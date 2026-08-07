@@ -247,6 +247,10 @@ void testAnalyticTranslatingSlabPressureWork() {
                     "piston: left pressure force is analytic and outward");
     checkVectorNear(right.pressureForceNewtons, {660.0, 0.0, 0.0}, 0.0,
                     "piston: right pressure force is analytic and outward");
+    checkNear(left.maximumPressureTractionDeviationPascals, 0.0, 0.0,
+              "piston: left pressure traction is exactly uniform");
+    checkNear(right.maximumPressureTractionDeviationPascals, 0.0, 0.0,
+              "piston: right pressure traction is exactly uniform");
     checkVectorNear(left.pressureImpulseNewtonSeconds,
                     {-264.0, 0.0, 0.0}, 2.0e-13,
                     "piston: left pressure impulse matches the temporal canonical");
@@ -367,6 +371,11 @@ void testDisturbedProjectionAndDeterminism() {
           "projection: regional divergence is reduced to the solver budget");
     check(firstDiagnostics.maximumNormalVelocityErrorMetersPerSecond == 0.0,
           "projection: constrained normal velocities remain bit-exact");
+    check(firstDiagnostics.surfaces[0]
+                  .maximumPressureTractionDeviationPascals > 0.0
+              || firstDiagnostics.surfaces[1]
+                  .maximumPressureTractionDeviationPascals > 0.0,
+          "projection: disturbed pressure reports its nonuniform surface traction");
     checkNear(
         firstDiagnostics.maximumAbsoluteRegionVolumeRateCubicMetersPerSecond,
         0.0, 2.0e-15,

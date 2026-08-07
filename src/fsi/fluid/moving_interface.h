@@ -110,6 +110,10 @@ struct MovingInterfaceSurfaceDiagnostics {
     // interface.
     Vector3 pressureForceNewtons;
     Vector3 pressureImpulseNewtonSeconds;
+    // Maximum facewise pressure-traction departure from the surface mean.
+    // A downstream uniform-traction bridge may accept the surface only when
+    // this value meets its explicit reconstruction tolerance.
+    double maximumPressureTractionDeviationPascals = 0.0;
     double pressurePowerWatts = 0.0;
     double pressureWorkJoules = 0.0;
 

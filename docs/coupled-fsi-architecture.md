@@ -409,7 +409,8 @@ tools/
 ```
 
 Likely CMake targets are `simwing_scene`, `simwing_structure`,
-`simwing_transfer`, `simwing_fluid`, `simwing_coupling`, `simwing-fsi`,
+`simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
+`simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing-fsi`,
 `simwing_viewer_protocol`,
 `simwing-viewer`, and focused test executables. Keep Qt out of the numerical
 targets; only the viewer/UI targets link it. Backend interfaces must not be so
@@ -437,8 +438,8 @@ structural step and replayable diagnostic trace with synthetic physical export
 settings. Manufacturing flat-pattern UVs, exact authored line-attachment
 vertices, authored paired seams and stitch mechanics, live bidirectional
 control, an authoritative settings source/engine CLI, and the arbitrary/cut-cell
-moving-interface, grid-side transfer, AMR, and full CFD evolution kernels remain
-open work.
+moving-interface, general nonuniform grid-side transfer, AMR, and full CFD
+evolution kernels remain open work.
 Phase 2 has started with a dependency-free uniform periodic MAC-grid
 verification kernel:
 its finite-volume gradient and divergence are a tested adjoint pair, its
@@ -474,9 +475,18 @@ immutable nodal impulses and independent surface/nodal impulse, angular
 impulse, and work ledgers. Its acceptance boundary requires the exact exchange
 duration, applies the equivalent average force through Structure's internal
 XPBD substeps, and restores the checkpoint from before load application on any
-failure. This does not yet implement the paired Cartesian-grid traction
-sampler, nonuniform triangle quadrature, fluid/structure iteration bridge, or
-strong-coupling convergence decision.
+failure. The first stable-ID fluid-to-structure bridge is present for the exact
+uniform subset of those operators. It accepts one canonical face-aligned fluid
+surface, requires its facewise pressure-traction deviation to meet an explicit
+budget, reconstructs one uniform world-space traction, and then requires
+independent fluid/structure area, force, and power ledgers to close before
+returning the immutable structural transfer. The `--case piston` worker
+evaluates compatible start/end fluid samples, trapezoidally integrates them,
+accepts the impulse through XPBD, and publishes the resulting moving
+two-triangle surface and CFD ledger fields to the standalone viewer. This does
+not yet implement general Cartesian surface correspondence, nonuniform
+triangle quadrature, fluid/structure iteration, or a strong-coupling
+convergence decision.
 
 ### Phase 0 — Establish the remake boundary
 
@@ -555,6 +565,14 @@ normal-velocity error is bit-exact zero on X, Y, and Z faces; disturbed regional
 projection has L2 divergence below `2e-11 1/s` and compatibility volume-rate
 roundoff below `2e-15 m^3/s`. A one-sided `1.5 m^3/s` fixed-grid volume request
 is rejected without changing pressure or velocity.
+The uniform bridge canonical maps the slab's stable right-wall ID to the same
+`6 m^2` two-triangle structure, closes `660 N` and `165 W` at `0.25 m/s`, and
+delivers `264 N*s`/`66 J` through the temporal exchange to accepted XPBD
+momentum. It rejects nonuniform face traction, an absent surface ID, mismatched
+area, failed fluid projection, and inconsistent interface power. The visible
+piston worker repeats the full chain at `120 Hz` with a synthetic `6000 kg`
+tributary-mass plate so 600 default frames show about `1.38 m` of deterministic
+translation without leaving the initial viewer scale.
 
 Work:
 
@@ -562,8 +580,8 @@ Work:
   discrete-surface layer;
 - in parallel conceptually, use IBAMR or OpenFOAM/preCICE as an external
   reference for selected canonical cases, not as a required GUI dependency;
-- implement arbitrary moving-interface/jump conditions, paired grid-side
-  transfer, refinement, and fluid checkpoints;
+- implement arbitrary moving-interface/jump conditions, general nonuniform
+  paired grid-side transfer, refinement, and fluid checkpoints;
 - add rate-limited AMR, pressure, velocity, divergence, traction, and
   pressure-jump viewer layers as each field becomes available;
 - verify CPU first, then add GPU kernels behind identical numerical tests.
@@ -582,10 +600,11 @@ Required canonical cases:
 The structure side now verifies prescribed volume, interface work, temporal
 impulse transfer, and transactional XPBD acceptance. The fluid side verifies a
 volume-compatible translating sealed slab with exact face velocity and matching
-per-wall pressure impulse/work. A genuinely volume-changing piston still needs
-moving cut-cell volumes, geometric conservation, and the coupled fluid/structure
-energy ledger, so the complete piston canonical has not yet passed the Phase 2
-gate.
+per-wall pressure impulse/work. The uniform stable-ID subset now also crosses
+those accepted fluid samples into XPBD and the viewer with explicit interface
+residuals. A genuinely volume-changing piston still needs moving cut-cell
+volumes, geometric conservation, and the complete coupled fluid/structure
+energy ledger, so the full Phase 2 piston gate remains open.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

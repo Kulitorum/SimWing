@@ -23,6 +23,18 @@ Vector3 add(const Vector3& first, const Vector3& second) {
             first.z + second.z};
 }
 
+Vector3 subtract(const Vector3& first, const Vector3& second) {
+    return {first.x - second.x,
+            first.y - second.y,
+            first.z - second.z};
+}
+
+double length(const Vector3& value) {
+    return std::sqrt(value.x * value.x
+                     + value.y * value.y
+                     + value.z * value.z);
+}
+
 Vector3 scale(const Vector3& value, const double factor) {
     return {factor * value.x, factor * value.y, factor * value.z};
 }
@@ -789,6 +801,20 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
             pressureForceAlongPositiveAxis
             * face.normalVelocityMetersPerSecond;
     }
+    for (const auto& face : interfaces.faces()) {
+        const auto [minusCell, plusCell] = adjacentCells(grid, face);
+        auto& surface = surfaces.at(face.surfaceStableId);
+        const Vector3 meanTraction = scale(
+            surface.pressureForceNewtons,
+            1.0 / surface.areaSquareMeters);
+        const Vector3 faceTraction = axialVector(
+            face.axis,
+            candidatePressure.values()[minusCell]
+                - candidatePressure.values()[plusCell]);
+        surface.maximumPressureTractionDeviationPascals = std::max(
+            surface.maximumPressureTractionDeviationPascals,
+            length(subtract(faceTraction, meanTraction)));
+    }
     diagnostics.surfaces.reserve(surfaces.size());
     for (auto& [stableId, surface] : surfaces) {
         static_cast<void>(stableId);
@@ -816,6 +842,19 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
         && finite(diagnostics.totalPressureImpulseNewtonSeconds)
         && std::isfinite(diagnostics.totalPressurePowerWatts)
         && std::isfinite(diagnostics.totalPressureWorkJoules)
+        && std::ranges::all_of(
+            diagnostics.surfaces,
+            [](const MovingInterfaceSurfaceDiagnostics& surface) {
+                return surface.faceCount > 0
+                    && std::isfinite(surface.areaSquareMeters)
+                    && surface.areaSquareMeters > 0.0
+                    && finite(surface.pressureForceNewtons)
+                    && finite(surface.pressureImpulseNewtonSeconds)
+                    && std::isfinite(
+                        surface.maximumPressureTractionDeviationPascals)
+                    && std::isfinite(surface.pressurePowerWatts)
+                    && std::isfinite(surface.pressureWorkJoules);
+            })
         && isFinite(candidateVelocity) && isFinite(candidatePressure);
     if (!diagnostics.finite) {
         projection.converged = false;

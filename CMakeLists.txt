@@ -301,6 +301,31 @@ target_include_directories(simwing_fluid PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
 )
 
+add_library(simwing_fluid_structure_bridge STATIC
+    src/fsi/fluid_structure_bridge.cpp
+    src/fsi/fluid_structure_bridge.h
+)
+target_include_directories(simwing_fluid_structure_bridge PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_fluid_structure_bridge PUBLIC
+    simwing_fluid
+    simwing_transfer
+)
+
+add_library(simwing_piston_case STATIC
+    src/fsi/piston_case.cpp
+    src/fsi/piston_case.h
+)
+target_include_directories(simwing_piston_case PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_piston_case PUBLIC
+    simwing_coupling
+    simwing_fluid_structure_bridge
+    simwing_structure_frame
+)
+
 # The Playground's wing: mesh parsing, refinement, SoftBody assembly and the
 # per-frame step, with no widget attached. A library rather than GUI sources
 # so the headless solver benchmark drives the identical simulation.
@@ -611,6 +636,21 @@ add_executable(simwing-coupling-test
 )
 target_link_libraries(simwing-coupling-test PRIVATE simwing_coupling)
 
+add_executable(simwing-fluid-structure-bridge-test
+    tests/simwing_fluid_structure_bridge_test.cpp
+)
+target_link_libraries(simwing-fluid-structure-bridge-test PRIVATE
+    simwing_coupling
+    simwing_fluid_structure_bridge
+)
+
+add_executable(simwing-piston-case-test
+    tests/simwing_piston_case_test.cpp
+)
+target_link_libraries(simwing-piston-case-test PRIVATE
+    simwing_piston_case
+)
+
 add_executable(playground-cells-test
     tests/playground_cells_test.cpp
 )
@@ -660,6 +700,7 @@ add_executable(simwing-fsi
 )
 target_link_libraries(simwing-fsi PRIVATE
     simwing_canonical_case
+    simwing_piston_case
 )
 
 qt_add_executable(LEparagliding WIN32
@@ -776,6 +817,8 @@ set_target_properties(
     simwing-fluid-moving-interface-test
     simwing-transfer-test
     simwing-coupling-test
+    simwing-fluid-structure-bridge-test
+    simwing-piston-case-test
     simwing-viewer
     simwing-fsi
     playground-cells-test
@@ -818,6 +861,8 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-fluid-moving-interface-test
         simwing-transfer-test
         simwing-coupling-test
+        simwing-fluid-structure-bridge-test
+        simwing-piston-case-test
         simwing-viewer
         simwing-fsi
         playground-cells-test
@@ -950,7 +995,16 @@ add_test(NAME simwing_fluid_moving_interface
     COMMAND simwing-fluid-moving-interface-test)
 add_test(NAME simwing_transfer COMMAND simwing-transfer-test)
 add_test(NAME simwing_coupling COMMAND simwing-coupling-test)
+add_test(NAME simwing_fluid_structure_bridge
+    COMMAND simwing-fluid-structure-bridge-test)
+add_test(NAME simwing_piston_case COMMAND simwing-piston-case-test)
 add_test(NAME simwing_fsi_help COMMAND simwing-fsi --help)
+add_test(NAME simwing_fsi_piston_headless
+    COMMAND simwing-fsi
+        --case piston
+        --steps 4
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-piston-headless.swtrace")
 add_test(NAME simwing_viewer_help COMMAND simwing-viewer --help)
 if(NOT WIN32)
     set_tests_properties(simwing_viewer_help PROPERTIES

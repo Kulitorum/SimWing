@@ -48,13 +48,18 @@ moment, and rigid-motion power ledgers. A versioned macro-step coupling layer
 now integrates nonuniform temporal samples into nodal impulse, angular impulse,
 and work, and applies the result transactionally across XPBD substeps. Its
 prescribed moving-piston canonical closes analytic pressure-volume work and
-delivers the same total impulse to structural momentum. A real 3.28 fixture
+delivers the same total impulse to structural momentum. A strict uniform
+fluid-to-structure bridge now binds one face-aligned pressure surface to one
+structural surface by stable ID and rejects nonuniform traction or mismatched
+area, force, and power. The `simwing-fsi --case piston` harness crosses that
+bridge, temporal coupling, XPBD acceptance, and replayable viewer frames with
+visible deterministic motion. A real 3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,
 checkpoint replay, and completed trace using synthetic physical settings.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
-assembly, paired grid-to-surface transfer, arbitrary/cut-cell moving interfaces,
-multiple crossings, and AMR CFD remain open. These worker cases
+assembly, general nonuniform grid-to-surface reconstruction, arbitrary/cut-cell
+moving interfaces, multiple crossings, and AMR CFD remain open. These worker cases
 validate the pipeline; they are not yet wing CFD or aerodynamic truth.
 The inherited Playground is not used by these targets.
 

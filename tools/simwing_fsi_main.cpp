@@ -1,4 +1,5 @@
 #include "canonical_case.h"
+#include "piston_case.h"
 #include "viewer_protocol.h"
 
 #include <algorithm>
@@ -35,21 +36,42 @@ namespace {
 constexpr std::uint64_t defaultSteps = 600;
 constexpr std::uint64_t maximumSteps = 10'000'000;
 
+enum class WorkerCase {
+    Structural,
+    Piston,
+};
+
 struct Options {
     std::uint64_t steps = defaultSteps;
     std::filesystem::path tracePath;
     bool viewer = true;
     bool help = false;
+    WorkerCase workerCase = WorkerCase::Structural;
 };
 
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: simwing-fsi [--steps N] [--trace PATH] [--viewer|--no-viewer]\n"
+        "Usage: simwing-fsi [--case structural|piston] [--steps N] [--trace PATH]\n"
+        "                   [--viewer|--no-viewer]\n"
         "\n"
-        "Runs the canonical Qt-free XPBD structural case and writes a completed\n"
-        "diagnostic trace. Interactive runs launch the sibling simwing-viewer\n"
-        "with --follow; --no-viewer is unthrottled for tests and CI.\n");
+        "Runs a canonical Qt-free numerical case and writes a completed diagnostic\n"
+        "trace. 'structural' is the original analytic XPBD harness; 'piston' runs\n"
+        "the uniform fluid -> transfer -> temporal coupling -> XPBD path. Interactive\n"
+        "runs launch the sibling simwing-viewer with --follow; --no-viewer is\n"
+        "unthrottled for tests and CI.\n");
+}
+
+bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
+    if (text == "structural") {
+        workerCase = WorkerCase::Structural;
+        return true;
+    }
+    if (text == "piston") {
+        workerCase = WorkerCase::Piston;
+        return true;
+    }
+    return false;
 }
 
 bool parseUnsigned(std::string_view text, std::uint64_t& value) {
@@ -78,6 +100,17 @@ bool parseOptions(int argc,
         } else if (argument == "--no-viewer") {
             noViewerRequested = true;
             options.viewer = false;
+        } else if (argument == "--case") {
+            if (++index >= argc
+                || !parseWorkerCase(argv[index], options.workerCase)) {
+                error = "--case requires 'structural' or 'piston'";
+                return false;
+            }
+        } else if (argument.starts_with("--case=")) {
+            if (!parseWorkerCase(argument.substr(7), options.workerCase)) {
+                error = "--case requires 'structural' or 'piston'";
+                return false;
+            }
         } else if (argument == "--steps") {
             if (++index >= argc
                 || !parseUnsigned(argv[index], options.steps)) {
@@ -285,82 +318,93 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        simwing::fsi::CanonicalStructuralCase simulation;
-        simwing::viewer::TraceWriter writer(output);
-        if (!writer.writeHeader(simulation.traceHeader())
-            || !flushTrace(output, error)) {
-            if (error.empty()) {
-                error = writer.error().message;
-            }
-            std::fprintf(stderr, "trace header failed: %s\n", error.c_str());
-            return 1;
-        }
-
-        if (options.viewer) {
-            const std::filesystem::path viewer = siblingViewerPath(argv[0]);
-            if (!launchViewer(viewer, options.tracePath, error)) {
-                std::fprintf(stderr, "%s\n", error.c_str());
-                return 1;
-            }
-        }
-
-        auto nextFrameTime = std::chrono::steady_clock::now();
-        for (std::uint64_t step = 0; step < options.steps; ++step) {
-            const simwing::viewer::DiagnosticFrame frame =
-                simulation.advance();
-            if (!writer.writeFrame(frame)
+        const auto run = [&](auto& simulation) -> int {
+            simwing::viewer::TraceWriter writer(output);
+            if (!writer.writeHeader(simulation.traceHeader())
                 || !flushTrace(output, error)) {
                 if (error.empty()) {
                     error = writer.error().message;
                 }
-                std::fprintf(stderr, "trace frame failed: %s\n",
+                std::fprintf(stderr, "trace header failed: %s\n",
                              error.c_str());
                 return 1;
             }
+
             if (options.viewer) {
-                nextFrameTime += std::chrono::duration_cast<
-                    std::chrono::steady_clock::duration>(
-                    std::chrono::duration<double>(
-                        simulation.stepSettings().timeStepSeconds));
-                std::this_thread::sleep_until(nextFrameTime);
+                const std::filesystem::path viewer =
+                    siblingViewerPath(argv[0]);
+                if (!launchViewer(viewer, options.tracePath, error)) {
+                    std::fprintf(stderr, "%s\n", error.c_str());
+                    return 1;
+                }
             }
-        }
 
-        if (!writer.finish() || !flushTrace(output, error)) {
-            if (error.empty()) {
-                error = writer.error().message;
+            auto nextFrameTime = std::chrono::steady_clock::now();
+            for (std::uint64_t step = 0; step < options.steps; ++step) {
+                const simwing::viewer::DiagnosticFrame frame =
+                    simulation.advance();
+                if (!writer.writeFrame(frame)
+                    || !flushTrace(output, error)) {
+                    if (error.empty()) {
+                        error = writer.error().message;
+                    }
+                    std::fprintf(stderr, "trace frame failed: %s\n",
+                                 error.c_str());
+                    return 1;
+                }
+                if (options.viewer) {
+                    nextFrameTime += std::chrono::duration_cast<
+                        std::chrono::steady_clock::duration>(
+                        std::chrono::duration<double>(
+                            simulation.stepSettings().timeStepSeconds));
+                    std::this_thread::sleep_until(nextFrameTime);
+                }
             }
-            std::fprintf(stderr, "trace completion failed: %s\n",
-                         error.c_str());
-            return 1;
-        }
 
-        const simwing::fsi::StructureCheckpoint checkpoint =
-            simulation.structure().checkpoint();
-        simwing::fsi::StructureVector3 minimum =
-            checkpoint.nodes.front().positionMeters;
-        simwing::fsi::StructureVector3 maximum = minimum;
-        for (const simwing::fsi::StructureNodeState& node : checkpoint.nodes) {
-            minimum.x = std::min(minimum.x, node.positionMeters.x);
-            minimum.y = std::min(minimum.y, node.positionMeters.y);
-            minimum.z = std::min(minimum.z, node.positionMeters.z);
-            maximum.x = std::max(maximum.x, node.positionMeters.x);
-            maximum.y = std::max(maximum.y, node.positionMeters.y);
-            maximum.z = std::max(maximum.z, node.positionMeters.z);
+            if (!writer.finish() || !flushTrace(output, error)) {
+                if (error.empty()) {
+                    error = writer.error().message;
+                }
+                std::fprintf(stderr, "trace completion failed: %s\n",
+                             error.c_str());
+                return 1;
+            }
+
+            const simwing::fsi::StructureCheckpoint checkpoint =
+                simulation.structure().checkpoint();
+            simwing::fsi::StructureVector3 minimum =
+                checkpoint.nodes.front().positionMeters;
+            simwing::fsi::StructureVector3 maximum = minimum;
+            for (const simwing::fsi::StructureNodeState& node
+                 : checkpoint.nodes) {
+                minimum.x = std::min(minimum.x, node.positionMeters.x);
+                minimum.y = std::min(minimum.y, node.positionMeters.y);
+                minimum.z = std::min(minimum.z, node.positionMeters.z);
+                maximum.x = std::max(maximum.x, node.positionMeters.x);
+                maximum.y = std::max(maximum.y, node.positionMeters.y);
+                maximum.z = std::max(maximum.z, node.positionMeters.z);
+            }
+            const simwing::fsi::StructureDiagnostics diagnostics =
+                simulation.structure().diagnostics();
+            std::printf("simwing-fsi completed %llu step(s), t=%.9g s, "
+                        "bounds=[%.6g %.6g %.6g]-[%.6g %.6g %.6g] m, "
+                        "max-strain=%.6g, trace=%s\n",
+                        static_cast<unsigned long long>(
+                            checkpoint.acceptedStepCount),
+                        checkpoint.simulationTimeSeconds,
+                        minimum.x, minimum.y, minimum.z,
+                        maximum.x, maximum.y, maximum.z,
+                        diagnostics.maximumAbsoluteMembraneStrain,
+                        options.tracePath.string().c_str());
+            return 0;
+        };
+
+        if (options.workerCase == WorkerCase::Piston) {
+            simwing::fsi::CoupledPistonCase simulation;
+            return run(simulation);
         }
-        const simwing::fsi::StructureDiagnostics diagnostics =
-            simulation.structure().diagnostics();
-        std::printf("simwing-fsi completed %llu step(s), t=%.9g s, "
-                    "bounds=[%.6g %.6g %.6g]-[%.6g %.6g %.6g] m, "
-                    "max-strain=%.6g, trace=%s\n",
-                    static_cast<unsigned long long>(
-                        checkpoint.acceptedStepCount),
-                    checkpoint.simulationTimeSeconds,
-                    minimum.x, minimum.y, minimum.z,
-                    maximum.x, maximum.y, maximum.z,
-                    diagnostics.maximumAbsoluteMembraneStrain,
-                    options.tracePath.string().c_str());
-        return 0;
+        simwing::fsi::CanonicalStructuralCase simulation;
+        return run(simulation);
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "simwing-fsi failed: %s\n", exception.what());
         return 1;
