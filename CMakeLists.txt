@@ -192,6 +192,34 @@ else()
     target_compile_options(softwing_core PRIVATE -w)
 endif()
 
+# SimWing remake foundations. These targets deliberately do not link any
+# inherited Playground simulation library: only the structural adapter uses
+# the isolated XPBD core.
+add_library(simwing_scene STATIC
+    src/fsi/scene.cpp
+    src/fsi/scene.h
+)
+target_include_directories(simwing_scene PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+
+add_library(simwing_structure STATIC
+    src/fsi/structure.cpp
+    src/fsi/structure.h
+)
+target_include_directories(simwing_structure PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_structure PUBLIC softwing_core)
+
+add_library(simwing_viewer_protocol STATIC
+    src/viewer/viewer_protocol.cpp
+    src/viewer/viewer_protocol.h
+)
+target_include_directories(simwing_viewer_protocol PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/viewer"
+)
+
 # The Playground's wing: mesh parsing, refinement, SoftBody assembly and the
 # per-frame step, with no widget attached. A library rather than GUI sources
 # so the headless solver benchmark drives the identical simulation.
@@ -415,6 +443,22 @@ add_executable(softwing-cell-volume-test
     tests/softwing_cell_volume_test.cpp
 )
 target_link_libraries(softwing-cell-volume-test PRIVATE softwing_core)
+
+add_executable(simwing-scene-test
+    tests/simwing_scene_test.cpp
+)
+target_link_libraries(simwing-scene-test PRIVATE simwing_scene)
+
+add_executable(simwing-structure-test
+    tests/simwing_structure_test.cpp
+)
+target_link_libraries(simwing-structure-test PRIVATE simwing_structure)
+
+add_executable(simwing-viewer-protocol-test
+    tests/simwing_viewer_protocol_test.cpp
+)
+target_link_libraries(simwing-viewer-protocol-test
+    PRIVATE simwing_viewer_protocol)
 
 add_executable(playground-cells-test
     tests/playground_cells_test.cpp
@@ -674,6 +718,9 @@ add_test(NAME playground_pressure_solve COMMAND playground-pressure-solve-test)
 add_test(NAME playground_cell_air COMMAND playground-cell-air-test)
 add_test(NAME softwing_material COMMAND softwing-material-test)
 add_test(NAME softwing_cell_volume COMMAND softwing-cell-volume-test)
+add_test(NAME simwing_scene COMMAND simwing-scene-test)
+add_test(NAME simwing_structure COMMAND simwing-structure-test)
+add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
 add_test(NAME playground_cells COMMAND playground-cells-test)
 add_test(NAME playground_material COMMAND playground-material-test)
 add_test(NAME playground_contact COMMAND playground-contact-test)

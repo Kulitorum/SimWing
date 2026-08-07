@@ -23,6 +23,12 @@ the first implementation slice. Interactive runs open it by default so the
 live structure, loads, contact, coupling residuals, and progressively added CFD
 fields can be inspected; automated runs remain available through `--no-viewer`.
 
+The first remake foundations are now present: scene-v2 validation and bounded
+serialization, a Qt-free XPBD structural/checkpoint adapter, and the immutable
+viewer frame/trace protocol. The standalone window and worker connection are
+the next implementation layer; the inherited Playground is not used by these
+targets.
+
 ## Inherited LEparagliding Studio baseline
 
 This project is a C++ port of Pere Casellas' LEparagliding 3.28 “Jardins”

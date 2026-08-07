@@ -150,6 +150,12 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
 - `flatparts`: structured part model, deterministic nester, PDF/DXF writers.
 - `softwing_core`: dependency-free XPBD/cloth/contact/pneumatics/suspension
   core under `src/softwing`.
+- `simwing_scene`: Qt-free scene-v2 data model, deterministic validation, and
+  bounded binary serialization under `src/fsi`.
+- `simwing_structure`: Qt-free SimWing-facing adapter around the retained XPBD
+  primitives. It links `softwing_core` and no Playground library.
+- `simwing_viewer_protocol`: Qt-free immutable diagnostic-frame and trace
+  protocol shared by future workers and the standalone viewer.
 - `playground_contact`: Qt-free bounded Playground cloth-contact features,
   topology exclusions, projection and coverage diagnostics.
 - `playground_sim`: widget-independent mesh parser/body builder/step and shape
@@ -420,6 +426,27 @@ Remaining free-flight stability and material-model limitations are recorded in
 `docs/legacy/leparagliding/CONTINUE.md`; do not infer that bounded authority
 makes this a certified aerodynamic solver.
 
+### SimWing FSI foundations
+
+- `src/fsi/scene.{h,cpp}` owns scene-v2's SI/right-handed/Z-up contract,
+  stable-ID entities, two-sided fluid regions, materials, openings, pilot,
+  attachments, suspension lines, validation, and bounded deterministic binary
+  round trips.
+- `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
+  loads/state, trusted constraint/membrane/bending assembly, diagnostics, and
+  rollback checkpoints without including any Playground header.
+- Registered contact and the rigid-payload `SuspensionSystem` are not yet in
+  `simwing_structure`: their persistent/warm-start state needs a public
+  production checkpoint API in `softwing_core` before strong coupling can use
+  them safely.
+- `src/viewer/viewer_protocol.{h,cpp}` owns immutable sampled diagnostic frames
+  and replayable traces. It uses nonzero 64-bit stable entity/region IDs,
+  transactional decoding, configurable limits, and a 256 MiB default encoded
+  frame ceiling.
+- New numerical targets must not link the inherited `playground_*` libraries.
+  Cross the scene/structure/viewer boundaries through explicit adapters and
+  versioned data only.
+
 ### Vendored and generated content
 
 - `third_party/libf2c`: vendored runtime. Avoid edits unless fixing a proven
@@ -442,7 +469,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 27 configured tests on Windows. The Fortran-reference test is
+There are 30 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 
@@ -457,6 +484,7 @@ paths that release CI deliberately excludes from its offscreen test command.
 | flat capture/nesting/PDF/DXF | `flatparts_export`; run `nesting-bench` when placement quality/performance can move |
 | Playground body/pressure/cells/material | `playground_pressure_solve`, `playground_cells`, `playground_metrics`, `playground_material`, `softwing_material`, and the deterministic bench guards below |
 | Playground contact | `playground_contact`, `playground_contact_integration`, plus a relevant bench/GUI scenario |
+| SimWing scene/structure/viewer foundations | `simwing_scene`, `simwing_structure`, `simwing_viewer_protocol`, plus `softwing_material`/`softwing_cell_volume` when core primitives change |
 | packaging/resources/CMake | configure from clean metadata, build Release, and run the full suite |
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
