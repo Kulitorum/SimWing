@@ -41,7 +41,12 @@ Face-aligned moving membranes can now partition stable fluid regions, impose
 an exact normal MAC velocity, and project each region transactionally while
 retaining its prior pressure gauge. A translating sealed-slab canonical closes
 the same `264 N*s` and `66 J` per-wall impulse/work values as the structural
-piston case; fixed-grid volume-changing motion is explicitly rejected. A
+piston case; incompatible sealed fixed-grid volume change remains explicitly
+rejected. Equal-sided interface labels can also describe a nonseparating sheet
+whose fluid remains connected around a resolved grid path. The first open
+planar control volume follows that sheet through one partial cell and
+independently closes geometric volume change, surface sweep, and projected
+opening transport on X, Y, and Z grids. A
 topology-bound conservative transfer layer integrates uniform triangle
 traction or explicit barycentric quadrature patches into structural loads while
 independently closing force, moment, and rigid-motion power ledgers. A versioned
@@ -55,15 +60,19 @@ canonical MAC tiles against structural triangles and conservatively maps
 nonuniform face traction while closing per-face and aggregate area, force,
 moment, and power ledgers. The `simwing-fsi --case piston` harness crosses that
 face-resolved bridge, temporal coupling, XPBD acceptance, and replayable viewer
-frames with visible deterministic motion. A real 3.28 fixture
+frames with visible deterministic motion. The third
+`simwing-fsi --case open-piston` harness drives a `6000 kg` plate at
+`0.05 m/s`, exposes the resisting CFD pressure separately from its actuator,
+and publishes accepted partial-cell and geometric-conservation ledgers. A real
+3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,
 checkpoint replay, and completed trace using synthetic physical settings.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or changing grid-to-surface correspondence,
-arbitrary/cut-cell moving interfaces, multiple crossings, and AMR CFD remain
-open. These worker cases validate the pipeline; they are not yet wing CFD or
-aerodynamic truth.
+general cut-cell pressure metrics, topology rebase, multiple crossings, and AMR
+CFD remain open. These worker cases validate the pipeline; they are not yet
+wing CFD or aerodynamic truth.
 The inherited Playground is not used by these targets.
 
 ## Inherited LEparagliding Studio baseline

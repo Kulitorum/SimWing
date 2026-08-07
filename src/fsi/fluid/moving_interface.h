@@ -31,8 +31,10 @@ struct GridFaceMovingInterface {
 
 // Immutable fixed-topology verification boundary. Removing its constrained
 // faces from the periodic cell graph must produce exactly one connected
-// component for every stable fluid region. Multiple crossings on one grid face
-// and disconnected aliases of one region ID are rejected.
+// component for every stable fluid region. Distinct side IDs describe a
+// separating closed sheet; equal side IDs describe a nonseparating sheet whose
+// two sides remain connected around a resolved opening. Multiple crossings on
+// one grid face and disconnected aliases of one region ID are rejected.
 class FaceAlignedMovingInterface final {
 public:
     FaceAlignedMovingInterface(

@@ -97,7 +97,7 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
-.\build\bin\Release\simwing-fsi.exe [--case structural|piston] [--steps N] [--trace <file>] [--no-viewer]
+.\build\bin\Release\simwing-fsi.exe [--case structural|piston|open-piston] [--steps N] [--trace <file>] [--no-viewer]
 .\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
@@ -177,13 +177,19 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
 - `simwing_piston_case`: Qt-free visible verification harness crossing fluid
   projection, the face-resolved bridge, temporal coupling, XPBD acceptance, and
   immutable viewer frames.
+- `simwing_open_piston_case`: Qt-free driven open-piston harness crossing a
+  connected-fluid projection, partial-cell control-volume geometry, opening
+  transport, CFD reaction, XPBD acceptance, and immutable viewer frames.
 - `simwing_scene_structure`: deterministic scene-v2 membrane, per-sheet
   bending, junction, and cable assembly into `simwing_structure`.
 - `simwing_fluid`: Qt-free periodic staggered-grid field operators and
   transactional pressure projection verification kernel, including a
   validated single-crossing sharp pressure-jump field and fixed-topology,
-  face-aligned moving-interface constraints. It has no Playground dependency
-  and is not yet an arbitrary/multiple-crossing or whole-wing flow solver.
+  face-aligned moving-interface constraints. Its first open planar
+  control-volume operator closes partial-cell geometry, surface sweep, and
+  resolved-opening transport without topology rebase. It has no Playground
+  dependency and is not yet an arbitrary/multiple-crossing or whole-wing flow
+  solver.
 - `simwing_viewer_protocol`: Qt-free immutable diagnostic-frame and trace
   protocol shared by future workers and the standalone viewer.
 - `playground_contact`: Qt-free bounded Playground cloth-contact features,
@@ -508,6 +514,11 @@ makes this a certified aerodynamic solver.
   `--case piston`. Its synthetic heavy piston makes the accepted motion visible
   while preserving the analytic tributary-mass translation. It is an
   end-to-end fixed-topology verification harness, not general moving-grid FSI.
+- `src/fsi/open_piston_case.{h,cpp}` is the third worker case selected with
+  `--case open-piston`. An explicit actuator accelerates and then drives a
+  `6000 kg` planar plate at `0.05 m/s`; CFD supplies the independently exposed
+  resisting pressure. The connected fluid is routed around a resolved opening,
+  and only accepted geometry/transport/structure states reach the trace.
 - `src/fsi/fluid/grid.{h,cpp}` owns the uniform periodic Cartesian grid,
   cell-centred scalar fields, unique periodic MAC face velocities, and the
   paired finite-volume divergence/gradient operators.
@@ -524,8 +535,14 @@ makes this a certified aerodynamic solver.
   rejects nonzero regional volume rate before mutation, and reports canonical
   MAC-tile bounds, traction, force, velocity, and power as well as aggregate
   pressure impulse/work per surface. This pressure sampling is exact for the
-  piecewise-constant slab test, not general surface reconstruction. Arbitrary
-  interface motion, cut-cell geometric conservation, topology changes, and
+  piecewise-constant slab test, not general surface reconstruction. Distinct
+  side IDs require a separating topology; equal IDs describe a nonseparating
+  surface connected around a resolved grid path.
+- `src/fsi/fluid/moving_control_volume.{h,cpp}` binds one complete
+  nonseparating planar surface and one complete open MAC plane. Within the
+  first partial cell it independently closes geometric volume change, surface
+  sweep, projected opening transport, velocity, and pressure-power ledgers.
+  General cut-cell pressure metrics, topology rebase, folded surfaces, and
   multiple crossings remain future work.
 - `src/fsi/transfer.{h,cpp}` owns canonical stable-ID coupling topology and
   immutable transfer results. It integrates either current triangle
@@ -577,7 +594,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 46 configured tests on Windows. The Fortran-reference test is
+There are 49 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 
@@ -593,10 +610,10 @@ paths that release CI deliberately excludes from its offscreen test command.
 | Playground body/pressure/cells/material | `playground_pressure_solve`, `playground_cells`, `playground_metrics`, `playground_material`, `softwing_material`, and the deterministic bench guards below |
 | Playground contact | `playground_contact`, `playground_contact_integration`, plus a relevant bench/GUI scenario |
 | SimWing scene/structure/viewer foundations | `simwing_scene`, `simwing_model_scene_export`, `simwing_model_scene_real_export`, `simwing_structure`, `simwing_scene_structure`, `simwing_viewer_protocol`, `simwing_structure_frame`, plus `softwing_material`/`softwing_cell_volume` when core primitives change and `softwing_suspension_checkpoint` for payload/suspension state |
-| SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`, `simwing_fluid_moving_interface`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing no-jump projection energy, transactional failure, deterministic replay, Taylor-Green invariance, manufactured second-order pressure convergence, stable region/interface orientation, static sharp-jump balance, exact X/Y/Z face constraints, canonical face-tile geometry/traction ledgers, per-region compatibility/gauges, and analytic translating-slab pressure impulse/work |
+| SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`, `simwing_fluid_moving_interface`, `simwing_fluid_control_volume`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing no-jump projection energy, transactional failure, deterministic replay, Taylor-Green invariance, manufactured second-order pressure convergence, stable region/interface orientation, static sharp-jump balance, exact X/Y/Z face constraints, canonical face-tile geometry/traction ledgers, per-region compatibility/gauges, analytic translating-slab pressure impulse/work, and open-piston partial-cell/surface-sweep/opening-flux GCL closure |
 | SimWing conservative transfer | `simwing_transfer`; preserve stable topology/Structure binding, analytic uniform and barycentric-quadrature area/force/moment, rigid translation/rotation power, independent ledger closure, additive nodal load application, and rejection before mutation for foreign results/structures |
 | SimWing macro-step coupling | `simwing_coupling`; preserve strictly ordered local sample time, topology/duration binding, analytic moving-piston impulse and pressure-volume work, independent temporal ledger closure, momentum delivery through XPBD, deterministic replay, and pre-load checkpoint rollback on failure |
-| SimWing fluid/structure bridge and piston worker | `simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing_fsi_piston_headless`; preserve the strict uniform subset, planar face-resolved nonuniform transfer, stable surface/geometry binding, complete nonoverlapping coverage, per-face and aggregate area/force/moment/power closure, analytic impulse delivery, bit-identical replay, accepted-only frames, and Qt-free headless execution |
+| SimWing fluid/structure bridge and piston workers | `simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing_open_piston_case`, `simwing_fsi_piston_headless`, `simwing_fsi_open_piston_headless`; preserve the strict uniform subset, planar face-resolved nonuniform transfer, stable surface/geometry binding, complete nonoverlapping coverage, per-face and aggregate area/force/moment/power closure, analytic impulse delivery, explicit actuator-versus-CFD reaction, bit-identical replay, accepted-only frames, and Qt-free headless execution |
 | packaging/resources/CMake | configure from clean metadata, build Release, and run the full suite |
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with

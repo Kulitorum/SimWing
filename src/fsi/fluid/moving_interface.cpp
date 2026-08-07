@@ -414,7 +414,6 @@ FaceAlignedMovingInterface::FaceAlignedMovingInterface(
         if (face.surfaceStableId == 0
             || face.minusRegionStableId == 0
             || face.plusRegionStableId == 0
-            || face.minusRegionStableId == face.plusRegionStableId
             || !std::isfinite(face.normalVelocityMetersPerSecond)) {
             throw std::invalid_argument(
                 "moving interface IDs, regions, and velocity must be valid");
@@ -511,9 +510,11 @@ FaceAlignedMovingInterface::FaceAlignedMovingInterface(
         const auto [minusCell, plusCell] = adjacentCells(grid, face);
         const auto minusComponent = components[minusCell];
         const auto plusComponent = components[plusCell];
-        if (minusComponent == plusComponent) {
+        const bool sameRegion = face.minusRegionStableId
+            == face.plusRegionStableId;
+        if (sameRegion != (minusComponent == plusComponent)) {
             throw std::invalid_argument(
-                "moving interface faces do not separate their labelled regions");
+                "moving interface side labels disagree with grid connectivity");
         }
         bindRegion(minusComponent, face.minusRegionStableId);
         bindRegion(plusComponent, face.plusRegionStableId);
@@ -901,7 +902,6 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
                 return face.surfaceStableId > 0
                     && face.minusRegionStableId > 0
                     && face.plusRegionStableId > 0
-                    && face.minusRegionStableId != face.plusRegionStableId
                     && finite(face.lowerCornerMeters)
                     && finite(face.upperCornerMeters)
                     && std::isfinite(face.areaSquareMeters)

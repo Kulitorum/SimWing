@@ -292,6 +292,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/grid.h
     src/fsi/fluid/interface_jump.cpp
     src/fsi/fluid/interface_jump.h
+    src/fsi/fluid/moving_control_volume.cpp
+    src/fsi/fluid/moving_control_volume.h
     src/fsi/fluid/moving_interface.cpp
     src/fsi/fluid/moving_interface.h
     src/fsi/fluid/projection.cpp
@@ -323,6 +325,19 @@ target_include_directories(simwing_piston_case PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
 )
 target_link_libraries(simwing_piston_case PUBLIC
+    simwing_coupling
+    simwing_fluid_structure_bridge
+    simwing_structure_frame
+)
+
+add_library(simwing_open_piston_case STATIC
+    src/fsi/open_piston_case.cpp
+    src/fsi/open_piston_case.h
+)
+target_include_directories(simwing_open_piston_case PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_open_piston_case PUBLIC
     simwing_coupling
     simwing_fluid_structure_bridge
     simwing_structure_frame
@@ -628,6 +643,11 @@ add_executable(simwing-fluid-moving-interface-test
 )
 target_link_libraries(simwing-fluid-moving-interface-test PRIVATE simwing_fluid)
 
+add_executable(simwing-fluid-control-volume-test
+    tests/simwing_fluid_control_volume_test.cpp
+)
+target_link_libraries(simwing-fluid-control-volume-test PRIVATE simwing_fluid)
+
 add_executable(simwing-transfer-test
     tests/simwing_transfer_test.cpp
 )
@@ -651,6 +671,13 @@ add_executable(simwing-piston-case-test
 )
 target_link_libraries(simwing-piston-case-test PRIVATE
     simwing_piston_case
+)
+
+add_executable(simwing-open-piston-case-test
+    tests/simwing_open_piston_case_test.cpp
+)
+target_link_libraries(simwing-open-piston-case-test PRIVATE
+    simwing_open_piston_case
 )
 
 add_executable(playground-cells-test
@@ -702,6 +729,7 @@ add_executable(simwing-fsi
 )
 target_link_libraries(simwing-fsi PRIVATE
     simwing_canonical_case
+    simwing_open_piston_case
     simwing_piston_case
 )
 
@@ -817,10 +845,12 @@ set_target_properties(
     simwing-fluid-projection-test
     simwing-fluid-interface-jump-test
     simwing-fluid-moving-interface-test
+    simwing-fluid-control-volume-test
     simwing-transfer-test
     simwing-coupling-test
     simwing-fluid-structure-bridge-test
     simwing-piston-case-test
+    simwing-open-piston-case-test
     simwing-viewer
     simwing-fsi
     playground-cells-test
@@ -861,10 +891,12 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-fluid-projection-test
         simwing-fluid-interface-jump-test
         simwing-fluid-moving-interface-test
+        simwing-fluid-control-volume-test
         simwing-transfer-test
         simwing-coupling-test
         simwing-fluid-structure-bridge-test
         simwing-piston-case-test
+        simwing-open-piston-case-test
         simwing-viewer
         simwing-fsi
         playground-cells-test
@@ -995,11 +1027,14 @@ add_test(NAME simwing_fluid_interface_jump
     COMMAND simwing-fluid-interface-jump-test)
 add_test(NAME simwing_fluid_moving_interface
     COMMAND simwing-fluid-moving-interface-test)
+add_test(NAME simwing_fluid_control_volume
+    COMMAND simwing-fluid-control-volume-test)
 add_test(NAME simwing_transfer COMMAND simwing-transfer-test)
 add_test(NAME simwing_coupling COMMAND simwing-coupling-test)
 add_test(NAME simwing_fluid_structure_bridge
     COMMAND simwing-fluid-structure-bridge-test)
 add_test(NAME simwing_piston_case COMMAND simwing-piston-case-test)
+add_test(NAME simwing_open_piston_case COMMAND simwing-open-piston-case-test)
 add_test(NAME simwing_fsi_help COMMAND simwing-fsi --help)
 add_test(NAME simwing_fsi_piston_headless
     COMMAND simwing-fsi
@@ -1007,6 +1042,12 @@ add_test(NAME simwing_fsi_piston_headless
         --steps 4
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-piston-headless.swtrace")
+add_test(NAME simwing_fsi_open_piston_headless
+    COMMAND simwing-fsi
+        --case open-piston
+        --steps 4
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-open-piston-headless.swtrace")
 add_test(NAME simwing_viewer_help COMMAND simwing-viewer --help)
 if(NOT WIN32)
     set_tests_properties(simwing_viewer_help PROPERTIES

@@ -157,7 +157,7 @@ void testTopologyCanonicalizationAndValidation() {
     invalid[0].plusRegionStableId = invalid[0].minusRegionStableId;
     expectRejected(
         [&] { static_cast<void>(FaceAlignedMovingInterface(grid, invalid)); },
-        "validation: equal side regions are rejected");
+        "validation: one equal-side face cannot contradict separating topology");
     invalid = authored;
     invalid[0].normalVelocityMetersPerSecond =
         std::numeric_limits<double>::quiet_NaN();
@@ -196,6 +196,21 @@ void testTopologyCanonicalizationAndValidation() {
     expectRejected(
         [&] { static_cast<void>(FaceAlignedMovingInterface(grid, onePlane)); },
         "validation: a periodic plane that does not partition regions is rejected");
+
+    for (auto& face : onePlane) {
+        face.minusRegionStableId = 9;
+        face.plusRegionStableId = 9;
+    }
+    const FaceAlignedMovingInterface nonseparating(
+        grid, std::move(onePlane));
+    check(nonseparating.regionCount() == 1
+              && nonseparating.regionStableIds().front() == 9
+              && std::ranges::all_of(
+                  nonseparating.cellRegionStableIds(),
+                  [](const std::uint64_t stableId) {
+                      return stableId == 9;
+                  }),
+          "topology: equal side IDs retain one region around a resolved opening");
 }
 
 void testAnalyticTranslatingSlabPressureWork() {

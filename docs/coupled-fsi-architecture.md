@@ -379,6 +379,8 @@ src/fsi/
     structure.*             adapter around softwing_core
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
+    piston_case.*           sealed fixed-topology worker canonical
+    open_piston_case.*      driven open-control-volume worker canonical
     diagnostics.*           conservation, residuals, events, profiling
     checkpoint.*            versioned restart state
     scenarios.*             tunnel, glide, inflation, collapse definitions
@@ -389,6 +391,8 @@ src/fsi/
         diffusion.*
         projection.*
         interface_jump.*
+        moving_interface.*  grid-face constraints and region topology
+        moving_control_volume.* open planar partial-cell GCL ledger
         turbulence.*
         boundaries.*
 
@@ -410,7 +414,8 @@ tools/
 
 Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
-`simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing-fsi`,
+`simwing_fluid_structure_bridge`, `simwing_piston_case`,
+`simwing_open_piston_case`, `simwing-fsi`,
 `simwing_viewer_protocol`,
 `simwing-viewer`, and focused test executables. Keep Qt out of the numerical
 targets; only the viewer/UI targets link it. Backend interfaces must not be so
@@ -437,9 +442,9 @@ composite transaction. The real 3.28 regression now reaches an accepted coupled
 structural step and replayable diagnostic trace with synthetic physical export
 settings. Manufacturing flat-pattern UVs, exact authored line-attachment
 vertices, authored paired seams and stitch mechanics, live bidirectional
-control, an authoritative settings source/engine CLI, and the arbitrary/cut-cell
-moving-interface, curved or changing grid-side correspondence, AMR, and full
-CFD evolution kernels remain open work.
+control, an authoritative settings source/engine CLI, and general cut-cell
+moving interfaces, topology rebase, curved or changing grid-side
+correspondence, AMR, and full CFD evolution kernels remain open work.
 Phase 2 has started with a dependency-free uniform periodic MAC-grid
 verification kernel:
 its finite-volume gradient and divergence are a tested adjoint pair, its
@@ -456,12 +461,20 @@ fluid regions, and holds prescribed normal MAC velocity exactly while solving
 one zero-mean pressure correction per region. The prior mean pressure in each
 region is retained because those means are independent incompressible null
 modes. Nonzero fixed-grid region volume rate is rejected transactionally rather
-than hidden by compatibility subtraction. Adjacent cell-centre pressure gives
+than hidden by compatibility subtraction. A nonseparating plane instead uses
+one region ID on both sides when the remaining grid graph supplies a resolved
+fluid path around it. The first planar moving-control-volume operator binds one
+such surface to one open MAC plane and follows its offset through one partial
+cell. It computes geometric volume change, surface sweep, and projected opening
+transport independently and requires all three to agree before acceptance.
+This is a fixed-topology GCL verification subset, not a general cut-cell
+pressure operator or topology-rebase scheme. Adjacent cell-centre pressure gives
 exact force/impulse/work for the piecewise-constant slab canonical, and the
 accepted diagnostics retain each canonical MAC tile's rectangle, traction,
 force, constrained velocity, and power ledger. This is deliberately not
-presented as arbitrary surface reconstruction, cut-cell geometric conservation,
-folded/multiple-crossing motion, advection, turbulence, or a wing-flow solver.
+presented as arbitrary surface reconstruction, general cut-cell pressure
+geometry, folded/multiple-crossing motion, advection, turbulence, or a
+wing-flow solver.
 
 The first structure-side conservative-transfer primitive is also present. A
 canonical stable-ID surface is fingerprint-bound to one immutable structural
@@ -491,9 +504,14 @@ through those patches only after per-face and aggregate area, force, moment,
 and power ledgers close. The `--case piston` worker now evaluates compatible
 start/end face-resolved fluid samples, trapezoidally integrates them, accepts
 the impulse through XPBD, and publishes the resulting moving two-triangle
-surface and CFD ledger fields to the standalone viewer. This does not yet
-implement curved or changing Eulerian correspondence, cut cells,
-fluid/structure iteration, or a strong-coupling convergence decision.
+surface and CFD ledger fields to the standalone viewer. The
+`--case open-piston` worker adds the nonseparating connected-fluid projection,
+partial-cell geometry, resolved-opening GCL ledger, an explicit plate actuator,
+and a separately reported resisting CFD load. Both the numerical state and
+published frame cross accepted boundaries only. This does not yet implement
+curved or changing Eulerian correspondence, general cut-cell pressure metrics,
+topology rebase, fluid/structure iteration, or a strong-coupling convergence
+decision.
 
 ### Phase 0 — Establish the remake boundary
 
@@ -538,7 +556,8 @@ cases meet their declared tolerances.
 
 Status: in progress. `simwing_fluid` currently owns the uniform periodic
 verification grid, pressure projection, and fixed-topology face-aligned moving
-constraints. On solve failure it preserves the
+constraints, plus the first open planar one-partial-cell control-volume
+operator. On solve failure it preserves the
 input pressure and velocity bit-for-bit so future macro-step retry can be
 transactional. It also owns a canonical single-crossing sharp pressure-jump
 field with explicit surface and two-sided region identity; duplicate crossings
@@ -572,6 +591,13 @@ normal-velocity error is bit-exact zero on X, Y, and Z faces; disturbed regional
 projection has L2 divergence below `2e-11 1/s` and compatibility volume-rate
 roundoff below `2e-15 m^3/s`. A one-sided `1.5 m^3/s` fixed-grid volume request
 is rejected without changing pressure or velocity.
+The open-piston canonical uses one `6 m^2` nonseparating plane moving at
+`0.25 m/s` for `0.4 s` in a connected periodic region. Projection routes a
+uniform `0.25 m/s` flow through the explicit opening plane. The analytic
+`0.6 m^3` chamber growth must agree independently with partial-cell geometry,
+surface sweep within `3e-15 m^3`, and opening transport within `3e-12 m^3`;
+the same operator is checked on X, Y, and Z axes. Motion stops before the next
+MAC face because topology rebase is deliberately not implicit.
 The uniform bridge canonical maps the slab's stable right-wall ID to the same
 `6 m^2` two-triangle structure, closes `660 N` and `165 W` at `0.25 m/s`, and
 delivers `264 N*s`/`66 J` through the temporal exchange to accepted XPBD
@@ -584,7 +610,11 @@ corresponding SI units; gaps, tile or triangle overlap, orientation mismatch,
 changed geometry, and locally inconsistent power are rejected. The visible
 piston worker repeats the face-resolved full chain at `120 Hz` with a synthetic
 `6000 kg` tributary-mass plate so 600 default frames show about `1.38 m` of
-deterministic translation without leaving the initial viewer scale.
+deterministic translation without leaving the initial viewer scale. The open
+piston worker uses the same mass and rate but drives at `0.05 m/s`: 600 frames
+move `0.25 m`, grow the analytic chamber from `12` to `13.5 m^3`, expose the
+actuator impulse separately from CFD pressure reaction, and remain inside the
+first `0.5 m` cell.
 
 Work:
 
@@ -614,10 +644,12 @@ impulse transfer, and transactional XPBD acceptance. The fluid side verifies a
 volume-compatible translating sealed slab with exact face velocity and matching
 per-wall pressure impulse/work. The planar fixed-correspondence stable-ID subset
 now also crosses those accepted face-resolved fluid samples into XPBD and the
-viewer with explicit interface residuals. A genuinely volume-changing piston
-still needs moving cut-cell volumes, geometric conservation, changing
-correspondence, and the complete coupled fluid/structure energy ledger, so the
-full Phase 2 piston gate remains open.
+viewer with explicit interface residuals. The first open volume-changing piston
+now has one partial-cell geometry update and an independently closed
+surface-sweep/opening-transport GCL ledger. General cut-cell pressure metrics,
+topology rebase, changing correspondence, sealed deforming chambers, and the
+complete coupled fluid/structure energy ledger remain open, so the full Phase 2
+piston gate is not yet closed.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

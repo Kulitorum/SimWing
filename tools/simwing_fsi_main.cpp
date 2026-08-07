@@ -1,4 +1,5 @@
 #include "canonical_case.h"
+#include "open_piston_case.h"
 #include "piston_case.h"
 #include "viewer_protocol.h"
 
@@ -39,6 +40,7 @@ constexpr std::uint64_t maximumSteps = 10'000'000;
 enum class WorkerCase {
     Structural,
     Piston,
+    OpenPiston,
 };
 
 struct Options {
@@ -52,12 +54,15 @@ struct Options {
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: simwing-fsi [--case structural|piston] [--steps N] [--trace PATH]\n"
+        "Usage: simwing-fsi [--case structural|piston|open-piston] [--steps N]\n"
+        "                   [--trace PATH]\n"
         "                   [--viewer|--no-viewer]\n"
         "\n"
         "Runs a canonical Qt-free numerical case and writes a completed diagnostic\n"
         "trace. 'structural' is the original analytic XPBD harness; 'piston' runs\n"
-        "the uniform fluid -> transfer -> temporal coupling -> XPBD path. Interactive\n"
+        "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
+        "'open-piston' adds connected-fluid pressure reaction, partial-cell motion,\n"
+        "and an independently closed opening-flux GCL ledger. Interactive\n"
         "runs launch the sibling simwing-viewer with --follow; --no-viewer is\n"
         "unthrottled for tests and CI.\n");
 }
@@ -69,6 +74,10 @@ bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
     }
     if (text == "piston") {
         workerCase = WorkerCase::Piston;
+        return true;
+    }
+    if (text == "open-piston") {
+        workerCase = WorkerCase::OpenPiston;
         return true;
     }
     return false;
@@ -103,12 +112,12 @@ bool parseOptions(int argc,
         } else if (argument == "--case") {
             if (++index >= argc
                 || !parseWorkerCase(argv[index], options.workerCase)) {
-                error = "--case requires 'structural' or 'piston'";
+                error = "--case requires 'structural', 'piston', or 'open-piston'";
                 return false;
             }
         } else if (argument.starts_with("--case=")) {
             if (!parseWorkerCase(argument.substr(7), options.workerCase)) {
-                error = "--case requires 'structural' or 'piston'";
+                error = "--case requires 'structural', 'piston', or 'open-piston'";
                 return false;
             }
         } else if (argument == "--steps") {
@@ -401,6 +410,10 @@ int main(int argc, char* argv[]) {
 
         if (options.workerCase == WorkerCase::Piston) {
             simwing::fsi::CoupledPistonCase simulation;
+            return run(simulation);
+        }
+        if (options.workerCase == WorkerCase::OpenPiston) {
+            simwing::fsi::OpenPistonCase simulation;
             return run(simulation);
         }
         simwing::fsi::CanonicalStructuralCase simulation;
