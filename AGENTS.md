@@ -172,9 +172,9 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   bending, junction, and cable assembly into `simwing_structure`.
 - `simwing_fluid`: Qt-free periodic staggered-grid field operators and
   transactional pressure projection verification kernel, including a
-  validated single-crossing sharp pressure-jump field. It has no Playground
-  dependency and is not yet a moving/multiple-interface or whole-wing flow
-  solver.
+  validated single-crossing sharp pressure-jump field and fixed-topology,
+  face-aligned moving-interface constraints. It has no Playground dependency
+  and is not yet an arbitrary/multiple-crossing or whole-wing flow solver.
 - `simwing_viewer_protocol`: Qt-free immutable diagnostic-frame and trace
   protocol shared by future workers and the standalone viewer.
 - `playground_contact`: Qt-free bounded Playground cloth-contact features,
@@ -505,6 +505,14 @@ makes this a certified aerodynamic solver.
   signed two-region pressure jumps, the jump-corrected gradient, and its paired
   Poisson source. It rejects multiple crossings on one face until the folded
   interface representation exists.
+- `src/fsi/fluid/moving_interface.{h,cpp}` owns physically grid-bound MAC-face
+  velocity constraints and their stable connected fluid regions. Its
+  disconnected projection preserves one prior pressure mean per region,
+  rejects nonzero regional volume rate before mutation, and reports canonical
+  adjacent-cell pressure force/impulse/work per surface. This pressure sampling
+  is exact for the piecewise-constant slab test, not general surface
+  reconstruction. Arbitrary interface motion, cut-cell geometric conservation,
+  topology changes, and multiple crossings remain future work.
 - `src/fsi/transfer.{h,cpp}` owns canonical stable-ID coupling topology and
   immutable transfer results. It integrates current triangle area/centroid and
   linearly interpolated velocity, distributes each uniform traction resultant
@@ -519,7 +527,8 @@ makes this a certified aerodynamic solver.
   and work ledgers. Acceptance requires the exact Structure step duration,
   applies equivalent average nodal loads across its internal substeps, and
   restores the checkpoint from before load application on any failure. It does
-  not yet decide strong-coupling convergence or integrate a moving fluid wall.
+  not yet decide strong-coupling convergence or bridge the independent fluid
+  and structural iterations.
 - New numerical targets must not link the inherited `playground_*` libraries.
   Cross the scene/structure/viewer boundaries through explicit adapters and
   versioned data only.
@@ -546,7 +555,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 42 configured tests on Windows. The Fortran-reference test is
+There are 43 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 
@@ -562,7 +571,7 @@ paths that release CI deliberately excludes from its offscreen test command.
 | Playground body/pressure/cells/material | `playground_pressure_solve`, `playground_cells`, `playground_metrics`, `playground_material`, `softwing_material`, and the deterministic bench guards below |
 | Playground contact | `playground_contact`, `playground_contact_integration`, plus a relevant bench/GUI scenario |
 | SimWing scene/structure/viewer foundations | `simwing_scene`, `simwing_model_scene_export`, `simwing_model_scene_real_export`, `simwing_structure`, `simwing_scene_structure`, `simwing_viewer_protocol`, `simwing_structure_frame`, plus `softwing_material`/`softwing_cell_volume` when core primitives change and `softwing_suspension_checkpoint` for payload/suspension state |
-| SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing no-jump projection energy, transactional failure, deterministic replay, Taylor-Green invariance, manufactured second-order pressure convergence, stable two-region jump orientation, and static sharp-jump balance without spurious flow |
+| SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`, `simwing_fluid_moving_interface`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing no-jump projection energy, transactional failure, deterministic replay, Taylor-Green invariance, manufactured second-order pressure convergence, stable region/interface orientation, static sharp-jump balance, exact X/Y/Z face constraints, per-region compatibility/gauges, and analytic translating-slab pressure impulse/work |
 | SimWing conservative transfer | `simwing_transfer`; preserve stable topology/Structure binding, analytic area/force/moment, rigid translation/rotation power, independent ledger closure, additive nodal load application, and rejection before mutation for foreign results/structures |
 | SimWing macro-step coupling | `simwing_coupling`; preserve strictly ordered local sample time, topology/duration binding, analytic moving-piston impulse and pressure-volume work, independent temporal ledger closure, momentum delivery through XPBD, deterministic replay, and pre-load checkpoint rollback on failure |
 | packaging/resources/CMake | configure from clean metadata, build Release, and run the full suite |

@@ -436,8 +436,9 @@ composite transaction. The real 3.28 regression now reaches an accepted coupled
 structural step and replayable diagnostic trace with synthetic physical export
 settings. Manufacturing flat-pattern UVs, exact authored line-attachment
 vertices, authored paired seams and stitch mechanics, live bidirectional
-control, an authoritative settings source/engine CLI, and the moving-interface,
-grid-side transfer, AMR, and full CFD evolution kernels remain open work.
+control, an authoritative settings source/engine CLI, and the arbitrary/cut-cell
+moving-interface, grid-side transfer, AMR, and full CFD evolution kernels remain
+open work.
 Phase 2 has started with a dependency-free uniform periodic MAC-grid
 verification kernel:
 its finite-volume gradient and divergence are a tested adjoint pair, its
@@ -448,9 +449,17 @@ periodic momentum/kinetic-energy budgets. A canonical single-crossing
 grid-face field now retains stable surface IDs, two distinct fluid-region IDs,
 and the signed pressure discontinuity. Its paired sharp gradient and Poisson
 source preserve a static pressurized slab without smoothing the pressure or
-creating flow. This is deliberately not presented as arbitrary surface
-reconstruction, a moving or folded/multiple-crossing interface, a physical
-boundary-condition, advection, turbulence, or wing-flow solver.
+creating flow. A separate physically grid-bound face-aligned interface now
+removes constrained faces from the pressure graph, partitions cells into stable
+fluid regions, and holds prescribed normal MAC velocity exactly while solving
+one zero-mean pressure correction per region. The prior mean pressure in each
+region is retained because those means are independent incompressible null
+modes. Nonzero fixed-grid region volume rate is rejected transactionally rather
+than hidden by compatibility subtraction. Adjacent cell-centre pressure gives
+exact force/impulse/work for the piecewise-constant slab canonical. This is
+deliberately not presented as arbitrary surface reconstruction, cut-cell
+geometric conservation, folded/multiple-crossing motion, advection, turbulence,
+or a wing-flow solver.
 
 The first structure-side conservative-transfer primitive is also present. A
 canonical stable-ID surface is fingerprint-bound to one immutable structural
@@ -466,8 +475,8 @@ impulse, and work ledgers. Its acceptance boundary requires the exact exchange
 duration, applies the equivalent average force through Structure's internal
 XPBD substeps, and restores the checkpoint from before load application on any
 failure. This does not yet implement the paired Cartesian-grid traction
-sampler, nonuniform triangle quadrature, moving-wall fluid condition, or
-strong-coupling iteration/convergence decision.
+sampler, nonuniform triangle quadrature, fluid/structure iteration bridge, or
+strong-coupling convergence decision.
 
 ### Phase 0 — Establish the remake boundary
 
@@ -510,8 +519,9 @@ cases meet their declared tolerances.
 
 ### Phase 2 — CFD verification kernel
 
-Status: in progress. `simwing_fluid` currently owns only the uniform periodic
-verification grid and pressure projection. On solve failure it preserves the
+Status: in progress. `simwing_fluid` currently owns the uniform periodic
+verification grid, pressure projection, and fixed-topology face-aligned moving
+constraints. On solve failure it preserves the
 input pressure and velocity bit-for-bit so future macro-step retry can be
 transactional. It also owns a canonical single-crossing sharp pressure-jump
 field with explicit surface and two-sided region identity; duplicate crossings
@@ -538,6 +548,13 @@ under pressure rising linearly from `100 Pa` to `120 Pa`. Nonuniform samples at
 `264 N*s` impulse, and `66 J` pressure-volume work. Impulse and angular-impulse
 residuals are each below `3e-13` in their SI units, work residual is below
 `1e-13 J`, and the accepted XPBD momentum gain is the same `264 kg*m/s`.
+The fluid-side translating-slab canonical uses the same `6 m^2`, `0.25 m/s`,
+`0.4 s`, and `110 Pa` values. Each wall must report `660 N`, `264 N*s`, and
+`66 J` with opposite signs, while the closed slab totals remain zero. Interface
+normal-velocity error is bit-exact zero on X, Y, and Z faces; disturbed regional
+projection has L2 divergence below `2e-11 1/s` and compatibility volume-rate
+roundoff below `2e-15 m^3/s`. A one-sided `1.5 m^3/s` fixed-grid volume request
+is rejected without changing pressure or velocity.
 
 Work:
 
@@ -545,7 +562,7 @@ Work:
   discrete-surface layer;
 - in parallel conceptually, use IBAMR or OpenFOAM/preCICE as an external
   reference for selected canonical cases, not as a required GUI dependency;
-- implement projection, moving-interface jump conditions, paired grid-side
+- implement arbitrary moving-interface/jump conditions, paired grid-side
   transfer, refinement, and fluid checkpoints;
 - add rate-limited AMR, pressure, velocity, divergence, traction, and
   pressure-jump viewer layers as each field becomes available;
@@ -562,10 +579,13 @@ Required canonical cases:
 - resolved opening that closes below grid scale and reopens;
 - force, moment, and power transfer under rigid translation and rotation.
 
-The structure-side half of the moving-piston case now verifies prescribed
-volume, interface work, temporal impulse transfer, and transactional XPBD
-acceptance. Moving-wall enforcement and the fluid mass/energy half remain open,
-so the complete piston canonical has not yet passed the Phase 2 gate.
+The structure side now verifies prescribed volume, interface work, temporal
+impulse transfer, and transactional XPBD acceptance. The fluid side verifies a
+volume-compatible translating sealed slab with exact face velocity and matching
+per-wall pressure impulse/work. A genuinely volume-changing piston still needs
+moving cut-cell volumes, geometric conservation, and the coupled fluid/structure
+energy ledger, so the complete piston canonical has not yet passed the Phase 2
+gate.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

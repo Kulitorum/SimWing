@@ -36,7 +36,12 @@ pressure projection with deterministic rollback behavior, exact discrete
 gradient/divergence pairing, Taylor-Green preservation, and manufactured
 second-order pressure convergence. A validated single-crossing sharp-interface
 field now preserves a prescribed two-sided static pressure jump without
-smearing or spurious flow, including across the periodic domain boundary. A
+smearing or spurious flow, including across the periodic domain boundary.
+Face-aligned moving membranes can now partition stable fluid regions, impose
+an exact normal MAC velocity, and project each region transactionally while
+retaining its prior pressure gauge. A translating sealed-slab canonical closes
+the same `264 N*s` and `66 J` per-wall impulse/work values as the structural
+piston case; fixed-grid volume-changing motion is explicitly rejected. A
 topology-bound conservative transfer layer integrates uniform triangle
 traction into barycentric structural loads while independently closing force,
 moment, and rigid-motion power ledgers. A versioned macro-step coupling layer
@@ -48,8 +53,8 @@ also crosses export, structural assembly, one coupled pilot/suspension step,
 checkpoint replay, and completed trace using synthetic physical settings.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
-assembly, and the grid-side,
-moving/multiple-interface, and AMR CFD work remain open. These worker cases
+assembly, paired grid-to-surface transfer, arbitrary/cut-cell moving interfaces,
+multiple crossings, and AMR CFD remain open. These worker cases
 validate the pipeline; they are not yet wing CFD or aerodynamic truth.
 The inherited Playground is not used by these targets.
 

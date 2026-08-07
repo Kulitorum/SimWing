@@ -292,6 +292,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/grid.h
     src/fsi/fluid/interface_jump.cpp
     src/fsi/fluid/interface_jump.h
+    src/fsi/fluid/moving_interface.cpp
+    src/fsi/fluid/moving_interface.h
     src/fsi/fluid/projection.cpp
     src/fsi/fluid/projection.h
 )
@@ -594,6 +596,11 @@ add_executable(simwing-fluid-interface-jump-test
 )
 target_link_libraries(simwing-fluid-interface-jump-test PRIVATE simwing_fluid)
 
+add_executable(simwing-fluid-moving-interface-test
+    tests/simwing_fluid_moving_interface_test.cpp
+)
+target_link_libraries(simwing-fluid-moving-interface-test PRIVATE simwing_fluid)
+
 add_executable(simwing-transfer-test
     tests/simwing_transfer_test.cpp
 )
@@ -766,6 +773,7 @@ set_target_properties(
     simwing-fsi-worker-test
     simwing-fluid-projection-test
     simwing-fluid-interface-jump-test
+    simwing-fluid-moving-interface-test
     simwing-transfer-test
     simwing-coupling-test
     simwing-viewer
@@ -807,6 +815,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-fsi-worker-test
         simwing-fluid-projection-test
         simwing-fluid-interface-jump-test
+        simwing-fluid-moving-interface-test
         simwing-transfer-test
         simwing-coupling-test
         simwing-viewer
@@ -937,6 +946,8 @@ add_test(NAME simwing_fsi_worker COMMAND simwing-fsi-worker-test)
 add_test(NAME simwing_fluid_projection COMMAND simwing-fluid-projection-test)
 add_test(NAME simwing_fluid_interface_jump
     COMMAND simwing-fluid-interface-jump-test)
+add_test(NAME simwing_fluid_moving_interface
+    COMMAND simwing-fluid-moving-interface-test)
 add_test(NAME simwing_transfer COMMAND simwing-transfer-test)
 add_test(NAME simwing_coupling COMMAND simwing-coupling-test)
 add_test(NAME simwing_fsi_help COMMAND simwing-fsi --help)
