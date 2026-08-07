@@ -23,6 +23,22 @@ change moves ownership or invalidates a command or invariant.
 - XFLR5 v6.62 and the SoftWingLab-derived XPBD core are vendored. Both have
   local changes and are no longer drop-in upstream copies.
 
+### SimWing remake boundary
+
+- Reuse the isolated XPBD structure primitives in `src/softwing`: membranes,
+  constraints, cables, suspension, contact, and their canonical tests.
+- Do not treat the inherited Playground simulation as a baseline or migration
+  target. Its aerodynamic loads, bounded pressure solve, cell-air network,
+  flight dynamics, metrics, scenarios, and results are discarded for SimWing.
+- The new FSI path must not link `playground_sim`, `playground_pressure_solve`,
+  `playground_cell_air`, or `playground_analysis`, and it does not read
+  `lep-sim.json` v1.
+- Build scene-v2 directly from authoritative model geometry, assemble a new
+  Qt-free structural adapter from XPBD primitives, and let CFD be the sole
+  owner of internal/external pressure and aerodynamic traction.
+- Archived Playground records explain inherited code only. They are not
+  SimWing physics acceptance criteria.
+
 ## Start every task here
 
 1. Run `git status --short --branch` and preserve all user changes, including

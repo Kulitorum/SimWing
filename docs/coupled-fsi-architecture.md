@@ -13,9 +13,11 @@ simulation. Absolute predictions require measured material properties and
 validation data. Until that evidence exists, results must be labelled by their
 validation level and include numerical and parameter uncertainty.
 
-This document is the target architecture.
-`docs/legacy/leparagliding/CONTINUE.md` remains the record of the imported
-Playground implementation and its measured regression guards.
+This document is the target architecture. The imported Playground simulation
+is not a baseline for SimWing physics. Its archived records may explain the
+old code, but its aerodynamic loads, pressure model, cell-air model, flight
+dynamics, metrics, scenarios, and numerical results are not regression oracles
+for the remake.
 
 ## Imported baseline
 
@@ -25,34 +27,22 @@ The initial SimWing tree was copied from the working tree at
 - Git commit: `497b5632154fb09ef14c4b47943d3fa31a184309`.
 - Imported tracked and non-ignored files: 1,182.
 - Excluded: `.git`, generated build trees, and ignored generated outputs.
-- Preserved alongside the import: `ChatGPT.txt`.
-- The source working tree was clean for tracked files at final synchronization;
-  its non-ignored design and fixture files were included.
-- SimWing has no Git metadata yet. Repository initialization and any history
-  relationship to LEparagliding are an explicit project decision, not an
-  accidental side effect of the copy.
-
-Before implementation starts, freeze this baseline in version control and run
-the existing test suite. The source repository changed during the import, so
-future transfers must be deliberate commits or patches rather than live-folder
-synchronization.
-
-One inherited inconsistency must be resolved before changing solver arithmetic:
-current code and some documents use 96 targeted free-flight cable sweep pairs,
-while older handoff text describes three. Record the executable baseline and
-update the stale document; do not silently choose either value.
+- SimWing begins with independent root commit
+  `bec9843df172ffebe70cfb17f4d5871418e4e98e`; the original commit is recorded
+  in `UPSTREAM.md` but is not part of SimWing history.
+- Personal designs, the private planning transcript, local fixtures, and build
+  output are not part of the public repository.
+- Future upstream transfers must be deliberate source imports. There is no
+  compatibility promise for inherited Playground behavior.
 
 ### Initial verification snapshot
 
 The imported tree was configured on Windows with CMake 4.1.1, Visual Studio
-2022/MSVC 19.44, Qt 6.11.1, and Open CASCADE 8.0. The ten focused Release
-targets for Playground/soft-wing physics all compiled successfully.
-
-All nine focused CTest cases passed in 0.24 seconds:
-`playground_metrics`, `playground_pressure_solve`, `playground_cell_air`,
-`softwing_material`, `softwing_cell_volume`, `playground_cells`,
-`playground_material`, `playground_contact`, and
-`playground_contact_integration`.
+2022/MSVC 19.44, Qt 6.11.1, and Open CASCADE 8.0. The focused Release targets
+compiled and their tests passed. Only the XPBD material, membrane, cable,
+suspension, volume, and contact results are relevant inputs to the remake. A
+passing Playground simulation test means that the import is intact; it is not
+a SimWing physics acceptance criterion.
 
 A first run appeared to hang because the narrowly built executables could not
 find `Qt6Core.dll`; Windows displayed a modal loader-error dialog outside
@@ -63,19 +53,17 @@ snapshot.
 
 ## Executive decision
 
-Build two complementary simulation modes behind one scene format and one
-structural model:
+Build one new full-FSI simulation path. It uses the proven XPBD structural
+primitives but none of the inherited Playground simulation. An adaptive
+Cartesian finite-volume flow solver with a projection step and a sharp,
+two-sided immersed-interface treatment owns internal and external air. It uses
+strong partitioned coupling to XPBD and is the sole path to flight, inflation,
+collapse, and reinflation.
 
-1. **Fast flight mode** retains reduced-order aerodynamics and a lumped cell-air
-   network. It supports interactive design work, deterministic regressions, and
-   early validation of the structural and suspension model. The unshipped
-   SoftWingLab aerodynamic implementation is a useful source, but it must be
-   ported and revalidated, not copied wholesale.
-2. **Full FSI mode** uses an adaptive Cartesian finite-volume flow solver with a
-   projection step and a sharp, two-sided immersed-interface treatment of the
-   zero-thickness canopy and ribs. It owns internal and external air and uses
-   strong partitioned coupling to XPBD. This is the path to inflation, collapse,
-   and reinflation.
+There is no preliminary port of the Playground pressure solver, polar forces,
+cell-air network, flight dynamics, or SoftWingLab reduced-order aerodynamics.
+If an interactive reduced model is useful later, derive and validate it against
+the completed CFD system; do not make it a foundation of the remake.
 
 The transcript's central intuition is sound: an Eulerian flow grid avoids
 remeshing around extreme fabric motion, and the fabric must preserve distinct
@@ -100,17 +88,16 @@ not merely turn on AMReX EB.
 |---|---|---|
 | Translated LEparagliding calculation core | Keep unchanged behind the engine process | It is the geometry/design oracle and compatibility boundary. |
 | OCCT exact model and viewport | Keep | It remains the exact design model and production viewer. |
-| `src/softwing` XPBD constraints, contact, pneumatics, and suspension | Evolve behind a structural adapter | It provides the best current large-deformation foundation and deterministic tests. |
-| `playground_metrics.*` | Extract and generalize | Shape, load, collapse, and settling metrics are essential validation instruments. |
-| Playground prescribed pressure, bounded Cp projection, polar force, and cell pressure stamping | Keep only as legacy/fast-mode backends | CFD must own pressure in full mode; applying both would double-count fluid loads. |
-| Playground GUI and monolithic worker | Replace incrementally with Flight Lab controller/view | The CFD worker must be isolated from the Qt GUI and support checkpointed long runs. |
-| `lep-sim.json` version 1 | Retain a compatibility reader; supersede for new runs | It lacks authoritative triangles, two-sided region labels, material coordinates, seam topology, and full rib/intake geometry. |
-| SoftWingLab reduced-order VLM/wake implementation | Selectively port into fast mode | It contains useful conservative transfer and coupling diagnostics, but its own records show unresolved circulation and planform gates. |
+| `src/softwing` XPBD constraints, membranes, cables, contact, and suspension | Reuse behind a new structural adapter | These are the trusted large-deformation building blocks. Existing aerodynamic and pressure integration is outside this boundary. |
+| `playground_sim`, pressure solve, cell air, metrics, analysis, and scenarios | Discard from the new path | Their behavior and results are not useful simulation truth. New diagnostics are specified from conservation and validation requirements. |
+| Playground GUI and monolithic worker | Replace rather than migrate | The CFD worker and its UI are new components with no feature-parity gate. |
+| `lep-sim.json` version 1 | Do not consume | Scene-v2 is exported directly from authoritative geometry; no compatibility adapter is required. |
+| SoftWingLab reduced-order VLM/wake implementation | Do not port | Reduced aerodynamics must not delay or shape the full-CFD architecture. |
 | XFLR5 | Keep as a polar and aerodynamic comparison tool | It is not a dynamic FSI solver. |
 
-The existing deterministic tunnel pressure path remains an oracle until the new
-scene and structural adapter reproduce it. It must not constrain the final CFD
-physics after equivalent regressions exist.
+Only isolated XPBD primitives and their canonical unit tests cross the remake
+boundary. No existing Playground tunnel, glide, collapse, trim, pressure, or
+shape result is an oracle.
 
 ## Target process architecture
 
@@ -175,8 +162,8 @@ Required scene data:
   restart/checkpoint identifiers.
 
 The exporter must use authoritative geometry rather than reconstructing ribs
-and diagonals from sampled curves in the simulator. Retain the coarse v1 writer
-only for compatibility while v2 is established.
+and diagonals from sampled curves in the simulator. The new worker never reads
+the coarse v1 format.
 
 Scene validation is a standalone library and command-line tool. It rejects:
 
@@ -190,9 +177,10 @@ Scene validation is a standalone library and command-line tool. It rejects:
 
 ## Structural model
 
-The first structural backend wraps the existing `softwing_core`; it does not
-rewrite XPBD during CFD development. Refactor the current Playground body
-construction into a Qt-free adapter with these responsibilities:
+The first structural backend wraps the trusted portions of `softwing_core`; it
+does not rewrite XPBD during CFD development. Build a new Qt-free assembly path
+from scene-v2 rather than extracting Playground body construction. It has these
+responsibilities:
 
 - build nodes, membrane/bending/seam constraints, ribs, diagonals, lines,
   payload, and contact from scene-v2;
@@ -202,7 +190,7 @@ construction into a Qt-free adapter with these responsibilities:
 - predict and correct interface position and velocity;
 - save and restore all state for implicit-coupling iterations;
 - expose surface normals, region labels, contact state, cell volume, and
-  topology without leaking Playground widget concepts;
+  topology through new SimWing interfaces;
 - compute structural energy, constraint residuals, penetration, line loads,
   and material strain in every accepted step.
 
@@ -321,9 +309,8 @@ These phenomena are architecture requirements, not late visual effects:
   moving skin and ribs.
 - Intake mouths and rib crossports provide actual resolved mass and momentum
   exchange.
-- Cell pressure is measured from the fluid solution. The existing 0D gas model
-  may provide a fast backend or an explicitly documented unresolved-flow
-  closure, but cannot stamp pressure in full CFD mode.
+- Cell pressure is measured from the fluid solution. The inherited 0D gas model
+  and pressure stamping are not used.
 - Collapse is detected from region-resolved volume, pressure difference,
   contact topology, inlet effective area, fabric inversion, and suspension
   load—not one visual threshold.
@@ -382,20 +369,23 @@ hide grid layout or force extra full-field copies.
 
 ## Delivery phases and gates
 
-### Phase 0 — Freeze and measure the inherited baseline
+### Phase 0 — Establish the remake boundary
 
 Work:
 
-- choose repository history strategy and commit the import;
-- build Release and run all inherited tests;
-- archive the current deterministic tunnel CSV and named glide/tuck scenarios;
-- reconcile the cable-sweep documentation/code discrepancy;
-- record representative runtime, memory, shape metrics, line loads, and known
-  failures;
-- define scenario files instead of relying on UI defaults.
+- define the exact `softwing_core` classes retained for membranes, constraints,
+  cables, suspension, and contact;
+- create new canonical XPBD tests for a membrane patch, bending strip,
+  suspension graph, line load, self-contact, and closed volume under an
+  analytic external load;
+- define checkpoint/state and material-property interfaces needed by coupling;
+- create the new SimWing CMake targets with no Playground dependencies;
+- mark the inherited Playground targets for removal once the new structural
+  target and worker skeleton build.
 
-Gate: every inherited regression has an explicit pass/fail result; the baseline
-can be reproduced from a clean checkout; no new solver code has landed yet.
+Gate: the new headless structural target exercises XPBD directly and does not
+link any Playground simulation library. Its tests are based on analytic or
+structural invariants, not inherited flight results.
 
 ### Phase 1 — Scene-v2 and structural extraction
 
@@ -403,35 +393,18 @@ Work:
 
 - extend the exact model capture/export with authoritative simulation
   triangles, material coordinates, regions, rib holes, seams, and attachments;
-- implement binary payload, reader, validator, and v1 compatibility adapter;
-- extract Playground body construction and stepping into the structural adapter;
-- move reusable metrics behind solver-independent views;
+- implement the v2 binary payload, reader, and validator with no v1 adapter;
+- assemble the wing through a new structural adapter using `softwing_core`
+  primitives directly;
+- implement new conservation, strain, line-load, volume, and contact
+  diagnostics from their definitions;
 - add rollback/checkpoint support and structural conservation diagnostics.
 
-Gate: v2 reproduces the v1 tunnel baseline within declared tolerances, all
-scene validation fixtures pass, and a headless structural run has no Qt/GUI
-dependency.
+Gate: scene validation fixtures pass; a headless structural run has no Qt,
+Playground, aerodynamic, pressure, or v1-format dependency; analytic structural
+cases meet their declared tolerances.
 
-### Phase 2 — Calibratable fast Flight Lab
-
-Work:
-
-- port only the reviewed SoftWingLab reduced-order aerodynamic pieces;
-- preserve its conservative force/moment/power transfer tests;
-- use the 0D cell-air network only in this mode;
-- expose backend identity and validation level in every output;
-- replace the Playground UI with Flight Lab only after feature and regression
-  parity; keep the legacy launch option during migration.
-
-Gate: deterministic tunnel and free-flight cases meet conservation budgets and
-measured polar/trim tolerances. Unresolved circulation or planform gates remain
-visible failures, not waived checks.
-
-This phase is strongly recommended because it matures the scene, structure,
-protocol, metrics, and coupling instrumentation before expensive CFD is added.
-It is not a substitute for full inflation CFD.
-
-### Phase 3 — CFD verification kernel
+### Phase 2 — CFD verification kernel
 
 Work:
 
@@ -464,7 +437,7 @@ refinement, sharp two-sided pressure, folded-interface handling, acceptable
 memory, a compatible license, and better measured cost/accuracy than the
 projection solver.
 
-### Phase 4 — One-way CFD on an inflated wing
+### Phase 3 — One-way CFD on an inflated wing
 
 Work:
 
@@ -478,7 +451,7 @@ Gate: integrated loads and pressure distributions are grid-converged within a
 declared band and agree with validation data closely enough to justify two-way
 coupling. A matching global lift coefficient alone is insufficient.
 
-### Phase 5 — Two-way inflated-wing FSI
+### Phase 4 — Two-way inflated-wing FSI
 
 Work:
 
@@ -491,7 +464,7 @@ Gate: results are insensitive to further coupling iterations, structural
 substeps, and fluid time-step reduction within written tolerances; no hidden
 force path is needed to keep the canopy inflated.
 
-### Phase 6 — Resolved ram-air inflation
+### Phase 5 — Resolved ram-air inflation
 
 Work:
 
@@ -505,7 +478,7 @@ Gate: symmetric inflation repeats across grid/time-step refinement and matches
 the validation envelope without artificial pressure injection or geometry
 stabilization.
 
-### Phase 7 — Collapse and reinflation
+### Phase 6 — Collapse and reinflation
 
 Work:
 
@@ -519,17 +492,18 @@ Gate: mass does not cross sealed contact, topology events converge under
 refinement, and measured collapse/reopening thresholds and time histories fall
 within declared uncertainty bands.
 
-### Phase 8 — Productization and performance
+### Phase 7 — Productization and performance
 
 Work:
 
 - GPU-port proven hotspots, add distributed block execution if required;
 - provide progressive preview fields and robust cancellation/checkpoint resume;
-- create presets for interactive fast mode and offline validation mode;
+- create presets for canonical verification, development resolution, and
+  offline validation resolution;
 - add result provenance: commit, scene checksum, backend, grid, time steps,
   tolerances, material set, validation level, and hardware;
-- retire the legacy Playground only after saved scenarios and workflows have a
-  migration path.
+- remove the inherited Playground from the SimWing build and UI; there is no
+  behavioral or saved-scenario compatibility requirement.
 
 Gate: production cases are restartable, reproducible within the declared
 parallelism contract, bounded in memory, diagnosable, and covered by automated
@@ -543,15 +517,16 @@ should be:
 1. `scene-v2` schema plus a deterministic exporter for one representative
    design;
 2. scene validator and stable-ID round-trip tests;
-3. Qt-free structural adapter that loads v2 and reproduces the legacy pinned
-   tunnel shape/load metrics;
+3. a new Qt-free structural adapter that loads v2 and passes canonical XPBD
+   membrane, suspension, contact, and analytic-load tests;
 4. generic surface coupling view plus a synthetic, analytically known pressure
    jump;
 5. conservative traction transfer tests for total force, moment, and work;
 6. a minimal worker protocol that advances and checkpoints this structural
    case;
-7. Flight Lab GUI displaying its geometry, convergence, and conservation
-   diagnostics.
+7. machine-readable geometry, convergence, and conservation output for the
+   headless case. Build the new Flight Lab GUI only after this boundary and the
+   CFD kernel are verified.
 
 That slice attacks the largest integration risks—geometry truth, ownership,
 load transfer, rollback, and process isolation—without pretending a CFD kernel

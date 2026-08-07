@@ -14,6 +14,9 @@ while the solver-independent scene format, structural adapter, CFD worker, and
 Flight Lab are developed. The implementation roadmap and validation boundary
 are recorded in
 [`docs/coupled-fsi-architecture.md`](docs/coupled-fsi-architecture.md).
+SimWing reuses the isolated XPBD structural primitives, but its fluid and flight
+simulation is a remake: inherited Playground aerodynamics, pressure, cell-air,
+flight, and scenario behavior are not compatibility targets.
 
 ## Inherited LEparagliding Studio baseline
 
