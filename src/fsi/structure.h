@@ -5,6 +5,7 @@
 #include <compare>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -80,12 +81,92 @@ struct StructureDihedralDefinition {
     double complianceRadiansPerNewtonMeter = 0.0;
 };
 
+// Optional exhaustive self-contact for the contiguous fabric triangle range.
+// There is deliberately no implicit material default: scene assembly enables
+// it only when the caller supplies explicit thickness/compliance/friction.
+struct StructureFabricContactDefinition {
+    double halfThicknessMeters = 0.0;
+    double normalComplianceMetersPerNewton = 0.0;
+    double staticFriction = 0.0;
+    double dynamicFriction = 0.0;
+
+    auto operator<=>(const StructureFabricContactDefinition&) const = default;
+};
+
+struct StructureQuaternion {
+    double w = 1.0;
+    double x = 0.0;
+    double y = 0.0;
+    double z = 0.0;
+
+    auto operator<=>(const StructureQuaternion&) const = default;
+};
+
+enum class StructureSuspensionEndpointKind : std::uint8_t {
+    SurfaceAttachment = 1,
+    Junction = 2,
+    PilotHarness = 3,
+};
+
+struct StructureSuspensionEndpointDefinition {
+    StructureSuspensionEndpointKind kind =
+        StructureSuspensionEndpointKind::SurfaceAttachment;
+    std::uint64_t stableId = 0;
+};
+
+struct StructureSuspensionAttachmentDefinition {
+    std::uint64_t stableId = 0;
+    std::size_t node = 0;
+};
+
+struct StructureSuspensionJunctionDefinition {
+    std::uint64_t stableId = 0;
+    std::size_t node = 0;
+};
+
+struct StructurePilotHarnessDefinition {
+    std::uint64_t stableId = 0;
+    StructureVector3 localPositionMeters;
+};
+
+struct StructureSuspensionSegmentDefinition {
+    std::uint64_t stableId = 0;
+    StructureSuspensionEndpointDefinition from;
+    StructureSuspensionEndpointDefinition to;
+    double restLengthMeters = 0.0;
+    double axialStiffnessNewtons = 0.0;
+    double axialDampingNewtonSecondsPerMeter = 0.0;
+    std::uint32_t role = 0;
+};
+
+struct StructureSuspensionDefinition {
+    std::uint64_t pilotStableId = 0;
+    double pilotMassKg = 0.0;
+    StructureVector3 pilotCenterOfMassLocalMeters;
+    StructureVector3 pilotInitialCenterOfMassWorldMeters;
+    StructureVector3 pilotInitialLinearVelocityMetersPerSecond;
+    StructureVector3 pilotInitialAngularVelocityRadiansPerSecond;
+    StructureQuaternion pilotInitialBodyToWorld;
+    StructureVector3 pilotPrincipalInertiaKgSquareMeters;
+    std::vector<StructureSuspensionAttachmentDefinition> attachments;
+    std::vector<StructureSuspensionJunctionDefinition> junctions;
+    std::vector<StructurePilotHarnessDefinition> harnessPoints;
+    std::vector<StructureSuspensionSegmentDefinition> segments;
+    int solverIterations = 12;
+    double attachmentTolerance = 1.0e-10;
+    double minimumLineLengthMeters = 1.0e-10;
+    double maximumLineResidualMeters = 2.0e-4;
+    double maximumControlWorkJoules = 1.0e6;
+};
+
 struct StructureDefinition {
     std::vector<StructureNodeDefinition> nodes;
     std::vector<StructureTriangleDefinition> triangles;
     std::vector<StructureConstraintDefinition> constraints;
     std::vector<StructureMembraneDefinition> membranes;
     std::vector<StructureDihedralDefinition> dihedrals;
+    std::optional<StructureFabricContactDefinition> fabricSelfContact;
+    std::optional<StructureSuspensionDefinition> suspension;
 };
 
 struct StructureNodeState {
@@ -94,6 +175,33 @@ struct StructureNodeState {
     StructureVector3 velocityMetersPerSecond;
 
     auto operator<=>(const StructureNodeState&) const = default;
+};
+
+struct StructureRigidPayloadState {
+    StructureVector3 centerOfMassWorldMeters;
+    StructureQuaternion bodyToWorld;
+    StructureVector3 linearVelocityMetersPerSecond;
+    StructureVector3 angularVelocityRadiansPerSecond;
+
+    auto operator<=>(const StructureRigidPayloadState&) const = default;
+};
+
+struct StructureSuspensionSegmentState {
+    std::uint64_t stableId = 0;
+    double currentLengthMeters = 0.0;
+    double commandedRestLengthMeters = 0.0;
+    double tensionNewtons = 0.0;
+
+    auto operator<=>(const StructureSuspensionSegmentState&) const = default;
+};
+
+struct StructureSuspensionState {
+    StructureRigidPayloadState payload;
+    std::vector<StructureVector3> harnessPositionsMeters;
+    std::vector<StructureVector3> harnessVelocitiesMetersPerSecond;
+    std::vector<StructureSuspensionSegmentState> segments;
+
+    auto operator<=>(const StructureSuspensionState&) const = default;
 };
 
 struct StructureStepSettings {
@@ -116,6 +224,9 @@ struct StructureDiagnostics {
     std::size_t constraintCount = 0;
     std::size_t membraneCount = 0;
     std::size_t dihedralCount = 0;
+    std::size_t contactPairCount = 0;
+    std::size_t activeContactCount = 0;
+    std::size_t suspensionSegmentCount = 0;
     double totalDynamicMassKg = 0.0;
     StructureVector3 centerOfMassMeters;
     StructureVector3 linearMomentumKgMetersPerSecond;
@@ -124,6 +235,8 @@ struct StructureDiagnostics {
     double maximumCableExtensionMeters = 0.0;
     double maximumAbsoluteMembraneStrain = 0.0;
     double maximumMembraneResidual = 0.0;
+    double maximumContactPenetrationMeters = 0.0;
+    double maximumSuspensionResidualMeters = 0.0;
     StructureVector3 pendingExternalForceNewtons;
     StructureVector3 lastAppliedExternalForceNewtons;
     bool finite = true;
@@ -131,17 +244,12 @@ struct StructureDiagnostics {
     auto operator<=>(const StructureDiagnostics&) const = default;
 };
 
-inline constexpr std::uint32_t structureCheckpointVersion = 1;
+inline constexpr std::uint32_t structureCheckpointVersion = 2;
 
-// A checkpoint is a committed macro-step state for the primitives this
-// adapter currently wraps. Rebuilding on restore deliberately clears XPBD
-// iteration multipliers, which softwing also clears at the beginning of every
-// substep. Pending nodal loads are retained.
-//
-// Registered contact and the rigid-payload SuspensionSystem are intentionally
-// absent: their persistent warm-start/private state has no production
-// checkpoint API in softwing_core. They must not be added here until that API
-// exists; using test friends would make rollback incomplete and unsafe.
+// A checkpoint is a committed macro-step state for the complete adapter. Its
+// immutable private payload owns the soft-body/contact warm starts and the
+// optional suspension/rigid-payload checkpoint. Pending nodal loads and public
+// accounting remain visible here for orchestration and persistence adapters.
 struct StructureCheckpoint {
     std::uint32_t version = structureCheckpointVersion;
     std::uint64_t definitionFingerprint = 0;
@@ -150,6 +258,11 @@ struct StructureCheckpoint {
     std::vector<StructureNodeState> nodes;
     std::vector<StructureVector3> pendingExternalForcesNewtons;
     StructureVector3 lastAppliedExternalForceNewtons;
+
+private:
+    friend class Structure;
+    struct Detail;
+    std::shared_ptr<const Detail> detail;
 };
 
 class Structure {
@@ -167,6 +280,8 @@ public:
     [[nodiscard]] std::uint64_t acceptedStepCount() const noexcept;
     [[nodiscard]] double simulationTimeSeconds() const noexcept;
     [[nodiscard]] std::vector<StructureNodeState> nodeStates() const;
+    [[nodiscard]] std::optional<StructureSuspensionState>
+    suspensionState() const;
 
     void clearExternalForces() noexcept;
     void addExternalForce(std::size_t node,

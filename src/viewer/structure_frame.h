@@ -4,6 +4,7 @@
 #include "viewer_protocol.h"
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -23,6 +24,11 @@ struct StructureFrameTriangleMapping {
 struct StructureFrameLineMapping {
     std::uint64_t stableId = 0;
     std::uint32_t role = 0;
+    // Direct Structure constraints derive these from topology. Suspension
+    // segments use explicit indices because one endpoint may be a rigid
+    // harness vertex appended after all SoftBody nodes.
+    std::uint32_t vertex0 = std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t vertex1 = std::numeric_limits<std::uint32_t>::max();
 };
 
 struct StructureFrameMappingDefinition {
@@ -33,7 +39,8 @@ struct StructureFrameMappingDefinition {
 
 // This is an immutable, one-to-one mapping from a Structure definition to the
 // stable IDs and side-region IDs used by diagnostic frames. Triangle and line
-// entries follow StructureDefinition::triangles and ::constraints respectively.
+// Triangle entries follow StructureDefinition::triangles. Line entries contain
+// all direct constraints followed by rigid-payload suspension segments.
 // Construction rejects incomplete, ambiguous, or foreign topology before a
 // run can publish a misleading frame.
 class StructureFrameMapping final {
@@ -85,15 +92,16 @@ struct StructureFrameContext {
 // contract is deliberately limited to quantities exposed by Structure:
 //
 // - per-vertex velocity and pending external force;
-// - per-line geometric length and constraint violation;
+// - per-line geometric length and unilateral/bilateral violation;
 // - aggregate applied/pending force, mass, momentum, energy, and solver-error
 //   diagnostics.
 //
 // Structure currently exposes membrane strain/residual only as global maxima,
 // so no per-triangle strain field is emitted. It exposes the last applied load
 // only as an aggregate, so no per-vertex applied-force field is invented.
-// Constraint multipliers/tensions are private to softwing_core and likewise
-// are not represented as line tension.
+// Direct-constraint multipliers remain private to softwing_core. Suspension
+// tension is available, but a mixed field would invent values for direct
+// constraints, so this adapter does not publish a line-tension field yet.
 [[nodiscard]] DiagnosticFrame buildStructureFrame(
     const fsi::Structure& structure,
     const StructureFrameMapping& mapping,

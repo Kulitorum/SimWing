@@ -68,6 +68,11 @@ count; `workerThreads == 0` still selects the untouched serial sweep):
   rigid-payload state. It binds the registered body/contact topology but leaves
   body nodes, structural multipliers, contact warm starts, forces, and pressure
   to the enclosing coupled checkpoint.
+- `SoftBody::checkpoint` / `restore` — the complementary immutable,
+  topology-fingerprinted safe point for nodes, distance/membrane/bending state,
+  forces, contact warm starts, accepted contact records, diagnostics, and audit
+  keys. Derived scheduling caches are rebuilt lazily. `simwing_structure`
+  composes this with the suspension checkpoint before publishing a safe point.
 
 The generic membrane constraint-space damping field predates the Playground
 material mode. Nonzero values are stable for the small isolated coupons it was

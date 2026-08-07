@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace softwing {
@@ -442,6 +443,14 @@ class SuspensionSystem {
 public:
     static SuspensionSystem build(CanopyMesh& canopy,
                                   const SuspensionDefinition& definition);
+    // Builds against authoritative already-resolved structure nodes. The
+    // attachment and junction arrays are matched to the normalized definition
+    // by ID, validated, and reused without creating or moving body nodes.
+    static SuspensionSystem buildResolved(
+        SoftBody& body,
+        const SuspensionDefinition& definition,
+        std::span<const ResolvedSuspensionAttachment> attachments,
+        std::span<const std::pair<std::string, std::size_t>> junctionNodes);
 
     SuspensionSystem(SuspensionSystem&&) noexcept = default;
     SuspensionSystem& operator=(SuspensionSystem&&) noexcept = default;

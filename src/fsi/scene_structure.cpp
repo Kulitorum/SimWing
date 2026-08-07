@@ -5,7 +5,11 @@
 #include <limits>
 #include <map>
 #include <new>
+#include <queue>
+#include <set>
+#include <stdexcept>
 #include <string_view>
+#include <tuple>
 #include <utility>
 
 namespace simwing::fsi {
@@ -63,6 +67,7 @@ void reject(SceneStructureAssembly& assembly) {
     assembly.assembled = false;
     assembly.definition = {};
     assembly.mappings = {};
+    assembly.settings = {};
     assembly.totalFabricMassKg = 0.0;
     sortDiagnostics(assembly);
 }
@@ -119,6 +124,10 @@ bool checkBounds(const Scene& scene,
         && checkedMappingBytes(scene.triangles.size(), sizeof(StableId),
                                remaining)
         && checkedMappingBytes(scene.suspensionLines.size(), sizeof(StableId),
+                               remaining)
+        && checkedMappingBytes(scene.suspensionLines.size(), sizeof(StableId),
+                               remaining)
+        && checkedMappingBytes(scene.attachments.size(), sizeof(StableId),
                                remaining)
         // A manifold triangulation has fewer than two hinges per triangle;
         // claiming two pairs is a simple overflow-safe conservative bound.
@@ -403,6 +412,266 @@ StructureMembraneMaterial convert(const FabricMaterial& material) {
     return result;
 }
 
+struct SuspensionEndpointKey {
+    StructureSuspensionEndpointKind kind =
+        StructureSuspensionEndpointKind::SurfaceAttachment;
+    StableId stableId = invalidStableId;
+
+    auto operator<=>(const SuspensionEndpointKey&) const = default;
+};
+
+SuspensionEndpointKey endpointKey(const Attachment& attachment) {
+    switch (attachment.kind) {
+    case AttachmentKind::SurfaceVertex:
+        return {StructureSuspensionEndpointKind::SurfaceAttachment,
+                attachment.id};
+    case AttachmentKind::SuspensionJunction:
+        return {StructureSuspensionEndpointKind::Junction,
+                attachment.suspensionJunctionId};
+    case AttachmentKind::PilotHarness:
+        return {StructureSuspensionEndpointKind::PilotHarness,
+                attachment.id};
+    }
+    throw std::logic_error("validated attachment has an unknown kind");
+}
+
+StructureSuspensionEndpointDefinition convert(
+    const SuspensionEndpointKey& endpoint) {
+    return {endpoint.kind, endpoint.stableId};
+}
+
+bool assemblePilotSuspension(
+    const Pilot& pilot,
+    const std::vector<const Attachment*>& attachments,
+    const std::vector<const SuspensionLine*>& lines,
+    const std::vector<const SuspensionJunction*>& junctions,
+    const std::map<StableId, std::size_t>& nodeIndices,
+    const std::map<StableId, const LineMaterial*>& lineMaterialsById,
+    const SceneStructureSettings& settings,
+    SceneStructureAssembly& assembly) {
+    if (lines.empty()) {
+        addDiagnostic(
+            assembly, SceneStructureDiagnosticCode::UnsupportedPilot,
+            EntityKind::Pilot, pilot.id,
+            "rigid pilot requires a connected suspension tree");
+        return false;
+    }
+
+    std::map<StableId, const Attachment*> attachmentsById;
+    for (const Attachment* attachment : attachments) {
+        attachmentsById.emplace(attachment->id, attachment);
+    }
+    std::map<StableId, const SuspensionJunction*> junctionsById;
+    for (const SuspensionJunction* junction : junctions) {
+        junctionsById.emplace(junction->id, junction);
+    }
+
+    using Neighbor = std::pair<SuspensionEndpointKey,
+                               const SuspensionLine*>;
+    std::map<SuspensionEndpointKey, std::vector<Neighbor>> adjacency;
+    std::set<std::pair<SuspensionEndpointKey, SuspensionEndpointKey>> pairs;
+    for (const SuspensionLine* line : lines) {
+        const SuspensionEndpointKey first = endpointKey(
+            *attachmentsById.at(line->startAttachmentId));
+        const SuspensionEndpointKey second = endpointKey(
+            *attachmentsById.at(line->endAttachmentId));
+        auto canonical = std::pair{first, second};
+        if (canonical.second < canonical.first) {
+            std::swap(canonical.first, canonical.second);
+        }
+        if (first == second || !pairs.insert(canonical).second) {
+            addDiagnostic(
+                assembly,
+                SceneStructureDiagnosticCode::UnsupportedSuspensionTopology,
+                EntityKind::SuspensionLine, line->id,
+                "suspension tree contains a self-edge or duplicate endpoint pair");
+            continue;
+        }
+        adjacency[first].push_back({second, line});
+        adjacency[second].push_back({first, line});
+    }
+    for (auto& [endpoint, neighbors] : adjacency) {
+        std::ranges::sort(
+            neighbors, [](const Neighbor& left, const Neighbor& right) {
+                return std::tuple{left.first.kind, left.first.stableId,
+                                  left.second->id}
+                    < std::tuple{right.first.kind, right.first.stableId,
+                                 right.second->id};
+            });
+        if (endpoint.kind
+                == StructureSuspensionEndpointKind::SurfaceAttachment
+            && neighbors.size() != 1) {
+            addDiagnostic(
+                assembly,
+                SceneStructureDiagnosticCode::UnsupportedSuspensionTopology,
+                EntityKind::Attachment, endpoint.stableId,
+                "surface suspension attachment must be a tree leaf");
+        }
+        if (endpoint.kind == StructureSuspensionEndpointKind::Junction) {
+            const SuspensionJunction* junction =
+                junctionsById.at(endpoint.stableId);
+            if (junction->fixed || neighbors.size() < 2) {
+                addDiagnostic(
+                    assembly,
+                    SceneStructureDiagnosticCode::UnsupportedSuspensionTopology,
+                    EntityKind::SuspensionJunction, junction->id,
+                    junction->fixed
+                        ? "pilot suspension junction must be dynamic"
+                        : "pilot suspension junction cannot be a terminal leaf");
+            }
+        }
+    }
+    if (!assembly.diagnostics.empty()) {
+        return false;
+    }
+
+    std::set<SuspensionEndpointKey> visited;
+    std::map<StableId,
+             std::pair<SuspensionEndpointKey, SuspensionEndpointKey>>
+        orientedLines;
+    for (const auto& [componentStart, ignored] : adjacency) {
+        static_cast<void>(ignored);
+        if (visited.contains(componentStart)) {
+            continue;
+        }
+        std::vector<SuspensionEndpointKey> component;
+        std::queue<SuspensionEndpointKey> pending;
+        pending.push(componentStart);
+        visited.insert(componentStart);
+        std::size_t degreeSum = 0;
+        while (!pending.empty()) {
+            const SuspensionEndpointKey current = pending.front();
+            pending.pop();
+            component.push_back(current);
+            degreeSum += adjacency.at(current).size();
+            for (const Neighbor& neighbor : adjacency.at(current)) {
+                if (visited.insert(neighbor.first).second) {
+                    pending.push(neighbor.first);
+                }
+            }
+        }
+        std::vector<SuspensionEndpointKey> roots;
+        std::size_t surfaceLeaves = 0;
+        for (const SuspensionEndpointKey& endpoint : component) {
+            if (endpoint.kind
+                == StructureSuspensionEndpointKind::PilotHarness) {
+                roots.push_back(endpoint);
+            } else if (endpoint.kind
+                       == StructureSuspensionEndpointKind::SurfaceAttachment) {
+                ++surfaceLeaves;
+            }
+        }
+        if (roots.size() != 1 || surfaceLeaves == 0
+            || degreeSum / 2 != component.size() - 1) {
+            addDiagnostic(
+                assembly,
+                SceneStructureDiagnosticCode::UnsupportedSuspensionTopology,
+                EntityKind::SuspensionLine, lines.front()->id,
+                "each suspension component must be an acyclic tree with one harness root and at least one surface leaf");
+            continue;
+        }
+
+        std::set<SuspensionEndpointKey> rooted;
+        std::queue<SuspensionEndpointKey> outward;
+        rooted.insert(roots.front());
+        outward.push(roots.front());
+        while (!outward.empty()) {
+            const SuspensionEndpointKey parent = outward.front();
+            outward.pop();
+            for (const Neighbor& neighbor : adjacency.at(parent)) {
+                if (!rooted.insert(neighbor.first).second) {
+                    continue;
+                }
+                // SuspensionSystem segments point from the canopy leaf toward
+                // the rigid-payload root.
+                orientedLines.emplace(
+                    neighbor.second->id,
+                    std::pair{neighbor.first, parent});
+                outward.push(neighbor.first);
+            }
+        }
+    }
+    if (!assembly.diagnostics.empty()
+        || orientedLines.size() != lines.size()) {
+        if (assembly.diagnostics.empty()) {
+            addDiagnostic(
+                assembly,
+                SceneStructureDiagnosticCode::UnsupportedSuspensionTopology,
+                EntityKind::SuspensionLine, lines.front()->id,
+                "suspension tree could not be oriented toward the pilot");
+        }
+        return false;
+    }
+
+    StructureSuspensionDefinition suspension;
+    suspension.pilotStableId = pilot.id;
+    suspension.pilotMassKg = pilot.massKg;
+    suspension.pilotInitialCenterOfMassWorldMeters = convert(
+        pilot.centerOfMassPositionMeters);
+    suspension.pilotInitialLinearVelocityMetersPerSecond = convert(
+        pilot.linearVelocityMetersPerSecond);
+    suspension.pilotInitialBodyToWorld = {
+        pilot.bodyToWorld.w, pilot.bodyToWorld.x,
+        pilot.bodyToWorld.y, pilot.bodyToWorld.z};
+    suspension.pilotPrincipalInertiaKgSquareMeters = convert(
+        pilot.principalInertiaKgSquareMeters);
+    suspension.solverIterations = settings.suspensionSolverIterations;
+    suspension.attachmentTolerance =
+        settings.suspensionAttachmentTolerance;
+    suspension.minimumLineLengthMeters =
+        settings.suspensionMinimumLineLengthMeters;
+    suspension.maximumLineResidualMeters =
+        settings.suspensionMaximumLineResidualMeters;
+    suspension.maximumControlWorkJoules =
+        settings.suspensionMaximumControlWorkJoules;
+
+    for (const auto& [endpoint, neighbors] : adjacency) {
+        static_cast<void>(neighbors);
+        if (endpoint.kind
+            == StructureSuspensionEndpointKind::SurfaceAttachment) {
+            const Attachment* attachment = attachmentsById.at(
+                endpoint.stableId);
+            suspension.attachments.push_back(
+                {endpoint.stableId, nodeIndices.at(attachment->vertexId)});
+        } else if (endpoint.kind
+                   == StructureSuspensionEndpointKind::Junction) {
+            suspension.junctions.push_back(
+                {endpoint.stableId, nodeIndices.at(endpoint.stableId)});
+        } else {
+            const Attachment* attachment = attachmentsById.at(
+                endpoint.stableId);
+            if (attachment->pilotId != pilot.id) {
+                addDiagnostic(
+                    assembly,
+                    SceneStructureDiagnosticCode::UnsupportedPilotHarness,
+                    EntityKind::Attachment, attachment->id,
+                    "harness root belongs to a different pilot");
+                continue;
+            }
+            suspension.harnessPoints.push_back(
+                {endpoint.stableId,
+                 convert(attachment->pilotLocalPositionMeters)});
+            assembly.mappings.pilotHarnessAttachmentIds.push_back(
+                endpoint.stableId);
+        }
+    }
+    for (const SuspensionLine* line : lines) {
+        const auto oriented = orientedLines.at(line->id);
+        suspension.segments.push_back(
+            {line->id, convert(oriented.first), convert(oriented.second),
+             line->restLengthMeters,
+             lineMaterialsById.at(line->materialId)
+                 ->axialStiffnessNewtons,
+             0.0, static_cast<std::uint32_t>(line->role)});
+        assembly.mappings.suspensionSegmentLineIds.push_back(line->id);
+    }
+    if (!assembly.diagnostics.empty()) {
+        return false;
+    }
+    assembly.definition.suspension = std::move(suspension);
+    return true;
+}
+
 template <typename Vector>
 std::optional<std::size_t> indexOf(const Vector& ids,
                                    StableId id) noexcept {
@@ -445,14 +714,26 @@ std::optional<std::size_t> SceneStructureMappings::constraintIndex(
     return indexOf(constraintSuspensionLineIds, suspensionLineId);
 }
 
+std::optional<std::size_t> SceneStructureMappings::suspensionSegmentIndex(
+    StableId suspensionLineId) const noexcept {
+    return indexOf(suspensionSegmentLineIds, suspensionLineId);
+}
+
+std::optional<std::size_t> SceneStructureMappings::pilotHarnessIndex(
+    StableId attachmentId) const noexcept {
+    return indexOf(pilotHarnessAttachmentIds, attachmentId);
+}
+
 bool SceneStructureAssembly::ok() const noexcept {
     return assembled && diagnostics.empty();
 }
 
 SceneStructureAssembly assembleSceneStructure(
     const Scene& scene,
-    const SceneStructureLimits& limits) {
+    const SceneStructureLimits& limits,
+    const SceneStructureSettings& settings) {
     SceneStructureAssembly assembly;
+    assembly.settings = settings;
     try {
         const ValidationReport validation = validateScene(scene);
         if (!validation.ok()) {
@@ -473,15 +754,55 @@ SceneStructureAssembly assembleSceneStructure(
             reject(assembly);
             return assembly;
         }
-
-        const auto pilots = sortedById(scene.pilots);
-        for (const Pilot* pilot : pilots) {
+        const bool invalidSuspensionSettings =
+            settings.suspensionSolverIterations <= 0
+            || !(settings.suspensionAttachmentTolerance > 0.0)
+            || !std::isfinite(settings.suspensionAttachmentTolerance)
+            || !(settings.suspensionMinimumLineLengthMeters > 0.0)
+            || !std::isfinite(settings.suspensionMinimumLineLengthMeters)
+            || settings.suspensionMaximumLineResidualMeters < 0.0
+            || !std::isfinite(
+                settings.suspensionMaximumLineResidualMeters)
+            || settings.suspensionMaximumControlWorkJoules < 0.0
+            || !std::isfinite(
+                settings.suspensionMaximumControlWorkJoules);
+        if (invalidSuspensionSettings) {
             addDiagnostic(
                 assembly,
-                SceneStructureDiagnosticCode::UnsupportedPilot,
-                EntityKind::Pilot,
-                pilot->id,
-                "rigid pilot dynamics are not checkpoint-safe in simwing_structure");
+                SceneStructureDiagnosticCode::UnsupportedSuspensionTopology,
+                EntityKind::Scene, invalidStableId,
+                "invalid suspension solver settings");
+        }
+        if (settings.fabricSelfContact) {
+            const StructureFabricContactDefinition& contact =
+                *settings.fabricSelfContact;
+            if (!(contact.halfThicknessMeters > 0.0)
+                || !std::isfinite(contact.halfThicknessMeters)
+                || contact.normalComplianceMetersPerNewton < 0.0
+                || !std::isfinite(contact.normalComplianceMetersPerNewton)
+                || contact.staticFriction < 0.0
+                || !std::isfinite(contact.staticFriction)
+                || contact.dynamicFriction < 0.0
+                || !std::isfinite(contact.dynamicFriction)
+                || contact.dynamicFriction > contact.staticFriction) {
+                addDiagnostic(
+                    assembly,
+                    SceneStructureDiagnosticCode::MaterialIncompatible,
+                    EntityKind::Scene, invalidStableId,
+                    "invalid explicit fabric contact settings");
+            }
+        }
+
+        const auto pilots = sortedById(scene.pilots);
+        if (pilots.size() > 1) {
+            for (const Pilot* pilot : pilots) {
+                addDiagnostic(
+                    assembly,
+                    SceneStructureDiagnosticCode::UnsupportedPilot,
+                    EntityKind::Pilot,
+                    pilot->id,
+                    "one Structure instance supports exactly one rigid pilot");
+            }
         }
 
         for (const Seam* seam : sortedById(scene.seams)) {
@@ -497,14 +818,6 @@ SceneStructureAssembly assembleSceneStructure(
         std::map<StableId, const Attachment*> attachmentsById;
         for (const Attachment* attachment : attachments) {
             attachmentsById.emplace(attachment->id, attachment);
-            if (attachment->kind == AttachmentKind::PilotHarness) {
-                addDiagnostic(
-                    assembly,
-                    SceneStructureDiagnosticCode::UnsupportedPilotHarness,
-                    EntityKind::Attachment,
-                    attachment->id,
-                    "pilot-harness attachments require rigid-payload checkpoint support");
-            }
         }
 
         const auto lines = sortedById(scene.suspensionLines);
@@ -512,15 +825,17 @@ SceneStructureAssembly assembleSceneStructure(
             const Attachment* start = attachmentsById.at(
                 line->startAttachmentId);
             const Attachment* end = attachmentsById.at(line->endAttachmentId);
-            if (start->kind == AttachmentKind::PilotHarness
-                || end->kind == AttachmentKind::PilotHarness) {
+            if (pilots.empty()
+                && (start->kind == AttachmentKind::PilotHarness
+                    || end->kind == AttachmentKind::PilotHarness)) {
                 addDiagnostic(
                     assembly,
                     SceneStructureDiagnosticCode::UnsupportedSuspensionTopology,
                     EntityKind::SuspensionLine,
                     line->id,
-                    "pilot harness suspension topology is not checkpoint-safe");
-            } else {
+                    "a pilot harness line requires exactly one rigid pilot");
+            } else if (start->kind != AttachmentKind::PilotHarness
+                       && end->kind != AttachmentKind::PilotHarness) {
                 const StableId startNodeId =
                     start->kind == AttachmentKind::SurfaceVertex
                     ? start->vertexId
@@ -545,11 +860,28 @@ SceneStructureAssembly assembleSceneStructure(
             return assembly;
         }
 
-        const auto vertices = sortedById(scene.vertices);
+        const auto allVertices = sortedById(scene.vertices);
         const auto junctions = sortedById(scene.suspensionJunctions);
         const auto triangles = sortedById(scene.triangles);
         const auto materials = sortedById(scene.fabricMaterials);
         const auto lineMaterials = sortedById(scene.lineMaterials);
+        std::set<StableId> structuralVertexIds;
+        for (const Triangle* triangle : triangles) {
+            structuralVertexIds.insert(triangle->vertexIds.begin(),
+                                       triangle->vertexIds.end());
+        }
+        for (const Attachment* attachment : attachments) {
+            if (attachment->kind == AttachmentKind::SurfaceVertex) {
+                structuralVertexIds.insert(attachment->vertexId);
+            }
+        }
+        std::vector<const Vertex*> vertices;
+        vertices.reserve(structuralVertexIds.size());
+        for (const Vertex* vertex : allVertices) {
+            if (structuralVertexIds.contains(vertex->id)) {
+                vertices.push_back(vertex);
+            }
+        }
 
         std::map<StableId, std::size_t> nodeIndices;
         assembly.definition.nodes.reserve(vertices.size() + junctions.size());
@@ -660,38 +992,47 @@ SceneStructureAssembly assembleSceneStructure(
         for (const LineMaterial* material : lineMaterials) {
             lineMaterialsById.emplace(material->id, material);
         }
-        assembly.definition.constraints.reserve(lines.size());
-        assembly.mappings.constraintSuspensionLineIds.reserve(lines.size());
-        for (const SuspensionLine* line : lines) {
-            const Attachment* start = attachmentsById.at(
-                line->startAttachmentId);
-            const Attachment* end = attachmentsById.at(line->endAttachmentId);
-            const LineMaterial* material = lineMaterialsById.at(
-                line->materialId);
-            const double compliance = line->restLengthMeters
-                / material->axialStiffnessNewtons;
-            if (!std::isfinite(compliance) || compliance < 0.0) {
-                addDiagnostic(
-                    assembly,
-                    SceneStructureDiagnosticCode::MaterialIncompatible,
-                    EntityKind::LineMaterial,
-                    material->id,
-                    "line stiffness cannot be represented as finite XPBD compliance");
-                continue;
+        if (pilots.empty()) {
+            assembly.definition.constraints.reserve(lines.size());
+            assembly.mappings.constraintSuspensionLineIds.reserve(
+                lines.size());
+            for (const SuspensionLine* line : lines) {
+                const Attachment* start = attachmentsById.at(
+                    line->startAttachmentId);
+                const Attachment* end = attachmentsById.at(
+                    line->endAttachmentId);
+                const LineMaterial* material = lineMaterialsById.at(
+                    line->materialId);
+                const double compliance = line->restLengthMeters
+                    / material->axialStiffnessNewtons;
+                if (!std::isfinite(compliance) || compliance < 0.0) {
+                    addDiagnostic(
+                        assembly,
+                        SceneStructureDiagnosticCode::MaterialIncompatible,
+                        EntityKind::LineMaterial,
+                        material->id,
+                        "line stiffness cannot be represented as finite XPBD compliance");
+                    continue;
+                }
+                assembly.definition.constraints.push_back(
+                    {StructureConstraintKind::Cable,
+                     nodeIndices.at(
+                         start->kind == AttachmentKind::SurfaceVertex
+                             ? start->vertexId
+                             : start->suspensionJunctionId),
+                     nodeIndices.at(
+                         end->kind == AttachmentKind::SurfaceVertex
+                             ? end->vertexId
+                             : end->suspensionJunctionId),
+                     line->restLengthMeters,
+                     compliance});
+                assembly.mappings.constraintSuspensionLineIds.push_back(
+                    line->id);
             }
-            assembly.definition.constraints.push_back(
-                {StructureConstraintKind::Cable,
-                 nodeIndices.at(
-                     start->kind == AttachmentKind::SurfaceVertex
-                         ? start->vertexId
-                         : start->suspensionJunctionId),
-                 nodeIndices.at(
-                     end->kind == AttachmentKind::SurfaceVertex
-                         ? end->vertexId
-                         : end->suspensionJunctionId),
-                 line->restLengthMeters,
-                 compliance});
-            assembly.mappings.constraintSuspensionLineIds.push_back(line->id);
+        } else if (pilots.size() == 1) {
+            static_cast<void>(assemblePilotSuspension(
+                *pilots.front(), attachments, lines, junctions,
+                nodeIndices, lineMaterialsById, settings, assembly));
         }
 
         for (std::size_t index = 0; index < lumpedMasses.size(); ++index) {
@@ -708,6 +1049,8 @@ SceneStructureAssembly assembleSceneStructure(
             }
         }
         assembly.totalFabricMassKg = static_cast<double>(totalFabricMass);
+        assembly.definition.fabricSelfContact =
+            settings.fabricSelfContact;
         if (!std::isfinite(assembly.totalFabricMassKg)) {
             addDiagnostic(
                 assembly,

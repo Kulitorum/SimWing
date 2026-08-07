@@ -452,25 +452,28 @@ makes this a certified aerodynamic solver.
   source for them. Its present local intrinsic charts are not manufacturing
   flat-pattern UVs, and it does not yet author paired seam chains.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
-  loads/state, trusted constraint/membrane/bending assembly, diagnostics, and
+  loads/state, trusted constraint/membrane/bending assembly, explicit optional
+  fabric self-contact, rigid-pilot suspension, diagnostics, and composite
   rollback checkpoints without including any Playground header.
 - `src/fsi/scene_structure.{h,cpp}` deterministically assembles supported
-  scene-v2 fabric, suspension junctions, and cable segments into that XPBD
-  boundary. It derives fabric mass from SI material-chart area and creates
-  signed dihedrals only across consistently oriented edges within one authored
-  sheet. It explicitly rejects seam and pilot/harness topology until their new
-  structural integrations are implemented.
+  scene-v2 fabric, suspension junctions, cable segments, and one rigid
+  pilot/harness tree into that XPBD boundary. It derives fabric mass from SI
+  material-chart area, creates signed dihedrals only across consistently
+  oriented edges within one authored sheet, and enables contact only from
+  explicit worker-supplied settings. It still rejects seams until their stitch
+  and tributary load-sharing model is implemented.
 - `softwing::SuspensionSystem` now exposes a validated transactional production
   checkpoint for its complete suspension and rigid-payload state, bound to the
-  registered body/contact topology. The enclosing structure still owns body
-  node/constraint/contact/pressure state. Registered contact and this checkpoint
-  are not yet composed into `simwing_structure`.
+  registered body/contact topology. `softwing::SoftBodyCheckpoint` captures the
+  complementary node/constraint/membrane/bending/contact state, including
+  contact warm starts; `simwing_structure` composes both transactionally.
 - `src/viewer/viewer_protocol.{h,cpp}` owns immutable sampled diagnostic frames
   and replayable traces. It uses nonzero 64-bit stable entity/region IDs,
   transactional decoding, configurable limits, and a 256 MiB default encoded
   frame ceiling.
 - `src/viewer/structure_frame.{h,cpp}` maps committed structure state to those
-  immutable frames without inventing unavailable per-element quantities.
+  immutable frames, including rigid harness vertices and suspension segments,
+  without inventing unavailable per-element quantities.
 - `src/viewer/viewer_window.{h,cpp}` and `tools/simwing_viewer_main.cpp` form
   the separate Qt/OpenGL trace viewer. Replay and growing-trace follow remain
   bounded and asynchronous.
@@ -478,6 +481,9 @@ makes this a certified aerodynamic solver.
   first end-to-end worker slice. The case is an analytic structural harness,
   not aerodynamic truth; it writes only accepted steps and launches the
   sibling viewer by default. `--no-viewer` must remain Qt-free and unthrottled.
+  The real-export regression additionally runs the 3.28 fixture through direct
+  scene export, structural assembly, a coupled accepted step, composite replay,
+  and a completed viewer trace using explicitly synthetic physical settings.
 - New numerical targets must not link the inherited `playground_*` libraries.
   Cross the scene/structure/viewer boundaries through explicit adapters and
   versioned data only.

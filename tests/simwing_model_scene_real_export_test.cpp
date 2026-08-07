@@ -1,12 +1,18 @@
 #include "engine_paths.h"
 #include "input_migration.h"
 #include "nurbs_model.h"
+#include "scene_structure.h"
+#include "structure_frame.h"
+#include "viewer_protocol.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <string>
+#include <sstream>
+#include <set>
+#include <map>
 #include <system_error>
 #include <vector>
 
@@ -112,7 +118,11 @@ lep::SimWingSceneExportSettings settings()
     };
     value.pilot.endpointMatchToleranceMeters = 0.002;
     value.suspensionJunctionMassKg = 0.02;
-    value.surfaceEndpointMatchToleranceMeters = 0.002;
+    // This diagnostic fixture uses the exporter's existing vertex-only
+    // attachment contract. The coarse captured skin is up to about 12 mm
+    // from a few authored brake-anchor endpoints; a production design source
+    // must eventually author exact attachment vertices.
+    value.surfaceEndpointMatchToleranceMeters = 0.015;
     return value;
 }
 
@@ -183,6 +193,41 @@ void testRealDesignCapture(const std::filesystem::path &input,
           "real export zipper-triangulates captured mini-ribs");
     check(!result.scene.openings.empty(),
           "real export contains authored intake and crossport openings");
+    std::set<std::pair<simwing::fsi::StableId, simwing::fsi::StableId>>
+        triangleEdges;
+    for (const auto &triangle : result.scene.triangles) {
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            auto edge = std::pair{
+                triangle.vertexIds[corner],
+                triangle.vertexIds[(corner + 1) % 3]};
+            if (edge.second < edge.first) {
+                std::swap(edge.first, edge.second);
+            }
+            triangleEdges.insert(edge);
+        }
+    }
+    const bool crossportsUseMeshEdges = std::ranges::all_of(
+        result.scene.openings, [&](const auto &opening) {
+            if (opening.role != simwing::fsi::OpeningRole::Crossport) {
+                return true;
+            }
+            for (std::size_t index = 0;
+                 index < opening.orderedVertexIds.size(); ++index) {
+                auto edge = std::pair{
+                    opening.orderedVertexIds[index],
+                    opening.orderedVertexIds[
+                        (index + 1) % opening.orderedVertexIds.size()]};
+                if (edge.second < edge.first) {
+                    std::swap(edge.first, edge.second);
+                }
+                if (!triangleEdges.contains(edge)) {
+                    return false;
+                }
+            }
+            return true;
+        });
+    check(crossportsUseMeshEdges,
+          "real crossport loops reuse exact rib-triangulation boundary edges");
     check(result.scene.suspensionLines.size() == 190,
           "real export preserves every captured suspension segment");
     check(attachmentCount(simwing::fsi::AttachmentKind::PilotHarness) == 2,
@@ -191,6 +236,131 @@ void testRealDesignCapture(const std::filesystem::path &input,
           "real export connects terminal lines to authoritative surface vertices");
     check(!result.scene.suspensionJunctions.empty(),
           "real export preserves intermediate suspension junctions");
+
+    const simwing::fsi::SceneStructureAssembly assembly =
+        simwing::fsi::assembleSceneStructure(result.scene);
+    if (!assembly.ok()) {
+        std::set<simwing::fsi::StableId> triangleVertices;
+        std::set<simwing::fsi::StableId> openingVertices;
+        std::set<simwing::fsi::StableId> attachmentVertices;
+        for (const auto &triangle : result.scene.triangles) {
+            triangleVertices.insert(triangle.vertexIds.begin(),
+                                    triangle.vertexIds.end());
+        }
+        for (const auto &opening : result.scene.openings) {
+            openingVertices.insert(opening.orderedVertexIds.begin(),
+                                   opening.orderedVertexIds.end());
+        }
+        for (const auto &attachment : result.scene.attachments) {
+            if (attachment.kind
+                == simwing::fsi::AttachmentKind::SurfaceVertex) {
+                attachmentVertices.insert(attachment.vertexId);
+            }
+        }
+        std::size_t orphanCount = 0;
+        std::size_t orphanOpenings = 0;
+        std::size_t orphanAttachments = 0;
+        for (const auto &vertex : result.scene.vertices) {
+            if (!triangleVertices.contains(vertex.id)) {
+                ++orphanCount;
+                orphanOpenings += openingVertices.contains(vertex.id);
+                orphanAttachments += attachmentVertices.contains(vertex.id);
+            }
+        }
+        std::fprintf(stderr,
+                     "scene vertices %zu, triangle-used %zu, orphan %zu, orphan-opening %zu, orphan-attachment %zu\n",
+                     result.scene.vertices.size(), triangleVertices.size(),
+                     orphanCount, orphanOpenings, orphanAttachments);
+        std::map<simwing::fsi::SceneStructureDiagnosticCode, std::size_t>
+            diagnosticCounts;
+        for (const auto &diagnostic : assembly.diagnostics) {
+            ++diagnosticCounts[diagnostic.code];
+        }
+        for (const auto &[code, count] : diagnosticCounts) {
+            std::fprintf(stderr, "assembly diagnostic %u: %zu\n",
+                         static_cast<unsigned>(code), count);
+        }
+        for (std::size_t index = 0;
+             index < std::min<std::size_t>(20, assembly.diagnostics.size());
+             ++index) {
+            const auto &diagnostic = assembly.diagnostics[index];
+            std::fprintf(stderr, "assembly: %s\n",
+                         diagnostic.message.c_str());
+        }
+    }
+    check(assembly.ok(),
+          "real scene assembles through the composite SimWing structure boundary");
+    if (!assembly.ok()) {
+        return;
+    }
+    check(assembly.definition.suspension.has_value()
+              && assembly.definition.suspension->segments.size() == 190
+              && assembly.mappings.suspensionSegmentLineIds.size() == 190
+              && assembly.mappings.pilotHarnessAttachmentIds.size() == 2,
+          "real assembly retains all suspension segments and both harness roots");
+
+    simwing::fsi::Structure structure(assembly.definition);
+    const simwing::viewer::StructureFrameMapping mapping =
+        simwing::viewer::makeStructureFrameMapping(
+            result.scene, assembly, structure);
+    simwing::fsi::StructureStepSettings step;
+    step.gravityMetersPerSecondSquared = {};
+    step.velocityDampingPerSecond = 0.0;
+    step.constraintIterations =
+        assembly.settings.suspensionSolverIterations;
+    const simwing::fsi::StructureCheckpoint saved = structure.checkpoint();
+    const simwing::fsi::StructureDiagnostics firstDiagnostics =
+        structure.step(step);
+    simwing::viewer::StructureFrameContext context;
+    context.sceneChecksum = result.scene.metadata.designChecksum;
+    context.solverCommit = "real-structural-worker-test/1";
+    context.timeStepSeconds = step.timeStepSeconds;
+    const simwing::viewer::DiagnosticFrame firstFrame =
+        simwing::viewer::buildStructureFrame(structure, mapping, context);
+    structure.restore(saved);
+    const simwing::fsi::StructureDiagnostics replayDiagnostics =
+        structure.step(step);
+    const simwing::viewer::DiagnosticFrame replayFrame =
+        simwing::viewer::buildStructureFrame(structure, mapping, context);
+    simwing::viewer::ProtocolError protocolError;
+    std::vector<std::uint8_t> firstBytes;
+    std::vector<std::uint8_t> replayBytes;
+    check(firstDiagnostics.finite
+              && firstDiagnostics == replayDiagnostics
+              && simwing::viewer::serializeFrame(
+                     firstFrame, firstBytes, &protocolError)
+              && simwing::viewer::serializeFrame(
+                     replayFrame, replayBytes, &protocolError)
+              && firstBytes == replayBytes,
+          "real structural step and composite checkpoint replay are bit-identical");
+    check(firstFrame.lines.size() == 190
+              && firstFrame.vertices.size()
+                     == assembly.definition.nodes.size() + 2,
+          "real diagnostic frame contains all lines and rigid harness vertices");
+
+    std::stringstream trace(
+        std::ios::in | std::ios::out | std::ios::binary);
+    simwing::viewer::TraceWriter writer(trace);
+    const simwing::viewer::TraceHeader header{
+        result.scene.metadata.designChecksum,
+        context.solverCommit};
+    check(writer.writeHeader(header)
+              && writer.writeFrame(firstFrame)
+              && writer.finish(),
+          "real accepted structure state writes a completed viewer trace");
+    trace.seekg(0);
+    simwing::viewer::TraceReader reader(trace);
+    simwing::viewer::TraceHeader decodedHeader;
+    simwing::viewer::DiagnosticFrame decodedFrame;
+    check(reader.readHeader(decodedHeader)
+              && decodedHeader.sceneChecksum == header.sceneChecksum
+              && decodedHeader.solverCommit == header.solverCommit
+              && reader.readNext(decodedFrame)
+                     == simwing::viewer::TraceReadStatus::Frame
+              && decodedFrame.lines.size() == 190
+              && reader.readNext(decodedFrame)
+                     == simwing::viewer::TraceReadStatus::End,
+          "real viewer trace replays one complete accepted frame");
 }
 
 } // namespace

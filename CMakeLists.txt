@@ -522,6 +522,7 @@ add_executable(simwing-model-scene-real-export-test
 )
 target_link_libraries(simwing-model-scene-real-export-test PRIVATE
     leparagliding_engine_runtime
+    simwing_structure_frame
 )
 
 add_executable(simwing-structure-test

@@ -87,9 +87,52 @@ void reverseCollections(Scene& scene) {
     std::ranges::reverse(scene.triangles);
     std::ranges::reverse(scene.seams);
     std::ranges::reverse(scene.lineMaterials);
+    std::ranges::reverse(scene.pilots);
     std::ranges::reverse(scene.suspensionJunctions);
     std::ranges::reverse(scene.attachments);
     std::ranges::reverse(scene.suspensionLines);
+}
+
+void testExplicitContactPolicyAndPilotLeafRejection() {
+    SceneStructureSettings settings;
+    settings.fabricSelfContact = {0.002, 1.0e-8, 0.4, 0.2};
+    const SceneStructureAssembly contact = assembleSceneStructure(
+        surfaceScene(), {}, settings);
+    check(contact.ok() && contact.settings == settings
+              && contact.definition.fabricSelfContact.has_value()
+              && contact.definition.fabricSelfContact->halfThicknessMeters
+                     == 0.002,
+          "settings: explicit contact policy crosses the scene boundary without defaults");
+    Structure contactStructure(contact.definition);
+    check(contactStructure.diagnostics().contactPairCount == 1,
+          "settings: explicit contact policy registers one fabric self-pair");
+
+    Scene leaf = surfaceScene();
+    leaf.pilots = {
+        {200, "pilot", 90.0, {0.0, 0.0, -2.0}, {}, {},
+         {8.0, 10.0, 6.0}},
+    };
+    leaf.suspensionJunctions = {
+        {50, {1.5, 0.5, -0.5}, 0.02, false},
+        {51, {1.5, 0.5, -1.0}, 0.02, false},
+    };
+    leaf.attachments = {
+        {300, AttachmentKind::SurfaceVertex, 10, 0, {}},
+        {301, AttachmentKind::SuspensionJunction, 0, 0, {}, 50},
+        {302, AttachmentKind::SuspensionJunction, 0, 0, {}, 51},
+        {303, AttachmentKind::PilotHarness, 0, 200, {}},
+    };
+    leaf.suspensionLines = {
+        {400, 300, 301, 110, 1.0, SuspensionLineRole::Suspension},
+        {401, 301, 303, 110, 1.0, SuspensionLineRole::Riser},
+        {402, 301, 302, 110, 0.5, SuspensionLineRole::Suspension},
+    };
+    const SceneStructureAssembly rejected = assembleSceneStructure(leaf);
+    check(!rejected.ok()
+              && contains(rejected,
+                          SceneStructureDiagnosticCode::UnsupportedSuspensionTopology)
+              && rejected.definition.nodes.empty(),
+          "pilot graph: a terminal junction is rejected before Structure construction");
 }
 
 void testDeterministicMappingAndStableIds() {
@@ -271,7 +314,7 @@ void testWeldedDifferentSheetsDoNotCreateHinge() {
           "sheet identity: a welded inter-sheet edge is not a fabric hinge");
 }
 
-void testUnsupportedPilotHarnessIsExplicitAndDeterministic() {
+void testPilotHarnessAssemblyIsCheckpointSafeAndDeterministic() {
     Scene scene = surfaceScene();
     scene.pilots = {
         {200, "pilot", 90.0, {0.0, 0.0, -1.0}, {}, {},
@@ -283,23 +326,53 @@ void testUnsupportedPilotHarnessIsExplicitAndDeterministic() {
     scene.suspensionLines[0].endAttachmentId = 302;
 
     const SceneStructureAssembly first = assembleSceneStructure(scene);
-    check(!first.ok() && !first.assembled,
-          "pilot-harness scene is rejected transactionally");
-    check(first.definition.nodes.empty()
-              && first.mappings.nodeVertexIds.empty(),
-          "unsupported assembly exposes no partial structure or mapping");
-    check(contains(first, SceneStructureDiagnosticCode::UnsupportedPilot)
-              && contains(first,
-                          SceneStructureDiagnosticCode::UnsupportedPilotHarness)
-              && contains(first,
-                          SceneStructureDiagnosticCode::UnsupportedSuspensionTopology),
-          "pilot, harness, and full suspension limitations are explicit");
+    check(first.ok() && first.definition.suspension.has_value(),
+          "pilot-harness scene assembles into the composite Structure boundary");
+    check(first.definition.constraints.empty()
+              && first.definition.suspension->attachments.size() == 1
+              && first.definition.suspension->harnessPoints.size() == 1
+              && first.definition.suspension->segments.size() == 1,
+          "pilot suspension is represented once as a directed rigid-payload graph");
+    check(first.mappings.constraintSuspensionLineIds.empty()
+              && first.mappings.suspensionSegmentLineIds
+                     == std::vector<StableId>({400})
+              && first.mappings.pilotHarnessAttachmentIds
+                     == std::vector<StableId>({302})
+              && first.mappings.suspensionSegmentIndex(400)
+                     == std::optional<std::size_t>(0)
+              && first.mappings.pilotHarnessIndex(302)
+                     == std::optional<std::size_t>(0),
+          "pilot suspension mappings preserve stable line and harness IDs");
+    const StructureSuspensionSegmentDefinition& segment =
+        first.definition.suspension->segments.front();
+    check(segment.from.kind
+                  == StructureSuspensionEndpointKind::SurfaceAttachment
+              && segment.from.stableId == 301
+              && segment.to.kind
+                     == StructureSuspensionEndpointKind::PilotHarness
+              && segment.to.stableId == 302,
+          "pilot suspension line is oriented from canopy leaf to harness root");
+    Structure structure(first.definition);
+    StructureStepSettings step;
+    step.gravityMetersPerSecondSquared = {};
+    const auto before = structure.checkpoint();
+    const auto diagnostics = structure.step(step);
+    structure.restore(before);
+    check(diagnostics.suspensionSegmentCount == 1
+              && structure.suspensionState().has_value(),
+          "pilot suspension definition constructs, steps, and restores");
 
     Scene reordered = scene;
     reverseCollections(reordered);
     const SceneStructureAssembly second = assembleSceneStructure(reordered);
-    check(first.diagnostics == second.diagnostics,
-          "unsupported diagnostics are deterministic under reordering");
+    check(second.ok()
+              && first.mappings.suspensionSegmentLineIds
+                     == second.mappings.suspensionSegmentLineIds
+              && first.mappings.pilotHarnessAttachmentIds
+                     == second.mappings.pilotHarnessAttachmentIds
+              && Structure(first.definition).definitionFingerprint()
+                     == Structure(second.definition).definitionFingerprint(),
+          "pilot suspension assembly is deterministic under reordering");
 }
 
 void testSuspensionJunctionSegmentGraph() {
@@ -435,10 +508,17 @@ void testExplicitValidationAndAssemblyRejections() {
     isolated.vertices.push_back({99, {4.0, 4.0, 4.0}});
     const SceneStructureAssembly isolatedResult =
         assembleSceneStructure(isolated);
-    check(!isolatedResult.ok()
-              && contains(isolatedResult,
+    check(isolatedResult.ok()
+              && !isolatedResult.mappings.nodeIndex(99).has_value(),
+          "opening-only or otherwise nonstructural scene vertex is omitted from XPBD nodes");
+    isolated.attachments.push_back(
+        {399, AttachmentKind::SurfaceVertex, 99, 0, {}});
+    const SceneStructureAssembly attachedIsolatedResult =
+        assembleSceneStructure(isolated);
+    check(!attachedIsolatedResult.ok()
+              && contains(attachedIsolatedResult,
                           SceneStructureDiagnosticCode::ZeroMassDynamicNode),
-          "dynamic scene vertex without fabric mass is rejected");
+          "surface attachment without fabric mass is rejected");
 
     Scene badChart = surfaceScene();
     badChart.triangles.front().materialCoordinates = {
@@ -496,7 +576,8 @@ int main() {
     testConservativeFabricMassAndMembranes();
     testFoldedStripRestAngle();
     testWeldedDifferentSheetsDoNotCreateHinge();
-    testUnsupportedPilotHarnessIsExplicitAndDeterministic();
+    testPilotHarnessAssemblyIsCheckpointSafeAndDeterministic();
+    testExplicitContactPolicyAndPilotLeafRejection();
     testSuspensionJunctionSegmentGraph();
     testSeamAndBendingTopologyRejections();
     testExplicitValidationAndAssemblyRejections();

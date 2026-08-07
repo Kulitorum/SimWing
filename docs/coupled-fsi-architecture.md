@@ -426,12 +426,17 @@ The exact-model capture now exports validated scene-v2.1 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical
 material and pilot settings. Scene assembly adds per-sheet bending and preserves
-the junction graph. `softwing_core` now provides a transactional production
-checkpoint for complete suspension and rigid-payload state. The next structural
-slice must compose that state and registered contact into `simwing_structure`.
-Manufacturing flat-pattern UVs, authored paired seams and stitch mechanics,
-pilot/harness assembly, live bidirectional control, an authoritative settings
-source/engine CLI, and the CFD kernel remain open work.
+the junction graph. It now orients one pilot's line forest toward its harness
+roots and assembles the rigid payload; contact remains an explicit worker policy
+because scene-v2 has no authoritative contact material yet. `softwing_core`
+provides complementary transactional checkpoints for complete SoftBody/contact
+and suspension/rigid-payload state, and `simwing_structure` restores them as one
+composite transaction. The real 3.28 regression now reaches an accepted coupled
+structural step and replayable diagnostic trace with synthetic physical export
+settings. Manufacturing flat-pattern UVs, exact authored line-attachment
+vertices, authored paired seams and stitch mechanics, live bidirectional
+control, an authoritative settings source/engine CLI, and the CFD kernel remain
+open work.
 
 ### Phase 0 — Establish the remake boundary
 

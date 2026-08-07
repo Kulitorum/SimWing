@@ -252,6 +252,32 @@ struct RectangularMembraneCoupon {
                                    std::size_t widthIndex) const;
 };
 
+// Immutable, owner-independent safe-point state for one SoftBody. The opaque
+// payload contains all mutable structural values, face pressures, contact
+// warm starts, accepted contact records/diagnostics, and implementation audit
+// traces. Derived scheduling caches and worker threads are intentionally not
+// state. restore() accepts checkpoints from an equivalent rebuilt topology
+// and commits transactionally after all allocating copies have succeeded.
+class SoftBodyCheckpoint {
+public:
+    SoftBodyCheckpoint() = default;
+    SoftBodyCheckpoint(const SoftBodyCheckpoint&) = default;
+    SoftBodyCheckpoint(SoftBodyCheckpoint&&) noexcept = default;
+    SoftBodyCheckpoint& operator=(const SoftBodyCheckpoint&) = default;
+    SoftBodyCheckpoint& operator=(SoftBodyCheckpoint&&) noexcept = default;
+
+    [[nodiscard]] bool valid() const noexcept;
+    [[nodiscard]] std::uint64_t topologyFingerprint() const noexcept;
+
+private:
+    friend class SoftBody;
+    struct State;
+    explicit SoftBodyCheckpoint(std::shared_ptr<const State> state)
+        : state_(std::move(state)) {}
+
+    std::shared_ptr<const State> state_;
+};
+
 class SoftBody {
 public:
     std::size_t addNode(const Vec3& position, double mass);
@@ -364,6 +390,8 @@ public:
                                    double pressureDifference);
     void clearExternalForces();
     void addForce(std::size_t nodeIndex, const Vec3& force);
+    [[nodiscard]] SoftBodyCheckpoint checkpoint() const;
+    void restore(const SoftBodyCheckpoint& checkpoint);
     void step(const StepSettings& settings);
     void stepCoupled(const StepSettings& settings,
                      SuspensionSystem& suspension);
@@ -644,6 +672,7 @@ private:
     // so workers are spawned once, not per sweep; it is rebuilt only when the
     // requested worker count changes.
     [[nodiscard]] WorkerPool* poolFor(const StepSettings& settings);
+    [[nodiscard]] std::uint64_t checkpointTopologyFingerprint() const;
 
     std::vector<Node> nodes_;
     std::vector<Triangle> triangles_;

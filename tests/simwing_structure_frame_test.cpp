@@ -159,6 +159,24 @@ simwing::fsi::Scene sampleAssemblyScene() {
     return scene;
 }
 
+simwing::fsi::Scene samplePilotAssemblyScene() {
+    using namespace simwing::fsi;
+    Scene scene = sampleAssemblyScene();
+    scene.pilots = {
+        {800, "viewer pilot", 90.0, {1.0, 0.5, -2.0}, {}, {},
+         {8.0, 10.0, 6.0}},
+    };
+    scene.attachments.push_back(
+        {315, AttachmentKind::PilotHarness, 0, 800,
+         {0.0, 0.0, 0.5}});
+    scene.suspensionLines = {
+        {700, 310, 314, 110, 1.25, SuspensionLineRole::Suspension},
+        {701, 312, 314, 110, 1.25, SuspensionLineRole::Suspension},
+        {702, 314, 315, 110, 1.0, SuspensionLineRole::Riser},
+    };
+    return scene;
+}
+
 void reverseSceneCollections(simwing::fsi::Scene& scene) {
     std::ranges::reverse(scene.regions);
     std::ranges::reverse(scene.vertices);
@@ -531,6 +549,48 @@ void testSceneAssemblyMappingRejections() {
         "scene mapping: failed assembly is rejected transactionally");
 }
 
+void testPilotSuspensionFrameAndReplay() {
+    using namespace simwing::fsi;
+    const Scene scene = samplePilotAssemblyScene();
+    const SceneStructureAssembly assembly = assembleSceneStructure(scene);
+    check(assembly.ok(), "pilot frame: scene assembly succeeds");
+    Structure structure(assembly.definition);
+    const StructureFrameMapping mapping = makeStructureFrameMapping(
+        scene, assembly, structure);
+    check(mapping.vertexStableIds()
+              == std::vector<StableId>({10, 11, 12, 13, 50, 315}),
+          "pilot frame: harness is an immutable diagnostic vertex");
+    check(mapping.lines().size() == 3
+              && mapping.lines()[0].vertex0 == 0
+              && mapping.lines()[0].vertex1 == 4
+              && mapping.lines()[1].vertex0 == 1
+              && mapping.lines()[1].vertex1 == 4
+              && mapping.lines()[2].vertex0 == 4
+              && mapping.lines()[2].vertex1 == 5,
+          "pilot frame: suspension lines retain canopy, junction, and harness endpoints");
+
+    StructureStepSettings settings;
+    settings.gravityMetersPerSecondSquared = {};
+    settings.constraintIterations =
+        assembly.settings.suspensionSolverIterations;
+    const auto saved = structure.checkpoint();
+    static_cast<void>(structure.step(settings));
+    const DiagnosticFrame first = buildStructureFrame(
+        structure, mapping, sampleContext());
+    structure.restore(saved);
+    static_cast<void>(structure.step(settings));
+    const DiagnosticFrame replay = buildStructureFrame(
+        structure, mapping, sampleContext());
+    ProtocolError error;
+    std::vector<std::uint8_t> firstBytes;
+    std::vector<std::uint8_t> replayBytes;
+    check(first.vertices.size() == 6 && first.lines.size() == 3
+              && serializeFrame(first, firstBytes, &error)
+              && serializeFrame(replay, replayBytes, &error)
+              && firstBytes == replayBytes,
+          "pilot frame: composite checkpoint continuation serializes bit-identically");
+}
+
 } // namespace
 
 int main() {
@@ -540,6 +600,7 @@ int main() {
     testInvalidMappings();
     testSceneAssemblyMappingAndReordering();
     testSceneAssemblyMappingRejections();
+    testPilotSuspensionFrameAndReplay();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing structure-frame check(s) failed\n",

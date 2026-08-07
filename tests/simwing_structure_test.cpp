@@ -152,6 +152,18 @@ void testCheckpointRestoreAndDeterminism() {
               0.0,
               "checkpoint: simulation time rolls back and advances once");
 
+    const auto committed = structure.checkpoint();
+    auto tampered = committed;
+    tampered.nodes[0].positionMeters.x += 1.0;
+    bool tamperRejected = false;
+    try {
+        structure.restore(tampered);
+    } catch (const std::invalid_argument&) {
+        tamperRejected = true;
+    }
+    check(tamperRejected && structure.nodeStates() == committed.nodes,
+          "checkpoint: public node tampering cannot diverge from the opaque complete state");
+
     Structure other(constrainedPair(
         StructureConstraintKind::Distance, 1.0).definition());
     bool rejected = false;
@@ -229,6 +241,84 @@ void testMembraneBoundaryAndValidation() {
     check(rejected, "validation: dynamic zero-mass node is rejected");
 }
 
+void testContactCheckpointReplay() {
+    StructureDefinition definition;
+    definition.nodes = {
+        {{-1.0, -1.0, 0.0}, 1.0, false},
+        {{1.0, -1.0, 0.0}, 1.0, false},
+        {{0.0, 1.0, 0.0}, 1.0, false},
+        {{-1.0, -1.0, 0.01}, 1.0, false},
+        {{0.0, 1.0, 0.01}, 1.0, false},
+        {{1.0, -1.0, 0.01}, 1.0, false},
+    };
+    definition.triangles = {{{0, 1, 2}}, {{3, 4, 5}}};
+    definition.fabricSelfContact = {
+        0.01, 0.0, 0.0, 0.0};
+    Structure structure(std::move(definition));
+    StructureStepSettings settings = constraintSettings();
+    settings.constraintIterations = 4;
+    const auto contactDiagnostics = structure.step(settings);
+    const auto saved = structure.checkpoint();
+    const auto firstDiagnostics = structure.step(settings);
+    const auto firstState = structure.nodeStates();
+    structure.restore(saved);
+    const auto replayDiagnostics = structure.step(settings);
+    const auto replayState = structure.nodeStates();
+
+    check(contactDiagnostics.contactPairCount == 1,
+          "contact: explicit fabric self-pair is registered");
+    check(contactDiagnostics.activeContactCount > 0,
+          "contact: overlapping disconnected sheets are active");
+    check(firstState == replayState,
+          "contact checkpoint: warm-start continuation is bit-identical");
+    check(firstDiagnostics == replayDiagnostics,
+          "contact checkpoint: diagnostics replay bit-identically");
+}
+
+void testSuspensionPilotCheckpointReplay() {
+    StructureDefinition definition;
+    definition.nodes.push_back({{0.0, 0.0, 1.0}, 0.0, true});
+    simwing::fsi::StructureSuspensionDefinition suspension;
+    suspension.pilotStableId = 100;
+    suspension.pilotMassKg = 2.0;
+    suspension.pilotInitialCenterOfMassWorldMeters = {};
+    suspension.pilotPrincipalInertiaKgSquareMeters = {0.2, 0.3, 0.4};
+    suspension.attachments.push_back({200, 0});
+    suspension.harnessPoints.push_back({300, {}});
+    suspension.segments.push_back(
+        {400,
+         {simwing::fsi::StructureSuspensionEndpointKind::SurfaceAttachment,
+          200},
+         {simwing::fsi::StructureSuspensionEndpointKind::PilotHarness, 300},
+         0.75, 10000.0, 0.0, 1});
+    definition.suspension = suspension;
+    Structure structure(std::move(definition));
+    StructureStepSettings settings = constraintSettings();
+    settings.constraintIterations = suspension.solverIterations;
+    static_cast<void>(structure.step(settings));
+    const auto saved = structure.checkpoint();
+    const auto firstDiagnostics = structure.step(settings);
+    const auto firstNodes = structure.nodeStates();
+    const auto firstSuspension = structure.suspensionState();
+    structure.restore(saved);
+    const auto replayDiagnostics = structure.step(settings);
+    const auto replayNodes = structure.nodeStates();
+    const auto replaySuspension = structure.suspensionState();
+
+    check(firstDiagnostics.suspensionSegmentCount == 1,
+          "suspension: composite adapter registers the line graph");
+    check(firstDiagnostics.totalDynamicMassKg == suspension.pilotMassKg,
+          "suspension: rigid pilot contributes to total mass diagnostics");
+    check(firstSuspension.has_value()
+              && firstSuspension->harnessPositionsMeters.size() == 1
+              && firstSuspension->segments.size() == 1,
+          "suspension: immutable public payload/line state is available");
+    check(firstNodes == replayNodes && firstSuspension == replaySuspension,
+          "suspension checkpoint: payload and line replay is bit-identical");
+    check(firstDiagnostics == replayDiagnostics,
+          "suspension checkpoint: composite diagnostics replay exactly");
+}
+
 } // namespace
 
 int main() {
@@ -237,6 +327,8 @@ int main() {
     testCheckpointRestoreAndDeterminism();
     testFailedStepRollsBackLoadsAndState();
     testMembraneBoundaryAndValidation();
+    testContactCheckpointReplay();
+    testSuspensionPilotCheckpointReplay();
     if (failures != 0) {
         std::fprintf(stderr, "%d SimWing structure check(s) failed\n", failures);
         return 1;

@@ -21,6 +21,20 @@ struct SceneStructureLimits {
     std::size_t maximumMappingBytes = 256ULL * 1024ULL * 1024ULL;
 };
 
+// Solver/contact policy is supplied by the worker rather than guessed from
+// scene geometry. Scene-v2 carries authoritative fabric/line/pilot data, but
+// it does not yet carry a verified contact material model.
+struct SceneStructureSettings {
+    int suspensionSolverIterations = 12;
+    double suspensionAttachmentTolerance = 1.0e-10;
+    double suspensionMinimumLineLengthMeters = 1.0e-10;
+    double suspensionMaximumLineResidualMeters = 2.0e-4;
+    double suspensionMaximumControlWorkJoules = 1.0e6;
+    std::optional<StructureFabricContactDefinition> fabricSelfContact;
+
+    auto operator<=>(const SceneStructureSettings&) const = default;
+};
+
 enum class SceneStructureDiagnosticSeverity : std::uint8_t {
     Error = 1,
 };
@@ -64,6 +78,11 @@ struct SceneStructureMappings {
     std::vector<StableId> triangleIds;
     std::vector<StableId> membraneTriangleIds;
     std::vector<StableId> constraintSuspensionLineIds;
+    // Populated instead of constraintSuspensionLineIds when a rigid pilot
+    // owns the directed suspension tree.
+    std::vector<StableId> suspensionSegmentLineIds;
+    // Aligned with StructureSuspensionDefinition::harnessPoints.
+    std::vector<StableId> pilotHarnessAttachmentIds;
     // One stable triangle-ID pair per StructureDefinition::dihedrals entry.
     std::vector<std::array<StableId, 2>> dihedralTriangleIds;
 
@@ -77,6 +96,10 @@ struct SceneStructureMappings {
         StableId triangleId) const noexcept;
     [[nodiscard]] std::optional<std::size_t> constraintIndex(
         StableId suspensionLineId) const noexcept;
+    [[nodiscard]] std::optional<std::size_t> suspensionSegmentIndex(
+        StableId suspensionLineId) const noexcept;
+    [[nodiscard]] std::optional<std::size_t> pilotHarnessIndex(
+        StableId attachmentId) const noexcept;
 };
 
 struct SceneStructureAssembly {
@@ -85,6 +108,7 @@ struct SceneStructureAssembly {
     bool assembled = false;
     StructureDefinition definition;
     SceneStructureMappings mappings;
+    SceneStructureSettings settings;
     double totalFabricMassKg = 0.0;
     std::vector<SceneStructureDiagnostic> diagnostics;
 
@@ -92,9 +116,11 @@ struct SceneStructureAssembly {
 };
 
 // Converts validated scene-v2 geometry into the currently checkpoint-safe
-// Structure boundary. All scene vertices are dynamic. Fabric mass is lumped
-// from each triangle's undeformed material-chart area equally to its three
-// vertices. In-plane warp, weft, shear, and damping properties are mapped to
+// Structure boundary. Vertices used by fabric triangles or surface
+// attachments are dynamic; geometry used only to describe an opening loop is
+// retained by scene-v2 but has no independent structural degree of freedom.
+// Fabric mass is lumped from each triangle's undeformed material-chart area
+// equally to its three vertices. In-plane warp, weft, shear, and damping properties are mapped to
 // one Bulk membrane per triangle. A consistently oriented two-triangle
 // manifold edge within the same authored sheet ID becomes one dihedral;
 // merely welded edges between different sheets do not. If h0/h1 and L0/L1 are
@@ -106,14 +132,17 @@ struct SceneStructureAssembly {
 // the signed rest angle. A zero rigidity produces no hinge.
 //
 // SurfaceVertex and SuspensionJunction attachments become explicit cable graph
-// nodes; a dynamic junction must carry its scene-declared positive mass. Cable
-// compliance is restLength/EA. Line mass and drag are intentionally not
-// included in nodal mass or force ledgers by this bridge. Pilot/harness
-// topology remains unsupported until the rigid-payload checkpoint API exists.
+// nodes; a dynamic junction must carry its scene-declared positive mass. A
+// scene with one rigid pilot is oriented deterministically from surface leaves
+// through junctions to harness roots and enters Structure's composite
+// suspension solver. A scene without a pilot retains direct nodal cable
+// constraints. Cable compliance is restLength/EA. Line mass and drag are
+// intentionally not included in nodal mass or force ledgers by this bridge.
 // Seams remain validated scene topology but are rejected here: converting
 // their paired chains requires a verified stitch/tributary load-sharing model.
 [[nodiscard]] SceneStructureAssembly assembleSceneStructure(
     const Scene& scene,
-    const SceneStructureLimits& limits = {});
+    const SceneStructureLimits& limits = {},
+    const SceneStructureSettings& settings = {});
 
 } // namespace simwing::fsi

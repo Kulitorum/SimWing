@@ -27,14 +27,17 @@ fields can be inspected; automated runs remain available through `--no-viewer`.
 The first remake foundations are now present: scene-v2 validation and bounded
 serialization, direct export from captured analytical wing geometry,
 deterministic scene-to-XPBD membrane/cable/bending assembly, production
-suspension/payload checkpoints, immutable structural diagnostic frames, a
+suspension/payload/contact checkpoints, rigid-pilot/harness assembly, immutable
+structural diagnostic frames, a
 standalone Qt/OpenGL trace viewer, and a canonical Qt-free worker that opens
 the viewer by default and streams accepted XPBD steps through a replayable
-growing trace. Export still requires explicit physical material/pilot settings;
-manufacturing-pattern UVs, structural seam assembly, pilot integration in the
-new adapter, and CFD remain open work. This first worker case validates the
-pipeline; it is not yet wing CFD or aerodynamic truth. The inherited Playground
-is not used by these targets.
+growing trace. A real 3.28 fixture also crosses export, structural assembly,
+one coupled pilot/suspension step, checkpoint replay, and completed trace using
+synthetic physical settings. Export still requires explicit physical
+material/pilot settings; manufacturing-pattern UVs, exact authored attachment
+vertices, structural seam assembly, and CFD remain open work. These worker
+cases validate the pipeline; they are not yet wing CFD or aerodynamic truth.
+The inherited Playground is not used by these targets.
 
 ## Inherited LEparagliding Studio baseline
 

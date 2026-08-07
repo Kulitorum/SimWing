@@ -1357,6 +1357,155 @@ SuspensionSystem SuspensionSystem::build(
     return system;
 }
 
+SuspensionSystem SuspensionSystem::buildResolved(
+    SoftBody& body,
+    const SuspensionDefinition& input,
+    std::span<const ResolvedSuspensionAttachment> inputAttachments,
+    std::span<const std::pair<std::string, std::size_t>> inputJunctionNodes) {
+    const SuspensionDefinition definition =
+        validateAndNormalizeSuspensionDefinition(input);
+    if (inputAttachments.size() != definition.attachments.size()
+        || inputJunctionNodes.size() != definition.junctions.size()) {
+        fail(SuspensionPhase::AttachmentResolution, "resolved-counts",
+             "resolved attachment/junction counts do not match the definition");
+    }
+
+    std::map<std::string, const ResolvedSuspensionAttachment*>
+        attachmentsById;
+    for (const ResolvedSuspensionAttachment& attachment : inputAttachments) {
+        if (!attachmentsById.emplace(attachment.id, &attachment).second) {
+            fail(SuspensionPhase::AttachmentResolution, attachment.id,
+                 "duplicate resolved attachment identity");
+        }
+    }
+    std::vector<ResolvedSuspensionAttachment> resolved;
+    resolved.reserve(definition.attachments.size());
+    std::set<std::size_t> resolvedNodes;
+    for (const SuspensionAttachmentDefinition& expected :
+         definition.attachments) {
+        const auto found = attachmentsById.find(expected.id);
+        if (found == attachmentsById.end()) {
+            fail(SuspensionPhase::AttachmentResolution, expected.id,
+                 "resolved attachment is missing");
+        }
+        const ResolvedSuspensionAttachment& supplied = *found->second;
+        if (supplied.panelId != expected.panelId
+            || supplied.chart.x != expected.chart.x
+            || supplied.chart.y != expected.chart.y
+            || supplied.provenanceId != expected.provenanceId
+            || supplied.nodeIndex >= body.nodes().size()
+            || !finite(supplied.worldPosition)
+            || supplied.worldPosition.x
+                   != body.nodes()[supplied.nodeIndex].position.x
+            || supplied.worldPosition.y
+                   != body.nodes()[supplied.nodeIndex].position.y
+            || supplied.worldPosition.z
+                   != body.nodes()[supplied.nodeIndex].position.z) {
+            fail(SuspensionPhase::AttachmentResolution, expected.id,
+                 "resolved attachment does not match its definition or body node");
+        }
+        resolvedNodes.insert(supplied.nodeIndex);
+        resolved.push_back(supplied);
+    }
+
+    std::map<std::string, std::size_t> junctionsById;
+    for (const auto& [id, node] : inputJunctionNodes) {
+        if (!junctionsById.emplace(id, node).second) {
+            fail(SuspensionPhase::AttachmentResolution, id,
+                 "duplicate resolved junction identity");
+        }
+    }
+    std::vector<std::size_t> junctionNodes;
+    junctionNodes.reserve(definition.junctions.size());
+    std::set<std::size_t> uniqueJunctionNodes;
+    for (const SuspensionJunctionDefinition& expected :
+         definition.junctions) {
+        const auto found = junctionsById.find(expected.id);
+        if (found == junctionsById.end()
+            || found->second >= body.nodes().size()) {
+            fail(SuspensionPhase::AttachmentResolution, expected.id,
+                 "resolved junction is missing or out of range");
+        }
+        const std::size_t nodeIndex = found->second;
+        const Node& node = body.nodes()[nodeIndex];
+        if (!uniqueJunctionNodes.insert(nodeIndex).second
+            || resolvedNodes.contains(nodeIndex)
+            || node.position.x != expected.initialWorldPosition.x
+            || node.position.y != expected.initialWorldPosition.y
+            || node.position.z != expected.initialWorldPosition.z
+            || node.inverseMass != 1.0 / expected.mass) {
+            fail(SuspensionPhase::AttachmentResolution, expected.id,
+                 "resolved junction does not match its unique dynamic body node");
+        }
+        junctionNodes.push_back(nodeIndex);
+    }
+
+    SuspensionSystem system;
+    system.definition_ = definition;
+    system.owner_ = &body;
+    system.attachments_ = std::move(resolved);
+    system.junctionNodeIndices_ = std::move(junctionNodes);
+    system.payloadState_ = definition.payload.initialState;
+    system.previousPayloadState_ = system.payloadState_;
+    for (const PayloadPointDefinition& point :
+         definition.payload.hangPoints) {
+        system.baseHangPointPositions_.push_back(point.localPosition);
+        system.commandedHangPointPositions_.push_back(point.localPosition);
+    }
+    for (const SuspensionControlDefinition& control : definition.controls) {
+        system.controls_.push_back({control.id, control.neutralCommand,
+                                    control.neutralCommand, 0.0, 0.0});
+    }
+    for (const SuspensionSegmentDefinition& segment : definition.segments) {
+        RuntimeSuspensionSegment runtime;
+        runtime.definition = segment;
+        runtime.from = resolveRuntimeEndpoint(
+            definition, system.attachments_, system.junctionNodeIndices_,
+            segment.from);
+        runtime.to = resolveRuntimeEndpoint(
+            definition, system.attachments_, system.junctionNodeIndices_,
+            segment.to);
+        runtime.commandedRestLength = segment.restLength;
+        for (const SuspensionAttachmentDefinition& attachment :
+             definition.attachments) {
+            SuspensionEndpoint endpoint{SuspensionEndpointKind::Attachment,
+                                        attachment.id};
+            std::set<std::string> visited;
+            while (true) {
+                if (!visited.insert(endpointKey(endpoint)).second) {
+                    break;
+                }
+                const auto found = std::ranges::find_if(
+                    definition.segments,
+                    [&](const SuspensionSegmentDefinition& candidate) {
+                        return endpointKey(candidate.from)
+                            == endpointKey(endpoint);
+                    });
+                if (found == definition.segments.end()) {
+                    break;
+                }
+                if (found->id == segment.id) {
+                    runtime.attachmentPaths.push_back(attachment.id);
+                    break;
+                }
+                endpoint = found->to;
+            }
+        }
+        system.segments_.push_back(std::move(runtime));
+    }
+    system.groundMultipliers_.assign(
+        definition.payload.supportPoints.size(), 0.0);
+    system.pendingSegmentControlWork_.assign(system.segments_.size(), 0.0);
+    system.segmentDiagnostics_.resize(system.segments_.size());
+    system.diagnostics_.registered = true;
+    system.diagnostics_.attachmentCount = system.attachments_.size();
+    system.diagnostics_.junctionCount = system.junctionNodeIndices_.size();
+    system.diagnostics_.segmentCount = system.segments_.size();
+    system.diagnostics_.provenance = definition.provenance.front().id;
+    system.committedDiagnostics_ = system.diagnostics_;
+    return system;
+}
+
 SoftBody& SuspensionSystem::owner() const {
     if (owner_ == nullptr)
         fail(SuspensionPhase::Validation, "owner",

@@ -22,9 +22,60 @@
 #include <utility>
 
 namespace softwing {
+
+struct SoftBodyCheckpoint::State {
+    std::uint64_t topologyFingerprint = 0;
+    std::vector<Node> nodes;
+    std::vector<Triangle> triangles;
+    std::vector<DistanceConstraint> constraints;
+    std::vector<MembraneElement> membranes;
+    std::vector<DihedralBendingConstraint> dihedrals;
+    std::vector<std::pair<ContactFeatureKey, double>> contactMultipliers;
+    std::vector<ContactRecord> contactRecords;
+    ContactDiagnostics contactDiagnostics;
+    std::vector<ContactDiagnostics> contactPairDiagnostics;
+    std::vector<ContactFeatureKey> iterationCandidateKeys;
+    std::vector<ContactFeatureKey> iterationQueryKeys;
+    std::vector<ContactFeatureKey> certificationCandidateKeys;
+    std::vector<ContactFeatureKey> certificationQueryKeys;
+};
+
+bool SoftBodyCheckpoint::valid() const noexcept {
+    return static_cast<bool>(state_);
+}
+
+std::uint64_t SoftBodyCheckpoint::topologyFingerprint() const noexcept {
+    return state_ ? state_->topologyFingerprint : 0;
+}
+
 namespace {
 
 constexpr double kMinimumLength = 1.0e-12;
+
+class CheckpointTopologyHasher {
+public:
+    void add(std::uint64_t value) {
+        for (std::size_t index = 0; index < sizeof(value); ++index) {
+            value_ ^= static_cast<std::uint8_t>(value & 0xffU);
+            value_ *= 1099511628211ULL;
+            value >>= 8U;
+        }
+    }
+
+    void add(double value) {
+        add(std::bit_cast<std::uint64_t>(value));
+    }
+
+    template <typename Enum>
+    void addEnum(Enum value) {
+        add(static_cast<std::uint64_t>(value));
+    }
+
+    [[nodiscard]] std::uint64_t value() const noexcept { return value_; }
+
+private:
+    std::uint64_t value_ = 14695981039346656037ULL;
+};
 
 using PerformanceClock = std::chrono::steady_clock;
 
@@ -765,6 +816,167 @@ void SoftBody::clearExternalForces() {
 void SoftBody::addForce(std::size_t nodeIndex, const Vec3& force) {
     requireNodeIndex(nodeIndex, nodes_.size());
     nodes_[nodeIndex].force += force;
+}
+
+std::uint64_t SoftBody::checkpointTopologyFingerprint() const {
+    CheckpointTopologyHasher hash;
+    hash.add(std::uint64_t{1});
+    hash.add(static_cast<std::uint64_t>(nodes_.size()));
+    for (const Node& node : nodes_) {
+        hash.add(node.inverseMass);
+    }
+    hash.add(static_cast<std::uint64_t>(triangles_.size()));
+    for (const Triangle& triangle : triangles_) {
+        hash.add(static_cast<std::uint64_t>(triangle.a));
+        hash.add(static_cast<std::uint64_t>(triangle.b));
+        hash.add(static_cast<std::uint64_t>(triangle.c));
+    }
+    hash.add(static_cast<std::uint64_t>(constraints_.size()));
+    for (const DistanceConstraint& constraint : constraints_) {
+        hash.add(static_cast<std::uint64_t>(constraint.a));
+        hash.add(static_cast<std::uint64_t>(constraint.b));
+        hash.add(constraint.restLength);
+        hash.add(constraint.compliance);
+        hash.addEnum(constraint.kind);
+    }
+    hash.add(static_cast<std::uint64_t>(membraneElements_.size()));
+    for (const MembraneElement& element : membraneElements_) {
+        hash.add(static_cast<std::uint64_t>(element.triangle));
+        for (const Vec2& chart : element.chart) {
+            hash.add(chart.x);
+            hash.add(chart.y);
+        }
+        const OrthotropicMembraneMaterial& material = element.material;
+        hash.add(material.warpStiffness);
+        hash.add(material.weftStiffness);
+        hash.add(material.couplingStiffness);
+        hash.add(material.shearStiffness);
+        hash.add(material.warpPreTension);
+        hash.add(material.weftPreTension);
+        hash.add(material.dampingTime);
+        hash.add(material.compressionStiffnessRatio);
+        hash.addEnum(element.role);
+        hash.add(element.referenceArea);
+        hash.add(element.inverseReferenceMatrix.m00);
+        hash.add(element.inverseReferenceMatrix.m01);
+        hash.add(element.inverseReferenceMatrix.m10);
+        hash.add(element.inverseReferenceMatrix.m11);
+        hash.add(element.complianceMatrix.xx);
+        hash.add(element.complianceMatrix.yy);
+        hash.add(element.complianceMatrix.zz);
+        hash.add(element.complianceMatrix.xy);
+        hash.add(element.complianceMatrix.xz);
+        hash.add(element.complianceMatrix.yz);
+    }
+    hash.add(static_cast<std::uint64_t>(dihedralConstraints_.size()));
+    for (const DihedralBendingConstraint& constraint :
+         dihedralConstraints_) {
+        hash.add(static_cast<std::uint64_t>(constraint.a));
+        hash.add(static_cast<std::uint64_t>(constraint.b));
+        hash.add(static_cast<std::uint64_t>(constraint.c));
+        hash.add(static_cast<std::uint64_t>(constraint.d));
+        hash.add(constraint.restAngleRadians);
+        hash.add(constraint.compliance);
+    }
+    hash.add(interiorPressurePartitions_ ? std::uint64_t{1}
+                                         : std::uint64_t{0});
+    hash.add(static_cast<std::uint64_t>(contactSurfaces_.size()));
+    for (const RegisteredContactSurface& surface : contactSurfaces_) {
+        hash.add(static_cast<std::uint64_t>(surface.firstTriangle));
+        hash.add(static_cast<std::uint64_t>(surface.triangleCount));
+        hash.add(surface.halfThickness);
+        hash.add(static_cast<std::uint64_t>(surface.vertices.size()));
+        for (const std::size_t vertex : surface.vertices) {
+            hash.add(static_cast<std::uint64_t>(vertex));
+        }
+        hash.add(static_cast<std::uint64_t>(surface.edges.size()));
+        for (const ContactEdge& edge : surface.edges) {
+            hash.add(static_cast<std::uint64_t>(edge.a));
+            hash.add(static_cast<std::uint64_t>(edge.b));
+        }
+    }
+    hash.add(static_cast<std::uint64_t>(contactLines_.size()));
+    for (const RegisteredContactLine& line : contactLines_) {
+        hash.add(static_cast<std::uint64_t>(line.a));
+        hash.add(static_cast<std::uint64_t>(line.b));
+        hash.add(line.radius);
+    }
+    hash.add(static_cast<std::uint64_t>(contactPairs_.size()));
+    for (const RegisteredContactPair& pair : contactPairs_) {
+        hash.addEnum(pair.kind);
+        hash.addEnum(pair.firstKind);
+        hash.add(static_cast<std::uint64_t>(pair.first));
+        hash.addEnum(pair.secondKind);
+        hash.add(static_cast<std::uint64_t>(pair.second));
+        hash.add(pair.settings.normalCompliance);
+        hash.add(pair.settings.staticFriction);
+        hash.add(pair.settings.dynamicFriction);
+    }
+    hash.add(hasAerodynamicRegistration() ? std::uint64_t{1}
+                                          : std::uint64_t{0});
+    return hash.value();
+}
+
+SoftBodyCheckpoint SoftBody::checkpoint() const {
+    auto state = std::make_shared<SoftBodyCheckpoint::State>();
+    state->topologyFingerprint = checkpointTopologyFingerprint();
+    state->nodes = nodes_;
+    state->triangles = triangles_;
+    state->constraints = constraints_;
+    state->membranes = membraneElements_;
+    state->dihedrals = dihedralConstraints_;
+    state->contactMultipliers = contactMultipliers_;
+    state->contactRecords = contactRecords_;
+    state->contactDiagnostics = contactDiagnostics_;
+    state->contactPairDiagnostics = contactPairDiagnostics_;
+    state->iterationCandidateKeys = contactAudit_.iterationCandidateKeys;
+    state->iterationQueryKeys = contactAudit_.iterationQueryKeys;
+    state->certificationCandidateKeys =
+        contactAudit_.certificationCandidateKeys;
+    state->certificationQueryKeys = contactAudit_.certificationQueryKeys;
+    return SoftBodyCheckpoint(std::move(state));
+}
+
+void SoftBody::restore(const SoftBodyCheckpoint& checkpointValue) {
+    if (!checkpointValue.state_) {
+        throw std::invalid_argument("SoftBody checkpoint is empty");
+    }
+    if (checkpointValue.state_->topologyFingerprint
+        != checkpointTopologyFingerprint()) {
+        throw std::invalid_argument(
+            "SoftBody checkpoint belongs to a different topology");
+    }
+    const SoftBodyCheckpoint::State& source = *checkpointValue.state_;
+    if (source.nodes.size() != nodes_.size()
+        || source.triangles.size() != triangles_.size()
+        || source.constraints.size() != constraints_.size()
+        || source.membranes.size() != membraneElements_.size()
+        || source.dihedrals.size() != dihedralConstraints_.size()
+        || source.contactPairDiagnostics.size() != contactPairs_.size()) {
+        throw std::invalid_argument(
+            "SoftBody checkpoint state counts do not match the live body");
+    }
+
+    // Complete every allocation before the first live write. All commit
+    // operations below are swaps or scalar assignments.
+    SoftBodyCheckpoint::State candidate = source;
+    nodes_.swap(candidate.nodes);
+    triangles_.swap(candidate.triangles);
+    constraints_.swap(candidate.constraints);
+    membraneElements_.swap(candidate.membranes);
+    dihedralConstraints_.swap(candidate.dihedrals);
+    contactMultipliers_.swap(candidate.contactMultipliers);
+    contactRecords_.swap(candidate.contactRecords);
+    std::swap(contactDiagnostics_, candidate.contactDiagnostics);
+    contactPairDiagnostics_.swap(candidate.contactPairDiagnostics);
+    contactAudit_.iterationCandidateKeys.swap(
+        candidate.iterationCandidateKeys);
+    contactAudit_.iterationQueryKeys.swap(candidate.iterationQueryKeys);
+    contactAudit_.certificationCandidateKeys.swap(
+        candidate.certificationCandidateKeys);
+    contactAudit_.certificationQueryKeys.swap(
+        candidate.certificationQueryKeys);
+    constraintSolveNodes_.clear();
 }
 
 void SoftBody::step(const StepSettings& settings) {

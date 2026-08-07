@@ -99,6 +99,10 @@ void addGlobalVector(
         && first.membraneTriangleIds == second.membraneTriangleIds
         && first.constraintSuspensionLineIds
                == second.constraintSuspensionLineIds
+        && first.suspensionSegmentLineIds
+               == second.suspensionSegmentLineIds
+        && first.pilotHarnessAttachmentIds
+               == second.pilotHarnessAttachmentIds
         && first.dihedralTriangleIds == second.dihedralTriangleIds;
 }
 
@@ -200,13 +204,22 @@ StructureFrameMapping::StructureFrameMapping(
       triangles_(std::move(definition.triangles)),
       lines_(std::move(definition.lines)) {
     const fsi::StructureDefinition& topology = structure.definition();
-    if (topology.nodes.size() > std::numeric_limits<std::uint32_t>::max()) {
+    const std::size_t harnessCount = topology.suspension
+        ? topology.suspension->harnessPoints.size() : 0;
+    const std::size_t suspensionLineCount = topology.suspension
+        ? topology.suspension->segments.size() : 0;
+    constexpr std::size_t maximumViewerVertices =
+        std::numeric_limits<std::uint32_t>::max();
+    if (harnessCount > maximumViewerVertices
+        || topology.nodes.size()
+               > maximumViewerVertices - harnessCount) {
         throw std::invalid_argument(
             "Structure frame has too many vertices for the viewer protocol");
     }
-    if (vertexStableIds_.size() != topology.nodes.size()
+    if (vertexStableIds_.size() != topology.nodes.size() + harnessCount
         || triangles_.size() != topology.triangles.size()
-        || lines_.size() != topology.constraints.size()) {
+        || lines_.size()
+               != topology.constraints.size() + suspensionLineCount) {
         throw std::invalid_argument(
             "Structure frame mapping sizes do not match structure topology");
     }
@@ -247,6 +260,15 @@ StructureFrameMapping::StructureFrameMapping(
                 "Structure frame line references an unknown node");
         }
     }
+    for (std::size_t index = topology.constraints.size();
+         index < lines_.size(); ++index) {
+        if (lines_[index].vertex0 >= vertexStableIds_.size()
+            || lines_[index].vertex1 >= vertexStableIds_.size()
+            || lines_[index].vertex0 == lines_[index].vertex1) {
+            throw std::invalid_argument(
+                "Structure frame suspension line has invalid endpoints");
+        }
+    }
 }
 
 std::uint64_t StructureFrameMapping::structureFingerprint() const noexcept {
@@ -281,7 +303,7 @@ StructureFrameMapping makeStructureFrameMapping(
     // transactional oracle for every conversion rule owned by scene_structure
     // without copying those material, mass, or topology rules into the viewer.
     const fsi::SceneStructureAssembly canonical =
-        fsi::assembleSceneStructure(scene);
+        fsi::assembleSceneStructure(scene, {}, assembly.settings);
     if (!canonical.ok()) {
         throw std::invalid_argument(
             "Cannot map a scene that fails structural assembly");
@@ -291,8 +313,14 @@ StructureFrameMapping makeStructureFrameMapping(
             "Scene structure stable-ID mappings do not match the scene");
     }
 
+    const fsi::Structure canonicalStructure(canonical.definition);
+    const fsi::Structure assemblyStructure(assembly.definition);
     if (!sameDefinition(canonical.definition, assembly.definition)
-        || !sameDefinition(assembly.definition, structure.definition())) {
+        || !sameDefinition(assembly.definition, structure.definition())
+        || canonicalStructure.definitionFingerprint()
+               != assemblyStructure.definitionFingerprint()
+        || assemblyStructure.definitionFingerprint()
+               != structure.definitionFingerprint()) {
         throw std::invalid_argument(
             "Scene, assembly, and Structure definitions do not match");
     }
@@ -312,6 +340,10 @@ StructureFrameMapping makeStructureFrameMapping(
         definition.vertexStableIds.end(),
         canonical.mappings.nodeSuspensionJunctionIds.begin(),
         canonical.mappings.nodeSuspensionJunctionIds.end());
+    definition.vertexStableIds.insert(
+        definition.vertexStableIds.end(),
+        canonical.mappings.pilotHarnessAttachmentIds.begin(),
+        canonical.mappings.pilotHarnessAttachmentIds.end());
     definition.triangles.reserve(canonical.mappings.triangleIds.size());
     for (const fsi::StableId id : canonical.mappings.triangleIds) {
         const auto found = trianglesById.find(id);
@@ -325,7 +357,8 @@ StructureFrameMapping makeStructureFrameMapping(
              found->second->positiveSideRegionId});
     }
     definition.lines.reserve(
-        canonical.mappings.constraintSuspensionLineIds.size());
+        canonical.mappings.constraintSuspensionLineIds.size()
+        + canonical.mappings.suspensionSegmentLineIds.size());
     for (const fsi::StableId id :
          canonical.mappings.constraintSuspensionLineIds) {
         const auto found = linesById.find(id);
@@ -335,6 +368,64 @@ StructureFrameMapping makeStructureFrameMapping(
         }
         definition.lines.push_back(
             {id, static_cast<std::uint32_t>(found->second->role)});
+    }
+    if (canonical.definition.suspension) {
+        const fsi::StructureSuspensionDefinition& suspension =
+            *canonical.definition.suspension;
+        if (suspension.segments.size()
+            != canonical.mappings.suspensionSegmentLineIds.size()) {
+            throw std::invalid_argument(
+                "Scene suspension segment mapping is incomplete");
+        }
+        const auto endpointVertex = [&](const auto& endpoint) {
+            if (endpoint.kind
+                == fsi::StructureSuspensionEndpointKind::SurfaceAttachment) {
+                const auto found = std::ranges::find_if(
+                    suspension.attachments, [&](const auto& attachment) {
+                        return attachment.stableId == endpoint.stableId;
+                    });
+                if (found != suspension.attachments.end()) {
+                    return found->node;
+                }
+            } else if (endpoint.kind
+                       == fsi::StructureSuspensionEndpointKind::Junction) {
+                const auto found = std::ranges::find_if(
+                    suspension.junctions, [&](const auto& junction) {
+                        return junction.stableId == endpoint.stableId;
+                    });
+                if (found != suspension.junctions.end()) {
+                    return found->node;
+                }
+            } else if (endpoint.kind
+                       == fsi::StructureSuspensionEndpointKind::PilotHarness) {
+                const std::optional<std::size_t> harness =
+                    canonical.mappings.pilotHarnessIndex(endpoint.stableId);
+                if (harness) {
+                    return canonical.definition.nodes.size() + *harness;
+                }
+            }
+            throw std::invalid_argument(
+                "Scene suspension endpoint mapping is incomplete");
+        };
+        for (std::size_t index = 0; index < suspension.segments.size();
+             ++index) {
+            const fsi::StableId id =
+                canonical.mappings.suspensionSegmentLineIds[index];
+            const auto found = linesById.find(id);
+            if (found == linesById.end()
+                || suspension.segments[index].stableId != id) {
+                throw std::invalid_argument(
+                    "Scene suspension mapping references an unknown line");
+            }
+            const std::size_t first = endpointVertex(
+                suspension.segments[index].from);
+            const std::size_t second = endpointVertex(
+                suspension.segments[index].to);
+            definition.lines.push_back(
+                {id, static_cast<std::uint32_t>(found->second->role),
+                 static_cast<std::uint32_t>(first),
+                 static_cast<std::uint32_t>(second)});
+        }
     }
     return StructureFrameMapping(structure, std::move(definition));
 }
@@ -351,12 +442,26 @@ DiagnosticFrame buildStructureFrame(
     const fsi::StructureDefinition& definition = structure.definition();
     const fsi::StructureCheckpoint checkpoint = structure.checkpoint();
     const fsi::StructureDiagnostics diagnostics = structure.diagnostics();
+    const std::optional<fsi::StructureSuspensionState> suspensionState =
+        structure.suspensionState();
+    const std::size_t harnessCount = suspensionState
+        ? suspensionState->harnessPositionsMeters.size() : 0;
+    const std::size_t suspensionLineCount = suspensionState
+        ? suspensionState->segments.size() : 0;
     if (checkpoint.nodes.size() != definition.nodes.size()
         || checkpoint.pendingExternalForcesNewtons.size()
                != definition.nodes.size()
-        || mapping.vertexStableIds().size() != definition.nodes.size()
+        || mapping.vertexStableIds().size()
+               != definition.nodes.size() + harnessCount
         || mapping.triangles().size() != definition.triangles.size()
-        || mapping.lines().size() != definition.constraints.size()) {
+        || mapping.lines().size()
+               != definition.constraints.size() + suspensionLineCount
+        || definition.suspension.has_value()
+               != suspensionState.has_value()
+        || (definition.suspension
+            && (definition.suspension->harnessPoints.size() != harnessCount
+                || definition.suspension->segments.size()
+                       != suspensionLineCount))) {
         throw std::logic_error(
             "Structure frame state and topology are inconsistent");
     }
@@ -371,11 +476,19 @@ DiagnosticFrame buildStructureFrame(
     frame.couplingResiduals = context.couplingResiduals;
     frame.conservation = context.conservation;
 
-    frame.vertices.reserve(definition.nodes.size());
+    frame.vertices.reserve(mapping.vertexStableIds().size());
     for (std::size_t index = 0; index < checkpoint.nodes.size(); ++index) {
         frame.vertices.push_back(
             {mapping.vertexStableIds()[index],
              toViewer(checkpoint.nodes[index].positionMeters)});
+    }
+    if (suspensionState) {
+        for (std::size_t index = 0; index < harnessCount; ++index) {
+            frame.vertices.push_back(
+                {mapping.vertexStableIds()[definition.nodes.size() + index],
+                 toViewer(
+                     suspensionState->harnessPositionsMeters[index])});
+        }
     }
 
     frame.triangles.reserve(definition.triangles.size());
@@ -394,9 +507,9 @@ DiagnosticFrame buildStructureFrame(
 
     std::vector<double> lineLengths;
     std::vector<double> lineViolations;
-    frame.lines.reserve(definition.constraints.size());
-    lineLengths.reserve(definition.constraints.size());
-    lineViolations.reserve(definition.constraints.size());
+    frame.lines.reserve(mapping.lines().size());
+    lineLengths.reserve(mapping.lines().size());
+    lineViolations.reserve(mapping.lines().size());
     for (std::size_t index = 0; index < definition.constraints.size();
          ++index) {
         const fsi::StructureConstraintDefinition& constraint =
@@ -414,6 +527,32 @@ DiagnosticFrame buildStructureFrame(
         lineViolations.push_back(
             constraintViolation(constraint, currentLength));
     }
+    if (suspensionState) {
+        for (std::size_t index = 0; index < suspensionLineCount; ++index) {
+            const std::size_t mappingIndex =
+                definition.constraints.size() + index;
+            const StructureFrameLineMapping& ids =
+                mapping.lines()[mappingIndex];
+            const fsi::StructureSuspensionSegmentState& segment =
+                suspensionState->segments[index];
+            if (segment.stableId != ids.stableId) {
+                throw std::logic_error(
+                    "Structure suspension state and frame mapping disagree");
+            }
+            frame.lines.push_back(
+                {ids.stableId, ids.vertex0, ids.vertex1, ids.role});
+            const double currentLength = length(subtract(
+                {frame.vertices[ids.vertex1].positionMetres.x,
+                 frame.vertices[ids.vertex1].positionMetres.y,
+                 frame.vertices[ids.vertex1].positionMetres.z},
+                {frame.vertices[ids.vertex0].positionMetres.x,
+                 frame.vertices[ids.vertex0].positionMetres.y,
+                 frame.vertices[ids.vertex0].positionMetres.z}));
+            lineLengths.push_back(currentLength);
+            lineViolations.push_back(std::max(
+                0.0, currentLength - segment.commandedRestLengthMeters));
+        }
+    }
 
     std::vector<Vec3d> velocities;
     std::vector<Vec3d> pendingForces;
@@ -424,6 +563,13 @@ DiagnosticFrame buildStructureFrame(
             toViewer(checkpoint.nodes[index].velocityMetersPerSecond));
         pendingForces.push_back(
             toViewer(checkpoint.pendingExternalForcesNewtons[index]));
+    }
+    if (suspensionState) {
+        for (std::size_t index = 0; index < harnessCount; ++index) {
+            velocities.push_back(toViewer(
+                suspensionState->harnessVelocitiesMetersPerSecond[index]));
+            pendingForces.push_back({});
+        }
     }
 
     frame.scalarFields.push_back(
@@ -444,6 +590,10 @@ DiagnosticFrame buildStructureFrame(
                     diagnostics.maximumAbsoluteMembraneStrain);
     addGlobalScalar(frame, "structure.maximum_membrane_residual", "1",
                     diagnostics.maximumMembraneResidual);
+    addGlobalScalar(frame, "structure.maximum_contact_penetration", "m",
+                    diagnostics.maximumContactPenetrationMeters);
+    addGlobalScalar(frame, "structure.maximum_suspension_residual", "m",
+                    diagnostics.maximumSuspensionResidualMeters);
 
     frame.vectorFields.push_back(
         {"structure.velocity", "m/s", FieldAssociation::Vertex,

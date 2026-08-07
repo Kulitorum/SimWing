@@ -31,6 +31,7 @@
 #include <OSD_Parallel.hxx>
 #include <PCDM_StoreStatus.hxx>
 #include <Poly_Triangulation.hxx>
+#include <Poly_PolygonOnTriangulation.hxx>
 #include <Precision.hxx>
 #include <Quantity_Color.hxx>
 #include <STEPCAFControl_Writer.hxx>
@@ -76,6 +77,7 @@
 #include <list>
 #include <map>
 #include <numbers>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -3806,6 +3808,8 @@ public:
 
         std::size_t triangleOrdinal = 0;
         std::size_t sheetOrdinal = 0;
+        std::map<std::array<StableId, 3>,
+                 std::pair<StableId, StableId>> directedSheetEdges;
         const auto addTriangle = [&](std::array<gp_Pnt, 3> points,
                                       gp_Vec preferredWarp,
                                       StableId negativeRegion,
@@ -3831,18 +3835,51 @@ public:
                 addError(message.str());
                 return;
             }
+            std::array<StableId, 3> ids{
+                vertexId(points[0]),
+                vertexId(points[1]),
+                vertexId(points[2])};
+            std::optional<bool> reverseWinding;
+            for (std::size_t corner = 0; corner < 3; ++corner) {
+                const StableId from = ids[corner];
+                const StableId to = ids[(corner + 1) % 3];
+                const std::array<StableId, 3> key{
+                    sheetId, std::min(from, to), std::max(from, to)};
+                const auto found = directedSheetEdges.find(key);
+                if (found == directedSheetEdges.end()) {
+                    continue;
+                }
+                const bool needsReverse = found->second
+                    == std::pair{from, to};
+                if (reverseWinding && *reverseWinding != needsReverse) {
+                    addError("Captured sheet " + std::to_string(sheetId)
+                             + " has contradictory triangle winding");
+                    return;
+                }
+                reverseWinding = needsReverse;
+            }
+            if (reverseWinding.value_or(false)) {
+                std::swap(points[1], points[2]);
+                std::swap(ids[1], ids[2]);
+            }
             std::array<Vec2, 3> chart = chartFor(points, preferredWarp);
             scene.triangles.push_back(
                 {stableId(4, triangleOrdinal++),
-                 {vertexId(points[0]),
-                  vertexId(points[1]),
-                  vertexId(points[2])},
+                 ids,
                  chart,
                   negativeRegion,
                   positiveRegion,
                   fabricMaterialIds.at(role),
                   sheetId,
                   role});
+            for (std::size_t corner = 0; corner < 3; ++corner) {
+                const StableId from = ids[corner];
+                const StableId to = ids[(corner + 1) % 3];
+                const std::array<StableId, 3> key{
+                    sheetId, std::min(from, to), std::max(from, to)};
+                directedSheetEdges.try_emplace(key,
+                                               std::pair{from, to});
+            }
         };
 
         std::size_t openingOrdinal = 0;
@@ -4213,17 +4250,26 @@ public:
                     std::vector<StableId> loop;
                     for (BRepTools_WireExplorer edgeExplorer(wire);
                          edgeExplorer.More(); edgeExplorer.Next()) {
-                        BRepAdaptor_Curve curve(edgeExplorer.Current());
-                        GCPnts_QuasiUniformDeflection sampler(curve, 1.0);
-                        if (!sampler.IsDone()) {
-                            addError("Could not sample a crossport in "
+                        const TopoDS_Edge edge = edgeExplorer.Current();
+                        const occ::handle<Poly_PolygonOnTriangulation>
+                            polygon = BRep_Tool::PolygonOnTriangulation(
+                                edge, triangulation, location);
+                        if (polygon.IsNull() || polygon->NbNodes() < 2) {
+                            addError("Could not recover a meshed crossport boundary in "
                                      + label);
                             loop.clear();
                             break;
                         }
-                        for (int point = 1;
-                             point < sampler.NbPoints(); ++point) {
-                            const StableId id = vertexId(sampler.Value(point));
+                        const bool reversed =
+                            edge.Orientation() == TopAbs_REVERSED;
+                        for (int point = 1; point <= polygon->NbNodes();
+                             ++point) {
+                            const int polygonIndex = reversed
+                                ? polygon->NbNodes() - point + 1 : point;
+                            const int node = polygon->Node(polygonIndex);
+                            const StableId id = vertexId(
+                                triangulation->Node(node).Transformed(
+                                    location.Transformation()));
                             if (loop.empty() || loop.back() != id) {
                                 loop.push_back(id);
                             }
@@ -4399,6 +4445,18 @@ public:
                                  + "' produced a degenerate zipper triangle");
                         return;
                     }
+                    // Independently sampled boundaries can leave a vanishing
+                    // final wedge next to a shared profile tip. It carries no
+                    // meaningful fabric area, while mass lumping would give
+                    // its vertices extreme inverse masses and an unusable
+                    // membrane system. Treat it like the coincident-tip
+                    // zero-area candidate documented above.
+                    constexpr double minimumTipSliverAreaSquareMillimetres =
+                        0.05;
+                    if (0.5 * normal.Magnitude()
+                        < minimumTipSliverAreaSquareMillimetres) {
+                        return;
+                    }
                     const gp_Vec warp =
                         fabricSettings.at(role)->warpAxis
                                 == lep::SimWingMaterialAxis::Primary
@@ -4449,6 +4507,11 @@ public:
         // Lines are added after surface vertices so endpoints can be matched
         // without moving the authored line graph. Non-matches remain explicit
         // SuspensionJunction entities.
+        std::set<StableId> fabricVertexIds;
+        for (const Triangle &triangle : scene.triangles) {
+            fabricVertexIds.insert(triangle.vertexIds.begin(),
+                                   triangle.vertexIds.end());
+        }
         const StableId pilotId = stableId(7, 0);
         scene.pilots.push_back(
             {pilotId,
@@ -4508,6 +4571,9 @@ public:
             double surfaceDistance =
                 settings.surfaceEndpointMatchToleranceMeters;
             for (const Vertex &vertex : scene.vertices) {
+                if (!fabricVertexIds.contains(vertex.id)) {
+                    continue;
+                }
                 const double distance = std::hypot(
                     metres.x - vertex.positionMeters.x,
                     metres.y - vertex.positionMeters.y,
