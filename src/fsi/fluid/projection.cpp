@@ -48,10 +48,13 @@ void validateSettings(const ProjectionSettings& settings) {
 
 } // namespace
 
-ProjectionDiagnostics projectVelocity(
+namespace {
+
+ProjectionDiagnostics projectVelocityImpl(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& predictedVelocityMetersPerSecond,
     CellScalarField& pressurePascals,
+    const SharpPressureJumpField* pressureJumps,
     const ProjectionSettings& settings) {
     validateSettings(settings);
     if (!predictedVelocityMetersPerSecond.matches(grid)
@@ -62,8 +65,14 @@ ProjectionDiagnostics projectVelocity(
         || !isFinite(pressurePascals)) {
         throw std::invalid_argument("projection fields must contain finite values");
     }
+    if (pressureJumps != nullptr && !pressureJumps->matches(grid)) {
+        throw std::invalid_argument(
+            "projection pressure-jump field does not match its grid");
+    }
 
     ProjectionDiagnostics diagnostics;
+    diagnostics.pressureJumpFaceCount = pressureJumps == nullptr
+        ? 0 : pressureJumps->faceCount();
     CellScalarField divergence(grid);
     computeDivergence(grid, predictedVelocityMetersPerSecond, divergence);
     diagnostics.compatibilityDivergencePerSecond = mean(divergence);
@@ -83,6 +92,18 @@ ProjectionDiagnostics projectVelocity(
         rightHandSide.values()[index] =
             rightHandSideScale * divergence.values()[index]
             - compatibilityRightHandSide;
+    }
+    if (pressureJumps != nullptr) {
+        CellScalarField pressureJumpSource(grid);
+        computePressureJumpSource(
+            grid, *pressureJumps, pressureJumpSource);
+        diagnostics.pressureJumpSourceCompatibilityPascalsPerSquareMeter =
+            mean(pressureJumpSource);
+        for (std::size_t index = 0; index < grid.cellCount(); ++index) {
+            rightHandSide.values()[index] -=
+                pressureJumpSource.values()[index]
+                - diagnostics.pressureJumpSourceCompatibilityPascalsPerSquareMeter;
+        }
     }
 
     CellScalarField candidatePressure = pressurePascals;
@@ -176,7 +197,12 @@ ProjectionDiagnostics projectVelocity(
     }
 
     MacVelocityField pressureGradient(grid);
-    computePressureGradient(grid, candidatePressure, pressureGradient);
+    if (pressureJumps == nullptr) {
+        computePressureGradient(grid, candidatePressure, pressureGradient);
+    } else {
+        computePressureGradientWithJumps(
+            grid, candidatePressure, *pressureJumps, pressureGradient);
+    }
     MacVelocityField candidateVelocity = predictedVelocityMetersPerSecond;
     const double correctionScale =
         settings.timeStepSeconds / settings.densityKgPerCubicMeter;
@@ -200,6 +226,37 @@ ProjectionDiagnostics projectVelocity(
     predictedVelocityMetersPerSecond = std::move(candidateVelocity);
     pressurePascals = std::move(candidatePressure);
     return diagnostics;
+}
+
+} // namespace
+
+ProjectionDiagnostics projectVelocity(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& predictedVelocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const ProjectionSettings& settings) {
+    return projectVelocityImpl(
+        grid, predictedVelocityMetersPerSecond, pressurePascals, nullptr,
+        settings);
+}
+
+ProjectionDiagnostics projectVelocityWithPressureJumps(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& predictedVelocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField& pressureJumps,
+    const ProjectionSettings& settings) {
+    if (!pressureJumps.matches(grid)) {
+        throw std::invalid_argument(
+            "projection pressure-jump field does not match its grid");
+    }
+    if (pressureJumps.empty()) {
+        return projectVelocity(
+            grid, predictedVelocityMetersPerSecond, pressurePascals, settings);
+    }
+    return projectVelocityImpl(
+        grid, predictedVelocityMetersPerSecond, pressurePascals,
+        &pressureJumps, settings);
 }
 
 } // namespace simwing::fsi::fluid

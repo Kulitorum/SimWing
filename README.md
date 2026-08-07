@@ -34,13 +34,16 @@ the viewer by default and streams accepted XPBD steps through a replayable
 growing trace. The first Qt-free fluid kernel adds a periodic staggered-grid
 pressure projection with deterministic rollback behavior, exact discrete
 gradient/divergence pairing, Taylor-Green preservation, and manufactured
-second-order pressure convergence. A real 3.28 fixture also crosses export,
-structural assembly, one coupled pilot/suspension step, checkpoint replay, and
-completed trace using synthetic physical settings. Export still requires
-explicit physical material/pilot settings; manufacturing-pattern UVs, exact
-authored attachment vertices, structural seam assembly, and the
-moving-interface/AMR CFD work remain open. These worker cases validate the
-pipeline; they are not yet wing CFD or aerodynamic truth.
+second-order pressure convergence. A validated single-crossing sharp-interface
+field now preserves a prescribed two-sided static pressure jump without
+smearing or spurious flow, including across the periodic domain boundary. A
+real 3.28 fixture also crosses export, structural assembly, one coupled
+pilot/suspension step, checkpoint replay, and completed trace using synthetic
+physical settings. Export still requires explicit physical material/pilot
+settings; manufacturing-pattern UVs, exact authored attachment vertices,
+structural seam assembly, and the moving/multiple-interface and AMR CFD work
+remain open. These worker cases validate the pipeline; they are not yet wing
+CFD or aerodynamic truth.
 The inherited Playground is not used by these targets.
 
 ## Inherited LEparagliding Studio baseline

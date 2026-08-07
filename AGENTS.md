@@ -165,8 +165,10 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
 - `simwing_scene_structure`: deterministic scene-v2 membrane, per-sheet
   bending, junction, and cable assembly into `simwing_structure`.
 - `simwing_fluid`: Qt-free periodic staggered-grid field operators and
-  transactional pressure projection verification kernel. It has no Playground
-  dependency and is not yet an immersed-interface or whole-wing flow solver.
+  transactional pressure projection verification kernel, including a
+  validated single-crossing sharp pressure-jump field. It has no Playground
+  dependency and is not yet a moving/multiple-interface or whole-wing flow
+  solver.
 - `simwing_viewer_protocol`: Qt-free immutable diagnostic-frame and trace
   protocol shared by future workers and the standalone viewer.
 - `playground_contact`: Qt-free bounded Playground cloth-contact features,
@@ -493,6 +495,10 @@ makes this a certified aerodynamic solver.
 - `src/fsi/fluid/projection.{h,cpp}` owns the deterministic zero-mean periodic
   pressure solve. It commits pressure and velocity together only on
   convergence; failure leaves both inputs bit-identical for later step retry.
+- `src/fsi/fluid/interface_jump.{h,cpp}` owns canonical grid-face crossings,
+  signed two-region pressure jumps, the jump-corrected gradient, and its paired
+  Poisson source. It rejects multiple crossings on one face until the folded
+  interface representation exists.
 - New numerical targets must not link the inherited `playground_*` libraries.
   Cross the scene/structure/viewer boundaries through explicit adapters and
   versioned data only.
@@ -519,7 +525,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 39 configured tests on Windows. The Fortran-reference test is
+There are 40 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 
@@ -535,7 +541,7 @@ paths that release CI deliberately excludes from its offscreen test command.
 | Playground body/pressure/cells/material | `playground_pressure_solve`, `playground_cells`, `playground_metrics`, `playground_material`, `softwing_material`, and the deterministic bench guards below |
 | Playground contact | `playground_contact`, `playground_contact_integration`, plus a relevant bench/GUI scenario |
 | SimWing scene/structure/viewer foundations | `simwing_scene`, `simwing_model_scene_export`, `simwing_model_scene_real_export`, `simwing_structure`, `simwing_scene_structure`, `simwing_viewer_protocol`, `simwing_structure_frame`, plus `softwing_material`/`softwing_cell_volume` when core primitives change and `softwing_suspension_checkpoint` for payload/suspension state |
-| SimWing fluid grid/projection | `simwing_fluid_projection`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing projection energy, transactional failure, deterministic replay, Taylor-Green invariance, and manufactured second-order pressure convergence |
+| SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing no-jump projection energy, transactional failure, deterministic replay, Taylor-Green invariance, manufactured second-order pressure convergence, stable two-region jump orientation, and static sharp-jump balance without spurious flow |
 | packaging/resources/CMake | configure from clean metadata, build Release, and run the full suite |
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with

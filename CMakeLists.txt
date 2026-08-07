@@ -272,6 +272,8 @@ target_link_libraries(simwing_canonical_case PUBLIC
 add_library(simwing_fluid STATIC
     src/fsi/fluid/grid.cpp
     src/fsi/fluid/grid.h
+    src/fsi/fluid/interface_jump.cpp
+    src/fsi/fluid/interface_jump.h
     src/fsi/fluid/projection.cpp
     src/fsi/fluid/projection.h
 )
@@ -569,6 +571,11 @@ add_executable(simwing-fluid-projection-test
 )
 target_link_libraries(simwing-fluid-projection-test PRIVATE simwing_fluid)
 
+add_executable(simwing-fluid-interface-jump-test
+    tests/simwing_fluid_interface_jump_test.cpp
+)
+target_link_libraries(simwing-fluid-interface-jump-test PRIVATE simwing_fluid)
+
 add_executable(playground-cells-test
     tests/playground_cells_test.cpp
 )
@@ -730,6 +737,7 @@ set_target_properties(
     simwing-structure-frame-test
     simwing-fsi-worker-test
     simwing-fluid-projection-test
+    simwing-fluid-interface-jump-test
     simwing-viewer
     simwing-fsi
     playground-cells-test
@@ -768,6 +776,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-structure-frame-test
         simwing-fsi-worker-test
         simwing-fluid-projection-test
+        simwing-fluid-interface-jump-test
         simwing-viewer
         simwing-fsi
         playground-cells-test
@@ -894,6 +903,8 @@ add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
 add_test(NAME simwing_fsi_worker COMMAND simwing-fsi-worker-test)
 add_test(NAME simwing_fluid_projection COMMAND simwing-fluid-projection-test)
+add_test(NAME simwing_fluid_interface_jump
+    COMMAND simwing-fluid-interface-jump-test)
 add_test(NAME simwing_fsi_help COMMAND simwing-fsi --help)
 add_test(NAME simwing_viewer_help COMMAND simwing-viewer --help)
 if(NOT WIN32)

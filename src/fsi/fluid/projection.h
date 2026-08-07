@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fluid/grid.h"
+#include "fluid/interface_jump.h"
 
 #include <cstddef>
 
@@ -27,6 +28,8 @@ struct ProjectionDiagnostics {
     double kineticEnergyBeforeJoules = 0.0;
     double kineticEnergyAfterJoules = 0.0;
     double pressureMeanPascals = 0.0;
+    std::size_t pressureJumpFaceCount = 0;
+    double pressureJumpSourceCompatibilityPascalsPerSquareMeter = 0.0;
 
     bool operator==(const ProjectionDiagnostics&) const = default;
 };
@@ -39,6 +42,16 @@ struct ProjectionDiagnostics {
     const PeriodicCartesianGrid& grid,
     MacVelocityField& predictedVelocityMetersPerSecond,
     CellScalarField& pressurePascals,
+    const ProjectionSettings& settings = {});
+
+// Applies the same transactional projection with a prescribed sharp,
+// two-sided pressure discontinuity. Empty jump fields take the exact no-jump
+// path. The current jump representation permits one crossing per grid face.
+[[nodiscard]] ProjectionDiagnostics projectVelocityWithPressureJumps(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& predictedVelocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField& pressureJumps,
     const ProjectionSettings& settings = {});
 
 } // namespace simwing::fsi::fluid

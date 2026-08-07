@@ -442,9 +442,13 @@ its finite-volume gradient and divergence are a tested adjoint pair, its
 zero-mean conjugate-gradient pressure projection commits transactionally, and
 the focused regression covers Taylor-Green invariance, a discretely
 manufactured exact projection, observed second-order pressure convergence, and
-periodic momentum/kinetic-energy budgets. This is deliberately not presented
-as an interface, boundary-condition, advection, turbulence, or wing-flow
-solver.
+periodic momentum/kinetic-energy budgets. A canonical single-crossing
+grid-face field now retains stable surface IDs, two distinct fluid-region IDs,
+and the signed pressure discontinuity. Its paired sharp gradient and Poisson
+source preserve a static pressurized slab without smoothing the pressure or
+creating flow. This is deliberately not presented as arbitrary surface
+reconstruction, a moving or folded/multiple-crossing interface, a physical
+boundary-condition, advection, turbulence, or wing-flow solver.
 
 ### Phase 0 — Establish the remake boundary
 
@@ -490,14 +494,20 @@ cases meet their declared tolerances.
 Status: in progress. `simwing_fluid` currently owns only the uniform periodic
 verification grid and pressure projection. On solve failure it preserves the
 input pressure and velocity bit-for-bit so future macro-step retry can be
-transactional. The regression budgets are: gradient/divergence adjoint error
-at or below `2e-14` in the canonical integral, Taylor-Green maximum divergence
-below `2e-14 1/s` with a bit-identical zero correction, discretely manufactured
-post-projection L2 divergence below `2e-12 1/s`, pressure convergence ratios in
-`[3.9, 4.2]` for two successive resolution doublings, no kinetic-energy
-increase, and periodic component-momentum sums preserved within `5e-14` in the
-mixed-mode case. These tolerances apply to the serial CPU verification backend,
-not yet to a future parallel reduction contract.
+transactional. It also owns a canonical single-crossing sharp pressure-jump
+field with explicit surface and two-sided region identity; duplicate crossings
+on one grid face are rejected rather than merged. The regression budgets are:
+gradient/divergence adjoint error at or below `2e-14` in the canonical
+integral, Taylor-Green maximum divergence below `2e-14 1/s` with a
+bit-identical zero correction, discretely manufactured post-projection L2
+divergence below `2e-12 1/s`, pressure convergence ratios in `[3.9, 4.2]` for
+two successive resolution doublings, no kinetic-energy increase, and periodic
+component-momentum sums preserved within `5e-14` in the mixed-mode case. The
+static 250 Pa slab must retain its two pressure levels within `2e-12 Pa` and
+keep spurious velocity below `2e-13 m/s`; a jump placed on periodic face zero
+has separate `1e-12 Pa` and `1e-13 m/s` budgets. These tolerances apply to the
+serial CPU verification backend, not yet to a future parallel reduction
+contract.
 
 Work:
 
