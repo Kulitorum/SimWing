@@ -435,8 +435,16 @@ composite transaction. The real 3.28 regression now reaches an accepted coupled
 structural step and replayable diagnostic trace with synthetic physical export
 settings. Manufacturing flat-pattern UVs, exact authored line-attachment
 vertices, authored paired seams and stitch mechanics, live bidirectional
-control, an authoritative settings source/engine CLI, and the CFD kernel remain
-open work.
+control, an authoritative settings source/engine CLI, and the moving-interface,
+transfer, AMR, and full CFD evolution kernels remain open work. Phase 2 has
+started with a dependency-free uniform periodic MAC-grid verification kernel:
+its finite-volume gradient and divergence are a tested adjoint pair, its
+zero-mean conjugate-gradient pressure projection commits transactionally, and
+the focused regression covers Taylor-Green invariance, a discretely
+manufactured exact projection, observed second-order pressure convergence, and
+periodic momentum/kinetic-energy budgets. This is deliberately not presented
+as an interface, boundary-condition, advection, turbulence, or wing-flow
+solver.
 
 ### Phase 0 — Establish the remake boundary
 
@@ -478,6 +486,18 @@ Playground, aerodynamic, pressure, or v1-format dependency; analytic structural
 cases meet their declared tolerances.
 
 ### Phase 2 — CFD verification kernel
+
+Status: in progress. `simwing_fluid` currently owns only the uniform periodic
+verification grid and pressure projection. On solve failure it preserves the
+input pressure and velocity bit-for-bit so future macro-step retry can be
+transactional. The regression budgets are: gradient/divergence adjoint error
+at or below `2e-14` in the canonical integral, Taylor-Green maximum divergence
+below `2e-14 1/s` with a bit-identical zero correction, discretely manufactured
+post-projection L2 divergence below `2e-12 1/s`, pressure convergence ratios in
+`[3.9, 4.2]` for two successive resolution doublings, no kinetic-energy
+increase, and periodic component-momentum sums preserved within `5e-14` in the
+mixed-mode case. These tolerances apply to the serial CPU verification backend,
+not yet to a future parallel reduction contract.
 
 Work:
 

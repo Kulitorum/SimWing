@@ -269,6 +269,16 @@ target_link_libraries(simwing_canonical_case PUBLIC
     simwing_structure_frame
 )
 
+add_library(simwing_fluid STATIC
+    src/fsi/fluid/grid.cpp
+    src/fsi/fluid/grid.h
+    src/fsi/fluid/projection.cpp
+    src/fsi/fluid/projection.h
+)
+target_include_directories(simwing_fluid PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+
 # The Playground's wing: mesh parsing, refinement, SoftBody assembly and the
 # per-frame step, with no widget attached. A library rather than GUI sources
 # so the headless solver benchmark drives the identical simulation.
@@ -554,6 +564,11 @@ add_executable(simwing-fsi-worker-test
 target_link_libraries(simwing-fsi-worker-test
     PRIVATE simwing_canonical_case)
 
+add_executable(simwing-fluid-projection-test
+    tests/simwing_fluid_projection_test.cpp
+)
+target_link_libraries(simwing-fluid-projection-test PRIVATE simwing_fluid)
+
 add_executable(playground-cells-test
     tests/playground_cells_test.cpp
 )
@@ -714,6 +729,7 @@ set_target_properties(
     simwing-viewer-protocol-test
     simwing-structure-frame-test
     simwing-fsi-worker-test
+    simwing-fluid-projection-test
     simwing-viewer
     simwing-fsi
     playground-cells-test
@@ -751,6 +767,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-viewer-protocol-test
         simwing-structure-frame-test
         simwing-fsi-worker-test
+        simwing-fluid-projection-test
         simwing-viewer
         simwing-fsi
         playground-cells-test
@@ -876,6 +893,7 @@ add_test(NAME simwing_scene_structure COMMAND simwing-scene-structure-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
 add_test(NAME simwing_fsi_worker COMMAND simwing-fsi-worker-test)
+add_test(NAME simwing_fluid_projection COMMAND simwing-fluid-projection-test)
 add_test(NAME simwing_fsi_help COMMAND simwing-fsi --help)
 add_test(NAME simwing_viewer_help COMMAND simwing-viewer --help)
 if(NOT WIN32)
