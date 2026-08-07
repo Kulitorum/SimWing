@@ -408,8 +408,9 @@ tools/
     simwing_fsi_bench.cpp   canonical deterministic/throughput cases
 ```
 
-Likely CMake targets are `simwing_scene`, `simwing_structure`, `simwing_fluid`,
-`simwing_coupling`, `simwing-fsi`, `simwing_viewer_protocol`,
+Likely CMake targets are `simwing_scene`, `simwing_structure`,
+`simwing_transfer`, `simwing_fluid`, `simwing_coupling`, `simwing-fsi`,
+`simwing_viewer_protocol`,
 `simwing-viewer`, and focused test executables. Keep Qt out of the numerical
 targets; only the viewer/UI targets link it. Backend interfaces must not be so
 abstract that they hide grid layout or force extra full-field copies.
@@ -449,6 +450,18 @@ source preserve a static pressurized slab without smoothing the pressure or
 creating flow. This is deliberately not presented as arbitrary surface
 reconstruction, a moving or folded/multiple-crossing interface, a physical
 boundary-condition, advection, turbulence, or wing-flow solver.
+
+The first structure-side conservative-transfer primitive is also present. A
+canonical stable-ID surface is fingerprint-bound to one immutable structural
+definition and rejects reversed or foreign topology. Uniform current-triangle
+traction is integrated at the centroid and distributed in equal barycentric
+shares, which exactly preserves its resultant, moment, and work against linear
+triangle kinematics. Surface and nodal ledgers are accumulated independently,
+and immutable results are applied additively through the real Structure nodal
+load path only after all bindings validate. This does not yet implement the
+paired Cartesian-grid traction sampler, nonuniform triangle quadrature, or a
+time-integrated multirate impulse exchange or fluid/structure coupling
+iteration.
 
 ### Phase 0 — Establish the remake boundary
 
@@ -507,7 +520,12 @@ static 250 Pa slab must retain its two pressure levels within `2e-12 Pa` and
 keep spurious velocity below `2e-13 m/s`; a jump placed on periodic face zero
 has separate `1e-12 Pa` and `1e-13 m/s` budgets. These tolerances apply to the
 serial CPU verification backend, not yet to a future parallel reduction
-contract.
+contract. The uniform-traction transfer canonical uses a `6 m^2` rectangle with
+analytic force `[12, -18, 30] N` and moment `[12, -57, -39] N*m`; force,
+moment, translation-power, and rotation-power residual budgets are `2e-14 N`,
+`3e-14 N*m`, `1e-14 W`, and `2e-14 W`, respectively. It also verifies cyclic
+topology canonicalization, bit-identical replay, foreign-result rejection
+before mutation, and the resulting velocity through an accepted XPBD step.
 
 Work:
 
