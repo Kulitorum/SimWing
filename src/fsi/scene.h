@@ -99,6 +99,8 @@ enum class SurfaceRole : std::uint8_t {
 struct Triangle {
     StableId id = invalidStableId;
     std::array<StableId, 3> vertexIds{};
+    // Undeformed material-chart coordinates in metres. Their signed area is
+    // the authoritative fabric area used for mass and membrane assembly.
     std::array<Vec2, 3> materialCoordinates{};
     StableId negativeSideRegionId = invalidStableId;
     StableId positiveSideRegionId = invalidStableId;

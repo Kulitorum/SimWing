@@ -36,6 +36,7 @@ if(WIN32 AND "${CMAKE_PREFIX_PATH}" STREQUAL "")
 endif()
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets Xml)
+find_package(OpenGL REQUIRED)
 
 # Open CASCADE Technology is the authoritative 3D kernel for model creation,
 # STEP serialization, tessellation, and viewport rendering. The Windows
@@ -212,12 +213,36 @@ target_include_directories(simwing_structure PUBLIC
 )
 target_link_libraries(simwing_structure PUBLIC softwing_core)
 
+add_library(simwing_scene_structure STATIC
+    src/fsi/scene_structure.cpp
+    src/fsi/scene_structure.h
+)
+target_include_directories(simwing_scene_structure PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_scene_structure PUBLIC
+    simwing_scene
+    simwing_structure
+)
+
 add_library(simwing_viewer_protocol STATIC
     src/viewer/viewer_protocol.cpp
     src/viewer/viewer_protocol.h
 )
 target_include_directories(simwing_viewer_protocol PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/viewer"
+)
+
+add_library(simwing_structure_frame STATIC
+    src/viewer/structure_frame.cpp
+    src/viewer/structure_frame.h
+)
+target_include_directories(simwing_structure_frame PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/viewer"
+)
+target_link_libraries(simwing_structure_frame PUBLIC
+    simwing_structure
+    simwing_viewer_protocol
 )
 
 # The Playground's wing: mesh parsing, refinement, SoftBody assembly and the
@@ -454,11 +479,23 @@ add_executable(simwing-structure-test
 )
 target_link_libraries(simwing-structure-test PRIVATE simwing_structure)
 
+add_executable(simwing-scene-structure-test
+    tests/simwing_scene_structure_test.cpp
+)
+target_link_libraries(simwing-scene-structure-test
+    PRIVATE simwing_scene_structure)
+
 add_executable(simwing-viewer-protocol-test
     tests/simwing_viewer_protocol_test.cpp
 )
 target_link_libraries(simwing-viewer-protocol-test
     PRIVATE simwing_viewer_protocol)
+
+add_executable(simwing-structure-frame-test
+    tests/simwing_structure_frame_test.cpp
+)
+target_link_libraries(simwing-structure-frame-test
+    PRIVATE simwing_structure_frame)
 
 add_executable(playground-cells-test
     tests/playground_cells_test.cpp
@@ -484,6 +521,25 @@ add_executable(flatparts-export-test
     tests/flatparts_export_test.cpp
 )
 target_link_libraries(flatparts-export-test PRIVATE flatparts Qt6::Gui)
+
+qt_add_executable(simwing-viewer
+    tools/simwing_viewer_main.cpp
+    src/viewer/viewer_window.cpp
+    src/viewer/viewer_window.h
+)
+target_include_directories(simwing-viewer PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/viewer"
+)
+target_link_libraries(simwing-viewer PRIVATE
+    simwing_viewer_protocol
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
+    Qt6::OpenGL
+    Qt6::OpenGLWidgets
+    OpenGL::GL
+)
 
 qt_add_executable(LEparagliding WIN32
     src/gui/airfoil_file.cpp
@@ -585,6 +641,12 @@ set_target_properties(
     playground-cell-air-test
     softwing-material-test
     softwing-cell-volume-test
+    simwing-scene-test
+    simwing-structure-test
+    simwing-scene-structure-test
+    simwing-viewer-protocol-test
+    simwing-structure-frame-test
+    simwing-viewer
     playground-cells-test
     playground-material-test
     playground-contact-test
@@ -611,6 +673,12 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         playground-cell-air-test
         softwing-material-test
         softwing-cell-volume-test
+        simwing-scene-test
+        simwing-structure-test
+        simwing-scene-structure-test
+        simwing-viewer-protocol-test
+        simwing-structure-frame-test
+        simwing-viewer
         playground-cells-test
         playground-material-test
         playground-contact-test
@@ -642,13 +710,15 @@ if(WIN32)
         NO_CACHE
     )
     if(WINDEPLOYQT_EXECUTABLE)
-        add_custom_command(TARGET LEparagliding POST_BUILD
-            COMMAND "${WINDEPLOYQT_EXECUTABLE}"
-                --no-translations
-                --no-system-d3d-compiler
-                "$<TARGET_FILE:LEparagliding>"
-            COMMENT "Deploying Qt runtime"
-        )
+        foreach(qt_runtime_target LEparagliding simwing-viewer)
+            add_custom_command(TARGET ${qt_runtime_target} POST_BUILD
+                COMMAND "${WINDEPLOYQT_EXECUTABLE}"
+                    --no-translations
+                    --no-system-d3d-compiler
+                    "$<TARGET_FILE:${qt_runtime_target}>"
+                COMMENT "Deploying Qt runtime for ${qt_runtime_target}"
+            )
+        endforeach()
     endif()
 
     # Runtime dependencies are broader than link-time imports: STEP and the
@@ -720,7 +790,15 @@ add_test(NAME softwing_material COMMAND softwing-material-test)
 add_test(NAME softwing_cell_volume COMMAND softwing-cell-volume-test)
 add_test(NAME simwing_scene COMMAND simwing-scene-test)
 add_test(NAME simwing_structure COMMAND simwing-structure-test)
+add_test(NAME simwing_scene_structure COMMAND simwing-scene-structure-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
+add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
+add_test(NAME simwing_viewer_help COMMAND simwing-viewer --help)
+if(NOT WIN32)
+    set_tests_properties(simwing_viewer_help PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+endif()
 add_test(NAME playground_cells COMMAND playground-cells-test)
 add_test(NAME playground_material COMMAND playground-material-test)
 add_test(NAME playground_contact COMMAND playground-contact-test)

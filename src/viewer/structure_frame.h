@@ -1,0 +1,87 @@
+#pragma once
+
+#include "structure.h"
+#include "viewer_protocol.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace simwing::viewer {
+
+struct StructureFrameTriangleMapping {
+    std::uint64_t stableId = 0;
+    std::uint64_t negativeRegionId = 0;
+    std::uint64_t positiveRegionId = 0;
+};
+
+struct StructureFrameLineMapping {
+    std::uint64_t stableId = 0;
+    std::uint32_t role = 0;
+};
+
+struct StructureFrameMappingDefinition {
+    std::vector<std::uint64_t> vertexStableIds;
+    std::vector<StructureFrameTriangleMapping> triangles;
+    std::vector<StructureFrameLineMapping> lines;
+};
+
+// This is an immutable, one-to-one mapping from a Structure definition to the
+// stable IDs and side-region IDs used by diagnostic frames. Triangle and line
+// entries follow StructureDefinition::triangles and ::constraints respectively.
+// Construction rejects incomplete, ambiguous, or foreign topology before a
+// run can publish a misleading frame.
+class StructureFrameMapping final {
+public:
+    StructureFrameMapping(
+        const fsi::Structure& structure,
+        StructureFrameMappingDefinition definition);
+
+    StructureFrameMapping(const StructureFrameMapping&) = default;
+    StructureFrameMapping(StructureFrameMapping&&) noexcept = default;
+    StructureFrameMapping& operator=(const StructureFrameMapping&) = delete;
+    StructureFrameMapping& operator=(StructureFrameMapping&&) = delete;
+
+    [[nodiscard]] std::uint64_t structureFingerprint() const noexcept;
+    [[nodiscard]] const std::vector<std::uint64_t>&
+    vertexStableIds() const noexcept;
+    [[nodiscard]] const std::vector<StructureFrameTriangleMapping>&
+    triangles() const noexcept;
+    [[nodiscard]] const std::vector<StructureFrameLineMapping>&
+    lines() const noexcept;
+
+private:
+    const std::uint64_t structureFingerprint_;
+    const std::vector<std::uint64_t> vertexStableIds_;
+    const std::vector<StructureFrameTriangleMapping> triangles_;
+    const std::vector<StructureFrameLineMapping> lines_;
+};
+
+struct StructureFrameContext {
+    std::string sceneChecksum;
+    std::string solverCommit;
+    double timeStepSeconds = 0.0;
+    std::uint32_t couplingIteration = 0;
+    CouplingResiduals couplingResiduals;
+    ConservationValues conservation;
+};
+
+// Builds an owning frame from a committed Structure state. The initial field
+// contract is deliberately limited to quantities exposed by Structure:
+//
+// - per-vertex velocity and pending external force;
+// - per-line geometric length and constraint violation;
+// - aggregate applied/pending force, mass, momentum, energy, and solver-error
+//   diagnostics.
+//
+// Structure currently exposes membrane strain/residual only as global maxima,
+// so no per-triangle strain field is emitted. It exposes the last applied load
+// only as an aggregate, so no per-vertex applied-force field is invented.
+// Constraint multipliers/tensions are private to softwing_core and likewise
+// are not represented as line tension.
+[[nodiscard]] DiagnosticFrame buildStructureFrame(
+    const fsi::Structure& structure,
+    const StructureFrameMapping& mapping,
+    const StructureFrameContext& context);
+
+} // namespace simwing::viewer

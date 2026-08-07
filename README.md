@@ -24,10 +24,10 @@ live structure, loads, contact, coupling residuals, and progressively added CFD
 fields can be inspected; automated runs remain available through `--no-viewer`.
 
 The first remake foundations are now present: scene-v2 validation and bounded
-serialization, a Qt-free XPBD structural/checkpoint adapter, and the immutable
-viewer frame/trace protocol. The standalone window and worker connection are
-the next implementation layer; the inherited Playground is not used by these
-targets.
+serialization, deterministic scene-to-XPBD assembly, a Qt-free structural and
+checkpoint adapter, immutable structural diagnostic frames, and a standalone
+Qt/OpenGL trace viewer. Live worker connection and control are the next
+implementation layer; the inherited Playground is not used by these targets.
 
 ## Inherited LEparagliding Studio baseline
 

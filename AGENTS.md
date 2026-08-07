@@ -435,6 +435,10 @@ makes this a certified aerodynamic solver.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
   loads/state, trusted constraint/membrane/bending assembly, diagnostics, and
   rollback checkpoints without including any Playground header.
+- `src/fsi/scene_structure.{h,cpp}` deterministically assembles supported
+  scene-v2 fabric and surface-to-surface cables into that XPBD boundary. It
+  derives fabric mass from SI material-chart area and rejects pilot/harness
+  topology until rigid-payload checkpointing exists.
 - Registered contact and the rigid-payload `SuspensionSystem` are not yet in
   `simwing_structure`: their persistent/warm-start state needs a public
   production checkpoint API in `softwing_core` before strong coupling can use
@@ -443,6 +447,11 @@ makes this a certified aerodynamic solver.
   and replayable traces. It uses nonzero 64-bit stable entity/region IDs,
   transactional decoding, configurable limits, and a 256 MiB default encoded
   frame ceiling.
+- `src/viewer/structure_frame.{h,cpp}` maps committed structure state to those
+  immutable frames without inventing unavailable per-element quantities.
+- `src/viewer/viewer_window.{h,cpp}` and `tools/simwing_viewer_main.cpp` form
+  the separate Qt/OpenGL trace viewer. Live worker follow/control remains a
+  later boundary; ordinary trace replay must stay bounded and asynchronous.
 - New numerical targets must not link the inherited `playground_*` libraries.
   Cross the scene/structure/viewer boundaries through explicit adapters and
   versioned data only.
@@ -469,7 +478,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 30 configured tests on Windows. The Fortran-reference test is
+There are 33 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 

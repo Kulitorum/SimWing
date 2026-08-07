@@ -417,11 +417,13 @@ abstract that they hide grid layout or force extra full-field copies.
 ## Delivery phases and gates
 
 Current foundation status: the Qt-free scene-v2 core, XPBD structural adapter,
-and immutable viewer frame/trace protocol are implemented with focused tests.
-The structural checkpoint intentionally excludes registered contact and the
-rigid-payload suspension system until `softwing_core` exposes their persistent
-state through a production API. The standalone OpenGL window, scene-to-structure
-assembly, and worker connection remain the next vertical-slice work.
+deterministic scene-to-structure assembly, immutable structural diagnostic
+frames, replayable trace protocol, and standalone Qt/OpenGL trace viewer are
+implemented with focused tests. The structural checkpoint intentionally
+excludes registered contact and the rigid-payload suspension system until
+`softwing_core` exposes their persistent state through a production API. Live
+worker follow/control and the authoritative design exporter remain the next
+vertical-slice work.
 
 ### Phase 0 — Establish the remake boundary
 
