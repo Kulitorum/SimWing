@@ -307,6 +307,40 @@ double faceArea(const PeriodicCartesianGrid& grid,
     throw std::invalid_argument("moving interface face has an unknown axis");
 }
 
+std::pair<Vector3, Vector3> faceCorners(
+    const PeriodicCartesianGrid& grid,
+    const GridFaceMovingInterface& face) {
+    const Vector3 spacing = grid.cellSpacingMeters();
+    Vector3 center;
+    switch (face.axis) {
+    case GridFaceAxis::X:
+        center = grid.xFaceCenterMeters(face.i, face.j, face.k);
+        return {
+            {center.x, center.y - 0.5 * spacing.y,
+             center.z - 0.5 * spacing.z},
+            {center.x, center.y + 0.5 * spacing.y,
+             center.z + 0.5 * spacing.z},
+        };
+    case GridFaceAxis::Y:
+        center = grid.yFaceCenterMeters(face.i, face.j, face.k);
+        return {
+            {center.x - 0.5 * spacing.x, center.y,
+             center.z - 0.5 * spacing.z},
+            {center.x + 0.5 * spacing.x, center.y,
+             center.z + 0.5 * spacing.z},
+        };
+    case GridFaceAxis::Z:
+        center = grid.zFaceCenterMeters(face.i, face.j, face.k);
+        return {
+            {center.x - 0.5 * spacing.x,
+             center.y - 0.5 * spacing.y, center.z},
+            {center.x + 0.5 * spacing.x,
+             center.y + 0.5 * spacing.y, center.z},
+        };
+    }
+    throw std::invalid_argument("moving interface face has an unknown axis");
+}
+
 Vector3 axialVector(const GridFaceAxis axis, const double value) {
     switch (axis) {
     case GridFaceAxis::X:
@@ -783,14 +817,37 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
     }
 
     std::map<std::uint64_t, MovingInterfaceSurfaceDiagnostics> surfaces;
+    diagnostics.faces.reserve(interfaces.faceCount());
     for (const auto& face : interfaces.faces()) {
         const auto [minusCell, plusCell] = adjacentCells(grid, face);
         const double area = faceArea(grid, face.axis);
-        const double pressureForceAlongPositiveAxis =
+        const double pressureDifferencePascals =
             (candidatePressure.values()[minusCell]
-             - candidatePressure.values()[plusCell]) * area;
+             - candidatePressure.values()[plusCell]);
+        const double pressureForceAlongPositiveAxis =
+            pressureDifferencePascals * area;
+        const Vector3 traction = axialVector(
+            face.axis, pressureDifferencePascals);
         const Vector3 force = axialVector(
             face.axis, pressureForceAlongPositiveAxis);
+        const auto [lowerCorner, upperCorner] = faceCorners(grid, face);
+        diagnostics.faces.push_back({
+            face.surfaceStableId,
+            face.minusRegionStableId,
+            face.plusRegionStableId,
+            face.axis,
+            face.i,
+            face.j,
+            face.k,
+            lowerCorner,
+            upperCorner,
+            area,
+            face.normalVelocityMetersPerSecond,
+            traction,
+            force,
+            pressureForceAlongPositiveAxis
+                * face.normalVelocityMetersPerSecond,
+        });
         auto& surface = surfaces[face.surfaceStableId];
         surface.stableId = face.surfaceStableId;
         ++surface.faceCount;
@@ -801,19 +858,14 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
             pressureForceAlongPositiveAxis
             * face.normalVelocityMetersPerSecond;
     }
-    for (const auto& face : interfaces.faces()) {
-        const auto [minusCell, plusCell] = adjacentCells(grid, face);
+    for (const auto& face : diagnostics.faces) {
         auto& surface = surfaces.at(face.surfaceStableId);
         const Vector3 meanTraction = scale(
             surface.pressureForceNewtons,
             1.0 / surface.areaSquareMeters);
-        const Vector3 faceTraction = axialVector(
-            face.axis,
-            candidatePressure.values()[minusCell]
-                - candidatePressure.values()[plusCell]);
         surface.maximumPressureTractionDeviationPascals = std::max(
             surface.maximumPressureTractionDeviationPascals,
-            length(subtract(faceTraction, meanTraction)));
+            length(subtract(face.pressureTractionPascals, meanTraction)));
     }
     diagnostics.surfaces.reserve(surfaces.size());
     for (auto& [stableId, surface] : surfaces) {
@@ -842,6 +894,24 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
         && finite(diagnostics.totalPressureImpulseNewtonSeconds)
         && std::isfinite(diagnostics.totalPressurePowerWatts)
         && std::isfinite(diagnostics.totalPressureWorkJoules)
+        && diagnostics.faces.size() == interfaces.faceCount()
+        && std::ranges::all_of(
+            diagnostics.faces,
+            [](const MovingInterfaceFaceDiagnostics& face) {
+                return face.surfaceStableId > 0
+                    && face.minusRegionStableId > 0
+                    && face.plusRegionStableId > 0
+                    && face.minusRegionStableId != face.plusRegionStableId
+                    && finite(face.lowerCornerMeters)
+                    && finite(face.upperCornerMeters)
+                    && std::isfinite(face.areaSquareMeters)
+                    && face.areaSquareMeters > 0.0
+                    && std::isfinite(
+                        face.normalVelocityMetersPerSecond)
+                    && finite(face.pressureTractionPascals)
+                    && finite(face.pressureForceNewtons)
+                    && std::isfinite(face.pressurePowerWatts);
+            })
         && std::ranges::all_of(
             diagnostics.surfaces,
             [](const MovingInterfaceSurfaceDiagnostics& surface) {

@@ -98,6 +98,30 @@ struct MovingFluidRegionDiagnostics {
     bool operator==(const MovingFluidRegionDiagnostics&) const = default;
 };
 
+// Canonical face-resolved pressure sample. lower/upperCornerMeters describe
+// the complete axis-aligned MAC-face tile; their coordinate on axis is equal.
+// Adjacent cell-centre pressure is constant on this first-order tile, so its
+// force acts exactly at the rectangle centroid. The tuple (axis,i,j,k) is its
+// fixed-grid identity within the bound interface topology.
+struct MovingInterfaceFaceDiagnostics {
+    std::uint64_t surfaceStableId = 0;
+    std::uint64_t minusRegionStableId = 0;
+    std::uint64_t plusRegionStableId = 0;
+    GridFaceAxis axis = GridFaceAxis::X;
+    std::size_t i = 0;
+    std::size_t j = 0;
+    std::size_t k = 0;
+    Vector3 lowerCornerMeters;
+    Vector3 upperCornerMeters;
+    double areaSquareMeters = 0.0;
+    double normalVelocityMetersPerSecond = 0.0;
+    Vector3 pressureTractionPascals;
+    Vector3 pressureForceNewtons;
+    double pressurePowerWatts = 0.0;
+
+    bool operator==(const MovingInterfaceFaceDiagnostics&) const = default;
+};
+
 struct MovingInterfaceSurfaceDiagnostics {
     std::uint64_t stableId = 0;
     std::size_t faceCount = 0;
@@ -132,6 +156,7 @@ struct MovingInterfaceProjectionDiagnostics {
     double totalPressurePowerWatts = 0.0;
     double totalPressureWorkJoules = 0.0;
     std::vector<MovingFluidRegionDiagnostics> regions;
+    std::vector<MovingInterfaceFaceDiagnostics> faces;
     std::vector<MovingInterfaceSurfaceDiagnostics> surfaces;
     bool finite = true;
 

@@ -302,6 +302,8 @@ target_include_directories(simwing_fluid PUBLIC
 )
 
 add_library(simwing_fluid_structure_bridge STATIC
+    src/fsi/face_resolved_bridge.cpp
+    src/fsi/face_resolved_bridge.h
     src/fsi/fluid_structure_bridge.cpp
     src/fsi/fluid_structure_bridge.h
 )

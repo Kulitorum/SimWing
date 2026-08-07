@@ -1,4 +1,5 @@
 #include "coupling.h"
+#include "face_resolved_bridge.h"
 #include "fluid_structure_bridge.h"
 
 #include <algorithm>
@@ -19,6 +20,7 @@ using simwing::fsi::Structure;
 using simwing::fsi::StructureDefinition;
 using simwing::fsi::StructureStepSettings;
 using simwing::fsi::StructureVector3;
+using simwing::fsi::PlanarFaceResolvedFluidStructureBridge;
 using simwing::fsi::UniformFluidStructureBridge;
 using simwing::fsi::fluid::CellScalarField;
 using simwing::fsi::fluid::FaceAlignedMovingInterface;
@@ -121,11 +123,23 @@ std::vector<GridFaceMovingInterface> slabFaces(
     return result;
 }
 
-MovingInterfaceProjectionDiagnostics fluidPistonDiagnostics() {
+MovingInterfaceProjectionDiagnostics fluidPistonDiagnostics(
+    const bool disturbed = false) {
     const auto grid = pistonGrid();
     const FaceAlignedMovingInterface interfaces(grid, slabFaces(grid));
     MacVelocityField velocity(grid);
-    std::ranges::fill(velocity.xFaces(), 0.25);
+    if (disturbed) {
+        for (std::size_t index = 0;
+             index < velocity.xFaces().size(); ++index) {
+            const double sample = static_cast<double>(index + 1);
+            velocity.xFaces()[index] = 0.2 * std::sin(0.31 * sample);
+            velocity.yFaces()[index] = 0.15 * std::cos(0.23 * sample);
+            velocity.zFaces()[index] =
+                0.1 * std::sin(0.17 * sample + 0.2);
+        }
+    } else {
+        std::ranges::fill(velocity.xFaces(), 0.25);
+    }
     CellScalarField pressure(grid);
     const auto counts = grid.cellCounts();
     for (std::size_t k = 0; k < counts.z; ++k) {
@@ -143,6 +157,17 @@ MovingInterfaceProjectionDiagnostics fluidPistonDiagnostics() {
     settings.projection.relativeResidualTolerance = 1.0e-13;
     return projectVelocityWithMovingInterfaces(
         grid, velocity, pressure, interfaces, settings);
+}
+
+std::vector<CouplingNodeKinematics> translatingKinematics(
+    const simwing::fsi::ConservativeSurfaceTransfer& transfer,
+    const Structure& structure,
+    const double speedMetersPerSecond = 0.25) {
+    auto result = transfer.captureKinematics(structure);
+    for (auto& node : result) {
+        node.velocityMetersPerSecond = {speedMetersPerSecond, 0.0, 0.0};
+    }
+    return result;
 }
 
 std::vector<CouplingNodeKinematics> translatingKinematics(
@@ -276,11 +301,193 @@ void testStrictRejectionContracts() {
         "validation: absent fluid surface stable ID is rejected");
 }
 
+void testFaceResolvedNonuniformPressureTransfer() {
+    Structure structure(pistonDefinition());
+    const auto reference = fluidPistonDiagnostics();
+    PlanarFaceResolvedFluidStructureBridge bridge(
+        structure, 200, pistonNodes(), pistonTriangles(), reference.faces);
+    const auto kinematics = translatingKinematics(
+        bridge.transfer(), structure);
+    const auto uniform = bridge.evaluate(reference, kinematics);
+    checkNear(bridge.referenceAreaSquareMeters(), 6.0, 1.0e-15,
+              "face bridge: clipped reference correspondence covers 6 square metres");
+    check(bridge.overlapPatchCount() >= 6
+              && uniform.diagnostics().overlapPatchCount
+                  == bridge.overlapPatchCount(),
+          "face bridge: fluid tiles are split into stable triangle overlap patches");
+    check(uniform.transferResult().diagnostics().quadraturePointCount
+              == bridge.overlapPatchCount(),
+          "face bridge: every overlap becomes one conservative quadrature patch");
+
+    const auto disturbed = fluidPistonDiagnostics(true);
+    check(disturbed.surfaces[1]
+              .maximumPressureTractionDeviationPascals > 0.0,
+          "face bridge: source regression contains genuinely nonuniform pressure");
+    const auto first = bridge.evaluate(disturbed, kinematics);
+    const auto second = bridge.evaluate(disturbed, kinematics);
+    const auto& diagnostics = first.diagnostics();
+    check(first == second,
+          "face bridge: nonuniform face correspondence replays bit-for-bit");
+    check(diagnostics.forceResidualNormNewtons < 2.0e-10
+              && diagnostics.momentResidualNormNewtonMeters < 2.0e-10
+              && std::abs(diagnostics.powerResidualWatts) < 2.0e-10
+              && diagnostics.maximumFacePowerResidualWatts < 2.0e-10
+              && diagnostics.finite,
+          "face bridge: nonuniform force, moment, global power, and per-face power close");
+    checkVectorNear(diagnostics.structureSurfaceForceNewtons,
+                    diagnostics.fluidPressureForceNewtons, 2.0e-10,
+                    "face bridge: structural quadrature preserves fluid face force");
+    checkVectorNear(diagnostics.structureSurfaceMomentNewtonMeters,
+                    diagnostics.fluidPressureMomentNewtonMeters, 2.0e-10,
+                    "face bridge: overlap centroids preserve fluid face moment");
+    checkNear(diagnostics.structureSurfacePowerWatts,
+              diagnostics.fluidPressurePowerWatts, 2.0e-10,
+              "face bridge: barycentric velocity preserves fluid face power");
+
+    auto changedGeometry = disturbed;
+    changedGeometry.faces[1].lowerCornerMeters.x += 0.01;
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluate(
+            changedGeometry, kinematics)); },
+        "face bridge validation: changed grid-face geometry is rejected");
+
+    auto incompleteKinematics = kinematics;
+    incompleteKinematics.pop_back();
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluate(
+            disturbed, incompleteKinematics)); },
+        "face bridge validation: incomplete kinematics are rejected before mapping");
+
+    auto invalidFaceVelocity = disturbed;
+    invalidFaceVelocity.faces[1].normalVelocityMetersPerSecond =
+        std::numeric_limits<double>::quiet_NaN();
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluate(
+            invalidFaceVelocity, kinematics)); },
+        "face bridge validation: non-finite face velocity is rejected");
+
+    auto aggregateMismatch = disturbed;
+    aggregateMismatch.surfaces[1].pressureForceNewtons.x += 1.0;
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluate(
+            aggregateMismatch, kinematics)); },
+        "face bridge validation: aggregate force must equal its face ledger");
+
+    auto cancellingPowerMismatch = disturbed;
+    auto firstRight = std::ranges::find_if(
+        cancellingPowerMismatch.faces,
+        [](const auto& face) { return face.surfaceStableId == 200; });
+    auto secondRight = std::ranges::find_if(
+        std::next(firstRight), cancellingPowerMismatch.faces.end(),
+        [](const auto& face) { return face.surfaceStableId == 200; });
+    const double firstForce = firstRight->pressureForceNewtons.x;
+    const double secondForce = secondRight->pressureForceNewtons.x;
+    const double firstVelocityChange = 0.1;
+    const double secondVelocityChange =
+        -firstVelocityChange * firstForce / secondForce;
+    firstRight->normalVelocityMetersPerSecond += firstVelocityChange;
+    firstRight->pressurePowerWatts += firstForce * firstVelocityChange;
+    secondRight->normalVelocityMetersPerSecond += secondVelocityChange;
+    secondRight->pressurePowerWatts += secondForce * secondVelocityChange;
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluate(
+            cancellingPowerMismatch, kinematics)); },
+        "face bridge validation: cancelling local power mismatch is rejected");
+
+    auto incompleteReferenceFaces = reference.faces;
+    const auto omitted = std::ranges::find_if(
+        incompleteReferenceFaces,
+        [](const auto& face) { return face.surfaceStableId == 200; });
+    incompleteReferenceFaces.erase(omitted);
+    expectRejected(
+        [&] { PlanarFaceResolvedFluidStructureBridge incomplete(
+            structure, 200, pistonNodes(), pistonTriangles(),
+            incompleteReferenceFaces); },
+        "face bridge validation: incomplete reference coverage is rejected");
+
+    auto reversedReferenceFaces = reference.faces;
+    std::reverse(reversedReferenceFaces.begin(), reversedReferenceFaces.end());
+    expectRejected(
+        [&] { PlanarFaceResolvedFluidStructureBridge reordered(
+            structure, 200, pistonNodes(), pistonTriangles(),
+            reversedReferenceFaces); },
+        "face bridge validation: noncanonical reference face order is rejected");
+
+    simwing::fsi::PlanarFaceResolvedBridgeSettings invalidSettings;
+    invalidSettings.transfer.minimumQuadratureAreaSquareMeters = 1.0;
+    expectRejected(
+        [&] { PlanarFaceResolvedFluidStructureBridge invalidConfiguration(
+            structure, 200, pistonNodes(), pistonTriangles(),
+            reference.faces, invalidSettings); },
+        "face bridge validation: incompatible overlap and quadrature thresholds are rejected");
+
+    auto overlappingReferenceFaces = reference.faces;
+    auto firstReferenceRight = std::ranges::find_if(
+        overlappingReferenceFaces,
+        [](const auto& face) { return face.surfaceStableId == 200; });
+    auto secondReferenceRight = std::ranges::find_if(
+        std::next(firstReferenceRight), overlappingReferenceFaces.end(),
+        [](const auto& face) { return face.surfaceStableId == 200; });
+    secondReferenceRight->lowerCornerMeters =
+        firstReferenceRight->lowerCornerMeters;
+    secondReferenceRight->upperCornerMeters =
+        firstReferenceRight->upperCornerMeters;
+    expectRejected(
+        [&] { PlanarFaceResolvedFluidStructureBridge overlappingFaces(
+            structure, 200, pistonNodes(), pistonTriangles(),
+            overlappingReferenceFaces); },
+        "face bridge validation: overlapping fluid tiles are rejected");
+
+    StructureDefinition reversedDefinition = pistonDefinition();
+    reversedDefinition.triangles = {
+        {{0, 2, 1}}, {{0, 3, 2}},
+    };
+    Structure reversedStructure(reversedDefinition);
+    const std::vector<CouplingSurfaceTriangleDefinition> reversedTriangles{
+        {1000, {10, 30, 20}},
+        {2000, {10, 40, 30}},
+    };
+    expectRejected(
+        [&] { PlanarFaceResolvedFluidStructureBridge reversedOrientation(
+            reversedStructure, 200, pistonNodes(), reversedTriangles,
+            reference.faces); },
+        "face bridge validation: reversed structural orientation is rejected");
+
+    StructureDefinition overlappingDefinition;
+    overlappingDefinition.nodes = {
+        {{3.0, 0.0, 0.0}, 1.0, false},
+        {{3.0, 2.0, 0.0}, 1.0, false},
+        {{3.0, 2.0, 3.0}, 1.0, false},
+        {{3.0, 0.0, 0.0}, 1.0, false},
+        {{3.0, 2.0, 0.0}, 1.0, false},
+        {{3.0, 2.0, 3.0}, 1.0, false},
+    };
+    overlappingDefinition.triangles = {
+        {{0, 1, 2}}, {{3, 4, 5}},
+    };
+    Structure overlappingStructure(overlappingDefinition);
+    const std::vector<CouplingSurfaceNodeDefinition> overlappingNodes{
+        {10, 0}, {20, 1}, {30, 2},
+        {40, 3}, {50, 4}, {60, 5},
+    };
+    const std::vector<CouplingSurfaceTriangleDefinition>
+        overlappingTriangles{
+            {1000, {10, 20, 30}},
+            {2000, {40, 50, 60}},
+        };
+    expectRejected(
+        [&] { PlanarFaceResolvedFluidStructureBridge overlappingStructureFaces(
+            overlappingStructure, 200, overlappingNodes,
+            overlappingTriangles, reference.faces); },
+        "face bridge validation: overlapping structural triangles are rejected");
+}
+
 } // namespace
 
 int main() {
     testAnalyticStableIdBridgeAndStructuralAcceptance();
     testStrictRejectionContracts();
+    testFaceResolvedNonuniformPressureTransfer();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing fluid-structure bridge check(s) failed\n",

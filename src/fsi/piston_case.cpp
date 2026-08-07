@@ -132,6 +132,11 @@ const fluid::MovingInterfaceSurfaceDiagnostics& rightSurface(
     return *found;
 }
 
+std::vector<fluid::MovingInterfaceFaceDiagnostics> referenceFluidFaces(
+    const double timeStepSeconds) {
+    return solveFluidSample(0.0, timeStepSeconds).faces;
+}
+
 double maximumVelocityDifference(
     const std::vector<StructureNodeState>& states,
     const double expectedSpeedMetersPerSecond) {
@@ -178,10 +183,14 @@ viewer::Vec3d toViewer(const StructureVector3& value) {
     return {value.x, value.y, value.z};
 }
 
+StructureVector3 scale(const StructureVector3& value, const double factor) {
+    return {factor * value.x, factor * value.y, factor * value.z};
+}
+
 void appendPistonFields(
     viewer::DiagnosticFrame& frame,
     const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
-    const UniformFluidStructureBridgeDiagnostics& bridgeDiagnostics,
+    const PlanarFaceResolvedBridgeDiagnostics& bridgeDiagnostics,
     const TimeIntegratedTransferDiagnostics& integratedDiagnostics) {
     frame.scalarFields.push_back({
         "interface.pressure_traction", "Pa",
@@ -204,7 +213,9 @@ void appendPistonFields(
     frame.vectorFields.push_back({
         "interface.uniform_pressure_traction", "Pa",
         viewer::FieldAssociation::Global,
-        {toViewer(bridgeDiagnostics.uniformPressureTractionPascals)}});
+        {toViewer(scale(
+            bridgeDiagnostics.fluidPressureForceNewtons,
+            1.0 / bridgeDiagnostics.fluidAreaSquareMeters))}});
     frame.vectorFields.push_back({
         "interface.step_impulse", "N*s", viewer::FieldAssociation::Global,
         {toViewer(
@@ -216,7 +227,8 @@ void appendPistonFields(
 CoupledPistonCase::CoupledPistonCase()
     : structure_(makeDefinition()),
       bridge_(structure_, rightPistonSurfaceStableId,
-              makeCouplingNodes(), makeCouplingTriangles()),
+              makeCouplingNodes(), makeCouplingTriangles(),
+              referenceFluidFaces(makeStepSettings().timeStepSeconds)),
       coupling_(bridge_.transfer()),
       frameMapping_(structure_, makeFrameMapping()),
       stepSettings_(makeStepSettings()) {}

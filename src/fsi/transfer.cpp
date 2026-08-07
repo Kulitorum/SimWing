@@ -268,9 +268,13 @@ ConservativeTransferResult ConservativeSurfaceTransfer::evaluate(
     }
     if (!finite(settings.momentReferenceMeters)
         || !std::isfinite(settings.minimumTriangleAreaSquareMeters)
-        || !(settings.minimumTriangleAreaSquareMeters > 0.0)) {
+        || !(settings.minimumTriangleAreaSquareMeters > 0.0)
+        || !std::isfinite(settings.minimumQuadratureAreaSquareMeters)
+        || !(settings.minimumQuadratureAreaSquareMeters > 0.0)
+        || !std::isfinite(settings.barycentricTolerance)
+        || settings.barycentricTolerance < 0.0) {
         throw std::invalid_argument(
-            "transfer settings must have finite reference and positive minimum area");
+            "transfer settings have an invalid reference, area, or barycentric tolerance");
     }
     for (std::size_t index = 0; index < nodes_.size(); ++index) {
         const auto& kinematics = nodeKinematics[index];
@@ -299,6 +303,7 @@ ConservativeTransferResult ConservativeSurfaceTransfer::evaluate(
     auto& diagnostics = result.diagnostics_;
     diagnostics.nodeCount = nodes_.size();
     diagnostics.triangleCount = triangles_.size();
+    diagnostics.quadraturePointCount = triangles_.size();
     diagnostics.momentReferenceMeters = settings.momentReferenceMeters;
 
     for (std::size_t triangleIndex = 0;
@@ -383,6 +388,208 @@ ConservativeTransferResult ConservativeSurfaceTransfer::evaluate(
     if (!diagnostics.finite) {
         throw std::overflow_error(
             "surface traction transfer produced non-finite ledgers");
+    }
+    return result;
+}
+
+ConservativeTransferResult ConservativeSurfaceTransfer::evaluateQuadrature(
+    const std::span<const CouplingNodeKinematics> nodeKinematics,
+    const std::span<const CouplingTriangleTractionQuadrature> quadrature,
+    const ConservativeTransferSettings& settings) const {
+    if (nodeKinematics.size() != nodes_.size() || quadrature.empty()) {
+        throw std::invalid_argument(
+            "coupling kinematics must match the surface and quadrature cannot be empty");
+    }
+    if (!finite(settings.momentReferenceMeters)
+        || !std::isfinite(settings.minimumTriangleAreaSquareMeters)
+        || !(settings.minimumTriangleAreaSquareMeters > 0.0)
+        || !std::isfinite(settings.minimumQuadratureAreaSquareMeters)
+        || !(settings.minimumQuadratureAreaSquareMeters > 0.0)
+        || !std::isfinite(settings.barycentricTolerance)
+        || settings.barycentricTolerance < 0.0) {
+        throw std::invalid_argument(
+            "transfer settings have an invalid reference, area, or barycentric tolerance");
+    }
+    for (std::size_t index = 0; index < nodes_.size(); ++index) {
+        const auto& kinematics = nodeKinematics[index];
+        if (kinematics.stableId != nodes_[index].stableId
+            || !finite(kinematics.positionMeters)
+            || !finite(kinematics.velocityMetersPerSecond)) {
+            throw std::invalid_argument(
+                "coupling node kinematics are non-finite or out of canonical order");
+        }
+    }
+
+    for (std::size_t triangleIndex = 0;
+         triangleIndex < triangles_.size(); ++triangleIndex) {
+        const auto indices = triangleNodeIndices_[triangleIndex];
+        const auto twiceAreaVector = cross(
+            subtract(nodeKinematics[indices[1]].positionMeters,
+                     nodeKinematics[indices[0]].positionMeters),
+            subtract(nodeKinematics[indices[2]].positionMeters,
+                     nodeKinematics[indices[0]].positionMeters));
+        const double area = 0.5 * norm(twiceAreaVector);
+        if (!std::isfinite(area)
+            || !(area >= settings.minimumTriangleAreaSquareMeters)) {
+            throw std::invalid_argument(
+                "current coupling triangle is degenerate or below minimum area");
+        }
+    }
+
+    std::set<std::uint64_t> quadratureStableIds;
+    std::vector<std::size_t> quadratureTriangleIndices;
+    std::vector<std::array<double, 3>> normalizedBarycentric;
+    quadratureTriangleIndices.reserve(quadrature.size());
+    normalizedBarycentric.reserve(quadrature.size());
+    std::pair<std::uint64_t, std::uint64_t> previousKey{};
+    bool havePrevious = false;
+    for (const auto& point : quadrature) {
+        const std::pair key{point.triangleStableId, point.stableId};
+        if (point.stableId == 0
+            || !quadratureStableIds.insert(point.stableId).second
+            || (havePrevious && !(previousKey < key))) {
+            throw std::invalid_argument(
+                "quadrature stable IDs must be unique and points canonically ordered");
+        }
+        havePrevious = true;
+        previousKey = key;
+        const auto triangle = std::lower_bound(
+            triangles_.begin(), triangles_.end(), point.triangleStableId,
+            [](const CouplingSurfaceTriangleDefinition& candidate,
+               const std::uint64_t stableId) {
+                return candidate.stableId < stableId;
+            });
+        if (triangle == triangles_.end()
+            || triangle->stableId != point.triangleStableId) {
+            throw std::invalid_argument(
+                "quadrature references an unknown coupling triangle");
+        }
+        if (!std::isfinite(point.areaSquareMeters)
+            || point.areaSquareMeters
+                < settings.minimumQuadratureAreaSquareMeters
+            || !finite(point.tractionPascals)) {
+            throw std::invalid_argument(
+                "quadrature area or traction is invalid");
+        }
+        double barycentricSum = 0.0;
+        for (const double coordinate : point.barycentricCoordinates) {
+            if (!std::isfinite(coordinate)
+                || coordinate < -settings.barycentricTolerance
+                || coordinate > 1.0 + settings.barycentricTolerance) {
+                throw std::invalid_argument(
+                    "quadrature barycentric coordinate is outside its triangle");
+            }
+            barycentricSum += coordinate;
+        }
+        if (!std::isfinite(barycentricSum)
+            || std::abs(barycentricSum - 1.0)
+                > settings.barycentricTolerance
+            || !(barycentricSum > 0.0)) {
+            throw std::invalid_argument(
+                "quadrature barycentric coordinates do not sum to one");
+        }
+        std::array<double, 3> normalized{
+            point.barycentricCoordinates[0] / barycentricSum,
+            point.barycentricCoordinates[1] / barycentricSum,
+            0.0,
+        };
+        normalized[2] = 1.0 - normalized[0] - normalized[1];
+        if (normalized[2] < -settings.barycentricTolerance
+            || normalized[2] > 1.0 + settings.barycentricTolerance) {
+            throw std::invalid_argument(
+                "normalized quadrature barycentric coordinate is invalid");
+        }
+        quadratureTriangleIndices.push_back(static_cast<std::size_t>(
+            triangle - triangles_.begin()));
+        normalizedBarycentric.push_back(normalized);
+    }
+
+    ConservativeTransferResult result;
+    result.surfaceFingerprint_ = fingerprint_;
+    result.targetDefinitionFingerprint_ = targetDefinitionFingerprint_;
+    result.nodeLoads_.reserve(nodes_.size());
+    for (const auto& node : nodes_) {
+        result.nodeLoads_.push_back({node.stableId, node.structureNode, {}});
+    }
+    auto& diagnostics = result.diagnostics_;
+    diagnostics.nodeCount = nodes_.size();
+    diagnostics.triangleCount = triangles_.size();
+    diagnostics.quadraturePointCount = quadrature.size();
+    diagnostics.momentReferenceMeters = settings.momentReferenceMeters;
+
+    for (std::size_t pointIndex = 0;
+         pointIndex < quadrature.size(); ++pointIndex) {
+        const auto& point = quadrature[pointIndex];
+        const auto triangleIndex = quadratureTriangleIndices[pointIndex];
+        const auto indices = triangleNodeIndices_[triangleIndex];
+        const auto weights = normalizedBarycentric[pointIndex];
+        StructureVector3 position;
+        StructureVector3 velocity;
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            position = add(position, scale(
+                nodeKinematics[indices[corner]].positionMeters,
+                weights[corner]));
+            velocity = add(velocity, scale(
+                nodeKinematics[indices[corner]].velocityMetersPerSecond,
+                weights[corner]));
+        }
+        const auto force = scale(
+            point.tractionPascals, point.areaSquareMeters);
+        diagnostics.surfaceAreaSquareMeters += point.areaSquareMeters;
+        diagnostics.integratedSurfaceForceNewtons = add(
+            diagnostics.integratedSurfaceForceNewtons, force);
+        diagnostics.integratedSurfaceMomentNewtonMeters = add(
+            diagnostics.integratedSurfaceMomentNewtonMeters,
+            cross(subtract(position, settings.momentReferenceMeters), force));
+        diagnostics.integratedSurfacePowerWatts += dot(force, velocity);
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            result.nodeLoads_[indices[corner]].forceNewtons = add(
+                result.nodeLoads_[indices[corner]].forceNewtons,
+                scale(force, weights[corner]));
+        }
+    }
+
+    for (std::size_t index = 0; index < nodes_.size(); ++index) {
+        const auto& force = result.nodeLoads_[index].forceNewtons;
+        diagnostics.transferredNodalForceNewtons = add(
+            diagnostics.transferredNodalForceNewtons, force);
+        diagnostics.transferredNodalMomentNewtonMeters = add(
+            diagnostics.transferredNodalMomentNewtonMeters,
+            cross(subtract(nodeKinematics[index].positionMeters,
+                           settings.momentReferenceMeters),
+                  force));
+        diagnostics.transferredNodalPowerWatts += dot(
+            force, nodeKinematics[index].velocityMetersPerSecond);
+    }
+    diagnostics.forceResidualNewtons = subtract(
+        diagnostics.transferredNodalForceNewtons,
+        diagnostics.integratedSurfaceForceNewtons);
+    diagnostics.forceResidualNormNewtons = norm(
+        diagnostics.forceResidualNewtons);
+    diagnostics.momentResidualNewtonMeters = subtract(
+        diagnostics.transferredNodalMomentNewtonMeters,
+        diagnostics.integratedSurfaceMomentNewtonMeters);
+    diagnostics.momentResidualNormNewtonMeters = norm(
+        diagnostics.momentResidualNewtonMeters);
+    diagnostics.powerResidualWatts =
+        diagnostics.transferredNodalPowerWatts
+        - diagnostics.integratedSurfacePowerWatts;
+    diagnostics.finite =
+        std::isfinite(diagnostics.surfaceAreaSquareMeters)
+        && finite(diagnostics.integratedSurfaceForceNewtons)
+        && finite(diagnostics.transferredNodalForceNewtons)
+        && finite(diagnostics.forceResidualNewtons)
+        && std::isfinite(diagnostics.forceResidualNormNewtons)
+        && finite(diagnostics.integratedSurfaceMomentNewtonMeters)
+        && finite(diagnostics.transferredNodalMomentNewtonMeters)
+        && finite(diagnostics.momentResidualNewtonMeters)
+        && std::isfinite(diagnostics.momentResidualNormNewtonMeters)
+        && std::isfinite(diagnostics.integratedSurfacePowerWatts)
+        && std::isfinite(diagnostics.transferredNodalPowerWatts)
+        && std::isfinite(diagnostics.powerResidualWatts);
+    if (!diagnostics.finite) {
+        throw std::overflow_error(
+            "surface traction quadrature produced non-finite ledgers");
     }
     return result;
 }

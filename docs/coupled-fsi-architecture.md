@@ -438,8 +438,8 @@ structural step and replayable diagnostic trace with synthetic physical export
 settings. Manufacturing flat-pattern UVs, exact authored line-attachment
 vertices, authored paired seams and stitch mechanics, live bidirectional
 control, an authoritative settings source/engine CLI, and the arbitrary/cut-cell
-moving-interface, general nonuniform grid-side transfer, AMR, and full CFD
-evolution kernels remain open work.
+moving-interface, curved or changing grid-side correspondence, AMR, and full
+CFD evolution kernels remain open work.
 Phase 2 has started with a dependency-free uniform periodic MAC-grid
 verification kernel:
 its finite-volume gradient and divergence are a tested adjoint pair, its
@@ -457,20 +457,23 @@ one zero-mean pressure correction per region. The prior mean pressure in each
 region is retained because those means are independent incompressible null
 modes. Nonzero fixed-grid region volume rate is rejected transactionally rather
 than hidden by compatibility subtraction. Adjacent cell-centre pressure gives
-exact force/impulse/work for the piecewise-constant slab canonical. This is
-deliberately not presented as arbitrary surface reconstruction, cut-cell
-geometric conservation, folded/multiple-crossing motion, advection, turbulence,
-or a wing-flow solver.
+exact force/impulse/work for the piecewise-constant slab canonical, and the
+accepted diagnostics retain each canonical MAC tile's rectangle, traction,
+force, constrained velocity, and power ledger. This is deliberately not
+presented as arbitrary surface reconstruction, cut-cell geometric conservation,
+folded/multiple-crossing motion, advection, turbulence, or a wing-flow solver.
 
 The first structure-side conservative-transfer primitive is also present. A
 canonical stable-ID surface is fingerprint-bound to one immutable structural
 definition and rejects reversed or foreign topology. Uniform current-triangle
 traction is integrated at the centroid and distributed in equal barycentric
-shares, which exactly preserves its resultant, moment, and work against linear
-triangle kinematics. Surface and nodal ledgers are accumulated independently,
-and immutable results are applied additively through the real Structure nodal
-load path only after all bindings validate. A separate versioned macro-step
-coupling layer trapezoidally integrates nonuniform local-time samples into
+shares. The same boundary also accepts explicit stable area/barycentric
+quadrature patches, allowing nonuniform traction while exactly preserving
+resultant, moment, and work against linear triangle kinematics. Surface and
+nodal ledgers are accumulated independently, and immutable results are applied
+additively through the real Structure nodal load path only after all bindings
+validate. A separate versioned macro-step coupling layer trapezoidally
+integrates nonuniform local-time samples into
 immutable nodal impulses and independent surface/nodal impulse, angular
 impulse, and work ledgers. Its acceptance boundary requires the exact exchange
 duration, applies the equivalent average force through Structure's internal
@@ -480,13 +483,17 @@ uniform subset of those operators. It accepts one canonical face-aligned fluid
 surface, requires its facewise pressure-traction deviation to meet an explicit
 budget, reconstructs one uniform world-space traction, and then requires
 independent fluid/structure area, force, and power ledgers to close before
-returning the immutable structural transfer. The `--case piston` worker
-evaluates compatible start/end fluid samples, trapezoidally integrates them,
-accepts the impulse through XPBD, and publishes the resulting moving
-two-triangle surface and CFD ledger fields to the standalone viewer. This does
-not yet implement general Cartesian surface correspondence, nonuniform
-triangle quadrature, fluid/structure iteration, or a strong-coupling
-convergence decision.
+returning the immutable structural transfer. A planar fixed-correspondence
+extension clips canonical nonoverlapping MAC tiles against fully covering,
+consistently oriented reference triangles once. Every positive-area overlap
+becomes a stable barycentric patch; current nonuniform tile traction is mapped
+through those patches only after per-face and aggregate area, force, moment,
+and power ledgers close. The `--case piston` worker now evaluates compatible
+start/end face-resolved fluid samples, trapezoidally integrates them, accepts
+the impulse through XPBD, and publishes the resulting moving two-triangle
+surface and CFD ledger fields to the standalone viewer. This does not yet
+implement curved or changing Eulerian correspondence, cut cells,
+fluid/structure iteration, or a strong-coupling convergence decision.
 
 ### Phase 0 — Establish the remake boundary
 
@@ -569,10 +576,15 @@ The uniform bridge canonical maps the slab's stable right-wall ID to the same
 `6 m^2` two-triangle structure, closes `660 N` and `165 W` at `0.25 m/s`, and
 delivers `264 N*s`/`66 J` through the temporal exchange to accepted XPBD
 momentum. It rejects nonuniform face traction, an absent surface ID, mismatched
-area, failed fluid projection, and inconsistent interface power. The visible
-piston worker repeats the full chain at `120 Hz` with a synthetic `6000 kg`
-tributary-mass plate so 600 default frames show about `1.38 m` of deterministic
-translation without leaving the initial viewer scale.
+area, failed fluid projection, and inconsistent interface power. The planar
+face-resolved canonical then uses a disturbed projection with genuinely
+nonuniform tile pressure. Deterministic tile/triangle clipping preserves its
+force, moment, global power, and every face's local power within `2e-10` in the
+corresponding SI units; gaps, tile or triangle overlap, orientation mismatch,
+changed geometry, and locally inconsistent power are rejected. The visible
+piston worker repeats the face-resolved full chain at `120 Hz` with a synthetic
+`6000 kg` tributary-mass plate so 600 default frames show about `1.38 m` of
+deterministic translation without leaving the initial viewer scale.
 
 Work:
 
@@ -580,8 +592,8 @@ Work:
   discrete-surface layer;
 - in parallel conceptually, use IBAMR or OpenFOAM/preCICE as an external
   reference for selected canonical cases, not as a required GUI dependency;
-- implement arbitrary moving-interface/jump conditions, general nonuniform
-  paired grid-side transfer, refinement, and fluid checkpoints;
+- implement arbitrary moving-interface/jump conditions, curved/changing
+  paired grid-side correspondence, refinement, and fluid checkpoints;
 - add rate-limited AMR, pressure, velocity, divergence, traction, and
   pressure-jump viewer layers as each field becomes available;
 - verify CPU first, then add GPU kernels behind identical numerical tests.
@@ -600,11 +612,12 @@ Required canonical cases:
 The structure side now verifies prescribed volume, interface work, temporal
 impulse transfer, and transactional XPBD acceptance. The fluid side verifies a
 volume-compatible translating sealed slab with exact face velocity and matching
-per-wall pressure impulse/work. The uniform stable-ID subset now also crosses
-those accepted fluid samples into XPBD and the viewer with explicit interface
-residuals. A genuinely volume-changing piston still needs moving cut-cell
-volumes, geometric conservation, and the complete coupled fluid/structure
-energy ledger, so the full Phase 2 piston gate remains open.
+per-wall pressure impulse/work. The planar fixed-correspondence stable-ID subset
+now also crosses those accepted face-resolved fluid samples into XPBD and the
+viewer with explicit interface residuals. A genuinely volume-changing piston
+still needs moving cut-cell volumes, geometric conservation, changing
+correspondence, and the complete coupled fluid/structure energy ledger, so the
+full Phase 2 piston gate remains open.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

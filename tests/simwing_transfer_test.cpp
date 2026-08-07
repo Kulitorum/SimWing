@@ -16,12 +16,16 @@ using simwing::fsi::CouplingNodeKinematics;
 using simwing::fsi::CouplingSurfaceNodeDefinition;
 using simwing::fsi::CouplingSurfaceTriangleDefinition;
 using simwing::fsi::CouplingTriangleTraction;
+using simwing::fsi::CouplingTriangleTractionQuadrature;
 using simwing::fsi::Structure;
 using simwing::fsi::StructureDefinition;
 using simwing::fsi::StructureStepSettings;
 using simwing::fsi::StructureVector3;
 
 int failures = 0;
+
+template<typename Callback>
+void expectRejected(Callback&& callback, const char* message);
 
 void check(const bool condition, const char* message) {
     if (!condition) {
@@ -353,6 +357,78 @@ void testLoadApplicationAndBinding() {
           "binding: result from another surface is rejected before mutation");
 }
 
+void testNonuniformBarycentricQuadrature() {
+    Structure structure(rectangleDefinition());
+    ConservativeSurfaceTransfer transfer(
+        structure, scrambledNodes(), scrambledTriangles());
+    auto kinematics = transfer.captureKinematics(structure);
+    for (auto& node : kinematics) {
+        node.velocityMetersPerSecond = {0.25, -0.5, 0.0};
+    }
+    const std::vector<CouplingTriangleTractionQuadrature> quadrature = {
+        {1, 100, {2.0 / 3.0, 1.0 / 6.0, 1.0 / 6.0},
+         1.0, {2.0, 0.0, 0.0}},
+        {2, 100, {1.0 / 6.0, 5.0 / 12.0, 5.0 / 12.0},
+         2.0, {4.0, 0.0, 0.0}},
+        {3, 200, {1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0},
+         3.0, {0.0, 2.0, 0.0}},
+    };
+    const auto first = transfer.evaluateQuadrature(kinematics, quadrature);
+    const auto second = transfer.evaluateQuadrature(kinematics, quadrature);
+    const auto& diagnostics = first.diagnostics();
+    check(first == second,
+          "quadrature: identical nonuniform patches replay bit-for-bit");
+    check(diagnostics.triangleCount == 2
+              && diagnostics.quadraturePointCount == 3,
+          "quadrature: triangle topology and patch count remain distinct");
+    checkNear(diagnostics.surfaceAreaSquareMeters, 6.0, 1.0e-15,
+              "quadrature: patch areas recover the analytic surface area");
+    checkVectorNear(diagnostics.integratedSurfaceForceNewtons,
+                    {10.0, 6.0, 0.0}, 1.0e-14,
+                    "quadrature: nonuniform patches integrate analytic force");
+    checkVectorNear(diagnostics.integratedSurfaceMomentNewtonMeters,
+                    {0.0, 0.0, 9.0}, 2.0e-14,
+                    "quadrature: patch centroids integrate analytic moment");
+    checkNear(diagnostics.integratedSurfacePowerWatts, -0.5, 1.0e-14,
+              "quadrature: patch work uses interpolated linear velocity");
+    check(diagnostics.forceResidualNormNewtons < 2.0e-14
+              && diagnostics.momentResidualNormNewtonMeters < 3.0e-14
+              && std::abs(diagnostics.powerResidualWatts) < 2.0e-14,
+          "quadrature: independent nodal force, moment, and power ledgers close");
+    const auto loads = first.nodeLoads();
+    checkVectorNear(loads[0].forceNewtons,
+                    {8.0 / 3.0, 2.0, 0.0}, 2.0e-15,
+                    "quadrature: first shared node receives geometric patch weights");
+    checkVectorNear(loads[1].forceNewtons,
+                    {11.0 / 3.0, 0.0, 0.0}, 2.0e-15,
+                    "quadrature: first boundary node receives nonuniform load");
+    checkVectorNear(loads[2].forceNewtons,
+                    {11.0 / 3.0, 2.0, 0.0}, 2.0e-15,
+                    "quadrature: second shared node receives both triangles");
+    checkVectorNear(loads[3].forceNewtons,
+                    {0.0, 2.0, 0.0}, 2.0e-15,
+                    "quadrature: final boundary node receives its overlap load");
+
+    auto invalid = quadrature;
+    std::swap(invalid[0], invalid[1]);
+    expectRejected(
+        [&] { static_cast<void>(transfer.evaluateQuadrature(
+            kinematics, invalid)); },
+        "quadrature validation: noncanonical patch order is rejected");
+    invalid = quadrature;
+    invalid[0].barycentricCoordinates = {-0.1, 0.5, 0.6};
+    expectRejected(
+        [&] { static_cast<void>(transfer.evaluateQuadrature(
+            kinematics, invalid)); },
+        "quadrature validation: patch outside its triangle is rejected");
+    invalid = quadrature;
+    invalid[0].areaSquareMeters = 0.0;
+    expectRejected(
+        [&] { static_cast<void>(transfer.evaluateQuadrature(
+            kinematics, invalid)); },
+        "quadrature validation: zero-area patch is rejected");
+}
+
 template<typename Callback>
 void expectRejected(Callback&& callback, const char* message) {
     bool rejected = false;
@@ -437,6 +513,7 @@ int main() {
     testAnalyticForceMomentAndTranslationPower();
     testRigidRotationPowerIdentityAndDeterminism();
     testLoadApplicationAndBinding();
+    testNonuniformBarycentricQuadrature();
     testTopologyAndEvaluationValidation();
     if (failures != 0) {
         std::fprintf(stderr, "%d SimWing transfer check(s) failed\n", failures);

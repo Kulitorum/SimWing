@@ -217,6 +217,7 @@ void testAnalyticTranslatingSlabPressureWork() {
           "piston: compatible velocity and two-region pressure remain bit-identical");
     check(diagnostics.interfaceFaceCount == 12
               && diagnostics.fluidRegionCount == 2
+              && diagnostics.faces.size() == 12
               && diagnostics.surfaces.size() == 2,
           "piston: every face, fluid region, and membrane surface is diagnosed");
     checkNear(diagnostics.maximumAbsoluteRegionVolumeRateCubicMetersPerSecond,
@@ -237,6 +238,29 @@ void testAnalyticTranslatingSlabPressureWork() {
 
     const auto& left = diagnostics.surfaces[0];
     const auto& right = diagnostics.surfaces[1];
+    const auto& firstRightFace = diagnostics.faces[1];
+    check(firstRightFace.surfaceStableId == 200
+              && firstRightFace.minusRegionStableId == 2
+              && firstRightFace.plusRegionStableId == 1
+              && firstRightFace.axis == GridFaceAxis::X
+              && firstRightFace.i == 6
+              && firstRightFace.j == 0
+              && firstRightFace.k == 0,
+          "piston: face diagnostics preserve canonical grid and region identity");
+    checkVectorNear(firstRightFace.lowerCornerMeters, {3.0, 0.0, 0.0}, 0.0,
+                    "piston: face tile lower corner is exact grid geometry");
+    checkVectorNear(firstRightFace.upperCornerMeters, {3.0, 1.0, 1.0}, 0.0,
+                    "piston: face tile upper corner is exact grid geometry");
+    checkNear(firstRightFace.areaSquareMeters, 1.0, 0.0,
+              "piston: one face tile carries its exact area");
+    checkVectorNear(firstRightFace.pressureTractionPascals,
+                    {110.0, 0.0, 0.0}, 0.0,
+                    "piston: one face tile carries its pressure traction");
+    checkVectorNear(firstRightFace.pressureForceNewtons,
+                    {110.0, 0.0, 0.0}, 0.0,
+                    "piston: one face tile carries its integrated force");
+    checkNear(firstRightFace.pressurePowerWatts, 27.5, 0.0,
+              "piston: one face tile carries its pressure power");
     check(left.stableId == 100 && right.stableId == 200,
           "piston: surface diagnostics are canonicalized by stable ID");
     checkNear(left.areaSquareMeters, 6.0, 0.0,

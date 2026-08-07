@@ -43,24 +43,27 @@ retaining its prior pressure gauge. A translating sealed-slab canonical closes
 the same `264 N*s` and `66 J` per-wall impulse/work values as the structural
 piston case; fixed-grid volume-changing motion is explicitly rejected. A
 topology-bound conservative transfer layer integrates uniform triangle
-traction into barycentric structural loads while independently closing force,
-moment, and rigid-motion power ledgers. A versioned macro-step coupling layer
-now integrates nonuniform temporal samples into nodal impulse, angular impulse,
+traction or explicit barycentric quadrature patches into structural loads while
+independently closing force, moment, and rigid-motion power ledgers. A versioned
+macro-step coupling layer now integrates nonuniform temporal samples into nodal
+impulse, angular impulse,
 and work, and applies the result transactionally across XPBD substeps. Its
 prescribed moving-piston canonical closes analytic pressure-volume work and
-delivers the same total impulse to structural momentum. A strict uniform
-fluid-to-structure bridge now binds one face-aligned pressure surface to one
-structural surface by stable ID and rejects nonuniform traction or mismatched
-area, force, and power. The `simwing-fsi --case piston` harness crosses that
-bridge, temporal coupling, XPBD acceptance, and replayable viewer frames with
-visible deterministic motion. A real 3.28 fixture
+delivers the same total impulse to structural momentum. Alongside the strict
+uniform fluid-to-structure subset, a planar fixed-correspondence bridge clips
+canonical MAC tiles against structural triangles and conservatively maps
+nonuniform face traction while closing per-face and aggregate area, force,
+moment, and power ledgers. The `simwing-fsi --case piston` harness crosses that
+face-resolved bridge, temporal coupling, XPBD acceptance, and replayable viewer
+frames with visible deterministic motion. A real 3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,
 checkpoint replay, and completed trace using synthetic physical settings.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
-assembly, general nonuniform grid-to-surface reconstruction, arbitrary/cut-cell
-moving interfaces, multiple crossings, and AMR CFD remain open. These worker cases
-validate the pipeline; they are not yet wing CFD or aerodynamic truth.
+assembly, curved or changing grid-to-surface correspondence,
+arbitrary/cut-cell moving interfaces, multiple crossings, and AMR CFD remain
+open. These worker cases validate the pipeline; they are not yet wing CFD or
+aerodynamic truth.
 The inherited Playground is not used by these targets.
 
 ## Inherited LEparagliding Studio baseline

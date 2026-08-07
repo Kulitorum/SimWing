@@ -1,7 +1,7 @@
 #pragma once
 
 #include "coupling.h"
-#include "fluid_structure_bridge.h"
+#include "face_resolved_bridge.h"
 #include "structure_frame.h"
 #include "viewer_protocol.h"
 
@@ -36,7 +36,7 @@ public:
 
 private:
     Structure structure_;
-    UniformFluidStructureBridge bridge_;
+    PlanarFaceResolvedFluidStructureBridge bridge_;
     ConservativeMacroStepCoupling coupling_;
     viewer::StructureFrameMapping frameMapping_;
     StructureStepSettings stepSettings_;

@@ -41,6 +41,21 @@ struct CouplingTriangleTraction {
     bool operator==(const CouplingTriangleTraction&) const = default;
 };
 
+// One constant-traction quadrature patch inside a current linear triangle.
+// Barycentric coordinates make the geometric correspondence explicit and
+// preserve force, moment, and work exactly for linear triangle kinematics.
+// Points must be ordered by triangleStableId, then stableId.
+struct CouplingTriangleTractionQuadrature {
+    std::uint64_t stableId = 0;
+    std::uint64_t triangleStableId = 0;
+    std::array<double, 3> barycentricCoordinates{};
+    double areaSquareMeters = 0.0;
+    StructureVector3 tractionPascals;
+
+    bool operator==(
+        const CouplingTriangleTractionQuadrature&) const = default;
+};
+
 struct CouplingNodeLoad {
     std::uint64_t stableId = 0;
     std::size_t structureNode = 0;
@@ -52,6 +67,8 @@ struct CouplingNodeLoad {
 struct ConservativeTransferSettings {
     StructureVector3 momentReferenceMeters;
     double minimumTriangleAreaSquareMeters = 1.0e-16;
+    double minimumQuadratureAreaSquareMeters = 1.0e-18;
+    double barycentricTolerance = 1.0e-12;
 };
 
 // Surface and nodal ledgers are accumulated independently. Residuals therefore
@@ -59,6 +76,7 @@ struct ConservativeTransferSettings {
 struct ConservativeTransferDiagnostics {
     std::size_t nodeCount = 0;
     std::size_t triangleCount = 0;
+    std::size_t quadraturePointCount = 0;
     double surfaceAreaSquareMeters = 0.0;
     StructureVector3 momentReferenceMeters;
     StructureVector3 integratedSurfaceForceNewtons;
@@ -118,6 +136,11 @@ public:
     [[nodiscard]] ConservativeTransferResult evaluate(
         std::span<const CouplingNodeKinematics> nodeKinematics,
         std::span<const CouplingTriangleTraction> triangleTractions,
+        const ConservativeTransferSettings& settings = {}) const;
+
+    [[nodiscard]] ConservativeTransferResult evaluateQuadrature(
+        std::span<const CouplingNodeKinematics> nodeKinematics,
+        std::span<const CouplingTriangleTractionQuadrature> quadrature,
         const ConservativeTransferSettings& settings = {}) const;
 
     // Adds the immutable result to existing pending structural loads. All
