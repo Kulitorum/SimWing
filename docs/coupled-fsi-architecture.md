@@ -422,11 +422,16 @@ frames, replayable trace protocol, and standalone Qt/OpenGL trace viewer are
 implemented with focused tests. A canonical Qt-free structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.
-The structural checkpoint intentionally
-excludes registered contact and the rigid-payload suspension system until
-`softwing_core` exposes their persistent state through a production API. Live
-bidirectional control, the authoritative design exporter, and the CFD kernel
-remain the next vertical-slice work.
+The exact-model capture now exports validated scene-v2.1 skins, authored open
+intakes, triangulated holed ribs, internal sheets, explicit suspension
+junctions, and the uncollapsed line graph when supplied explicit physical
+material and pilot settings. Scene assembly adds per-sheet bending and preserves
+the junction graph. `softwing_core` now provides a transactional production
+checkpoint for complete suspension and rigid-payload state. The next structural
+slice must compose that state and registered contact into `simwing_structure`.
+Manufacturing flat-pattern UVs, authored paired seams and stitch mechanics,
+pilot/harness assembly, live bidirectional control, an authoritative settings
+source/engine CLI, and the CFD kernel remain open work.
 
 ### Phase 0 — Establish the remake boundary
 

@@ -9,12 +9,15 @@
 
 namespace simwing::fsi {
 
+// Stable IDs are unique within each entity collection. Vertex and
+// SuspensionJunction additionally share one ID namespace because both become
+// Structure nodes and DiagnosticVertex entities without ID transformation.
 using StableId = std::uint64_t;
 
 inline constexpr StableId invalidStableId = 0;
 inline constexpr std::uint32_t sceneSchemaMajor = 2;
-inline constexpr std::uint32_t sceneSchemaMinor = 0;
-inline constexpr std::uint32_t sceneBinaryVersion = 1;
+inline constexpr std::uint32_t sceneSchemaMinor = 1;
+inline constexpr std::uint32_t sceneBinaryVersion = 2;
 
 struct Vec2 {
     double x = 0.0;
@@ -89,6 +92,16 @@ struct FabricMaterial {
     double permeabilitySquareMeters = 0.0;
 };
 
+// Measured properties of the assembled seam line. They intentionally do not
+// prescribe how discrete paired vertices share tributary length or stitch
+// load; that belongs to a separately verified structural seam model.
+struct SeamMaterial {
+    StableId id = invalidStableId;
+    std::string name;
+    double linearDensityKgPerMeter = 0.0;
+    double axialStiffnessNewtons = 0.0;
+};
+
 enum class SurfaceRole : std::uint8_t {
     Skin = 1,
     Rib = 2,
@@ -105,6 +118,11 @@ struct Triangle {
     StableId negativeSideRegionId = invalidStableId;
     StableId positiveSideRegionId = invalidStableId;
     StableId materialId = invalidStableId;
+    // Stable identity of the authored fabric sheet. Triangles sharing a mesh
+    // edge bend together only when this ID also matches. This prevents a
+    // welded skin/rib or skin/diagonal attachment edge from acquiring a
+    // fictitious fabric hinge.
+    StableId sheetId = invalidStableId;
     SurfaceRole role = SurfaceRole::Skin;
 };
 
@@ -120,6 +138,16 @@ struct Opening {
     StableId negativeSideRegionId = invalidStableId;
     StableId positiveSideRegionId = invalidStableId;
     OpeningRole role = OpeningRole::Intake;
+};
+
+// The chains have equal cardinality and pair element-by-element. Distinct
+// vertex IDs preserve the intended sewn coincidence without welding topology
+// or assuming a constraint stiffness/discretization rule.
+struct Seam {
+    StableId id = invalidStableId;
+    StableId materialId = invalidStableId;
+    std::vector<StableId> firstOrderedVertexIds;
+    std::vector<StableId> secondOrderedVertexIds;
 };
 
 struct LineMaterial {
@@ -144,6 +172,14 @@ struct Pilot {
 enum class AttachmentKind : std::uint8_t {
     SurfaceVertex = 1,
     PilotHarness = 2,
+    SuspensionJunction = 3,
+};
+
+struct SuspensionJunction {
+    StableId id = invalidStableId;
+    Vec3 positionMeters;
+    double massKg = 0.0;
+    bool fixed = false;
 };
 
 struct Attachment {
@@ -156,6 +192,7 @@ struct Attachment {
     StableId vertexId = invalidStableId;
     StableId pilotId = invalidStableId;
     Vec3 pilotLocalPositionMeters;
+    StableId suspensionJunctionId = invalidStableId;
 };
 
 enum class SuspensionLineRole : std::uint8_t {
@@ -179,10 +216,13 @@ struct Scene {
     std::vector<FluidRegion> regions;
     std::vector<Vertex> vertices;
     std::vector<FabricMaterial> fabricMaterials;
+    std::vector<SeamMaterial> seamMaterials;
     std::vector<Triangle> triangles;
     std::vector<Opening> openings;
+    std::vector<Seam> seams;
     std::vector<LineMaterial> lineMaterials;
     std::vector<Pilot> pilots;
+    std::vector<SuspensionJunction> suspensionJunctions;
     std::vector<Attachment> attachments;
     std::vector<SuspensionLine> suspensionLines;
 };
@@ -202,6 +242,9 @@ enum class EntityKind : std::uint8_t {
     Pilot = 8,
     Attachment = 9,
     SuspensionLine = 10,
+    SeamMaterial = 11,
+    Seam = 12,
+    SuspensionJunction = 13,
 };
 
 enum class ValidationCode : std::uint16_t {
@@ -224,6 +267,7 @@ enum class ValidationCode : std::uint16_t {
     InvalidAttachmentTarget = 17,
     DanglingLineAttachment = 18,
     InvalidSuspensionLine = 19,
+    InvalidSeam = 20,
 };
 
 struct ValidationDiagnostic {

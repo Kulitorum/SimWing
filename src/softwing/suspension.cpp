@@ -16,6 +16,7 @@
 #include <ranges>
 #include <set>
 #include <sstream>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 
@@ -43,6 +44,195 @@ bool finite(const Quaternion& value) {
 bool finite(const Mat3& value) {
     return std::ranges::all_of(value.values,
                                [](double entry) { return finite(entry); });
+}
+
+class CheckpointHasher {
+public:
+    void boolean(bool value) { byte(value ? 1U : 0U); }
+
+    void unsignedValue(std::uint64_t value) {
+        for (std::size_t index = 0; index < sizeof(value); ++index) {
+            byte(static_cast<std::uint8_t>(value & 0xffU));
+            value >>= 8U;
+        }
+    }
+
+    void count(std::size_t value) {
+        unsignedValue(static_cast<std::uint64_t>(value));
+    }
+
+    void real(double value) {
+        unsignedValue(std::bit_cast<std::uint64_t>(value));
+    }
+
+    void text(std::string_view value) {
+        count(value.size());
+        for (const unsigned char character : value) byte(character);
+    }
+
+    template <typename Enum>
+    void enumeration(Enum value) {
+        unsignedValue(static_cast<std::uint64_t>(
+            static_cast<std::underlying_type_t<Enum>>(value)));
+    }
+
+    [[nodiscard]] std::uint64_t value() const { return value_; }
+
+private:
+    void byte(std::uint8_t value) {
+        value_ ^= value;
+        value_ *= 1099511628211ULL;
+    }
+
+    std::uint64_t value_ = 14695981039346656037ULL;
+};
+
+void hashVec3(CheckpointHasher& hash, const Vec3& value) {
+    hash.real(value.x);
+    hash.real(value.y);
+    hash.real(value.z);
+}
+
+void hashPayloadState(CheckpointHasher& hash,
+                      const RigidPayloadState& value) {
+    hashVec3(hash, value.centreOfMassWorld);
+    hash.real(value.orientation.w);
+    hash.real(value.orientation.x);
+    hash.real(value.orientation.y);
+    hash.real(value.orientation.z);
+    hashVec3(hash, value.linearVelocity);
+    hashVec3(hash, value.angularVelocity);
+}
+
+void hashEndpoint(CheckpointHasher& hash, const SuspensionEndpoint& value) {
+    hash.enumeration(value.kind);
+    hash.text(value.id);
+}
+
+void hashWrench(CheckpointHasher& hash, const Wrench& value) {
+    hashVec3(hash, value.force);
+    hashVec3(hash, value.moment);
+}
+
+void hashSegmentDiagnostics(
+    CheckpointHasher& hash,
+    const SuspensionSegmentDiagnostics& value) {
+    hash.text(value.id);
+    hashEndpoint(hash, value.from);
+    hashEndpoint(hash, value.to);
+    hash.count(value.paths.size());
+    for (const std::string& path : value.paths) hash.text(path);
+    hash.count(value.groups.size());
+    for (const std::string& group : value.groups) hash.text(group);
+    hash.real(value.length);
+    hash.real(value.commandedRestLength);
+    hash.real(value.stretch);
+    hash.real(value.strain);
+    hash.boolean(value.taut);
+    hash.real(value.multiplier);
+    hash.real(value.tension);
+    hash.real(value.residual);
+    hash.real(value.elasticEnergy);
+    hashVec3(hash, value.dampingImpulse);
+    hash.real(value.dampingWork);
+    hash.real(value.controlWork);
+    hashVec3(hash, value.fromImpulse);
+    hashVec3(hash, value.toImpulse);
+    hashVec3(hash, value.fromMoment);
+    hashVec3(hash, value.toMoment);
+}
+
+void hashPayloadDiagnostics(CheckpointHasher& hash,
+                            const PayloadDiagnostics& value) {
+    hashPayloadState(hash, value.state);
+    hashVec3(hash, value.linearMomentum);
+    hashVec3(hash, value.angularMomentum);
+    hash.real(value.translationalKineticEnergy);
+    hash.real(value.rotationalKineticEnergy);
+    hash.real(value.gravitationalEnergy);
+    hashWrench(hash, value.appliedWrench);
+    hashWrench(hash, value.lineWrench);
+    hashWrench(hash, value.groundWrench);
+    hashWrench(hash, value.anchorWrench);
+}
+
+void hashSuspensionDiagnostics(CheckpointHasher& hash,
+                               const SuspensionDiagnostics& value) {
+    hash.boolean(value.registered);
+    hash.boolean(value.converged);
+    hash.boolean(value.allSlack);
+    hash.boolean(value.anchored);
+    hash.boolean(value.grounded);
+    hash.boolean(value.failedTrial);
+    hash.count(value.attachmentCount);
+    hash.count(value.junctionCount);
+    hash.count(value.segmentCount);
+    hash.count(value.tautCount);
+    hash.count(value.slackCount);
+    hash.count(value.solverIterations);
+    hash.real(value.maximumResidual);
+    hash.real(value.maximumGroundPenetration);
+    hash.real(value.elasticEnergy);
+    hash.real(value.dampingWork);
+    hash.real(value.controlWork);
+    hashVec3(hash, value.netInternalImpulse);
+    hashVec3(hash, value.netInternalMoment);
+    hashWrench(hash, value.fixedSupportReaction);
+    hashWrench(hash, value.canopySupportReaction);
+    hashWrench(hash, value.groundReaction);
+    hash.count(value.attachmentLoads.size());
+    for (const auto& [id, load] : value.attachmentLoads) {
+        hash.text(id);
+        hashVec3(hash, load);
+    }
+    hash.count(value.groupLoads.size());
+    for (const auto& [id, load] : value.groupLoads) {
+        hash.text(id);
+        hashVec3(hash, load);
+    }
+    hash.text(value.provenance);
+    hash.enumeration(value.failurePhase);
+    hash.text(value.failureEntity);
+}
+
+[[nodiscard]] std::uint64_t checkpointStateFingerprintOf(
+    const SuspensionCheckpoint& checkpoint) {
+    CheckpointHasher hash;
+    hash.count(checkpoint.schemaMajor);
+    hash.unsignedValue(checkpoint.topologyFingerprint);
+    hashPayloadState(hash, checkpoint.payloadState);
+    hashPayloadState(hash, checkpoint.previousPayloadState);
+    hash.count(checkpoint.commandedHangPointPositions.size());
+    for (const Vec3& value : checkpoint.commandedHangPointPositions)
+        hashVec3(hash, value);
+    hash.count(checkpoint.segments.size());
+    for (const SuspensionSegmentCheckpoint& value : checkpoint.segments) {
+        hash.text(value.id);
+        hash.real(value.commandedRestLength);
+        hash.real(value.accumulatedLambda);
+    }
+    hash.count(checkpoint.controls.size());
+    for (const SuspensionControlState& value : checkpoint.controls) {
+        hash.text(value.id);
+        hash.real(value.targetCommand);
+        hash.real(value.actualCommand);
+        hash.real(value.travel);
+        hash.real(value.signedWork);
+    }
+    hash.count(checkpoint.groundMultipliers.size());
+    for (double value : checkpoint.groundMultipliers) hash.real(value);
+    hashWrench(hash, checkpoint.appliedWrench);
+    hashVec3(hash, checkpoint.currentGravity);
+    hash.count(checkpoint.pendingSegmentControlWork.size());
+    for (double value : checkpoint.pendingSegmentControlWork) hash.real(value);
+    hash.count(checkpoint.segmentDiagnostics.size());
+    for (const SuspensionSegmentDiagnostics& value :
+         checkpoint.segmentDiagnostics)
+        hashSegmentDiagnostics(hash, value);
+    hashPayloadDiagnostics(hash, checkpoint.payloadDiagnostics);
+    hashSuspensionDiagnostics(hash, checkpoint.diagnostics);
+    hashSuspensionDiagnostics(hash, checkpoint.committedDiagnostics);
+    return hash.value();
 }
 
 double quaternionNormSquared(const Quaternion& value) {
@@ -1248,6 +1438,477 @@ void SuspensionSystem::setAppliedPayloadWrench(const Wrench& wrench) {
         fail(SuspensionPhase::Validation, "payload-wrench",
              "applied payload wrench is non-finite");
     appliedWrench_ = wrench;
+}
+
+std::uint64_t SuspensionSystem::checkpointTopologyFingerprint() const {
+    CheckpointHasher hash;
+    hash.text("SOFTWING_SUSPENSION_CHECKPOINT_TOPOLOGY");
+    hash.count(suspensionCheckpointSchemaMajor);
+    hash.text(serializeSuspensionDefinition(definition_));
+
+    const SoftBody& body = owner();
+    hash.count(body.nodes().size());
+    for (const Node& node : body.nodes()) hash.real(node.inverseMass);
+    hash.count(body.triangles().size());
+    for (const Triangle& triangle : body.triangles()) {
+        hash.count(triangle.a);
+        hash.count(triangle.b);
+        hash.count(triangle.c);
+    }
+    hash.count(body.constraints().size());
+    for (const DistanceConstraint& constraint : body.constraints()) {
+        hash.count(constraint.a);
+        hash.count(constraint.b);
+        hash.real(constraint.restLength);
+        hash.real(constraint.compliance);
+        hash.enumeration(constraint.kind);
+    }
+    hash.count(body.membraneElements().size());
+    for (const MembraneElement& element : body.membraneElements()) {
+        hash.count(element.triangle);
+        for (const Vec2& chart : element.chart) {
+            hash.real(chart.x);
+            hash.real(chart.y);
+        }
+        const OrthotropicMembraneMaterial& material = element.material;
+        hash.real(material.warpStiffness);
+        hash.real(material.weftStiffness);
+        hash.real(material.couplingStiffness);
+        hash.real(material.shearStiffness);
+        hash.real(material.warpPreTension);
+        hash.real(material.weftPreTension);
+        hash.real(material.dampingTime);
+        hash.real(material.compressionStiffnessRatio);
+        hash.enumeration(element.role);
+        hash.real(element.referenceArea);
+        hash.real(element.inverseReferenceMatrix.m00);
+        hash.real(element.inverseReferenceMatrix.m01);
+        hash.real(element.inverseReferenceMatrix.m10);
+        hash.real(element.inverseReferenceMatrix.m11);
+        hash.real(element.complianceMatrix.xx);
+        hash.real(element.complianceMatrix.yy);
+        hash.real(element.complianceMatrix.zz);
+        hash.real(element.complianceMatrix.xy);
+        hash.real(element.complianceMatrix.xz);
+        hash.real(element.complianceMatrix.yz);
+    }
+    hash.count(body.dihedralConstraints().size());
+    for (const DihedralBendingConstraint& constraint :
+         body.dihedralConstraints()) {
+        hash.count(constraint.a);
+        hash.count(constraint.b);
+        hash.count(constraint.c);
+        hash.count(constraint.d);
+        hash.real(constraint.restAngleRadians);
+        hash.real(constraint.compliance);
+    }
+    hash.boolean(body.hasInteriorPressurePartitions());
+    hash.count(body.contactSurfaces().size());
+    for (const RegisteredContactSurface& surface : body.contactSurfaces()) {
+        hash.count(surface.firstTriangle);
+        hash.count(surface.triangleCount);
+        hash.real(surface.halfThickness);
+        hash.count(surface.vertices.size());
+        for (std::size_t vertex : surface.vertices) hash.count(vertex);
+        hash.count(surface.edges.size());
+        for (const ContactEdge& edge : surface.edges) {
+            hash.count(edge.a);
+            hash.count(edge.b);
+        }
+    }
+    hash.count(body.contactLines().size());
+    for (const RegisteredContactLine& line : body.contactLines()) {
+        hash.count(line.a);
+        hash.count(line.b);
+        hash.real(line.radius);
+    }
+    hash.count(body.contactPairs().size());
+    for (const RegisteredContactPair& pair : body.contactPairs()) {
+        hash.enumeration(pair.kind);
+        hash.enumeration(pair.firstKind);
+        hash.count(pair.first);
+        hash.enumeration(pair.secondKind);
+        hash.count(pair.second);
+        hash.real(pair.settings.normalCompliance);
+        hash.real(pair.settings.staticFriction);
+        hash.real(pair.settings.dynamicFriction);
+    }
+
+    hash.count(attachments_.size());
+    for (const ResolvedSuspensionAttachment& attachment : attachments_) {
+        hash.text(attachment.id);
+        hash.text(attachment.panelId);
+        hash.real(attachment.chart.x);
+        hash.real(attachment.chart.y);
+        hash.count(attachment.nodeIndex);
+        hashVec3(hash, attachment.worldPosition);
+        hash.text(attachment.provenanceId);
+    }
+    hash.count(junctionNodeIndices_.size());
+    for (std::size_t node : junctionNodeIndices_) hash.count(node);
+    hash.count(baseHangPointPositions_.size());
+    for (const Vec3& point : baseHangPointPositions_) hashVec3(hash, point);
+
+    const auto runtimeEndpoint = [&](const RuntimeSuspensionEndpoint& endpoint) {
+        hashEndpoint(hash, endpoint.definition);
+        hash.boolean(endpoint.nodeIndex.has_value());
+        if (endpoint.nodeIndex) hash.count(*endpoint.nodeIndex);
+        hash.boolean(endpoint.payloadPointIndex.has_value());
+        if (endpoint.payloadPointIndex) hash.count(*endpoint.payloadPointIndex);
+    };
+    hash.count(segments_.size());
+    for (const RuntimeSuspensionSegment& segment : segments_) {
+        hash.text(segment.definition.id);
+        runtimeEndpoint(segment.from);
+        runtimeEndpoint(segment.to);
+        hash.count(segment.attachmentPaths.size());
+        for (const std::string& path : segment.attachmentPaths)
+            hash.text(path);
+    }
+    return hash.value();
+}
+
+SuspensionCheckpoint SuspensionSystem::checkpoint() const {
+    if (hasSnapshot_) {
+        fail(SuspensionPhase::Validation, "checkpoint-active-substep",
+             "cannot checkpoint an active suspension trial");
+    }
+
+    SuspensionCheckpoint result;
+    result.topologyFingerprint = checkpointTopologyFingerprint();
+    result.payloadState = payloadState_;
+    result.previousPayloadState = previousPayloadState_;
+    result.commandedHangPointPositions = commandedHangPointPositions_;
+    result.segments.reserve(segments_.size());
+    for (const RuntimeSuspensionSegment& segment : segments_) {
+        result.segments.push_back({segment.definition.id,
+                                   segment.commandedRestLength,
+                                   segment.accumulatedLambda});
+    }
+    result.controls = controls_;
+    result.groundMultipliers = groundMultipliers_;
+    result.appliedWrench = appliedWrench_;
+    result.currentGravity = currentGravity_;
+    result.pendingSegmentControlWork = pendingSegmentControlWork_;
+    result.segmentDiagnostics = segmentDiagnostics_;
+    result.payloadDiagnostics = payloadDiagnostics_;
+    result.diagnostics = diagnostics_;
+    result.committedDiagnostics = committedDiagnostics_;
+    result.stateFingerprint = checkpointStateFingerprintOf(result);
+    return result;
+}
+
+void SuspensionSystem::restore(const SuspensionCheckpoint& checkpointValue) {
+    if (hasSnapshot_) {
+        fail(SuspensionPhase::Validation, "checkpoint-active-substep",
+             "cannot restore during an active suspension trial");
+    }
+    if (checkpointValue.schemaMajor != suspensionCheckpointSchemaMajor) {
+        fail(SuspensionPhase::Validation, "checkpoint-schema",
+             "unsupported suspension checkpoint schema");
+    }
+    if (checkpointValue.topologyFingerprint !=
+        checkpointTopologyFingerprint()) {
+        fail(SuspensionPhase::Validation, "checkpoint-topology",
+             "suspension checkpoint belongs to a different definition or "
+             "topology");
+    }
+    if (checkpointValue.commandedHangPointPositions.size() !=
+            commandedHangPointPositions_.size() ||
+        checkpointValue.segments.size() != segments_.size() ||
+        checkpointValue.controls.size() != controls_.size() ||
+        checkpointValue.groundMultipliers.size() !=
+            groundMultipliers_.size() ||
+        checkpointValue.pendingSegmentControlWork.size() !=
+            pendingSegmentControlWork_.size() ||
+        checkpointValue.segmentDiagnostics.size() !=
+            segmentDiagnostics_.size()) {
+        fail(SuspensionPhase::Validation, "checkpoint-counts",
+             "suspension checkpoint state counts do not match the live "
+             "system");
+    }
+
+    const auto requirePayloadState = [&](const RigidPayloadState& state,
+                                         const std::string& entity) {
+        const double normSquared = quaternionNormSquared(state.orientation);
+        const bool canonical = state.orientation.w > 0.0 ||
+            (state.orientation.w == 0.0 &&
+             (state.orientation.x > 0.0 ||
+              (state.orientation.x == 0.0 &&
+               (state.orientation.y > 0.0 ||
+                (state.orientation.y == 0.0 &&
+                 state.orientation.z >= 0.0)))));
+        if (!finite(state.centreOfMassWorld) ||
+            !finite(state.orientation) ||
+            !finite(state.linearVelocity) ||
+            !finite(state.angularVelocity) ||
+            !finite(normSquared) ||
+            std::abs(normSquared - 1.0) > 1.0e-10 || !canonical) {
+            fail(SuspensionPhase::Validation, entity,
+                 "checkpoint rigid payload state is invalid");
+        }
+    };
+    const auto requireWrench = [&](const Wrench& wrench,
+                                   const std::string& entity) {
+        if (!finite(wrench.force) || !finite(wrench.moment)) {
+            fail(SuspensionPhase::Validation, entity,
+                 "checkpoint wrench is non-finite");
+        }
+    };
+    requirePayloadState(checkpointValue.payloadState, "checkpoint-payload");
+    requirePayloadState(checkpointValue.previousPayloadState,
+                        "checkpoint-previous-payload");
+    for (const Vec3& point : checkpointValue.commandedHangPointPositions) {
+        if (!finite(point)) {
+            fail(SuspensionPhase::Validation, "checkpoint-hang-point",
+                 "checkpoint commanded hang point is non-finite");
+        }
+    }
+    for (std::size_t index = 0; index < checkpointValue.segments.size();
+         ++index) {
+        const SuspensionSegmentCheckpoint& state =
+            checkpointValue.segments[index];
+        if (state.id != segments_[index].definition.id) {
+            fail(SuspensionPhase::Validation, "checkpoint-segment-id",
+                 "checkpoint segment identity does not match live topology");
+        }
+        if (!(state.commandedRestLength >
+              definition_.solver.minimumLineLength) ||
+            !finite(state.commandedRestLength) ||
+            state.accumulatedLambda < 0.0 ||
+            !finite(state.accumulatedLambda)) {
+            fail(SuspensionPhase::Validation, state.id,
+                 "checkpoint segment state is invalid");
+        }
+    }
+    for (std::size_t index = 0; index < checkpointValue.controls.size();
+         ++index) {
+        const SuspensionControlState& state = checkpointValue.controls[index];
+        const SuspensionControlDefinition& definition =
+            definition_.controls[index];
+        if (state.id != controls_[index].id || state.id != definition.id) {
+            fail(SuspensionPhase::Validation, "checkpoint-control-id",
+                 "checkpoint control identity does not match live topology");
+        }
+        if (!finite(state.targetCommand) || !finite(state.actualCommand) ||
+            !finite(state.travel) || state.travel < 0.0 ||
+            !finite(state.signedWork) ||
+            state.targetCommand < definition.minimumCommand ||
+            state.targetCommand > definition.maximumCommand ||
+            state.actualCommand < definition.minimumCommand ||
+            state.actualCommand > definition.maximumCommand) {
+            fail(SuspensionPhase::Validation, state.id,
+                 "checkpoint control state is invalid");
+        }
+    }
+    for (double multiplier : checkpointValue.groundMultipliers) {
+        if (multiplier < 0.0 || !finite(multiplier)) {
+            fail(SuspensionPhase::Validation, "checkpoint-ground",
+                 "checkpoint ground multiplier is invalid");
+        }
+    }
+    requireWrench(checkpointValue.appliedWrench,
+                  "checkpoint-applied-wrench");
+    if (!finite(checkpointValue.currentGravity)) {
+        fail(SuspensionPhase::Validation, "checkpoint-gravity",
+             "checkpoint gravity is non-finite");
+    }
+    for (double work : checkpointValue.pendingSegmentControlWork) {
+        if (!finite(work)) {
+            fail(SuspensionPhase::Validation, "checkpoint-control-work",
+                 "checkpoint pending control work is non-finite");
+        }
+    }
+
+    const auto requireSegmentDiagnostics = [&] {
+        for (std::size_t index = 0;
+             index < checkpointValue.segmentDiagnostics.size(); ++index) {
+            const SuspensionSegmentDiagnostics& value =
+                checkpointValue.segmentDiagnostics[index];
+            const RuntimeSuspensionSegment& runtime = segments_[index];
+            if (!value.id.empty() &&
+                (value.id != runtime.definition.id ||
+                 value.from.kind != runtime.definition.from.kind ||
+                 value.from.id != runtime.definition.from.id ||
+                 value.to.kind != runtime.definition.to.kind ||
+                 value.to.id != runtime.definition.to.id ||
+                 value.paths != runtime.attachmentPaths ||
+                 value.groups != runtime.definition.groups)) {
+                fail(SuspensionPhase::Validation,
+                     "checkpoint-segment-diagnostics",
+                     "checkpoint segment diagnostics identity is corrupt");
+            }
+            if (value.id.empty() &&
+                (!value.paths.empty() || !value.groups.empty())) {
+                fail(SuspensionPhase::Validation,
+                     "checkpoint-segment-diagnostics",
+                     "uninitialized checkpoint diagnostics contain identity "
+                     "data");
+            }
+            if (!finite(value.length) ||
+                !finite(value.commandedRestLength) ||
+                !finite(value.stretch) || !finite(value.strain) ||
+                !finite(value.multiplier) || !finite(value.tension) ||
+                !finite(value.residual) || !finite(value.elasticEnergy) ||
+                !finite(value.dampingImpulse) ||
+                !finite(value.dampingWork) || !finite(value.controlWork) ||
+                !finite(value.fromImpulse) || !finite(value.toImpulse) ||
+                !finite(value.fromMoment) || !finite(value.toMoment) ||
+                value.length < 0.0 || value.commandedRestLength < 0.0 ||
+                value.stretch < 0.0 || value.strain < 0.0 ||
+                value.multiplier < 0.0 || value.tension < 0.0 ||
+                value.residual < 0.0 || value.elasticEnergy < 0.0) {
+                fail(SuspensionPhase::Validation,
+                     "checkpoint-segment-diagnostics",
+                     "checkpoint segment diagnostics are invalid");
+            }
+        }
+    };
+    requireSegmentDiagnostics();
+
+    const auto requirePayloadDiagnostics = [&](const PayloadDiagnostics& value) {
+        requirePayloadState(value.state, "checkpoint-payload-diagnostics");
+        if (!finite(value.linearMomentum) ||
+            !finite(value.angularMomentum) ||
+            !finite(value.translationalKineticEnergy) ||
+            !finite(value.rotationalKineticEnergy) ||
+            !finite(value.gravitationalEnergy)) {
+            fail(SuspensionPhase::Validation,
+                 "checkpoint-payload-diagnostics",
+                 "checkpoint payload diagnostics are non-finite");
+        }
+        requireWrench(value.appliedWrench,
+                      "checkpoint-payload-diagnostics");
+        requireWrench(value.lineWrench, "checkpoint-payload-diagnostics");
+        requireWrench(value.groundWrench,
+                      "checkpoint-payload-diagnostics");
+        requireWrench(value.anchorWrench,
+                      "checkpoint-payload-diagnostics");
+    };
+    requirePayloadDiagnostics(checkpointValue.payloadDiagnostics);
+
+    std::set<std::string> validAttachmentIds;
+    for (const auto& attachment : attachments_)
+        validAttachmentIds.insert(attachment.id);
+    std::set<std::string> validGroupIds;
+    for (const auto& segment : segments_)
+        validGroupIds.insert(segment.definition.groups.begin(),
+                             segment.definition.groups.end());
+    const auto requireDiagnostics = [&](const SuspensionDiagnostics& value,
+                                        const std::string& entity) {
+        const std::uint64_t maximumSolverVisits =
+            static_cast<std::uint64_t>(segments_.size()) *
+            static_cast<std::uint64_t>(definition_.solver.lineIterations);
+        if (!value.registered ||
+            value.attachmentCount != attachments_.size() ||
+            value.junctionCount != junctionNodeIndices_.size() ||
+            value.segmentCount != segments_.size() ||
+            value.tautCount > segments_.size() ||
+            value.slackCount > segments_.size() ||
+            static_cast<std::uint64_t>(value.solverIterations) >
+                maximumSolverVisits ||
+            !finite(value.maximumResidual) ||
+            !finite(value.maximumGroundPenetration) ||
+            !finite(value.elasticEnergy) || !finite(value.dampingWork) ||
+            !finite(value.controlWork) ||
+            !finite(value.netInternalImpulse) ||
+            !finite(value.netInternalMoment) ||
+            value.maximumResidual < 0.0 ||
+            value.maximumGroundPenetration < 0.0 ||
+            value.elasticEnergy < 0.0 ||
+            value.provenance != definition_.provenance.front().id) {
+            fail(SuspensionPhase::Validation, entity,
+                 "checkpoint suspension diagnostics are invalid");
+        }
+        requireWrench(value.fixedSupportReaction, entity);
+        requireWrench(value.canopySupportReaction, entity);
+        requireWrench(value.groundReaction, entity);
+        std::set<std::string> seen;
+        for (const auto& [id, load] : value.attachmentLoads) {
+            if (!validAttachmentIds.contains(id) || !seen.insert(id).second ||
+                !finite(load)) {
+                fail(SuspensionPhase::Validation, entity,
+                     "checkpoint attachment diagnostics are invalid");
+            }
+        }
+        seen.clear();
+        for (const auto& [id, load] : value.groupLoads) {
+            if (!validGroupIds.contains(id) || !seen.insert(id).second ||
+                !finite(load)) {
+                fail(SuspensionPhase::Validation, entity,
+                     "checkpoint group diagnostics are invalid");
+            }
+        }
+        switch (value.failurePhase) {
+        case SuspensionPhase::Parse:
+        case SuspensionPhase::Validation:
+        case SuspensionPhase::AttachmentResolution:
+        case SuspensionPhase::GraphConstruction:
+        case SuspensionPhase::Control:
+        case SuspensionPhase::Prediction:
+        case SuspensionPhase::LineSolve:
+        case SuspensionPhase::GroundSolve:
+        case SuspensionPhase::Certification:
+        case SuspensionPhase::Diagnostics:
+            break;
+        default:
+            fail(SuspensionPhase::Validation, entity,
+                 "checkpoint diagnostic phase is invalid");
+        }
+        requireText(value.failureEntity, SuspensionPhase::Validation, entity,
+                    true);
+    };
+    requireDiagnostics(checkpointValue.diagnostics,
+                       "checkpoint-diagnostics");
+    requireDiagnostics(checkpointValue.committedDiagnostics,
+                       "checkpoint-committed-diagnostics");
+
+    if (checkpointValue.stateFingerprint !=
+        checkpointStateFingerprintOf(checkpointValue)) {
+        fail(SuspensionPhase::Validation, "checkpoint-integrity",
+             "suspension checkpoint state fingerprint does not match its "
+             "contents");
+    }
+
+    // Copy every allocating value before the first live write. The commit
+    // below is swaps plus scalar assignments and therefore cannot expose a
+    // partially restored suspension if allocation fails.
+    SuspensionCheckpoint candidate = checkpointValue;
+    payloadState_ = candidate.payloadState;
+    previousPayloadState_ = candidate.previousPayloadState;
+    commandedHangPointPositions_.swap(
+        candidate.commandedHangPointPositions);
+    for (std::size_t index = 0; index < segments_.size(); ++index) {
+        segments_[index].commandedRestLength =
+            candidate.segments[index].commandedRestLength;
+        segments_[index].accumulatedLambda =
+            candidate.segments[index].accumulatedLambda;
+    }
+    controls_.swap(candidate.controls);
+    groundMultipliers_.swap(candidate.groundMultipliers);
+    appliedWrench_ = candidate.appliedWrench;
+    currentGravity_ = candidate.currentGravity;
+    pendingSegmentControlWork_.swap(candidate.pendingSegmentControlWork);
+    segmentDiagnostics_.swap(candidate.segmentDiagnostics);
+    std::swap(payloadDiagnostics_, candidate.payloadDiagnostics);
+    std::swap(diagnostics_, candidate.diagnostics);
+    std::swap(committedDiagnostics_, candidate.committedDiagnostics);
+
+    // Trial snapshots are deliberately not checkpoint data. Reinitialize
+    // them and leave a solver-safe point; beginSubstep() will populate a new
+    // rollback snapshot before any future mutation.
+    snapshotPayloadState_ = {};
+    snapshotPreviousPayloadState_ = {};
+    snapshotCommandedHangPointPositions_.clear();
+    snapshotSegments_.clear();
+    snapshotControls_.clear();
+    snapshotGroundMultipliers_.clear();
+    snapshotCurrentGravity_ = {};
+    snapshotPendingSegmentControlWork_.clear();
+    snapshotSegmentDiagnostics_.clear();
+    snapshotPayloadDiagnostics_ = {};
+    snapshotDiagnostics_ = {};
+    hasSnapshot_ = false;
 }
 
 void SuspensionSystem::step(const StepSettings& settings) {

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../fsi/scene.h"
+
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -36,6 +38,98 @@ NurbsWriteResult writeNurbsStep(const std::filesystem::path &path,
 // suspension lines) as JSON. Millimetres, Z up. Returns false and sets
 // error if nothing was captured or the file cannot be written.
 bool writeSimMesh(const std::filesystem::path &path, std::string &error);
+
+// Selects the warp axis within each authored sheet: skin chord/span,
+// rib planar-profile X/Y, and internal-sheet boundary/rung respectively.
+enum class SimWingMaterialAxis
+{
+    Primary,
+    Secondary,
+};
+
+// Every emitted surface role needs an explicit measured material assignment.
+// IDs are owned by the deterministic exporter rather than supplied here.
+struct SimWingFabricExportSettings
+{
+    simwing::fsi::SurfaceRole role = simwing::fsi::SurfaceRole::Skin;
+    std::string name;
+    SimWingMaterialAxis warpAxis = SimWingMaterialAxis::Primary;
+    double warpStiffnessNewtonsPerMeter = 0.0;
+    double weftStiffnessNewtonsPerMeter = 0.0;
+    double shearStiffnessNewtonsPerMeter = 0.0;
+    double bendingStiffnessNewtonMeters = 0.0;
+    double arealDensityKgPerSquareMeter = 0.0;
+    double dampingSeconds = 0.0;
+    double porosityFraction = 0.0;
+    double permeabilitySquareMeters = 0.0;
+};
+
+// captureTypeName is the raw section-34 type identity supplied to
+// lep_nurbs_set_line_tag, not its decorated viewport label.
+struct SimWingLineExportSettings
+{
+    std::string captureTypeName;
+    std::string name;
+    double diameterMeters = 0.0;
+    double linearDensityKgPerMeter = 0.0;
+    double axialStiffnessNewtons = 0.0;
+    double dragCoefficient = 0.0;
+};
+
+struct SimWingHarnessExportPoint
+{
+    // Captured line endpoints within endpointMatchToleranceMeters of this
+    // world point become PilotHarness attachments at pilotLocalPositionMeters.
+    simwing::fsi::Vec3 worldPositionMeters;
+    simwing::fsi::Vec3 pilotLocalPositionMeters;
+};
+
+struct SimWingPilotExportSettings
+{
+    std::string name;
+    double massKg = 0.0;
+    simwing::fsi::Vec3 centerOfMassPositionMeters;
+    simwing::fsi::Vec3 linearVelocityMetersPerSecond;
+    simwing::fsi::Quaternion bodyToWorld;
+    simwing::fsi::Vec3 principalInertiaKgSquareMeters;
+    std::vector<SimWingHarnessExportPoint> harnessPoints;
+    double endpointMatchToleranceMeters = 0.0;
+};
+
+struct SimWingSceneExportSettings
+{
+    std::string designChecksum;
+    std::string exporterVersion;
+    std::vector<SimWingFabricExportSettings> fabricMaterials;
+    std::vector<SimWingLineExportSettings> lineMaterials;
+    SimWingPilotExportSettings pilot;
+    // Lumped mass assigned to every authored mass-carrying line junction.
+    // It is explicit because scene-v2 does not permit a dynamic zero-mass
+    // node and the capture data contains geometry, not riser hardware mass.
+    double suspensionJunctionMassKg = 0.0;
+    // Maximum authored line-endpoint distance from an exported skin/rib
+    // vertex for a SurfaceVertex attachment. A non-match remains an exact
+    // SuspensionJunction; it is never silently snapped farther than this.
+    double surfaceEndpointMatchToleranceMeters = 0.0;
+};
+
+struct SimWingSceneExportResult
+{
+    bool success = false;
+    simwing::fsi::Scene scene;
+    simwing::fsi::ValidationReport validation;
+    std::vector<std::string> errors;
+    std::vector<std::string> warnings;
+};
+
+// Builds scene-v2 directly from the captured analytical geometry. It never
+// reads or interprets lep-sim.json. Failure is transactional: scene is empty
+// and errors are sorted deterministically.
+SimWingSceneExportResult buildSimWingScene(
+    const SimWingSceneExportSettings &settings);
+SimWingSceneExportResult writeSimWingScene(
+    const std::filesystem::path &path,
+    const SimWingSceneExportSettings &settings);
 
 } // namespace lep
 

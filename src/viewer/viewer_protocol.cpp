@@ -758,8 +758,7 @@ bool validateFrame(
             || triangle.vertex1 == triangle.vertex2
             || triangle.vertex2 == triangle.vertex0
             || triangle.negativeRegionId == 0
-            || triangle.positiveRegionId == 0
-            || triangle.negativeRegionId == triangle.positiveRegionId) {
+            || triangle.positiveRegionId == 0) {
             return fail(error, ProtocolErrorCode::InvalidData,
                         "triangle has invalid vertices or side-region IDs");
         }

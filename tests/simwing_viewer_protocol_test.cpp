@@ -416,9 +416,8 @@ void testValidationAndLimits() {
     frame = sampleFrame();
     frame.triangles[0].positiveRegionId =
         frame.triangles[0].negativeRegionId;
-    check(!serializeFrame(frame, bytes, &error)
-              && error.code == ProtocolErrorCode::InvalidData,
-          "validation: identical triangle side regions are rejected");
+    check(serializeFrame(frame, bytes, &error),
+          "validation: an internal sheet may have the same connected region on both sides");
 
     frame = sampleFrame();
     ProtocolLimits tight;

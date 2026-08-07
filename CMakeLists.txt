@@ -204,6 +204,18 @@ target_include_directories(simwing_scene PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
 )
 
+add_library(lep_nurbs_model STATIC
+    src/model/nurbs_model.cpp
+    src/model/nurbs_model.h
+)
+target_include_directories(lep_nurbs_model PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/model"
+)
+target_link_libraries(lep_nurbs_model PUBLIC
+    lep_occt
+    simwing_scene
+)
+
 add_library(simwing_structure STATIC
     src/fsi/structure.cpp
     src/fsi/structure.h
@@ -362,24 +374,30 @@ set(XFLR5_RESOURCES
     third_party/xflr5/xflr5v6/xflwidgets/textfiles.qrc
 )
 
-add_executable(leparagliding-engine
+add_library(leparagliding_engine_runtime STATIC
     src/engine/engine_paths.cpp
     src/engine/engine_paths.h
     src/engine/input_migration.cpp
     src/engine/input_migration.h
-    src/engine/main.cpp
     src/flatparts/flat_capture.cpp
     src/flatparts/flat_capture.h
     src/legacy/leparagliding_core.cpp
-    src/model/nurbs_model.cpp
-    src/model/nurbs_model.h
 )
-target_include_directories(leparagliding-engine PRIVATE
+target_include_directories(leparagliding_engine_runtime PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/engine"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/flatparts"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/model"
 )
-target_link_libraries(leparagliding-engine PRIVATE f2c_runtime lep_occt)
+target_link_libraries(leparagliding_engine_runtime PUBLIC
+    f2c_runtime
+    lep_nurbs_model
+)
+add_executable(leparagliding-engine
+    src/engine/main.cpp
+)
+target_link_libraries(leparagliding-engine PRIVATE
+    leparagliding_engine_runtime
+)
 if(MSVC)
     set_source_files_properties(src/legacy/leparagliding_core.cpp PROPERTIES
         COMPILE_OPTIONS "/bigobj;/W0;/Zc:strictStrings-"
@@ -481,10 +499,30 @@ add_executable(softwing-cell-volume-test
 )
 target_link_libraries(softwing-cell-volume-test PRIVATE softwing_core)
 
+add_executable(softwing-suspension-checkpoint-test
+    tests/softwing_suspension_checkpoint_test.cpp
+)
+target_link_libraries(softwing-suspension-checkpoint-test
+    PRIVATE softwing_core)
+
 add_executable(simwing-scene-test
     tests/simwing_scene_test.cpp
 )
 target_link_libraries(simwing-scene-test PRIVATE simwing_scene)
+
+add_executable(simwing-model-scene-export-test
+    tests/simwing_model_scene_export_test.cpp
+)
+target_link_libraries(simwing-model-scene-export-test PRIVATE
+    lep_nurbs_model
+)
+
+add_executable(simwing-model-scene-real-export-test
+    tests/simwing_model_scene_real_export_test.cpp
+)
+target_link_libraries(simwing-model-scene-real-export-test PRIVATE
+    leparagliding_engine_runtime
+)
 
 add_executable(simwing-structure-test
     tests/simwing_structure_test.cpp
@@ -666,7 +704,10 @@ set_target_properties(
     playground-cell-air-test
     softwing-material-test
     softwing-cell-volume-test
+    softwing-suspension-checkpoint-test
     simwing-scene-test
+    simwing-model-scene-export-test
+    simwing-model-scene-real-export-test
     simwing-structure-test
     simwing-scene-structure-test
     simwing-viewer-protocol-test
@@ -700,7 +741,10 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         playground-cell-air-test
         softwing-material-test
         softwing-cell-volume-test
+        softwing-suspension-checkpoint-test
         simwing-scene-test
+        simwing-model-scene-export-test
+        simwing-model-scene-real-export-test
         simwing-structure-test
         simwing-scene-structure-test
         simwing-viewer-protocol-test
@@ -817,7 +861,15 @@ add_test(NAME playground_pressure_solve COMMAND playground-pressure-solve-test)
 add_test(NAME playground_cell_air COMMAND playground-cell-air-test)
 add_test(NAME softwing_material COMMAND softwing-material-test)
 add_test(NAME softwing_cell_volume COMMAND softwing-cell-volume-test)
+add_test(NAME softwing_suspension_checkpoint
+    COMMAND softwing-suspension-checkpoint-test)
 add_test(NAME simwing_scene COMMAND simwing-scene-test)
+add_test(NAME simwing_model_scene_export
+    COMMAND simwing-model-scene-export-test)
+add_test(NAME simwing_model_scene_real_export
+    COMMAND simwing-model-scene-real-export-test
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/3.28/leparagliding.txt"
+        "${CMAKE_BINARY_DIR}/simwing-model-scene-real-export-output")
 add_test(NAME simwing_structure COMMAND simwing-structure-test)
 add_test(NAME simwing_scene_structure COMMAND simwing-scene-structure-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)

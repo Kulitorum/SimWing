@@ -63,6 +63,11 @@ count; `workerThreads == 0` still selects the untouched serial sweep):
   membrane triangles. It is solved serially in deterministic insertion order,
   included in rollback/state persistence, and deliberately omitted at skin
   boundaries, degenerate faces and non-manifold/inconsistently wound edges.
+- `SuspensionSystem::checkpoint` / `restore` — an owner-independent,
+  fingerprinted, transactional safe-point value for complete suspension and
+  rigid-payload state. It binds the registered body/contact topology but leaves
+  body nodes, structural multipliers, contact warm starts, forces, and pressure
+  to the enclosing coupled checkpoint.
 
 The generic membrane constraint-space damping field predates the Playground
 material mode. Nonzero values are stable for the small isolated coupons it was

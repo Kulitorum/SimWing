@@ -8,6 +8,8 @@
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <BRepCheck_Result.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <BRepTools.hxx>
 #include <BRepTools_WireExplorer.hxx>
 #include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
@@ -28,6 +30,7 @@
 #include <NCollection_Sequence.hxx>
 #include <OSD_Parallel.hxx>
 #include <PCDM_StoreStatus.hxx>
+#include <Poly_Triangulation.hxx>
 #include <Precision.hxx>
 #include <Quantity_Color.hxx>
 #include <STEPCAFControl_Writer.hxx>
@@ -66,6 +69,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <exception>
 #include <limits>
@@ -75,6 +79,7 @@
 #include <set>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -220,6 +225,8 @@ struct CapturedLine
     int planIndex = 0;
     bool brake = false;
     std::string label;
+    std::string typeName;
+    double capturedDiameterMillimetres = 0.0;
 };
 
 // A diagonal-rib or mini-rib sheet, captured as its two boundary polylines.
@@ -258,6 +265,11 @@ struct SimRegionCapture
     // Which skin the rows came from, so the Playground can draw the
     // surfaces separately (hiding the extrados to look inside).
     Region surface = Region::Extrados;
+    // Vent samples exist for the legacy Playground even when the authored
+    // model leaves the intake open. Scene-v2 must never mistake that toy-only
+    // closure for fabric.
+    bool authoredSurface = true;
+    bool singleSkin = false;
     std::vector<int> stations;
     std::vector<std::array<gp_Pnt, simSpanColumnCount>> rows;
 
@@ -349,6 +361,11 @@ struct QuantizedPoint
     std::int64_t z = 0;
 
     bool operator==(const QuantizedPoint &) const = default;
+
+    bool operator<(const QuantizedPoint &other) const
+    {
+        return std::tie(x, y, z) < std::tie(other.x, other.y, other.z);
+    }
 };
 
 struct QuantizedPointHash
@@ -748,20 +765,26 @@ public:
                          1,
                          upperPointCount,
                          16,
-                         Region::Extrados);
+                         Region::Extrados,
+                         true,
+                         singleSkin);
         captureSimRegion(source,
                          panelIndex,
                          upperPointCount,
                          ventLast,
                          3,
-                         Region::Vent);
+                         Region::Vent,
+                         includeVentSurface,
+                         singleSkin);
         if (!singleSkin && ventLast < totalPointCount) {
             captureSimRegion(source,
                              panelIndex,
                              ventLast,
                              totalPointCount,
                              12,
-                             Region::Intrados);
+                             Region::Intrados,
+                             true,
+                             singleSkin);
         }
     }
 
@@ -854,6 +877,9 @@ public:
         line.planIndex = currentLineTag_.planIndex;
         line.brake = currentLineTag_.brake;
         line.label = currentLineTag_.label;
+        line.typeName = currentLineTag_.typeName;
+        line.capturedDiameterMillimetres =
+            currentLineTag_.diameterMillimetres;
         capturedLines_.push_back(std::move(line));
     }
 
@@ -893,6 +919,11 @@ public:
         currentLineTag_.label = std::move(title);
         currentLineTag_.planIndex = std::clamp(planIndex, 0, 6);
         currentLineTag_.brake = brake;
+        currentLineTag_.typeName = type;
+        currentLineTag_.diameterMillimetres =
+            std::isfinite(diameterMm) && diameterMm > 0.0
+                ? diameterMm
+                : 0.0;
     }
 
     void captureDiagonalStrip(const char *kind,
@@ -1110,6 +1141,8 @@ private:
         std::string label;
         int planIndex = 0;
         bool brake = false;
+        std::string typeName;
+        double diameterMillimetres = 0.0;
     };
 
     static std::size_t sourceFieldIndex(int panelIndex,
@@ -1800,7 +1833,9 @@ private:
                           int firstPoint,
                           int lastPoint,
                           int targetRows,
-                          Region surface)
+                          Region surface,
+                          bool authoredSurface,
+                          bool singleSkin)
     {
         const int stationCount = lastPoint - firstPoint + 1;
         if (stationCount < 2) {
@@ -1812,6 +1847,8 @@ private:
         SimRegionCapture capture;
         capture.panelIndex = panelIndex;
         capture.surface = surface;
+        capture.authoredSurface = authoredSurface;
+        capture.singleSkin = singleSkin;
         try {
             for (int station = firstPoint;
                  station <= lastPoint;
@@ -3509,6 +3546,1075 @@ private:
     }
 
 public:
+    lep::SimWingSceneExportResult buildSimWingScene(
+        const lep::SimWingSceneExportSettings &settings) const
+    {
+        using namespace simwing::fsi;
+        lep::SimWingSceneExportResult result;
+        Scene scene;
+        scene.metadata.designChecksum = settings.designChecksum;
+        scene.metadata.exporterVersion = settings.exporterVersion;
+        scene.metadata.sourceLengthToMeters = 0.01;
+
+        const auto addError = [&result](std::string message) {
+            result.errors.push_back(std::move(message));
+        };
+        const auto finalizeFailure = [&result]() {
+            std::sort(result.errors.begin(), result.errors.end());
+            result.errors.erase(
+                std::unique(result.errors.begin(), result.errors.end()),
+                result.errors.end());
+            std::sort(result.warnings.begin(), result.warnings.end());
+            result.scene = {};
+            result.success = false;
+        };
+        if (simRegions_.empty()) {
+            addError("No analytical skin was captured");
+        }
+        if (settings.designChecksum.empty()) {
+            addError("A design checksum is required for scene-v2 export");
+        }
+        if (settings.exporterVersion.empty()) {
+            addError("An exporter version is required for scene-v2 export");
+        }
+        if (!std::isfinite(settings.surfaceEndpointMatchToleranceMeters)
+            || !(settings.surfaceEndpointMatchToleranceMeters > 0.0)) {
+            addError(
+                "A finite positive surface endpoint match tolerance is required");
+        }
+        if (!std::isfinite(settings.pilot.endpointMatchToleranceMeters)
+            || !(settings.pilot.endpointMatchToleranceMeters > 0.0)) {
+            addError(
+                "A finite positive pilot endpoint match tolerance is required");
+        }
+        if (!capturedLines_.empty()
+            && (!std::isfinite(settings.suspensionJunctionMassKg)
+                || !(settings.suspensionJunctionMassKg > 0.0))) {
+            addError(
+                "A finite positive suspension-junction mass is required when lines are captured");
+        }
+        for (const SimRegionCapture &capture : simRegions_) {
+            if (capture.singleSkin) {
+                addError(
+                    "Single-skin captured geometry is not yet a closed scene-v2 fluid region");
+                break;
+            }
+        }
+
+        constexpr std::uint64_t ordinalMask =
+            (std::uint64_t{1} << 56U) - 1U;
+        const auto stableId = [&addError, ordinalMask](std::uint8_t category,
+                                                       std::size_t ordinal) {
+            const std::uint64_t oneBased =
+                static_cast<std::uint64_t>(ordinal) + 1U;
+            if (oneBased > ordinalMask) {
+                addError("Scene entity count exceeds the stable-ID range");
+                return invalidStableId;
+            }
+            return (static_cast<std::uint64_t>(category) << 56U)
+                | oneBased;
+        };
+
+        std::map<SurfaceRole, const lep::SimWingFabricExportSettings *>
+            fabricSettings;
+        for (const auto &material : settings.fabricMaterials) {
+            if (!fabricSettings.emplace(material.role, &material).second) {
+                addError("Duplicate fabric assignment for surface role "
+                         + std::to_string(static_cast<int>(material.role)));
+            }
+        }
+        std::set<SurfaceRole> requiredRoles{SurfaceRole::Skin};
+        if (!capturedRibs_.empty()) {
+            requiredRoles.insert(SurfaceRole::Rib);
+        }
+        for (const CapturedStrip &strip : capturedStrips_) {
+            requiredRoles.insert(strip.minirib ? SurfaceRole::MiniRib
+                                               : SurfaceRole::Diagonal);
+        }
+        std::map<SurfaceRole, StableId> fabricMaterialIds;
+        std::size_t fabricOrdinal = 0;
+        for (const SurfaceRole role : requiredRoles) {
+            const auto found = fabricSettings.find(role);
+            if (found == fabricSettings.end()) {
+                addError("Missing explicit fabric assignment for surface role "
+                         + std::to_string(static_cast<int>(role)));
+                continue;
+            }
+            const auto &source = *found->second;
+            const StableId id = stableId(3, fabricOrdinal++);
+            fabricMaterialIds.emplace(role, id);
+            scene.fabricMaterials.push_back(
+                {id,
+                 source.name,
+                 source.warpStiffnessNewtonsPerMeter,
+                 source.weftStiffnessNewtonsPerMeter,
+                 source.shearStiffnessNewtonsPerMeter,
+                 source.bendingStiffnessNewtonMeters,
+                 source.arealDensityKgPerSquareMeter,
+                 source.dampingSeconds,
+                 source.porosityFraction,
+                 source.permeabilitySquareMeters});
+        }
+
+        std::map<std::string, const lep::SimWingLineExportSettings *>
+            lineSettings;
+        for (const auto &material : settings.lineMaterials) {
+            if (!lineSettings.emplace(material.captureTypeName, &material)
+                     .second) {
+                addError("Duplicate line material assignment for captured type '"
+                         + material.captureTypeName + "'");
+            }
+        }
+        std::set<std::string> requiredLineTypes;
+        for (const CapturedLine &line : capturedLines_) {
+            requiredLineTypes.insert(line.typeName);
+        }
+        std::map<std::string, StableId> lineMaterialIds;
+        std::size_t lineMaterialOrdinal = 0;
+        for (const std::string &type : requiredLineTypes) {
+            const auto found = lineSettings.find(type);
+            if (found == lineSettings.end()) {
+                addError("Missing explicit line material assignment for captured type '"
+                         + type + "'");
+                continue;
+            }
+            const auto &source = *found->second;
+            const StableId id = stableId(6, lineMaterialOrdinal++);
+            lineMaterialIds.emplace(type, id);
+            scene.lineMaterials.push_back(
+                {id,
+                 source.name,
+                 source.diameterMeters,
+                 source.linearDensityKgPerMeter,
+                 source.axialStiffnessNewtons,
+                 source.dragCoefficient});
+        }
+        if (!result.errors.empty()) {
+            finalizeFailure();
+            return result;
+        }
+
+        const StableId outsideRegionId = stableId(1, 0);
+        scene.regions.push_back(
+            {outsideRegionId, RegionKind::Outside, "outside"});
+        struct CellKey
+        {
+            int panel = 0;
+            bool mirror = false;
+            bool operator<(const CellKey &other) const
+            {
+                return std::tie(panel, mirror)
+                    < std::tie(other.panel, other.mirror);
+            }
+        };
+        struct CellAccumulator
+        {
+            gp_XYZ sum{0.0, 0.0, 0.0};
+            std::size_t count = 0;
+            StableId regionId = invalidStableId;
+        };
+        std::map<CellKey, CellAccumulator> cells;
+        for (const SimRegionCapture &capture : simRegions_) {
+            for (const bool mirror : {false, true}) {
+                if (mirror && capture.selfMirrored()) {
+                    continue;
+                }
+                CellAccumulator &cell = cells[{capture.panelIndex, mirror}];
+                for (const auto &row : capture.rows) {
+                    for (gp_Pnt point : row) {
+                        if (mirror) {
+                            point.SetX(-point.X());
+                        }
+                        cell.sum += point.XYZ();
+                        ++cell.count;
+                    }
+                }
+            }
+        }
+        std::size_t cellOrdinal = 1;
+        for (auto &[key, cell] : cells) {
+            cell.regionId = stableId(1, cellOrdinal++);
+            scene.regions.push_back(
+                {cell.regionId,
+                 RegionKind::Cell,
+                 std::string(key.mirror ? "left-cell-" : "right-cell-")
+                     + std::to_string(key.panel)});
+        }
+        const auto cellCenter = [&cells](const CellKey &key) {
+            const CellAccumulator &cell = cells.at(key);
+            return gp_Pnt(cell.sum / static_cast<double>(cell.count));
+        };
+
+        std::unordered_map<QuantizedPoint, StableId, QuantizedPointHash>
+            vertexIds;
+        const auto place = [](gp_Pnt point, bool mirror) {
+            const double snappedX =
+                std::abs(point.X()) < symmetryPlaneToleranceMillimetres
+                    ? 0.0
+                    : point.X();
+            point.SetX(mirror ? -snappedX : snappedX);
+            return point;
+        };
+        const auto vertexId = [&](const gp_Pnt &point) {
+            const QuantizedPoint key = quantize(point);
+            const auto found = vertexIds.find(key);
+            if (found != vertexIds.end()) {
+                return found->second;
+            }
+            const StableId id = stableId(2, scene.vertices.size());
+            vertexIds.emplace(key, id);
+            scene.vertices.push_back(
+                {id,
+                 {point.X() * 0.001,
+                  point.Y() * 0.001,
+                  point.Z() * 0.001}});
+            return id;
+        };
+
+        const auto chartFor = [](const std::array<gp_Pnt, 3> &points,
+                                 gp_Vec preferredWarp) {
+            std::array<Vec2, 3> chart{};
+            gp_Vec first(points[0], points[1]);
+            gp_Vec second(points[0], points[2]);
+            gp_Vec normal = first.Crossed(second);
+            if (normal.Magnitude() <= Precision::Confusion()) {
+                return chart;
+            }
+            normal.Normalize();
+            preferredWarp -= normal.Multiplied(preferredWarp.Dot(normal));
+            if (preferredWarp.Magnitude() <= Precision::Confusion()) {
+                preferredWarp = first;
+            }
+            preferredWarp.Normalize();
+            gp_Vec weft = normal.Crossed(preferredWarp);
+            weft.Normalize();
+            for (std::size_t index = 1; index < 3; ++index) {
+                const gp_Vec offset(points[0], points[index]);
+                chart[index] = {offset.Dot(preferredWarp) * 0.001,
+                                offset.Dot(weft) * 0.001};
+            }
+            const double determinant =
+                chart[1].x * chart[2].y
+                - chart[2].x * chart[1].y;
+            if (determinant < 0.0) {
+                for (Vec2 &coordinate : chart) {
+                    coordinate.y = -coordinate.y;
+                }
+            }
+            return chart;
+        };
+
+        std::size_t triangleOrdinal = 0;
+        std::size_t sheetOrdinal = 0;
+        const auto addTriangle = [&](std::array<gp_Pnt, 3> points,
+                                      gp_Vec preferredWarp,
+                                      StableId negativeRegion,
+                                      StableId positiveRegion,
+                                      StableId sheetId,
+                                      SurfaceRole role) {
+            gp_Vec normal(points[0], points[1]);
+            normal.Cross(gp_Vec(points[0], points[2]));
+            if (normal.Magnitude() <= Precision::Confusion()) {
+                std::ostringstream message;
+                message.precision(17);
+                message
+                    << "Captured surface role "
+                    << static_cast<int>(role)
+                    << ", sheet " << sheetId
+                    << " produced a degenerate triangle at ("
+                    << points[0].X() << ", " << points[0].Y() << ", "
+                    << points[0].Z() << "), ("
+                    << points[1].X() << ", " << points[1].Y() << ", "
+                    << points[1].Z() << "), ("
+                    << points[2].X() << ", " << points[2].Y() << ", "
+                    << points[2].Z() << ')';
+                addError(message.str());
+                return;
+            }
+            std::array<Vec2, 3> chart = chartFor(points, preferredWarp);
+            scene.triangles.push_back(
+                {stableId(4, triangleOrdinal++),
+                 {vertexId(points[0]),
+                  vertexId(points[1]),
+                  vertexId(points[2])},
+                 chart,
+                  negativeRegion,
+                  positiveRegion,
+                  fabricMaterialIds.at(role),
+                  sheetId,
+                  role});
+        };
+
+        std::size_t openingOrdinal = 0;
+        for (const SimRegionCapture &capture : simRegions_) {
+            for (const bool mirror : {false, true}) {
+                if (mirror && capture.selfMirrored()) {
+                    continue;
+                }
+                const CellKey cellKey{capture.panelIndex, mirror};
+                const StableId cellRegion = cells.at(cellKey).regionId;
+                std::vector<std::array<gp_Pnt, simSpanColumnCount>> grid;
+                grid.reserve(capture.rows.size());
+                for (const auto &row : capture.rows) {
+                    std::array<gp_Pnt, simSpanColumnCount> placed{};
+                    for (int column = 0; column < simSpanColumnCount;
+                         ++column) {
+                        placed[column] = place(row[column], mirror);
+                    }
+                    grid.push_back(placed);
+                }
+                if (!capture.authoredSurface) {
+                    std::vector<StableId> loop;
+                    for (int column = 0; column < simSpanColumnCount;
+                         ++column) {
+                        loop.push_back(vertexId(grid.front()[column]));
+                    }
+                    for (std::size_t row = 1; row < grid.size(); ++row) {
+                        loop.push_back(vertexId(grid[row].back()));
+                    }
+                    for (int column = simSpanColumnCount - 2;
+                         column >= 0;
+                         --column) {
+                        loop.push_back(vertexId(grid.back()[column]));
+                    }
+                    for (std::size_t row = grid.size() - 1; row > 1;
+                         --row) {
+                        loop.push_back(vertexId(grid[row - 1].front()));
+                    }
+                    loop.erase(std::unique(loop.begin(), loop.end()),
+                               loop.end());
+                    scene.openings.push_back(
+                        {stableId(5, openingOrdinal++),
+                         std::move(loop),
+                         outsideRegionId,
+                         cellRegion,
+                         OpeningRole::Intake});
+                    continue;
+                }
+
+                const StableId sheetId = stableId(11, sheetOrdinal++);
+                const gp_Pnt center = cellCenter(cellKey);
+                const auto oriented = [&center](std::array<gp_Pnt, 3> points) {
+                    gp_Vec normal(points[0], points[1]);
+                    normal.Cross(gp_Vec(points[0], points[2]));
+                    const gp_Pnt centroid(
+                        (points[0].XYZ() + points[1].XYZ()
+                         + points[2].XYZ())
+                        / 3.0);
+                    if (normal.Dot(gp_Vec(centroid, center)) < 0.0) {
+                        std::swap(points[1], points[2]);
+                    }
+                    return points;
+                };
+                for (std::size_t row = 0; row + 1 < grid.size(); ++row) {
+                    for (int column = 0;
+                         column + 1 < simSpanColumnCount;
+                         ++column) {
+                        const gp_Vec chordDirection(
+                            grid[row][column], grid[row + 1][column]);
+                        const gp_Vec spanDirection(
+                            grid[row][column], grid[row][column + 1]);
+                        const auto material = fabricSettings.at(
+                            SurfaceRole::Skin);
+                        const gp_Vec warpDirection =
+                            material->warpAxis
+                                    == lep::SimWingMaterialAxis::Primary
+                                ? chordDirection
+                                : spanDirection;
+                        addTriangle(
+                            oriented({grid[row][column],
+                                      grid[row][column + 1],
+                                      grid[row + 1][column + 1]}),
+                            warpDirection,
+                            outsideRegionId,
+                            cellRegion,
+                            sheetId,
+                            SurfaceRole::Skin);
+                        addTriangle(
+                            oriented({grid[row][column],
+                                      grid[row + 1][column + 1],
+                                      grid[row + 1][column]}),
+                            warpDirection,
+                            outsideRegionId,
+                            cellRegion,
+                            sheetId,
+                            SurfaceRole::Skin);
+                    }
+                }
+            }
+        }
+
+        // Build the same exact planar, holed rib faces used by the CAD
+        // exporter, then triangulate them for scene-v2. A rib separates its
+        // two adjacent cells; a boundary rib separates its sole cell from
+        // the outside. The centre rib is emitted only once and separates the
+        // mirrored centre cells.
+        std::unordered_set<int> capturedPanelIndices;
+        std::map<int, std::vector<RibBoundarySegment>> ribSegments;
+        for (const PanelSurface &panel : panels_) {
+            capturedPanelIndices.insert(panel.panelIndex);
+        }
+        for (const PanelSurface &panel : panels_) {
+            ribSegments[panel.panelIndex].push_back(
+                {panel.firstPoint, panel.lastPoint});
+            if (!capturedPanelIndices.contains(panel.panelIndex - 1)) {
+                ribSegments[panel.panelIndex - 1].push_back(
+                    {panel.firstPoint, panel.lastPoint});
+            }
+        }
+
+        const auto ribCandidateCells = [&cells](int ribIndex,
+                                                 bool mirror,
+                                                 bool onCenter) {
+            std::vector<CellKey> candidates;
+            const auto add = [&cells, &candidates](const CellKey &key) {
+                if (cells.contains(key)) {
+                    candidates.push_back(key);
+                }
+            };
+            if (onCenter) {
+                add({ribIndex + 1, false});
+                add({ribIndex + 1, true});
+            } else {
+                add({ribIndex, mirror});
+                add({ribIndex + 1, mirror});
+            }
+            return candidates;
+        };
+        const auto sideRegionsFor = [&](const std::array<gp_Pnt, 3> &points,
+                                        const std::vector<CellKey> &candidates,
+                                        const std::string &label) {
+            std::pair<StableId, StableId> sides{invalidStableId,
+                                                invalidStableId};
+            gp_Vec normal(points[0], points[1]);
+            normal.Cross(gp_Vec(points[0], points[2]));
+            if (normal.Magnitude() <= Precision::Confusion()) {
+                addError(label + " produced a degenerate mesh triangle");
+                return sides;
+            }
+            normal.Normalize();
+            const gp_Pnt centroid(
+                (points[0].XYZ() + points[1].XYZ() + points[2].XYZ())
+                / 3.0);
+            std::vector<std::pair<double, StableId>> distances;
+            distances.reserve(candidates.size());
+            for (const CellKey &candidate : candidates) {
+                distances.emplace_back(
+                    normal.Dot(gp_Vec(centroid, cellCenter(candidate))),
+                    cells.at(candidate).regionId);
+            }
+            if (distances.empty()) {
+                addError(label + " has no adjacent captured cell");
+                return sides;
+            }
+            std::sort(distances.begin(), distances.end());
+            constexpr double sideToleranceMillimetres = 0.01;
+            if (distances.size() == 1) {
+                if (std::abs(distances.front().first)
+                    <= sideToleranceMillimetres) {
+                    addError(label
+                             + " has an indeterminate adjacent-cell side");
+                    return sides;
+                }
+                if (distances.front().first > 0.0) {
+                    sides = {outsideRegionId, distances.front().second};
+                } else {
+                    sides = {distances.front().second, outsideRegionId};
+                }
+                return sides;
+            }
+            if (distances.front().first >= -sideToleranceMillimetres
+                || distances.back().first <= sideToleranceMillimetres) {
+                addError(label
+                         + " does not geometrically separate its adjacent cells");
+                return sides;
+            }
+            sides = {distances.front().second, distances.back().second};
+            return sides;
+        };
+
+        for (const auto &[ribIndex, segments] : ribSegments) {
+            const auto captured = capturedRibs_.find(ribIndex);
+            if (captured == capturedRibs_.end()) {
+                addError("Missing captured rib station for rib "
+                         + std::to_string(ribIndex));
+                continue;
+            }
+            const bool onCenter = std::all_of(
+                captured->second.spatialPoints.begin(),
+                captured->second.spatialPoints.end(),
+                [](const gp_Pnt &point) {
+                    return std::abs(point.X())
+                        <= symmetryPlaneToleranceMillimetres;
+                });
+            int ignoredEdgeCount = 0;
+            TopoDS_Shape curveFallback;
+            std::vector<std::string> ribWarnings;
+            std::vector<std::string> ribErrors;
+            TopoDS_Face rightFace;
+            try {
+                rightFace = makeRibFace(ribIndex,
+                                        segments,
+                                        captured->second,
+                                        ignoredEdgeCount,
+                                        curveFallback,
+                                        ribWarnings,
+                                        ribErrors);
+            } catch (const Standard_Failure &failure) {
+                ribErrors.push_back(
+                    "OCCT failed building rib " + std::to_string(ribIndex)
+                    + ": "
+                    + (failure.GetMessageString() != nullptr
+                           ? failure.GetMessageString()
+                           : "unknown OCCT error"));
+            } catch (const std::exception &exception) {
+                ribErrors.push_back(
+                    "Failed building rib " + std::to_string(ribIndex)
+                    + ": " + exception.what());
+            }
+            result.warnings.insert(result.warnings.end(),
+                                   ribWarnings.begin(),
+                                   ribWarnings.end());
+            result.errors.insert(result.errors.end(),
+                                 ribErrors.begin(),
+                                 ribErrors.end());
+            if (!ribErrors.empty()) {
+                continue;
+            }
+            if (rightFace.IsNull()) {
+                if (!captured->second.holes.empty()) {
+                    addError("Holed rib " + std::to_string(ribIndex)
+                             + " collapsed to an outline");
+                } else {
+                    result.warnings.push_back(
+                        "Skipped collapsed zero-area rib "
+                        + std::to_string(ribIndex));
+                }
+                continue;
+            }
+
+            RibFrame materialFrame;
+            if (!fitRibFrame(captured->second.planarPoints,
+                             captured->second.spatialPoints,
+                             materialFrame)) {
+                addError("Could not recover the material axes of rib "
+                         + std::to_string(ribIndex));
+                continue;
+            }
+
+            std::size_t innerWireCount = 0;
+            const TopoDS_Wire outer = BRepTools::OuterWire(rightFace);
+            for (TopExp_Explorer explorer(rightFace, TopAbs_WIRE);
+                 explorer.More(); explorer.Next()) {
+                if (!TopoDS::Wire(explorer.Current()).IsSame(outer)) {
+                    ++innerWireCount;
+                }
+            }
+            if (innerWireCount != captured->second.holes.size()) {
+                addError("Rib " + std::to_string(ribIndex) + " captured "
+                         + std::to_string(captured->second.holes.size())
+                         + " crossports but its exact face contains "
+                         + std::to_string(innerWireCount));
+                continue;
+            }
+
+            for (const bool mirror : {false, true}) {
+                if (mirror && onCenter) {
+                    continue;
+                }
+                TopoDS_Face face = rightFace;
+                if (mirror) {
+                    const TopoDS_Shape reflected = mirrored(rightFace);
+                    if (reflected.IsNull()
+                        || reflected.ShapeType() != TopAbs_FACE) {
+                        addError("Could not mirror rib "
+                                 + std::to_string(ribIndex));
+                        continue;
+                    }
+                    face = TopoDS::Face(reflected);
+                }
+                const std::string label = std::string(mirror ? "left rib "
+                                                              : "right rib ")
+                    + std::to_string(ribIndex);
+                const StableId sheetId = stableId(11, sheetOrdinal++);
+                const std::vector<CellKey> candidates =
+                    ribCandidateCells(ribIndex, mirror, onCenter);
+                BRepTools::Clean(face);
+                BRepMesh_IncrementalMesh mesher(face, 1.0, false, 0.20, true);
+                if (!mesher.IsDone()) {
+                    addError("Could not triangulate " + label);
+                    continue;
+                }
+                TopLoc_Location location;
+                const occ::handle<Poly_Triangulation> triangulation =
+                    BRep_Tool::Triangulation(face, location);
+                if (triangulation.IsNull()
+                    || triangulation->NbTriangles() == 0) {
+                    addError("OCCT returned no triangles for " + label);
+                    continue;
+                }
+
+                std::pair<StableId, StableId> faceSides{
+                    invalidStableId, invalidStableId};
+                for (int index = 1;
+                     index <= triangulation->NbTriangles(); ++index) {
+                    Standard_Integer first = 0;
+                    Standard_Integer second = 0;
+                    Standard_Integer third = 0;
+                    triangulation->Triangle(index).Get(
+                        first, second, third);
+                    std::array<gp_Pnt, 3> points{
+                        triangulation->Node(first).Transformed(
+                            location.Transformation()),
+                        triangulation->Node(second).Transformed(
+                            location.Transformation()),
+                        triangulation->Node(third).Transformed(
+                            location.Transformation())};
+                    const auto sides = sideRegionsFor(points,
+                                                     candidates,
+                                                     label);
+                    if (sides.first == invalidStableId) {
+                        continue;
+                    }
+                    if (faceSides.first == invalidStableId) {
+                        faceSides = sides;
+                    } else if (faceSides != sides) {
+                        addError(label
+                                 + " triangulation has inconsistent winding");
+                        continue;
+                    }
+                    gp_Vec preferredWarp =
+                        fabricSettings.at(SurfaceRole::Rib)->warpAxis
+                                == lep::SimWingMaterialAxis::Primary
+                            ? materialFrame.axisX
+                            : materialFrame.axisY;
+                    if (mirror) {
+                        preferredWarp.SetX(-preferredWarp.X());
+                    }
+                    addTriangle(points,
+                                preferredWarp,
+                                sides.first,
+                                sides.second,
+                                sheetId,
+                                SurfaceRole::Rib);
+                }
+                if (faceSides.first == invalidStableId) {
+                    continue;
+                }
+
+                const TopoDS_Wire faceOuter = BRepTools::OuterWire(face);
+                for (TopExp_Explorer explorer(face, TopAbs_WIRE);
+                     explorer.More(); explorer.Next()) {
+                    const TopoDS_Wire wire =
+                        TopoDS::Wire(explorer.Current());
+                    if (wire.IsSame(faceOuter)) {
+                        continue;
+                    }
+                    std::vector<StableId> loop;
+                    for (BRepTools_WireExplorer edgeExplorer(wire);
+                         edgeExplorer.More(); edgeExplorer.Next()) {
+                        BRepAdaptor_Curve curve(edgeExplorer.Current());
+                        GCPnts_QuasiUniformDeflection sampler(curve, 1.0);
+                        if (!sampler.IsDone()) {
+                            addError("Could not sample a crossport in "
+                                     + label);
+                            loop.clear();
+                            break;
+                        }
+                        for (int point = 1;
+                             point < sampler.NbPoints(); ++point) {
+                            const StableId id = vertexId(sampler.Value(point));
+                            if (loop.empty() || loop.back() != id) {
+                                loop.push_back(id);
+                            }
+                        }
+                    }
+                    if (loop.size() >= 2 && loop.front() == loop.back()) {
+                        loop.pop_back();
+                    }
+                    std::set<StableId> unique(loop.begin(), loop.end());
+                    if (loop.size() < 3 || unique.size() != loop.size()) {
+                        addError("A crossport in " + label
+                                 + " does not form a unique closed loop");
+                        continue;
+                    }
+                    scene.openings.push_back(
+                        {stableId(5, openingOrdinal++),
+                         std::move(loop),
+                         faceSides.first,
+                         faceSides.second,
+                         OpeningRole::Crossport});
+                }
+            }
+        }
+
+        // Internal diagonal and mini-rib sheets do not divide the connected
+        // cell volume. Their two oriented sides deliberately retain the same
+        // containing-cell region.
+        for (const CapturedStrip &strip : capturedStrips_) {
+            if (strip.curveA.size() < 2 || strip.curveB.size() < 2) {
+                continue;
+            }
+            const SurfaceRole role = strip.minirib ? SurfaceRole::MiniRib
+                                                   : SurfaceRole::Diagonal;
+            double minX = std::numeric_limits<double>::max();
+            double maxX = std::numeric_limits<double>::lowest();
+            for (const gp_Pnt &point : strip.curveA) {
+                minX = std::min(minX, point.X());
+                maxX = std::max(maxX, point.X());
+            }
+            const bool selfMirrored = std::abs(minX + maxX)
+                < symmetryPlaneToleranceMillimetres;
+            for (const bool mirror : {false, true}) {
+                if (mirror && selfMirrored) {
+                    continue;
+                }
+                const StableId sheetId = stableId(11, sheetOrdinal++);
+                gp_XYZ centroid(0.0, 0.0, 0.0);
+                for (const gp_Pnt &point : strip.curveA) {
+                    centroid += place(point, mirror).XYZ();
+                }
+                for (const gp_Pnt &point : strip.curveB) {
+                    centroid += place(point, mirror).XYZ();
+                }
+                const gp_Pnt stripCenter(
+                    centroid
+                    / static_cast<double>(strip.curveA.size()
+                                          + strip.curveB.size()));
+                auto nearest = cells.end();
+                double nearestDistance = std::numeric_limits<double>::max();
+                for (auto candidate = cells.begin(); candidate != cells.end();
+                     ++candidate) {
+                    if (candidate->first.mirror != mirror
+                        && !selfMirrored) {
+                        continue;
+                    }
+                    const double distance = cellCenter(candidate->first)
+                                                .SquareDistance(stripCenter);
+                    if (distance < nearestDistance) {
+                        nearestDistance = distance;
+                        nearest = candidate;
+                    }
+                }
+                if (nearest == cells.end()) {
+                    addError("Could not assign internal sheet '" + strip.label
+                             + "' to a captured cell");
+                    continue;
+                }
+                const StableId region = nearest->second.regionId;
+                if (!strip.minirib) {
+                    if (strip.curveA.size() != strip.curveB.size()) {
+                        addError("Captured internal sheet '" + strip.label
+                                 + "' lost its authored rung correspondence");
+                        continue;
+                    }
+                    for (std::size_t index = 0;
+                         index + 1 < strip.curveA.size(); ++index) {
+                        const gp_Pnt a0 = place(strip.curveA[index], mirror);
+                        const gp_Pnt a1 =
+                            place(strip.curveA[index + 1], mirror);
+                        const gp_Pnt b0 = place(strip.curveB[index], mirror);
+                        const gp_Pnt b1 =
+                            place(strip.curveB[index + 1], mirror);
+                        const gp_Vec progression(a0, a1);
+                        const gp_Vec rung(a0, b0);
+                        const gp_Vec warp =
+                            fabricSettings.at(role)->warpAxis
+                                    == lep::SimWingMaterialAxis::Primary
+                                ? progression
+                                : rung;
+                        addTriangle({a0, b0, b1}, warp,
+                                    region, region, sheetId, role);
+                        addTriangle({a0, b1, a1}, warp,
+                                    region, region, sheetId, role);
+                    }
+                    continue;
+                }
+
+                // Mini-rib upper and lower boundaries have independently
+                // authored profile samples and may meet at either profile
+                // tip.
+                // Zipper the two polylines by normalized arc length so every
+                // boundary vertex survives without nearest-index repetition.
+                // The one candidate at a coincident tip is a triangulation
+                // artifact, not an authored zero-area fabric element.
+                std::vector<gp_Pnt> curveA;
+                std::vector<gp_Pnt> curveB;
+                curveA.reserve(strip.curveA.size());
+                curveB.reserve(strip.curveB.size());
+                for (const gp_Pnt &point : strip.curveA) {
+                    curveA.push_back(place(point, mirror));
+                }
+                for (const gp_Pnt &point : strip.curveB) {
+                    curveB.push_back(place(point, mirror));
+                }
+                const auto progress = [](const std::vector<gp_Pnt> &curve) {
+                    std::vector<double> values(curve.size(), 0.0);
+                    for (std::size_t index = 1; index < curve.size(); ++index) {
+                        values[index] = values[index - 1]
+                            + curve[index - 1].Distance(curve[index]);
+                    }
+                    if (values.back() > Precision::Confusion()) {
+                        for (double &value : values) {
+                            value /= values.back();
+                        }
+                    }
+                    return values;
+                };
+                const std::vector<double> progressA = progress(curveA);
+                const std::vector<double> progressB = progress(curveB);
+                if (progressA.back() == 0.0 || progressB.back() == 0.0) {
+                    addError("Captured mini-rib '" + strip.label
+                             + "' has a collapsed boundary");
+                    continue;
+                }
+                const bool hasSharedLeadingTip =
+                    curveA.front().Distance(curveB.front())
+                    <= Precision::Confusion();
+                const bool hasSharedTrailingTip =
+                    curveA.back().Distance(curveB.back())
+                    <= Precision::Confusion();
+                const std::size_t trianglesBefore = scene.triangles.size();
+                const auto addZipperTriangle = [&](std::array<gp_Pnt, 3> points,
+                                                   const gp_Vec &progression,
+                                                   const gp_Vec &rung) {
+                    gp_Vec normal(points[0], points[1]);
+                    normal.Cross(gp_Vec(points[0], points[2]));
+                    if (normal.Magnitude() <= Precision::Confusion()) {
+                        const auto countAt = [&](const gp_Pnt &tip) {
+                            return static_cast<std::size_t>(std::count_if(
+                                points.begin(), points.end(),
+                                [&](const gp_Pnt &point) {
+                                    return point.Distance(tip)
+                                        <= Precision::Confusion();
+                                }));
+                        };
+                        if ((hasSharedLeadingTip
+                             && countAt(curveA.front()) >= 2)
+                            || (hasSharedTrailingTip
+                                && countAt(curveA.back()) >= 2)) {
+                            return;
+                        }
+                        addError("Captured mini-rib '" + strip.label
+                                 + "' produced a degenerate zipper triangle");
+                        return;
+                    }
+                    const gp_Vec warp =
+                        fabricSettings.at(role)->warpAxis
+                                == lep::SimWingMaterialAxis::Primary
+                            ? progression
+                            : rung;
+                    addTriangle(points, warp,
+                                region, region, sheetId, role);
+                };
+                std::size_t indexA = 0;
+                std::size_t indexB = 0;
+                while (indexA + 1 < curveA.size()
+                       || indexB + 1 < curveB.size()) {
+                    const bool advanceA = indexB + 1 == curveB.size()
+                        || (indexA + 1 < curveA.size()
+                            && progressA[indexA + 1]
+                                   < progressB[indexB + 1]);
+                    const gp_Vec rung(curveA[indexA], curveB[indexB]);
+                    if (advanceA) {
+                        const gp_Vec progression(
+                            curveA[indexA], curveA[indexA + 1]);
+                        addZipperTriangle(
+                            {curveA[indexA], curveB[indexB],
+                             curveA[indexA + 1]},
+                            progression, rung);
+                        ++indexA;
+                    } else {
+                        const gp_Vec progression(
+                            curveB[indexB], curveB[indexB + 1]);
+                        addZipperTriangle(
+                            {curveA[indexA], curveB[indexB],
+                             curveB[indexB + 1]},
+                            progression, rung);
+                        ++indexB;
+                    }
+                }
+                if (scene.triangles.size() == trianglesBefore) {
+                    addError("Captured mini-rib '" + strip.label
+                             + "' collapsed to zero fabric area");
+                }
+            }
+        }
+
+        if (!result.errors.empty()) {
+            finalizeFailure();
+            return result;
+        }
+
+        // Lines are added after surface vertices so endpoints can be matched
+        // without moving the authored line graph. Non-matches remain explicit
+        // SuspensionJunction entities.
+        const StableId pilotId = stableId(7, 0);
+        scene.pilots.push_back(
+            {pilotId,
+             settings.pilot.name,
+             settings.pilot.massKg,
+             settings.pilot.centerOfMassPositionMeters,
+             settings.pilot.linearVelocityMetersPerSecond,
+             settings.pilot.bodyToWorld,
+             settings.pilot.principalInertiaKgSquareMeters});
+
+        std::map<QuantizedPoint, StableId, decltype(&pointLess)>
+            junctionIds(&pointLess);
+        std::map<std::tuple<int, StableId, std::size_t>, StableId>
+            attachmentIds;
+        const auto endpointAttachment = [&](const gp_Pnt &point) {
+            const Vec3 metres{point.X() * 0.001,
+                              point.Y() * 0.001,
+                              point.Z() * 0.001};
+            std::size_t harnessIndex = settings.pilot.harnessPoints.size();
+            double harnessDistance =
+                settings.pilot.endpointMatchToleranceMeters;
+            for (std::size_t index = 0;
+                 index < settings.pilot.harnessPoints.size();
+                 ++index) {
+                const Vec3 &candidate =
+                    settings.pilot.harnessPoints[index].worldPositionMeters;
+                const double distance = std::hypot(
+                    metres.x - candidate.x,
+                    metres.y - candidate.y,
+                    metres.z - candidate.z);
+                if (distance <= harnessDistance) {
+                    harnessDistance = distance;
+                    harnessIndex = index;
+                }
+            }
+            if (harnessIndex < settings.pilot.harnessPoints.size()) {
+                const auto key = std::make_tuple(2, pilotId, harnessIndex);
+                const auto found = attachmentIds.find(key);
+                if (found != attachmentIds.end()) {
+                    return found->second;
+                }
+                const StableId id = stableId(9, scene.attachments.size());
+                const auto &harness =
+                    settings.pilot.harnessPoints[harnessIndex];
+                scene.attachments.push_back(
+                    {id,
+                     AttachmentKind::PilotHarness,
+                     invalidStableId,
+                     pilotId,
+                     harness.pilotLocalPositionMeters,
+                     invalidStableId});
+                attachmentIds.emplace(key, id);
+                return id;
+            }
+
+            StableId surfaceId = invalidStableId;
+            double surfaceDistance =
+                settings.surfaceEndpointMatchToleranceMeters;
+            for (const Vertex &vertex : scene.vertices) {
+                const double distance = std::hypot(
+                    metres.x - vertex.positionMeters.x,
+                    metres.y - vertex.positionMeters.y,
+                    metres.z - vertex.positionMeters.z);
+                if (distance <= surfaceDistance) {
+                    surfaceDistance = distance;
+                    surfaceId = vertex.id;
+                }
+            }
+            if (surfaceId != invalidStableId) {
+                const auto key = std::make_tuple(1, surfaceId, 0U);
+                const auto found = attachmentIds.find(key);
+                if (found != attachmentIds.end()) {
+                    return found->second;
+                }
+                const StableId id = stableId(9, scene.attachments.size());
+                scene.attachments.push_back(
+                    {id,
+                     AttachmentKind::SurfaceVertex,
+                     surfaceId,
+                     invalidStableId,
+                     {},
+                     invalidStableId});
+                attachmentIds.emplace(key, id);
+                return id;
+            }
+
+            const QuantizedPoint key = quantize(point);
+            auto junction = junctionIds.find(key);
+            StableId junctionId = invalidStableId;
+            if (junction == junctionIds.end()) {
+                junctionId = stableId(8, scene.suspensionJunctions.size());
+                junctionIds.emplace(key, junctionId);
+                scene.suspensionJunctions.push_back(
+                    {junctionId,
+                     metres,
+                     settings.suspensionJunctionMassKg,
+                     false});
+            } else {
+                junctionId = junction->second;
+            }
+            const auto attachmentKey =
+                std::make_tuple(3, junctionId, 0U);
+            const auto existing = attachmentIds.find(attachmentKey);
+            if (existing != attachmentIds.end()) {
+                return existing->second;
+            }
+            const StableId id = stableId(9, scene.attachments.size());
+            scene.attachments.push_back(
+                {id,
+                 AttachmentKind::SuspensionJunction,
+                 invalidStableId,
+                 invalidStableId,
+                 {},
+                 junctionId});
+            attachmentIds.emplace(attachmentKey, id);
+            return id;
+        };
+
+        std::set<std::tuple<QuantizedPoint, QuantizedPoint, int, bool,
+                            std::string>> emittedLines;
+        std::size_t lineOrdinal = 0;
+        for (const CapturedLine &line : capturedLines_) {
+            const QuantizedSegment segment =
+                quantizeSegment(line.start, line.end);
+            const auto key = std::make_tuple(
+                segment.first, segment.second, line.planIndex,
+                line.brake, line.typeName);
+            if (!emittedLines.insert(key).second) {
+                continue;
+            }
+            const StableId firstAttachment = endpointAttachment(line.start);
+            const StableId secondAttachment = endpointAttachment(line.end);
+            if (firstAttachment == secondAttachment) {
+                addError("Captured suspension segment collapses to one attachment: "
+                         + line.label);
+                continue;
+            }
+            scene.suspensionLines.push_back(
+                {stableId(10, lineOrdinal++),
+                 firstAttachment,
+                 secondAttachment,
+                 lineMaterialIds.at(line.typeName),
+                 line.start.Distance(line.end) * 0.001,
+                 line.brake ? SuspensionLineRole::Brake
+                            : SuspensionLineRole::Suspension});
+        }
+
+        if (!result.errors.empty()) {
+            finalizeFailure();
+            return result;
+        }
+        result.validation = validateScene(scene);
+        if (!result.validation.ok()) {
+            for (const ValidationDiagnostic &diagnostic :
+                 result.validation.diagnostics) {
+                result.errors.push_back(diagnostic.message);
+            }
+            finalizeFailure();
+            return result;
+        }
+        result.scene = std::move(scene);
+        result.success = true;
+        std::sort(result.warnings.begin(), result.warnings.end());
+        return result;
+    }
+
     // Writes the Playground simulation mesh: the coarse skin samples of
     // both wing halves welded into one node table, quad connectivity per
     // region, rib outline loops for internal webs, and the labelled
@@ -3896,6 +5002,48 @@ NurbsWriteResult writeNurbsStep(const std::filesystem::path &path,
 bool writeSimMesh(const std::filesystem::path &path, std::string &error)
 {
     return model().writeSimMesh(path, error);
+}
+
+SimWingSceneExportResult buildSimWingScene(
+    const SimWingSceneExportSettings &settings)
+{
+    return model().buildSimWingScene(settings);
+}
+
+SimWingSceneExportResult writeSimWingScene(
+    const std::filesystem::path &path,
+    const SimWingSceneExportSettings &settings)
+{
+    SimWingSceneExportResult result = buildSimWingScene(settings);
+    if (!result.success) {
+        return result;
+    }
+
+    std::ostringstream encoded(std::ios::binary);
+    std::string error;
+    if (!simwing::fsi::writeScene(result.scene, encoded, &error)) {
+        result.errors.push_back("Could not encode scene-v2: " + error);
+    } else {
+        std::ofstream file(path, std::ios::binary);
+        if (!file) {
+            result.errors.push_back(
+                "Could not open " + path.string() + " for writing");
+        } else {
+            const std::string bytes = encoded.str();
+            file.write(bytes.data(),
+                       static_cast<std::streamsize>(bytes.size()));
+            if (!file) {
+                result.errors.push_back(
+                    "Could not write " + path.string());
+            }
+        }
+    }
+    if (!result.errors.empty()) {
+        std::sort(result.errors.begin(), result.errors.end());
+        result.scene = {};
+        result.success = false;
+    }
+    return result;
 }
 
 } // namespace lep

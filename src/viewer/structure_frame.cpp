@@ -93,10 +93,13 @@ void addGlobalVector(
     const fsi::SceneStructureMappings& first,
     const fsi::SceneStructureMappings& second) {
     return first.nodeVertexIds == second.nodeVertexIds
+        && first.nodeSuspensionJunctionIds
+               == second.nodeSuspensionJunctionIds
         && first.triangleIds == second.triangleIds
         && first.membraneTriangleIds == second.membraneTriangleIds
         && first.constraintSuspensionLineIds
-               == second.constraintSuspensionLineIds;
+               == second.constraintSuspensionLineIds
+        && first.dihedralTriangleIds == second.dihedralTriangleIds;
 }
 
 [[nodiscard]] bool sameDefinition(
@@ -221,10 +224,9 @@ StructureFrameMapping::StructureFrameMapping(
 
     for (const StructureFrameTriangleMapping& triangle : triangles_) {
         if (triangle.negativeRegionId == 0
-            || triangle.positiveRegionId == 0
-            || triangle.negativeRegionId == triangle.positiveRegionId) {
+            || triangle.positiveRegionId == 0) {
             throw std::invalid_argument(
-                "Structure frame triangle needs two distinct nonzero regions");
+                "Structure frame triangle needs nonzero side regions");
         }
     }
 
@@ -306,6 +308,10 @@ StructureFrameMapping makeStructureFrameMapping(
 
     StructureFrameMappingDefinition definition;
     definition.vertexStableIds = canonical.mappings.nodeVertexIds;
+    definition.vertexStableIds.insert(
+        definition.vertexStableIds.end(),
+        canonical.mappings.nodeSuspensionJunctionIds.begin(),
+        canonical.mappings.nodeSuspensionJunctionIds.end());
     definition.triangles.reserve(canonical.mappings.triangleIds.size());
     for (const fsi::StableId id : canonical.mappings.triangleIds) {
         const auto found = trianglesById.find(id);

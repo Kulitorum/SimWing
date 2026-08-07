@@ -6,8 +6,9 @@ SimWing is a separate GPL-3.0 engineering project for coupled XPBD-CFD
 simulation of ram-air paragliders, including the long-term goals of dynamic
 inflation, collapse, and reinflation. It is bootstrapped from
 [LEparagliding Studio](https://github.com/Kulitorum/LeParagliding) and preserves
-that project's history, exact wing-design engine, Qt/OCCT application, and
-soft-wing structural baseline.
+that project's exact wing-design engine, Qt/OCCT application, and soft-wing
+structural baseline. SimWing starts from an independent root commit; upstream
+provenance is recorded in [`UPSTREAM.md`](UPSTREAM.md), not copied Git history.
 
 The imported application and executables still use their LEparagliding names
 while the solver-independent scene format, structural adapter, CFD worker, and
@@ -24,12 +25,16 @@ live structure, loads, contact, coupling residuals, and progressively added CFD
 fields can be inspected; automated runs remain available through `--no-viewer`.
 
 The first remake foundations are now present: scene-v2 validation and bounded
-serialization, deterministic scene-to-XPBD assembly, a Qt-free structural and
-checkpoint adapter, immutable structural diagnostic frames, a standalone
-Qt/OpenGL trace viewer, and a canonical Qt-free worker that opens the viewer
-by default and streams accepted XPBD steps through a replayable growing trace.
-This first worker case validates the pipeline; it is not yet wing CFD or
-aerodynamic truth. The inherited Playground is not used by these targets.
+serialization, direct export from captured analytical wing geometry,
+deterministic scene-to-XPBD membrane/cable/bending assembly, production
+suspension/payload checkpoints, immutable structural diagnostic frames, a
+standalone Qt/OpenGL trace viewer, and a canonical Qt-free worker that opens
+the viewer by default and streams accepted XPBD steps through a replayable
+growing trace. Export still requires explicit physical material/pilot settings;
+manufacturing-pattern UVs, structural seam assembly, pilot integration in the
+new adapter, and CFD remain open work. This first worker case validates the
+pipeline; it is not yet wing CFD or aerodynamic truth. The inherited Playground
+is not used by these targets.
 
 ## Inherited LEparagliding Studio baseline
 

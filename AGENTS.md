@@ -8,7 +8,8 @@ change moves ownership or invalidates a command or invariant.
 ## Project identity
 
 - SimWing is a separate GPL-3.0 project for coupled XPBD-CFD paraglider
-  simulation, bootstrapped with full history from LEparagliding Studio. The
+  simulation, bootstrapped as an independent root from LEparagliding Studio.
+  `UPSTREAM.md` records the source commit without importing upstream history. The
   imported C++20/Qt 6 application is a desktop port of Pere Casellas'
   LEparagliding 3.28 engineering program and retains its application/target
   names during the staged migration.
@@ -152,10 +153,17 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
 - `flatparts`: structured part model, deterministic nester, PDF/DXF writers.
 - `softwing_core`: dependency-free XPBD/cloth/contact/pneumatics/suspension
   core under `src/softwing`.
+- `lep_nurbs_model`: exact OCCT model builder and direct authoritative-capture
+  to scene-v2 exporter, shared by the engine and focused exporter tests.
+- `leparagliding_engine_runtime`: translated calculation core and its path,
+  migration, flat-capture, and exact-model dependencies, shared by the thin
+  `leparagliding-engine` CLI and the representative real-capture exporter test.
 - `simwing_scene`: Qt-free scene-v2 data model, deterministic validation, and
   bounded binary serialization under `src/fsi`.
 - `simwing_structure`: Qt-free SimWing-facing adapter around the retained XPBD
   primitives. It links `softwing_core` and no Playground library.
+- `simwing_scene_structure`: deterministic scene-v2 membrane, per-sheet
+  bending, junction, and cable assembly into `simwing_structure`.
 - `simwing_viewer_protocol`: Qt-free immutable diagnostic-frame and trace
   protocol shared by future workers and the standalone viewer.
 - `playground_contact`: Qt-free bounded Playground cloth-contact features,
@@ -430,21 +438,33 @@ makes this a certified aerodynamic solver.
 
 ### SimWing FSI foundations
 
-- `src/fsi/scene.{h,cpp}` owns scene-v2's SI/right-handed/Z-up contract,
-  stable-ID entities, two-sided fluid regions, materials, openings, pilot,
+- `src/fsi/scene.{h,cpp}` owns scene-v2.1's SI/right-handed/Z-up contract,
+  stable-ID entities, authored fabric-sheet identity, two-sided fluid regions,
+  materials, openings, paired seam chains, pilot, suspension junctions,
   attachments, suspension lines, validation, and bounded deterministic binary
-  round trips.
+  round trips. Diagonal/mini-rib sheets may retain one connected cell on both
+  sides; skin and ribs may not.
+- `src/model/nurbs_model.{h,cpp}` can export scene-v2 directly from analytical
+  captures without reading `lep-sim.json`. It preserves authored open intakes,
+  exact triangulated rib/crossport faces, internal sheets, and the segmented
+  suspension graph. Physical fabric/line/pilot settings are mandatory and no
+  engine CLI writes this scene yet because the design format has no authoritative
+  source for them. Its present local intrinsic charts are not manufacturing
+  flat-pattern UVs, and it does not yet author paired seam chains.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
   loads/state, trusted constraint/membrane/bending assembly, diagnostics, and
   rollback checkpoints without including any Playground header.
 - `src/fsi/scene_structure.{h,cpp}` deterministically assembles supported
-  scene-v2 fabric and surface-to-surface cables into that XPBD boundary. It
-  derives fabric mass from SI material-chart area and rejects pilot/harness
-  topology until rigid-payload checkpointing exists.
-- Registered contact and the rigid-payload `SuspensionSystem` are not yet in
-  `simwing_structure`: their persistent/warm-start state needs a public
-  production checkpoint API in `softwing_core` before strong coupling can use
-  them safely.
+  scene-v2 fabric, suspension junctions, and cable segments into that XPBD
+  boundary. It derives fabric mass from SI material-chart area and creates
+  signed dihedrals only across consistently oriented edges within one authored
+  sheet. It explicitly rejects seam and pilot/harness topology until their new
+  structural integrations are implemented.
+- `softwing::SuspensionSystem` now exposes a validated transactional production
+  checkpoint for its complete suspension and rigid-payload state, bound to the
+  registered body/contact topology. The enclosing structure still owns body
+  node/constraint/contact/pressure state. Registered contact and this checkpoint
+  are not yet composed into `simwing_structure`.
 - `src/viewer/viewer_protocol.{h,cpp}` owns immutable sampled diagnostic frames
   and replayable traces. It uses nonzero 64-bit stable entity/region IDs,
   transactional decoding, configurable limits, and a 256 MiB default encoded
@@ -484,7 +504,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 35 configured tests on Windows. The Fortran-reference test is
+There are 38 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 
@@ -499,7 +519,7 @@ paths that release CI deliberately excludes from its offscreen test command.
 | flat capture/nesting/PDF/DXF | `flatparts_export`; run `nesting-bench` when placement quality/performance can move |
 | Playground body/pressure/cells/material | `playground_pressure_solve`, `playground_cells`, `playground_metrics`, `playground_material`, `softwing_material`, and the deterministic bench guards below |
 | Playground contact | `playground_contact`, `playground_contact_integration`, plus a relevant bench/GUI scenario |
-| SimWing scene/structure/viewer foundations | `simwing_scene`, `simwing_structure`, `simwing_viewer_protocol`, plus `softwing_material`/`softwing_cell_volume` when core primitives change |
+| SimWing scene/structure/viewer foundations | `simwing_scene`, `simwing_model_scene_export`, `simwing_model_scene_real_export`, `simwing_structure`, `simwing_scene_structure`, `simwing_viewer_protocol`, `simwing_structure_frame`, plus `softwing_material`/`softwing_cell_volume` when core primitives change and `softwing_suspension_checkpoint` for payload/suspension state |
 | packaging/resources/CMake | configure from clean metadata, build Release, and run the full suite |
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with

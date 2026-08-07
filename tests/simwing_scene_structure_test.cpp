@@ -62,9 +62,9 @@ Scene surfaceScene() {
     };
     scene.triangles = {
         {501, {10, 12, 13}, {{{0.0, 0.0}, {2.0, 1.0}, {0.0, 1.0}}},
-         1, 2, 100, SurfaceRole::Skin},
+         1, 2, 100, 900, SurfaceRole::Skin},
         {500, {10, 11, 12}, {{{0.0, 0.0}, {2.0, 0.0}, {2.0, 1.0}}},
-         1, 2, 100, SurfaceRole::Skin},
+         1, 2, 100, 900, SurfaceRole::Skin},
     };
     scene.lineMaterials = {
         {110, "test line", 0.001, 0.0008, 1000.0, 1.0},
@@ -83,8 +83,11 @@ void reverseCollections(Scene& scene) {
     std::ranges::reverse(scene.regions);
     std::ranges::reverse(scene.vertices);
     std::ranges::reverse(scene.fabricMaterials);
+    std::ranges::reverse(scene.seamMaterials);
     std::ranges::reverse(scene.triangles);
+    std::ranges::reverse(scene.seams);
     std::ranges::reverse(scene.lineMaterials);
+    std::ranges::reverse(scene.suspensionJunctions);
     std::ranges::reverse(scene.attachments);
     std::ranges::reverse(scene.suspensionLines);
 }
@@ -102,6 +105,10 @@ void testDeterministicMappingAndStableIds() {
               && first.mappings.triangleIds == second.mappings.triangleIds
               && first.mappings.membraneTriangleIds
                      == second.mappings.membraneTriangleIds
+              && first.mappings.dihedralTriangleIds
+                     == second.mappings.dihedralTriangleIds
+              && first.mappings.nodeSuspensionJunctionIds
+                     == second.mappings.nodeSuspensionJunctionIds
               && first.mappings.constraintSuspensionLineIds
                      == second.mappings.constraintSuspensionLineIds,
           "mapping arrays are deterministic under collection reordering");
@@ -131,6 +138,8 @@ void testDeterministicMappingAndStableIds() {
                      == second.definition.triangles.size()
               && first.definition.membranes.size()
                      == second.definition.membranes.size()
+              && first.definition.dihedrals.size()
+                     == second.definition.dihedrals.size()
               && first.definition.constraints.size()
                      == second.definition.constraints.size(),
           "reordered assembly has the same structural cardinalities");
@@ -185,6 +194,22 @@ void testConservativeFabricMassAndMembranes() {
               && first.role == StructureMaterialRole::Bulk,
           "scene fabric maps to a compatible Bulk orthotropic membrane");
 
+    check(assembly.definition.dihedrals.size() == 1
+              && assembly.mappings.dihedralTriangleIds
+                     == std::vector<std::array<StableId, 2>>({{500, 501}}),
+          "flat two-triangle strip creates one stable manifold hinge");
+    const StructureDihedralDefinition& hinge =
+        assembly.definition.dihedrals.front();
+    check(hinge.nodes[0] == *assembly.mappings.nodeIndex(12)
+              && hinge.nodes[1] == *assembly.mappings.nodeIndex(10)
+              && hinge.nodes[2] == *assembly.mappings.nodeIndex(11)
+              && hinge.nodes[3] == *assembly.mappings.nodeIndex(13),
+          "hinge node order follows the lower stable-ID triangle orientation");
+    checkNear(hinge.restAngleRadians, 0.0, 1.0e-15,
+              "flat analytic strip has zero rest angle");
+    checkNear(hinge.complianceRadiansPerNewtonMeter, 80.0 / 3.0, 1.0e-12,
+              "strip-width bending rule gives analytic angular compliance");
+
     const StructureConstraintDefinition& cable =
         assembly.definition.constraints.front();
     check(cable.kind == StructureConstraintKind::Cable
@@ -198,6 +223,52 @@ void testConservativeFabricMassAndMembranes() {
     check(constructed.definition().nodes.size() == 4
               && constructed.definition().membranes.size() == 2,
           "successful bridge output is accepted by the XPBD Structure boundary");
+}
+
+void testFoldedStripRestAngle() {
+    Scene scene = surfaceScene();
+    for (Vertex& vertex : scene.vertices) {
+        if (vertex.id == 10) {
+            vertex.positionMeters = {0.0, 0.0, 0.0};
+        } else if (vertex.id == 11) {
+            vertex.positionMeters = {1.0, 0.0, 0.0};
+        } else if (vertex.id == 12) {
+            vertex.positionMeters = {0.0, 1.0, 0.0};
+        } else if (vertex.id == 13) {
+            vertex.positionMeters = {0.0, 0.0, -1.0};
+        }
+    }
+    for (Triangle& triangle : scene.triangles) {
+        if (triangle.id == 500) {
+            triangle.vertexIds = {10, 11, 12};
+        } else {
+            triangle.vertexIds = {11, 10, 13};
+        }
+        triangle.materialCoordinates = {
+            Vec2{0.0, 0.0}, Vec2{1.0, 0.0}, Vec2{0.0, 1.0}};
+    }
+    const SceneStructureAssembly assembly = assembleSceneStructure(scene);
+    check(assembly.ok() && assembly.definition.dihedrals.size() == 1,
+          "folded strip: consistently oriented right-angle strip assembles");
+    const StructureDihedralDefinition& hinge =
+        assembly.definition.dihedrals.front();
+    checkNear(hinge.restAngleRadians, std::acos(-1.0) / 2.0, 1.0e-15,
+              "folded strip: signed rest angle comes from scene geometry");
+    checkNear(hinge.complianceRadiansPerNewtonMeter, 200.0 / 3.0,
+              1.0e-12,
+              "folded strip: unit material charts give analytic compliance");
+}
+
+void testWeldedDifferentSheetsDoNotCreateHinge() {
+    Scene scene = surfaceScene();
+    scene.triangles[1].sheetId = 901;
+
+    const SceneStructureAssembly assembly = assembleSceneStructure(scene);
+    check(assembly.ok(),
+          "sheet identity: welded triangles from different sheets assemble");
+    check(assembly.definition.dihedrals.empty()
+              && assembly.mappings.dihedralTriangleIds.empty(),
+          "sheet identity: a welded inter-sheet edge is not a fabric hinge");
 }
 
 void testUnsupportedPilotHarnessIsExplicitAndDeterministic() {
@@ -229,6 +300,119 @@ void testUnsupportedPilotHarnessIsExplicitAndDeterministic() {
     const SceneStructureAssembly second = assembleSceneStructure(reordered);
     check(first.diagnostics == second.diagnostics,
           "unsupported diagnostics are deterministic under reordering");
+}
+
+void testSuspensionJunctionSegmentGraph() {
+    Scene scene = surfaceScene();
+    scene.suspensionJunctions = {
+        {50, {1.5, 0.5, -0.5}, 0.02, false},
+    };
+    scene.attachments.push_back(
+        {302, AttachmentKind::SuspensionJunction, 0, 0, {}, 50});
+    scene.suspensionLines[0].endAttachmentId = 302;
+    scene.suspensionLines.push_back(
+        {401, 302, 301, 110, 1.5, SuspensionLineRole::Riser});
+
+    const SceneStructureAssembly assembly = assembleSceneStructure(scene);
+    check(assembly.ok(),
+          "junction graph: explicit surface-junction segments assemble");
+    check(assembly.definition.nodes.size() == 5
+              && assembly.mappings.nodeSuspensionJunctionIds
+                     == std::vector<StableId>({50})
+              && assembly.mappings.junctionNodeIndex(50)
+                     == std::optional<std::size_t>(4),
+          "junction graph: stable junction maps to its own XPBD node");
+    const std::size_t junction =
+        *assembly.mappings.junctionNodeIndex(50);
+    checkNear(assembly.definition.nodes[junction].massKg, 0.02, 0.0,
+              "junction graph: explicit dynamic junction mass is preserved");
+    check(assembly.definition.constraints.size() == 2
+              && assembly.mappings.constraintSuspensionLineIds
+                     == std::vector<StableId>({400, 401}),
+          "junction graph: line segments remain separate stable constraints");
+    check(assembly.definition.constraints[0].firstNode
+                  == *assembly.mappings.nodeIndex(10)
+              && assembly.definition.constraints[0].secondNode == junction
+              && assembly.definition.constraints[1].firstNode == junction
+              && assembly.definition.constraints[1].secondNode
+                     == *assembly.mappings.nodeIndex(12),
+          "junction graph: connectivity is not collapsed through the junction");
+
+    Scene reordered = scene;
+    reverseCollections(reordered);
+    const SceneStructureAssembly reorderedAssembly =
+        assembleSceneStructure(reordered);
+    check(reorderedAssembly.ok()
+              && reorderedAssembly.mappings.nodeSuspensionJunctionIds
+                     == assembly.mappings.nodeSuspensionJunctionIds
+              && reorderedAssembly.mappings.constraintSuspensionLineIds
+                     == assembly.mappings.constraintSuspensionLineIds,
+          "junction graph: mapping is deterministic under scene reordering");
+
+    Scene collision = scene;
+    collision.suspensionJunctions.front().id = 10;
+    collision.attachments.back().suspensionJunctionId = 10;
+    const SceneStructureAssembly collisionAssembly =
+        assembleSceneStructure(collision);
+    check(!collisionAssembly.ok()
+              && contains(collisionAssembly,
+                          SceneStructureDiagnosticCode::InvalidScene)
+              && collisionAssembly.definition.nodes.empty(),
+          "junction graph: vertex/junction stable-ID collision is rejected transactionally");
+}
+
+void testSeamAndBendingTopologyRejections() {
+    Scene seamScene = surfaceScene();
+    seamScene.seamMaterials = {
+        {120, "test seam", 0.001, 3500.0},
+    };
+    seamScene.seams = {
+        {610, 120, {10, 11}, {13, 12}},
+    };
+    check(validateScene(seamScene).ok(),
+          "seam bridge: paired seam topology is valid scene data");
+    const SceneStructureAssembly seamAssembly =
+        assembleSceneStructure(seamScene);
+    check(!seamAssembly.ok()
+              && contains(seamAssembly,
+                          SceneStructureDiagnosticCode::UnsupportedSeam)
+              && seamAssembly.definition.nodes.empty(),
+          "seam bridge: unsupported stitch physics rejects transactionally");
+
+    Scene inconsistent = surfaceScene();
+    inconsistent.triangles[0].vertexIds = {12, 10, 13};
+    inconsistent.triangles[0].materialCoordinates = {
+        Vec2{0.0, 0.0}, Vec2{2.0, 0.0}, Vec2{0.0, 1.0}};
+    check(validateScene(inconsistent).ok(),
+          "bending topology: oppositely oriented face remains a valid scene");
+    const SceneStructureAssembly inconsistentAssembly =
+        assembleSceneStructure(inconsistent);
+    check(!inconsistentAssembly.ok()
+              && contains(
+                  inconsistentAssembly,
+                  SceneStructureDiagnosticCode::UnsupportedBendingTopology),
+          "bending topology: same-direction shared edge is diagnosed");
+
+    Scene nonManifold = surfaceScene();
+    nonManifold.vertices.push_back({14, {1.5, 0.5, 1.0}});
+    nonManifold.triangles.push_back(
+        {502,
+         {10, 12, 14},
+         {{{0.0, 0.0}, {2.0, 0.0}, {1.0, 1.0}}},
+         1,
+         2,
+         100,
+         900,
+         SurfaceRole::Skin});
+    check(validateScene(nonManifold).ok(),
+          "bending topology: three-face edge remains serializable scene data");
+    const SceneStructureAssembly nonManifoldAssembly =
+        assembleSceneStructure(nonManifold);
+    check(!nonManifoldAssembly.ok()
+              && contains(
+                  nonManifoldAssembly,
+                  SceneStructureDiagnosticCode::UnsupportedBendingTopology),
+          "bending topology: non-manifold shared edge is diagnosed");
 }
 
 void testExplicitValidationAndAssemblyRejections() {
@@ -310,7 +494,11 @@ void testExplicitValidationAndAssemblyRejections() {
 int main() {
     testDeterministicMappingAndStableIds();
     testConservativeFabricMassAndMembranes();
+    testFoldedStripRestAngle();
+    testWeldedDifferentSheetsDoNotCreateHinge();
     testUnsupportedPilotHarnessIsExplicitAndDeterministic();
+    testSuspensionJunctionSegmentGraph();
+    testSeamAndBendingTopologyRejections();
     testExplicitValidationAndAssemblyRejections();
     if (failures != 0) {
         std::fprintf(stderr,

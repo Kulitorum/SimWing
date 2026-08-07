@@ -38,6 +38,10 @@ bool finite(const Vec3& value) {
     return finite(value.x) && finite(value.y) && finite(value.z);
 }
 
+bool exactlyZero(const Vec3& value) {
+    return value.x == 0.0 && value.y == 0.0 && value.z == 0.0;
+}
+
 bool finite(const Quaternion& value) {
     return finite(value.w) && finite(value.x) && finite(value.y)
            && finite(value.z);
@@ -73,7 +77,8 @@ bool valid(OpeningRole value) {
 
 bool valid(AttachmentKind value) {
     return value == AttachmentKind::SurfaceVertex
-           || value == AttachmentKind::PilotHarness;
+           || value == AttachmentKind::PilotHarness
+           || value == AttachmentKind::SuspensionJunction;
 }
 
 bool valid(SuspensionLineRole value) {
@@ -193,11 +198,16 @@ Scene canonicalScene(const Scene& scene) {
     std::stable_sort(result.vertices.begin(), result.vertices.end(), byId);
     std::stable_sort(result.fabricMaterials.begin(),
                      result.fabricMaterials.end(), byId);
+    std::stable_sort(result.seamMaterials.begin(),
+                     result.seamMaterials.end(), byId);
     std::stable_sort(result.triangles.begin(), result.triangles.end(), byId);
     std::stable_sort(result.openings.begin(), result.openings.end(), byId);
+    std::stable_sort(result.seams.begin(), result.seams.end(), byId);
     std::stable_sort(result.lineMaterials.begin(), result.lineMaterials.end(),
                      byId);
     std::stable_sort(result.pilots.begin(), result.pilots.end(), byId);
+    std::stable_sort(result.suspensionJunctions.begin(),
+                     result.suspensionJunctions.end(), byId);
     std::stable_sort(result.attachments.begin(), result.attachments.end(), byId);
     std::stable_sort(result.suspensionLines.begin(),
                      result.suspensionLines.end(), byId);
@@ -234,11 +244,16 @@ bool withinBinarySafetyLimits(const Scene& scene, std::string& error) {
         || !claim(scene.vertices.size(), sizeof(Vertex), "vertex count")
         || !claim(scene.fabricMaterials.size(), sizeof(FabricMaterial),
                   "fabric-material count")
+        || !claim(scene.seamMaterials.size(), sizeof(SeamMaterial),
+                  "seam-material count")
         || !claim(scene.triangles.size(), sizeof(Triangle), "triangle count")
         || !claim(scene.openings.size(), sizeof(Opening), "opening count")
+        || !claim(scene.seams.size(), sizeof(Seam), "seam count")
         || !claim(scene.lineMaterials.size(), sizeof(LineMaterial),
                   "line-material count")
         || !claim(scene.pilots.size(), sizeof(Pilot), "pilot count")
+        || !claim(scene.suspensionJunctions.size(),
+                  sizeof(SuspensionJunction), "suspension-junction count")
         || !claim(scene.attachments.size(), sizeof(Attachment),
                   "attachment count")
         || !claim(scene.suspensionLines.size(), sizeof(SuspensionLine),
@@ -257,9 +272,22 @@ bool withinBinarySafetyLimits(const Scene& scene, std::string& error) {
             return false;
         }
     }
+    for (const SeamMaterial& material : scene.seamMaterials) {
+        if (!claimString(material.name, "seam-material name")) {
+            return false;
+        }
+    }
     for (const Opening& opening : scene.openings) {
         if (!claim(opening.orderedVertexIds.size(), sizeof(StableId),
                    "opening boundary count")) {
+            return false;
+        }
+    }
+    for (const Seam& seam : scene.seams) {
+        if (!claim(seam.firstOrderedVertexIds.size(), sizeof(StableId),
+                   "first seam-chain vertex count")
+            || !claim(seam.secondOrderedVertexIds.size(), sizeof(StableId),
+                      "second seam-chain vertex count")) {
             return false;
         }
     }
@@ -547,11 +575,16 @@ ValidationReport validateScene(const Scene& scene) {
     validateIds(scene.vertices, EntityKind::Vertex, "vertex", report);
     validateIds(scene.fabricMaterials, EntityKind::FabricMaterial,
                 "fabric material", report);
+    validateIds(scene.seamMaterials, EntityKind::SeamMaterial,
+                "seam material", report);
     validateIds(scene.triangles, EntityKind::Triangle, "triangle", report);
     validateIds(scene.openings, EntityKind::Opening, "opening", report);
+    validateIds(scene.seams, EntityKind::Seam, "seam", report);
     validateIds(scene.lineMaterials, EntityKind::LineMaterial,
                 "line material", report);
     validateIds(scene.pilots, EntityKind::Pilot, "pilot", report);
+    validateIds(scene.suspensionJunctions, EntityKind::SuspensionJunction,
+                "suspension junction", report);
     validateIds(scene.attachments, EntityKind::Attachment, "attachment", report);
     validateIds(scene.suspensionLines, EntityKind::SuspensionLine,
                 "suspension line", report);
@@ -559,8 +592,10 @@ ValidationReport validateScene(const Scene& scene) {
     const auto regionIds = idSet(scene.regions);
     const auto vertexIds = idSet(scene.vertices);
     const auto fabricMaterialIds = idSet(scene.fabricMaterials);
+    const auto seamMaterialIds = idSet(scene.seamMaterials);
     const auto lineMaterialIds = idSet(scene.lineMaterials);
     const auto pilotIds = idSet(scene.pilots);
+    const auto suspensionJunctionIds = idSet(scene.suspensionJunctions);
     const auto attachmentIds = idSet(scene.attachments);
 
     std::size_t outsideCount = 0;
@@ -635,6 +670,25 @@ ValidationReport validateScene(const Scene& scene) {
         }
     }
 
+    for (const SeamMaterial* material : sortedById(scene.seamMaterials)) {
+        if (!finite(material->linearDensityKgPerMeter)
+            || !finite(material->axialStiffnessNewtons)) {
+            add(report, ValidationCode::NonFiniteValue,
+                EntityKind::SeamMaterial, material->id,
+                "seam material contains a non-finite value");
+        } else if (!(material->linearDensityKgPerMeter > 0.0)
+                   || !(material->axialStiffnessNewtons > 0.0)) {
+            add(report, ValidationCode::InvalidPhysicalValue,
+                EntityKind::SeamMaterial, material->id,
+                "seam material density and axial stiffness must be positive");
+        }
+        if (material->name.empty()) {
+            add(report, ValidationCode::MissingMetadata,
+                EntityKind::SeamMaterial, material->id,
+                "seam material name is required");
+        }
+    }
+
     std::map<std::array<StableId, 3>, StableId> triangleGeometry;
     for (const Triangle* triangle : sortedById(scene.triangles)) {
         if (!valid(triangle->role)) {
@@ -669,6 +723,11 @@ ValidationReport validateScene(const Scene& scene) {
                 EntityKind::Triangle, triangle->id,
                 "triangle references a missing fabric material");
         }
+        if (triangle->sheetId == invalidStableId) {
+            add(report, ValidationCode::InvalidId, EntityKind::Triangle,
+                triangle->id,
+                "triangle fabric sheet ID must be non-zero");
+        }
         const bool negativeExists =
             regionIds.contains(triangle->negativeSideRegionId);
         const bool positiveExists =
@@ -678,11 +737,15 @@ ValidationReport validateScene(const Scene& scene) {
                 EntityKind::Triangle, triangle->id,
                 "triangle references a missing side region");
         }
+        const bool isInternalSheet =
+            triangle->role == SurfaceRole::Diagonal
+            || triangle->role == SurfaceRole::MiniRib;
         if (triangle->negativeSideRegionId
-            == triangle->positiveSideRegionId) {
+                == triangle->positiveSideRegionId
+            && !isInternalSheet) {
             add(report, ValidationCode::InvalidSideRegions,
                 EntityKind::Triangle, triangle->id,
-                "triangle side regions must be distinct");
+                "skin and rib triangle side regions must be distinct");
         }
         std::array<StableId, 3> key = triangle->vertexIds;
         std::sort(key.begin(), key.end());
@@ -728,6 +791,58 @@ ValidationReport validateScene(const Scene& scene) {
             add(report, ValidationCode::InvalidSideRegions,
                 EntityKind::Opening, opening->id,
                 "opening side regions must be distinct");
+        }
+    }
+
+    std::map<std::array<StableId, 2>, StableId> seamVertexPairs;
+    for (const Seam* seam : sortedById(scene.seams)) {
+        bool invalidChains = seam->firstOrderedVertexIds.size() < 2
+            || seam->firstOrderedVertexIds.size()
+                   != seam->secondOrderedVertexIds.size();
+        std::unordered_set<StableId> allChainVertices;
+        const auto validateChain = [&](const std::vector<StableId>& chain,
+                                       const char* label) {
+            std::unordered_set<StableId> localVertices;
+            for (const StableId vertexId : chain) {
+                if (!vertexIds.contains(vertexId)) {
+                    add(report, ValidationCode::MissingVertexReference,
+                        EntityKind::Seam, seam->id,
+                        std::string("seam ") + label
+                            + " chain references a missing vertex");
+                }
+                if (!localVertices.insert(vertexId).second
+                    || !allChainVertices.insert(vertexId).second) {
+                    invalidChains = true;
+                }
+            }
+        };
+        validateChain(seam->firstOrderedVertexIds, "first");
+        validateChain(seam->secondOrderedVertexIds, "second");
+        if (seam->firstOrderedVertexIds.size()
+            == seam->secondOrderedVertexIds.size()) {
+            for (std::size_t index = 0;
+                 index < seam->firstOrderedVertexIds.size(); ++index) {
+                std::array<StableId, 2> pair{
+                    seam->firstOrderedVertexIds[index],
+                    seam->secondOrderedVertexIds[index]};
+                if (pair[0] == pair[1]) {
+                    invalidChains = true;
+                }
+                std::ranges::sort(pair);
+                if (!seamVertexPairs.emplace(pair, seam->id).second) {
+                    invalidChains = true;
+                }
+            }
+        }
+        if (invalidChains) {
+            add(report, ValidationCode::InvalidSeam, EntityKind::Seam,
+                seam->id,
+                "seam needs two disjoint equal-length ordered chains with at least two unique vertex pairs");
+        }
+        if (!seamMaterialIds.contains(seam->materialId)) {
+            add(report, ValidationCode::MissingMaterialReference,
+                EntityKind::Seam, seam->id,
+                "seam references a missing seam material");
         }
     }
 
@@ -783,6 +898,25 @@ ValidationReport validateScene(const Scene& scene) {
         }
     }
 
+    for (const SuspensionJunction* junction
+         : sortedById(scene.suspensionJunctions)) {
+        if (!finite(junction->positionMeters) || !finite(junction->massKg)) {
+            add(report, ValidationCode::NonFiniteValue,
+                EntityKind::SuspensionJunction, junction->id,
+                "suspension junction contains a non-finite value");
+        } else if (junction->massKg < 0.0
+                   || (!junction->fixed && !(junction->massKg > 0.0))) {
+            add(report, ValidationCode::InvalidPhysicalValue,
+                EntityKind::SuspensionJunction, junction->id,
+                "dynamic suspension junction requires positive explicit mass");
+        }
+        if (vertexIds.contains(junction->id)) {
+            add(report, ValidationCode::InvalidId,
+                EntityKind::SuspensionJunction, junction->id,
+                "suspension junction ID must not collide with a surface vertex ID");
+        }
+    }
+
     for (const Attachment* attachment : sortedById(scene.attachments)) {
         if (!valid(attachment->kind)) {
             add(report, ValidationCode::InvalidEnumValue,
@@ -792,22 +926,35 @@ ValidationReport validateScene(const Scene& scene) {
         }
         if (attachment->kind == AttachmentKind::SurfaceVertex) {
             if (!vertexIds.contains(attachment->vertexId)
-                || attachment->pilotId != invalidStableId) {
+                || attachment->pilotId != invalidStableId
+                || attachment->suspensionJunctionId != invalidStableId
+                || !exactlyZero(attachment->pilotLocalPositionMeters)) {
                 add(report, ValidationCode::InvalidAttachmentTarget,
                     EntityKind::Attachment, attachment->id,
                     "surface attachment must reference one existing vertex");
             }
-        } else {
+        } else if (attachment->kind == AttachmentKind::PilotHarness) {
             if (!pilotIds.contains(attachment->pilotId)) {
                 add(report, ValidationCode::MissingPilotReference,
                     EntityKind::Attachment, attachment->id,
                     "pilot attachment references a missing pilot");
             }
             if (attachment->vertexId != invalidStableId
+                || attachment->suspensionJunctionId != invalidStableId
                 || !finite(attachment->pilotLocalPositionMeters)) {
                 add(report, ValidationCode::InvalidAttachmentTarget,
                     EntityKind::Attachment, attachment->id,
                     "pilot attachment target or local position is invalid");
+            }
+        } else {
+            if (!suspensionJunctionIds.contains(
+                    attachment->suspensionJunctionId)
+                || attachment->vertexId != invalidStableId
+                || attachment->pilotId != invalidStableId
+                || !exactlyZero(attachment->pilotLocalPositionMeters)) {
+                add(report, ValidationCode::InvalidAttachmentTarget,
+                    EntityKind::Attachment, attachment->id,
+                    "junction attachment must reference one existing suspension junction");
             }
         }
     }
@@ -913,6 +1060,13 @@ bool writeScene(const Scene& scene,
             writer.real(material.porosityFraction);
             writer.real(material.permeabilitySquareMeters);
         }
+        writer.count(canonical.seamMaterials.size());
+        for (const SeamMaterial& material : canonical.seamMaterials) {
+            writer.u64(material.id);
+            writer.string(material.name);
+            writer.real(material.linearDensityKgPerMeter);
+            writer.real(material.axialStiffnessNewtons);
+        }
         writer.count(canonical.triangles.size());
         for (const Triangle& triangle : canonical.triangles) {
             writer.u64(triangle.id);
@@ -925,6 +1079,7 @@ bool writeScene(const Scene& scene,
             writer.u64(triangle.negativeSideRegionId);
             writer.u64(triangle.positiveSideRegionId);
             writer.u64(triangle.materialId);
+            writer.u64(triangle.sheetId);
             writer.u8(static_cast<std::uint8_t>(triangle.role));
         }
         writer.count(canonical.openings.size());
@@ -937,6 +1092,19 @@ bool writeScene(const Scene& scene,
             writer.u64(opening.negativeSideRegionId);
             writer.u64(opening.positiveSideRegionId);
             writer.u8(static_cast<std::uint8_t>(opening.role));
+        }
+        writer.count(canonical.seams.size());
+        for (const Seam& seam : canonical.seams) {
+            writer.u64(seam.id);
+            writer.u64(seam.materialId);
+            writer.count(seam.firstOrderedVertexIds.size());
+            for (const StableId vertexId : seam.firstOrderedVertexIds) {
+                writer.u64(vertexId);
+            }
+            writer.count(seam.secondOrderedVertexIds.size());
+            for (const StableId vertexId : seam.secondOrderedVertexIds) {
+                writer.u64(vertexId);
+            }
         }
         writer.count(canonical.lineMaterials.size());
         for (const LineMaterial& material : canonical.lineMaterials) {
@@ -957,6 +1125,14 @@ bool writeScene(const Scene& scene,
             writeQuaternion(writer, pilot.bodyToWorld);
             writeVec3(writer, pilot.principalInertiaKgSquareMeters);
         }
+        writer.count(canonical.suspensionJunctions.size());
+        for (const SuspensionJunction& junction :
+             canonical.suspensionJunctions) {
+            writer.u64(junction.id);
+            writeVec3(writer, junction.positionMeters);
+            writer.real(junction.massKg);
+            writer.u8(junction.fixed ? 1 : 0);
+        }
         writer.count(canonical.attachments.size());
         for (const Attachment& attachment : canonical.attachments) {
             writer.u64(attachment.id);
@@ -964,6 +1140,7 @@ bool writeScene(const Scene& scene,
             writer.u64(attachment.vertexId);
             writer.u64(attachment.pilotId);
             writeVec3(writer, attachment.pilotLocalPositionMeters);
+            writer.u64(attachment.suspensionJunctionId);
         }
         writer.count(canonical.suspensionLines.size());
         for (const SuspensionLine& line : canonical.suspensionLines) {
@@ -1044,6 +1221,13 @@ bool readScene(std::istream& input,
             material.porosityFraction = reader.real();
             material.permeabilitySquareMeters = reader.real();
         }
+        resizeFromCount(decoded.seamMaterials, reader, "seam material");
+        for (SeamMaterial& material : decoded.seamMaterials) {
+            material.id = reader.u64();
+            material.name = reader.string();
+            material.linearDensityKgPerMeter = reader.real();
+            material.axialStiffnessNewtons = reader.real();
+        }
         resizeFromCount(decoded.triangles, reader, "triangle");
         for (Triangle& triangle : decoded.triangles) {
             triangle.id = reader.u64();
@@ -1056,6 +1240,7 @@ bool readScene(std::istream& input,
             triangle.negativeSideRegionId = reader.u64();
             triangle.positiveSideRegionId = reader.u64();
             triangle.materialId = reader.u64();
+            triangle.sheetId = reader.u64();
             triangle.role = static_cast<SurfaceRole>(reader.u8());
         }
         resizeFromCount(decoded.openings, reader, "opening");
@@ -1069,6 +1254,21 @@ bool readScene(std::istream& input,
             opening.negativeSideRegionId = reader.u64();
             opening.positiveSideRegionId = reader.u64();
             opening.role = static_cast<OpeningRole>(reader.u8());
+        }
+        resizeFromCount(decoded.seams, reader, "seam");
+        for (Seam& seam : decoded.seams) {
+            seam.id = reader.u64();
+            seam.materialId = reader.u64();
+            resizeFromCount(seam.firstOrderedVertexIds, reader,
+                            "first seam-chain vertex");
+            for (StableId& vertexId : seam.firstOrderedVertexIds) {
+                vertexId = reader.u64();
+            }
+            resizeFromCount(seam.secondOrderedVertexIds, reader,
+                            "second seam-chain vertex");
+            for (StableId& vertexId : seam.secondOrderedVertexIds) {
+                vertexId = reader.u64();
+            }
         }
         resizeFromCount(decoded.lineMaterials, reader, "line material");
         for (LineMaterial& material : decoded.lineMaterials) {
@@ -1089,6 +1289,18 @@ bool readScene(std::istream& input,
             pilot.bodyToWorld = readQuaternion(reader);
             pilot.principalInertiaKgSquareMeters = readVec3(reader);
         }
+        resizeFromCount(decoded.suspensionJunctions, reader,
+                        "suspension junction");
+        for (SuspensionJunction& junction : decoded.suspensionJunctions) {
+            junction.id = reader.u64();
+            junction.positionMeters = readVec3(reader);
+            junction.massKg = reader.real();
+            const std::uint8_t fixed = reader.u8();
+            if (fixed > 1) {
+                reader.fail("suspension junction fixed flag is invalid");
+            }
+            junction.fixed = fixed != 0;
+        }
         resizeFromCount(decoded.attachments, reader, "attachment");
         for (Attachment& attachment : decoded.attachments) {
             attachment.id = reader.u64();
@@ -1096,6 +1308,7 @@ bool readScene(std::istream& input,
             attachment.vertexId = reader.u64();
             attachment.pilotId = reader.u64();
             attachment.pilotLocalPositionMeters = readVec3(reader);
+            attachment.suspensionJunctionId = reader.u64();
         }
         resizeFromCount(decoded.suspensionLines, reader, "suspension line");
         for (SuspensionLine& line : decoded.suspensionLines) {

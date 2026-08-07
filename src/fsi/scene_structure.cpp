@@ -80,12 +80,17 @@ bool checkedMappingBytes(std::size_t count,
 bool checkBounds(const Scene& scene,
                  const SceneStructureLimits& limits,
                  SceneStructureAssembly& assembly) {
-    if (scene.vertices.size() > limits.maximumNodes) {
+    const bool nodeCountOverflow = scene.suspensionJunctions.size()
+        > std::numeric_limits<std::size_t>::max() - scene.vertices.size();
+    const std::size_t nodeCount = nodeCountOverflow
+        ? std::numeric_limits<std::size_t>::max()
+        : scene.vertices.size() + scene.suspensionJunctions.size();
+    if (nodeCountOverflow || nodeCount > limits.maximumNodes) {
         addDiagnostic(assembly,
                       SceneStructureDiagnosticCode::MappingOverflow,
                       EntityKind::Scene,
                       invalidStableId,
-                      "scene vertex count exceeds the structure node bound");
+                      "scene vertex and junction count exceeds the structure node bound");
     }
     if (scene.triangles.size() > limits.maximumTriangles) {
         addDiagnostic(
@@ -107,11 +112,18 @@ bool checkBounds(const Scene& scene,
     std::size_t remaining = limits.maximumMappingBytes;
     const bool fits =
         checkedMappingBytes(scene.vertices.size(), sizeof(StableId), remaining)
+        && checkedMappingBytes(scene.suspensionJunctions.size(),
+                               sizeof(StableId), remaining)
         && checkedMappingBytes(scene.triangles.size(), sizeof(StableId),
                                remaining)
         && checkedMappingBytes(scene.triangles.size(), sizeof(StableId),
                                remaining)
         && checkedMappingBytes(scene.suspensionLines.size(), sizeof(StableId),
+                               remaining)
+        // A manifold triangulation has fewer than two hinges per triangle;
+        // claiming two pairs is a simple overflow-safe conservative bound.
+        && checkedMappingBytes(scene.triangles.size(),
+                               2 * sizeof(std::array<StableId, 2>),
                                remaining);
     if (!fits) {
         addDiagnostic(
@@ -130,6 +142,31 @@ StructureVector3 convert(const Vec3& value) {
 
 StructureVector2 convert(const Vec2& value) {
     return {value.x, value.y};
+}
+
+Vec3 subtract(const Vec3& first, const Vec3& second) {
+    return {first.x - second.x,
+            first.y - second.y,
+            first.z - second.z};
+}
+
+Vec3 cross(const Vec3& first, const Vec3& second) {
+    return {first.y * second.z - first.z * second.y,
+            first.z * second.x - first.x * second.z,
+            first.x * second.y - first.y * second.x};
+}
+
+double dot(const Vec3& first, const Vec3& second) {
+    return first.x * second.x + first.y * second.y
+        + first.z * second.z;
+}
+
+double length(const Vec3& value) {
+    return std::sqrt(dot(value, value));
+}
+
+Vec3 scaled(const Vec3& value, double scale) {
+    return {scale * value.x, scale * value.y, scale * value.z};
 }
 
 bool compatibleMaterial(const FabricMaterial& material) {
@@ -197,6 +234,159 @@ double materialChartArea(const Triangle& triangle) {
     return 0.5 * (first.x * second.y - second.x * first.y);
 }
 
+struct EdgeIncidence {
+    const Triangle* triangle = nullptr;
+    StableId from = invalidStableId;
+    StableId to = invalidStableId;
+    StableId opposite = invalidStableId;
+};
+
+void assembleBending(
+    const std::vector<const Triangle*>& triangles,
+    const std::map<StableId, const Vertex*>& verticesById,
+    const std::map<StableId, const FabricMaterial*>& materialsById,
+    const std::map<StableId, std::size_t>& nodeIndices,
+    SceneStructureAssembly& assembly) {
+    // The same spatial edge may be shared by several welded physical sheets
+    // (for example skin and rib). Sheet identity is therefore part of the
+    // bending key: only adjacent triangles cut from one authored sheet form a
+    // dihedral.
+    std::map<std::array<StableId, 3>, std::vector<EdgeIncidence>> edges;
+    for (const Triangle* triangle : triangles) {
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            const StableId from = triangle->vertexIds[corner];
+            const StableId to = triangle->vertexIds[(corner + 1) % 3];
+            const StableId opposite = triangle->vertexIds[(corner + 2) % 3];
+            std::array<StableId, 2> canonicalEdge{from, to};
+            std::ranges::sort(canonicalEdge);
+            const std::array<StableId, 3> key{
+                triangle->sheetId, canonicalEdge[0], canonicalEdge[1]};
+            edges[key].push_back({triangle, from, to, opposite});
+        }
+    }
+
+    assembly.definition.dihedrals.reserve(triangles.size() * 3 / 2);
+    assembly.mappings.dihedralTriangleIds.reserve(
+        triangles.size() * 3 / 2);
+    for (const auto& [sheetEdge, incidences] : edges) {
+        const StableId sheetId = sheetEdge[0];
+        const std::array<StableId, 2> edge{sheetEdge[1], sheetEdge[2]};
+        if (incidences.size() == 1) {
+            // A boundary has no adjacent fabric strip and intentionally gets
+            // no bending constraint.
+            continue;
+        }
+        if (incidences.size() != 2) {
+            addDiagnostic(
+                assembly,
+                SceneStructureDiagnosticCode::UnsupportedBendingTopology,
+                EntityKind::Triangle,
+                incidences.front().triangle->id,
+                "non-manifold edge " + std::to_string(edge[0]) + "-"
+                    + std::to_string(edge[1])
+                    + " in sheet " + std::to_string(sheetId)
+                    + " cannot define one fabric bending hinge");
+            continue;
+        }
+        const EdgeIncidence& first = incidences[0];
+        const EdgeIncidence& second = incidences[1];
+        if (first.from != second.to || first.to != second.from) {
+            addDiagnostic(
+                assembly,
+                SceneStructureDiagnosticCode::UnsupportedBendingTopology,
+                EntityKind::Triangle,
+                first.triangle->id,
+                "inconsistently oriented edge " + std::to_string(edge[0])
+                    + "-" + std::to_string(edge[1])
+                    + " in sheet " + std::to_string(sheetId)
+                    + " cannot define a signed fabric bending hinge");
+            continue;
+        }
+
+        const double firstRigidity = materialsById.at(
+            first.triangle->materialId)->bendingStiffnessNewtonMeters;
+        const double secondRigidity = materialsById.at(
+            second.triangle->materialId)->bendingStiffnessNewtonMeters;
+        if (!(firstRigidity > 0.0) || !(secondRigidity > 0.0)) {
+            // Series strips with a zero-rigidity side form a free hinge.
+            continue;
+        }
+
+        const Vec3& a = verticesById.at(first.from)->positionMeters;
+        const Vec3& b = verticesById.at(first.to)->positionMeters;
+        const Vec3& c = verticesById.at(first.opposite)->positionMeters;
+        const Vec3& d = verticesById.at(second.opposite)->positionMeters;
+        const Vec3 edgeVector = subtract(b, a);
+        const double edgeLength = length(edgeVector);
+        const Vec3 firstAreaVector = cross(edgeVector, subtract(c, a));
+        const Vec3 secondAreaVector = cross(subtract(d, a), edgeVector);
+        const double firstAreaLength = length(firstAreaVector);
+        const double secondAreaLength = length(secondAreaVector);
+        const auto chartCoordinate = [](const Triangle& triangle,
+                                        StableId vertexId) {
+            for (std::size_t corner = 0; corner < 3; ++corner) {
+                if (triangle.vertexIds[corner] == vertexId) {
+                    return triangle.materialCoordinates[corner];
+                }
+            }
+            return Vec2{};
+        };
+        const auto chartStrip = [&](const EdgeIncidence& incidence) {
+            const Vec2 chartA = chartCoordinate(
+                *incidence.triangle, incidence.from);
+            const Vec2 chartB = chartCoordinate(
+                *incidence.triangle, incidence.to);
+            const Vec2 chartC = chartCoordinate(
+                *incidence.triangle, incidence.opposite);
+            const Vec2 chartEdge{chartB.x - chartA.x,
+                                 chartB.y - chartA.y};
+            const Vec2 chartOpposite{chartC.x - chartA.x,
+                                     chartC.y - chartA.y};
+            const double chartEdgeLength = std::hypot(
+                chartEdge.x, chartEdge.y);
+            const double chartAltitude = std::abs(
+                chartEdge.x * chartOpposite.y
+                - chartEdge.y * chartOpposite.x) / chartEdgeLength;
+            return std::array<double, 2>{chartEdgeLength, chartAltitude};
+        };
+        const std::array<double, 2> firstChart = chartStrip(first);
+        const std::array<double, 2> secondChart = chartStrip(second);
+        const double compliance =
+            firstChart[1] / (2.0 * firstRigidity * firstChart[0])
+            + secondChart[1] / (2.0 * secondRigidity * secondChart[0]);
+        const Vec3 edgeUnit = scaled(edgeVector, 1.0 / edgeLength);
+        const Vec3 firstNormal = scaled(firstAreaVector,
+                                        1.0 / firstAreaLength);
+        const Vec3 secondNormal = scaled(secondAreaVector,
+                                         1.0 / secondAreaLength);
+        const double cosine = std::clamp(dot(firstNormal, secondNormal),
+                                         -1.0, 1.0);
+        const double sine = dot(
+            edgeUnit, cross(firstNormal, secondNormal));
+        const double restAngle = std::atan2(sine, cosine);
+        if (!std::isfinite(compliance) || compliance < 0.0
+            || !std::isfinite(restAngle)) {
+            addDiagnostic(
+                assembly,
+                SceneStructureDiagnosticCode::MaterialIncompatible,
+                EntityKind::Triangle,
+                first.triangle->id,
+                "fabric bending hinge is outside the representable XPBD range");
+            continue;
+        }
+
+        assembly.definition.dihedrals.push_back(
+            {{nodeIndices.at(first.from),
+              nodeIndices.at(first.to),
+              nodeIndices.at(first.opposite),
+              nodeIndices.at(second.opposite)},
+             restAngle,
+             compliance});
+        assembly.mappings.dihedralTriangleIds.push_back(
+            {first.triangle->id, second.triangle->id});
+    }
+}
+
 StructureMembraneMaterial convert(const FabricMaterial& material) {
     StructureMembraneMaterial result;
     result.warpStiffnessNewtonsPerMeter =
@@ -233,6 +423,16 @@ std::optional<std::size_t> SceneStructureMappings::nodeIndex(
 std::optional<std::size_t> SceneStructureMappings::triangleIndex(
     StableId triangleId) const noexcept {
     return indexOf(triangleIds, triangleId);
+}
+
+std::optional<std::size_t> SceneStructureMappings::junctionNodeIndex(
+    StableId junctionId) const noexcept {
+    const std::optional<std::size_t> local = indexOf(
+        nodeSuspensionJunctionIds, junctionId);
+    if (!local) {
+        return std::nullopt;
+    }
+    return nodeVertexIds.size() + *local;
 }
 
 std::optional<std::size_t> SceneStructureMappings::membraneIndex(
@@ -284,6 +484,15 @@ SceneStructureAssembly assembleSceneStructure(
                 "rigid pilot dynamics are not checkpoint-safe in simwing_structure");
         }
 
+        for (const Seam* seam : sortedById(scene.seams)) {
+            addDiagnostic(
+                assembly,
+                SceneStructureDiagnosticCode::UnsupportedSeam,
+                EntityKind::Seam,
+                seam->id,
+                "seam topology requires a verified stitch and tributary load-sharing model");
+        }
+
         const auto attachments = sortedById(scene.attachments);
         std::map<StableId, const Attachment*> attachmentsById;
         for (const Attachment* attachment : attachments) {
@@ -303,21 +512,32 @@ SceneStructureAssembly assembleSceneStructure(
             const Attachment* start = attachmentsById.at(
                 line->startAttachmentId);
             const Attachment* end = attachmentsById.at(line->endAttachmentId);
-            if (start->kind != AttachmentKind::SurfaceVertex
-                || end->kind != AttachmentKind::SurfaceVertex) {
+            if (start->kind == AttachmentKind::PilotHarness
+                || end->kind == AttachmentKind::PilotHarness) {
                 addDiagnostic(
                     assembly,
                     SceneStructureDiagnosticCode::UnsupportedSuspensionTopology,
                     EntityKind::SuspensionLine,
                     line->id,
-                    "only surface-to-surface suspension lines are currently representable");
-            } else if (start->vertexId == end->vertexId) {
-                addDiagnostic(
-                    assembly,
-                    SceneStructureDiagnosticCode::UnsupportedSuspensionTopology,
-                    EntityKind::SuspensionLine,
-                    line->id,
-                    "surface-to-surface suspension line endpoints must be distinct vertices");
+                    "pilot harness suspension topology is not checkpoint-safe");
+            } else {
+                const StableId startNodeId =
+                    start->kind == AttachmentKind::SurfaceVertex
+                    ? start->vertexId
+                    : start->suspensionJunctionId;
+                const StableId endNodeId =
+                    end->kind == AttachmentKind::SurfaceVertex
+                    ? end->vertexId
+                    : end->suspensionJunctionId;
+                if (start->kind == end->kind
+                    && startNodeId == endNodeId) {
+                    addDiagnostic(
+                        assembly,
+                        SceneStructureDiagnosticCode::UnsupportedSuspensionTopology,
+                        EntityKind::SuspensionLine,
+                        line->id,
+                        "suspension line endpoints must be distinct structural nodes");
+                }
             }
         }
         if (!assembly.diagnostics.empty()) {
@@ -326,12 +546,13 @@ SceneStructureAssembly assembleSceneStructure(
         }
 
         const auto vertices = sortedById(scene.vertices);
+        const auto junctions = sortedById(scene.suspensionJunctions);
         const auto triangles = sortedById(scene.triangles);
         const auto materials = sortedById(scene.fabricMaterials);
         const auto lineMaterials = sortedById(scene.lineMaterials);
 
         std::map<StableId, std::size_t> nodeIndices;
-        assembly.definition.nodes.reserve(vertices.size());
+        assembly.definition.nodes.reserve(vertices.size() + junctions.size());
         assembly.mappings.nodeVertexIds.reserve(vertices.size());
         for (const Vertex* vertex : vertices) {
             const std::size_t index = assembly.definition.nodes.size();
@@ -339,6 +560,23 @@ SceneStructureAssembly assembleSceneStructure(
             assembly.definition.nodes.push_back(
                 {convert(vertex->positionMeters), 0.0, false});
             assembly.mappings.nodeVertexIds.push_back(vertex->id);
+        }
+        assembly.mappings.nodeSuspensionJunctionIds.reserve(
+            junctions.size());
+        for (const SuspensionJunction* junction : junctions) {
+            const std::size_t index = assembly.definition.nodes.size();
+            nodeIndices.emplace(junction->id, index);
+            assembly.definition.nodes.push_back(
+                {convert(junction->positionMeters),
+                 junction->massKg,
+                 junction->fixed});
+            assembly.mappings.nodeSuspensionJunctionIds.push_back(
+                junction->id);
+        }
+
+        std::map<StableId, const Vertex*> verticesById;
+        for (const Vertex* vertex : vertices) {
+            verticesById.emplace(vertex->id, vertex);
         }
 
         std::map<StableId, const FabricMaterial*> materialsById;
@@ -413,6 +651,11 @@ SceneStructureAssembly assembleSceneStructure(
             totalFabricMass += static_cast<long double>(mass);
         }
 
+        if (assembly.diagnostics.empty()) {
+            assembleBending(triangles, verticesById, materialsById,
+                            nodeIndices, assembly);
+        }
+
         std::map<StableId, const LineMaterial*> lineMaterialsById;
         for (const LineMaterial* material : lineMaterials) {
             lineMaterialsById.emplace(material->id, material);
@@ -438,8 +681,14 @@ SceneStructureAssembly assembleSceneStructure(
             }
             assembly.definition.constraints.push_back(
                 {StructureConstraintKind::Cable,
-                 nodeIndices.at(start->vertexId),
-                 nodeIndices.at(end->vertexId),
+                 nodeIndices.at(
+                     start->kind == AttachmentKind::SurfaceVertex
+                         ? start->vertexId
+                         : start->suspensionJunctionId),
+                 nodeIndices.at(
+                     end->kind == AttachmentKind::SurfaceVertex
+                         ? end->vertexId
+                         : end->suspensionJunctionId),
                  line->restLengthMeters,
                  compliance});
             assembly.mappings.constraintSuspensionLineIds.push_back(line->id);

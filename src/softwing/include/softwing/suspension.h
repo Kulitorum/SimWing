@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <span>
@@ -352,6 +353,47 @@ struct SuspensionDiagnostics {
     std::string failureEntity;
 };
 
+inline constexpr std::size_t suspensionCheckpointSchemaMajor = 1;
+
+// Complete mutable state for one suspension segment. Immutable definitions,
+// resolved endpoint ownership, and attachment paths are bound by the
+// checkpoint topology fingerprint and remain owned by the live system.
+struct SuspensionSegmentCheckpoint {
+    std::string id;
+    double commandedRestLength = 0.0;
+    double accumulatedLambda = 0.0;
+};
+
+// A production safe-point value, intentionally complete rather than a set of
+// piecemeal mutable-state getters. The data is owned by the checkpoint and may
+// be persisted by a higher-level checkpoint format. restore() validates every
+// field and both fingerprints transactionally before touching the live owner.
+// Owner pointers, registration lifetime tokens, and active trial snapshots are
+// never captured or restored. This value owns the suspension and rigid-payload
+// state only: an enclosing coupled checkpoint must restore SoftBody nodes,
+// constraint/membrane/bending multipliers, contact warm starts, forces, and
+// face pressure before replay. The topology fingerprint nevertheless binds
+// all of those registered structural/contact definitions so incompatible
+// owners are rejected here.
+struct SuspensionCheckpoint {
+    std::size_t schemaMajor = suspensionCheckpointSchemaMajor;
+    std::uint64_t topologyFingerprint = 0;
+    std::uint64_t stateFingerprint = 0;
+    RigidPayloadState payloadState;
+    RigidPayloadState previousPayloadState;
+    std::vector<Vec3> commandedHangPointPositions;
+    std::vector<SuspensionSegmentCheckpoint> segments;
+    std::vector<SuspensionControlState> controls;
+    std::vector<double> groundMultipliers;
+    Wrench appliedWrench;
+    Vec3 currentGravity;
+    std::vector<double> pendingSegmentControlWork;
+    std::vector<SuspensionSegmentDiagnostics> segmentDiagnostics;
+    PayloadDiagnostics payloadDiagnostics;
+    SuspensionDiagnostics diagnostics;
+    SuspensionDiagnostics committedDiagnostics;
+};
+
 [[nodiscard]] const char* suspensionPhaseName(SuspensionPhase phase);
 [[nodiscard]] const char* suspensionSideName(SuspensionSide side);
 [[nodiscard]] const char* suspensionEndpointKindName(
@@ -439,6 +481,8 @@ public:
     void resetControls();
     void setPayloadState(const RigidPayloadState& state);
     void setAppliedPayloadWrench(const Wrench& wrench);
+    [[nodiscard]] SuspensionCheckpoint checkpoint() const;
+    void restore(const SuspensionCheckpoint& checkpoint);
     void step(const StepSettings& settings);
 
 private:
@@ -463,6 +507,7 @@ private:
     void rollbackSubstep() noexcept;
     void recordFailure(SuspensionPhase phase,
                        const std::string& entity) noexcept;
+    [[nodiscard]] std::uint64_t checkpointTopologyFingerprint() const;
 
     SuspensionDefinition definition_;
     SoftBody* owner_ = nullptr;

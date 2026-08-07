@@ -134,21 +134,26 @@ simwing::fsi::Scene sampleAssemblyScene() {
     };
     scene.triangles = {
         {501, {10, 12, 13}, {{{0.0, 0.0}, {2.0, 1.0}, {0.0, 1.0}}},
-         91, 90, 100, SurfaceRole::Rib},
+         91, 90, 100, 901, SurfaceRole::Rib},
         {500, {10, 11, 12}, {{{0.0, 0.0}, {2.0, 0.0}, {2.0, 1.0}}},
-         90, 91, 100, SurfaceRole::Skin},
+         90, 91, 100, 900, SurfaceRole::Skin},
     };
     scene.lineMaterials = {
         {110, "viewer line", 0.001, 0.0008, 1000.0, 1.0},
     };
+    scene.suspensionJunctions = {
+        {50, {1.0, 0.5, -0.5}, 0.02, false},
+    };
     scene.attachments = {
+        {314, AttachmentKind::SuspensionJunction, 0, 0, {}, 50},
         {313, AttachmentKind::SurfaceVertex, 13, 0, {}},
         {311, AttachmentKind::SurfaceVertex, 12, 0, {}},
         {310, AttachmentKind::SurfaceVertex, 10, 0, {}},
         {312, AttachmentKind::SurfaceVertex, 11, 0, {}},
     };
     scene.suspensionLines = {
-        {701, 312, 313, 110, 1.5, SuspensionLineRole::Riser},
+        {702, 314, 313, 110, 1.0, SuspensionLineRole::Riser},
+        {701, 312, 314, 110, 1.0, SuspensionLineRole::Riser},
         {700, 310, 311, 110, 2.5, SuspensionLineRole::Brake},
     };
     return scene;
@@ -160,6 +165,7 @@ void reverseSceneCollections(simwing::fsi::Scene& scene) {
     std::ranges::reverse(scene.fabricMaterials);
     std::ranges::reverse(scene.triangles);
     std::ranges::reverse(scene.lineMaterials);
+    std::ranges::reverse(scene.suspensionJunctions);
     std::ranges::reverse(scene.attachments);
     std::ranges::reverse(scene.suspensionLines);
 }
@@ -368,9 +374,12 @@ void testInvalidMappings() {
     invalid = sampleMappingDefinition();
     invalid.triangles[0].positiveRegionId =
         invalid.triangles[0].negativeRegionId;
-    checkInvalid(
-        [&] { StructureFrameMapping mapping(structure, invalid); },
-        "mapping: equal membrane side regions are rejected");
+    const StructureFrameMapping sameRegionMapping(structure, invalid);
+    const DiagnosticFrame sameRegionFrame = buildStructureFrame(
+        structure, sameRegionMapping, sampleContext());
+    check(sameRegionFrame.triangles[0].negativeRegionId
+              == sameRegionFrame.triangles[0].positiveRegionId,
+          "mapping: internal sheets preserve one connected region on both sides");
 
     invalid = sampleMappingDefinition();
     invalid.lines[1].stableId = 0;
@@ -410,8 +419,8 @@ void testSceneAssemblyMappingAndReordering() {
         makeStructureFrameMapping(scene, assembly, structure);
 
     check(mapping.vertexStableIds()
-              == std::vector<StableId>({10, 11, 12, 13}),
-          "scene mapping: vertex IDs come from canonical assembly order");
+              == std::vector<StableId>({10, 11, 12, 13, 50}),
+          "scene mapping: surface and junction IDs follow canonical assembly order");
     check(mapping.triangles().size() == 2
               && mapping.triangles()[0].stableId == 500
               && mapping.triangles()[0].negativeRegionId == 90
@@ -420,16 +429,17 @@ void testSceneAssemblyMappingAndReordering() {
               && mapping.triangles()[1].negativeRegionId == 91
               && mapping.triangles()[1].positiveRegionId == 90,
           "scene mapping: triangle IDs and oriented side regions are exact");
-    check(mapping.lines().size() == 2
+    check(mapping.lines().size() == 3
               && mapping.lines()[0].stableId == 700
               && mapping.lines()[0].role
                      == static_cast<std::uint32_t>(
                          SuspensionLineRole::Brake)
-              && mapping.lines()[1].stableId == 701
-              && mapping.lines()[1].role
-                     == static_cast<std::uint32_t>(
-                         SuspensionLineRole::Riser),
-          "scene mapping: suspension-line IDs and roles are exact");
+               && mapping.lines()[1].stableId == 701
+               && mapping.lines()[1].role
+                      == static_cast<std::uint32_t>(
+                          SuspensionLineRole::Riser)
+              && mapping.lines()[2].stableId == 702,
+          "scene mapping: junction graph line IDs and roles are exact");
 
     Scene reordered = scene;
     reverseSceneCollections(reordered);
@@ -447,6 +457,14 @@ void testSceneAssemblyMappingAndReordering() {
         buildStructureFrame(structure, mapping, context);
     const DiagnosticFrame second = buildStructureFrame(
         reorderedStructure, reorderedMapping, context);
+    check(first.vertices.size() == 5
+              && first.vertices[4].stableId == 50
+              && first.lines.size() == 3
+              && first.lines[1].vertex0 == 1
+              && first.lines[1].vertex1 == 4
+              && first.lines[2].vertex0 == 4
+              && first.lines[2].vertex1 == 3,
+          "scene mapping: junction node and segmented line endpoints are visible");
     ProtocolError error;
     std::vector<std::uint8_t> firstBytes;
     std::vector<std::uint8_t> secondBytes;
