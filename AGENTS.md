@@ -38,6 +38,11 @@ change moves ownership or invalidates a command or invariant.
   owner of internal/external pressure and aerodynamic traction.
 - Archived Playground records explain inherited code only. They are not
   SimWing physics acceptance criteria.
+- A standalone `simwing-viewer` is an early diagnostic requirement. Interactive
+  runs launch it by default; `--no-viewer` is the explicit CI/headless path.
+  Rendering consumes immutable, droppable snapshots and must never block or
+  alter solver arithmetic. Closing the viewer cannot stop the worker unless the
+  user sends an explicit stop command.
 
 ## Start every task here
 

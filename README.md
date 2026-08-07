@@ -18,6 +18,11 @@ SimWing reuses the isolated XPBD structural primitives, but its fluid and flight
 simulation is a remake: inherited Playground aerodynamics, pressure, cell-air,
 flight, and scenario behavior are not compatibility targets.
 
+Numerical development includes a standalone Qt/OpenGL diagnostic viewer from
+the first implementation slice. Interactive runs open it by default so the
+live structure, loads, contact, coupling residuals, and progressively added CFD
+fields can be inspected; automated runs remain available through `--no-viewer`.
+
 ## Inherited LEparagliding Studio baseline
 
 This project is a C++ port of Pere Casellas' LEparagliding 3.28 “Jardins”

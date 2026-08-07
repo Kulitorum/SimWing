@@ -108,19 +108,23 @@ LEparagliding design + airfoils + Studio-only material data
                          |
              exact OCCT model + scene-v2
                          |
-         +---------------+----------------+
-         |                                |
-  Studio / Flight Lab              simwing-fsi worker
-  controls, viewer, plots         checkpointable, no Qt UI
-         |                                |
-         |            +-------------------+-------------------+
-         |            |                                       |
-         |     structure adapter                       fluid backend
-         |     XPBD/contact/lines               adaptive FV + sharp IIM
-         |            |                                       |
-         |            +------- strong coupling driver --------+
-         |                                |
-         +--------- versioned frames, metrics, logs -----------+
+                         |
+              simwing-fsi worker process
+                  checkpointable, no UI
+                         |
+             +-----------+-----------+
+             |                       |
+      structure adapter        fluid backend
+      XPBD/contact/lines   adaptive FV + sharp IIM
+             |                       |
+             +-- strong coupling ----+
+                         |
+          immutable diagnostic frame stream
+                         |
+     +-------------------+-------------------+
+     |                                       |
+simwing-viewer                         Studio / Flight Lab
+standalone Qt/OpenGL                  later control integration
 ```
 
 The worker is a separate executable, following the successful calculation
@@ -132,6 +136,43 @@ Use a small versioned control protocol. Commands include load scene, initialize,
 advance, pause, checkpoint, resume, cancel, and request fields. Responses include
 progress, convergence, metrics, diagnostics, preview frames, and fatal errors.
 Do not stream full CFD fields to the GUI every step.
+
+## Live diagnostic visualization
+
+Visualization is part of the numerical-development workflow, not late UI
+polish. Implement a separate `simwing-viewer` executable in the first vertical
+slice. An interactive `simwing-fsi` run launches it by default; `--no-viewer`
+keeps CI, benchmarks, remote jobs, and scripted runs headless. `--viewer` forces
+it on when launch-mode detection is ambiguous.
+
+The viewer subscribes to immutable sampled frames over a versioned local
+protocol. The worker never waits for rendering: frames live in a bounded ring,
+old frames may be dropped, and closing or crashing the viewer cannot change the
+simulation state, time step, ordering, or result. Pause, single-step,
+checkpoint, and stop are explicit control messages processed only at solver
+safe points.
+
+The first viewer renders:
+
+- skin, ribs, seams, suspension lines, payload, face orientation, and region
+  labels;
+- structural strain, constraint error, contact pairs, sealing state, line
+  tension, and applied traction;
+- simulation time, time step, coupling iteration, residuals, and conservation
+  ledgers;
+- selectable clipping planes, camera presets, wireframe, normals, and stable
+  entity IDs.
+
+As CFD fields arrive, add AMR blocks, velocity glyphs/streamlines, pressure and
+vorticity slices, divergence, interface pressure jump, porous flux, and wake
+tracers. Field extraction is explicit and rate-limited; the default stream is a
+surface/diagnostic subset rather than a copy of the whole volume.
+
+Support recording the same frame stream to a replayable trace. A visual anomaly
+can then be inspected frame-by-frame, shared without rerunning an expensive
+case, and correlated with the exact numerical log/checkpoint. The viewer must
+always show the scene checksum, solver commit, step, and simulated time so a
+screenshot is meaningful evidence.
 
 ## Scene-v2 contract
 
@@ -354,18 +395,24 @@ src/fsi/
 src/gui/
     flight_lab_page.*       controls and results, no solver arithmetic
     flight_lab_controller.* worker lifecycle and protocol
-    flight_lab_view.*       sampled structure/flow visualization
+
+src/viewer/
+    viewer_protocol.*       immutable frame/control schema and trace files
+    viewer_window.*         standalone Qt/OpenGL diagnostics
+    viewer_layers.*         structure, interface, grid, field, and HUD layers
 
 tools/
     simwing_fsi_main.cpp    headless worker executable
+    simwing_viewer_main.cpp standalone live/replay viewer
     simwing_scene_main.cpp  inspect/validate/convert scenes
     simwing_fsi_bench.cpp   canonical deterministic/throughput cases
 ```
 
 Likely CMake targets are `simwing_scene`, `simwing_structure`, `simwing_fluid`,
-`simwing_coupling`, `simwing-fsi`, and focused test executables. Keep Qt out of
-the numerical targets. Backend interfaces must not be so abstract that they
-hide grid layout or force extra full-field copies.
+`simwing_coupling`, `simwing-fsi`, `simwing_viewer_protocol`,
+`simwing-viewer`, and focused test executables. Keep Qt out of the numerical
+targets; only the viewer/UI targets link it. Backend interfaces must not be so
+abstract that they hide grid layout or force extra full-field copies.
 
 ## Delivery phases and gates
 
@@ -380,6 +427,8 @@ Work:
   analytic external load;
 - define checkpoint/state and material-property interfaces needed by coupling;
 - create the new SimWing CMake targets with no Playground dependencies;
+- implement the versioned diagnostic-frame protocol and show the canonical
+  XPBD cases in the standalone viewer;
 - mark the inherited Playground targets for removal once the new structural
   target and worker skeleton build.
 
@@ -398,7 +447,9 @@ Work:
   primitives directly;
 - implement new conservation, strain, line-load, volume, and contact
   diagnostics from their definitions;
-- add rollback/checkpoint support and structural conservation diagnostics.
+- add rollback/checkpoint support and structural conservation diagnostics;
+- render stable scene IDs, materials, regions, strain, contact, and line loads
+  live in `simwing-viewer`.
 
 Gate: scene validation fixtures pass; a headless structural run has no Qt,
 Playground, aerodynamic, pressure, or v1-format dependency; analytic structural
@@ -414,6 +465,8 @@ Work:
   reference for selected canonical cases, not as a required GUI dependency;
 - implement projection, moving-interface jump conditions, conservative
   transfer, refinement, and checkpoints;
+- add rate-limited AMR, pressure, velocity, divergence, traction, and
+  pressure-jump viewer layers as each field becomes available;
 - verify CPU first, then add GPU kernels behind identical numerical tests.
 
 Required canonical cases:
@@ -497,7 +550,8 @@ within declared uncertainty bands.
 Work:
 
 - GPU-port proven hotspots, add distributed block execution if required;
-- provide progressive preview fields and robust cancellation/checkpoint resume;
+- mature progressive preview fields, trace replay, and robust
+  cancellation/checkpoint resume;
 - create presets for canonical verification, development resolution, and
   offline validation resolution;
 - add result provenance: commit, scene checksum, backend, grid, time steps,
@@ -524,9 +578,9 @@ should be:
 5. conservative traction transfer tests for total force, moment, and work;
 6. a minimal worker protocol that advances and checkpoints this structural
    case;
-7. machine-readable geometry, convergence, and conservation output for the
-   headless case. Build the new Flight Lab GUI only after this boundary and the
-   CFD kernel are verified.
+7. the standalone `simwing-viewer`, automatically opened for interactive runs,
+   showing the live structure, loads, contact, residuals, and conservation
+   state while also supporting trace recording/replay.
 
 That slice attacks the largest integration risks—geometry truth, ownership,
 load transfer, rollback, and process isolation—without pretending a CFD kernel
