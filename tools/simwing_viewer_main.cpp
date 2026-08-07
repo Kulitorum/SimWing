@@ -30,6 +30,11 @@ int main(int argc, char* argv[]) {
         QStringLiteral("smoke-test"),
         QStringLiteral("Render a built-in frame briefly and exit."));
     parser.addOption(smokeOption);
+    const QCommandLineOption followOption(
+        QStringLiteral("follow"),
+        QStringLiteral(
+            "Follow a growing trace until its explicit finish marker."));
+    parser.addOption(followOption);
     parser.addPositionalArgument(
         QStringLiteral("trace"),
         QStringLiteral("SimWing viewer trace to replay."),
@@ -38,10 +43,12 @@ int main(int argc, char* argv[]) {
 
     const QStringList positional = parser.positionalArguments();
     const bool smokeTest = parser.isSet(smokeOption);
+    const bool follow = parser.isSet(followOption);
     if ((!smokeTest && positional.size() != 1)
-        || (smokeTest && positional.size() > 1)) {
+        || (smokeTest && (positional.size() > 1 || follow))) {
         std::fprintf(stderr,
-                     "Usage: simwing-viewer [--smoke-test] <trace>\n");
+                     "Usage: simwing-viewer [--follow] <trace>\n"
+                     "       simwing-viewer --smoke-test\n");
         return 2;
     }
 
@@ -50,7 +57,7 @@ int main(int argc, char* argv[]) {
         window.showSmokeFrame();
     } else {
         QString error;
-        if (!window.loadTrace(positional.front(), &error)) {
+        if (!window.loadTrace(positional.front(), &error, follow)) {
             std::fprintf(stderr, "%s\n", error.toLocal8Bit().constData());
             return 2;
         }

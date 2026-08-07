@@ -599,6 +599,15 @@ bool writeBytes(
     return true;
 }
 
+bool flushTrace(std::ostream& stream, ProtocolError* error) {
+    stream.flush();
+    if (!stream) {
+        return fail(error, ProtocolErrorCode::IoError,
+                    "failed to flush viewer trace");
+    }
+    return true;
+}
+
 template <class Integer>
 bool writeLittle(
     std::ostream& stream,
@@ -950,7 +959,8 @@ bool TraceWriter::writeHeader(const TraceHeader& header) {
         || !writeLittle(*output_, kFrameProtocolVersion, &error_)
         || !writeLittle(*output_, static_cast<std::uint32_t>(0), &error_)
         || !writeStreamString(*output_, header.sceneChecksum, &error_)
-        || !writeStreamString(*output_, header.solverCommit, &error_)) {
+        || !writeStreamString(*output_, header.solverCommit, &error_)
+        || !flushTrace(*output_, &error_)) {
         return false;
     }
     header_ = header;
@@ -964,6 +974,10 @@ bool TraceWriter::writeFrame(const DiagnosticFrame& frame) {
         return fail(&error_, ProtocolErrorCode::InvalidData,
                     "viewer trace header must be written before frames");
     }
+    if (finished_) {
+        return fail(&error_, ProtocolErrorCode::InvalidData,
+                    "viewer trace was already finished");
+    }
     if (frame.sceneChecksum != header_.sceneChecksum
         || frame.solverCommit != header_.solverCommit) {
         return fail(&error_, ProtocolErrorCode::InvalidData,
@@ -973,9 +987,30 @@ bool TraceWriter::writeFrame(const DiagnosticFrame& frame) {
     if (!serializeFrame(frame, bytes, &error_, limits_)
         || !writeLittle(*output_, static_cast<std::uint64_t>(bytes.size()),
                         &error_)
-        || !writeBytes(*output_, bytes.data(), bytes.size(), &error_)) {
+        || !writeBytes(*output_, bytes.data(), bytes.size(), &error_)
+        || !flushTrace(*output_, &error_)) {
         return false;
     }
+    return true;
+}
+
+bool TraceWriter::finish() {
+    error_ = {};
+    if (!headerWritten_) {
+        return fail(&error_, ProtocolErrorCode::InvalidData,
+                    "viewer trace header must be written before finishing");
+    }
+    if (finished_) {
+        return fail(&error_, ProtocolErrorCode::InvalidData,
+                    "viewer trace was already finished");
+    }
+    // A zero-sized record cannot be a frame (the frame envelope alone is 16
+    // bytes), so it is an unambiguous backwards-compatible end marker.
+    if (!writeLittle(*output_, static_cast<std::uint64_t>(0), &error_)
+        || !flushTrace(*output_, &error_)) {
+        return false;
+    }
+    finished_ = true;
     return true;
 }
 
@@ -985,6 +1020,12 @@ const ProtocolError& TraceWriter::error() const noexcept {
 
 TraceReader::TraceReader(std::istream& input, ProtocolLimits limits)
     : input_(&input), limits_(limits) {}
+
+TraceReader::TraceReader(
+    std::istream& input,
+    TraceReadMode mode,
+    ProtocolLimits limits)
+    : input_(&input), limits_(limits), mode_(mode) {}
 
 bool TraceReader::readHeader(TraceHeader& header) {
     error_ = {};
@@ -1044,33 +1085,99 @@ TraceReadStatus TraceReader::readNext(DiagnosticFrame& frame) {
              "viewer trace header must be read before frames");
         return TraceReadStatus::Error;
     }
-
-    std::array<std::uint8_t, sizeof(std::uint64_t)> sizeBytes{};
-    input_->read(reinterpret_cast<char*>(sizeBytes.data()),
-                 static_cast<std::streamsize>(sizeBytes.size()));
-    const std::streamsize received = input_->gcount();
-    if (received == 0 && input_->eof()) {
+    if (ended_) {
         return TraceReadStatus::End;
     }
-    if (received != static_cast<std::streamsize>(sizeBytes.size())) {
-        fail(&error_, ProtocolErrorCode::Truncated,
-             "viewer trace frame length is truncated");
-        return TraceReadStatus::Error;
+
+    if (lengthBytesRead_ < sizeof(lengthBytes_)) {
+        input_->read(
+            reinterpret_cast<char*>(lengthBytes_ + lengthBytesRead_),
+            static_cast<std::streamsize>(sizeof(lengthBytes_)
+                                         - lengthBytesRead_));
+        const std::streamsize received = input_->gcount();
+        if (received > 0) {
+            lengthBytesRead_ += static_cast<std::size_t>(received);
+        }
+        if (input_->bad()) {
+            fail(&error_, ProtocolErrorCode::IoError,
+                 "failed to read viewer trace frame length");
+            return TraceReadStatus::Error;
+        }
+        if (lengthBytesRead_ < sizeof(lengthBytes_)) {
+            const bool naturalEnd = lengthBytesRead_ == 0 && input_->eof();
+            if (mode_ == TraceReadMode::Follow) {
+                // Formatted and unformatted reads set eofbit/failbit on a
+                // short read. Clear them so the same stream can observe bytes
+                // appended to a growing file on the next bounded poll.
+                input_->clear();
+                return TraceReadStatus::Pending;
+            }
+            if (naturalEnd) {
+                ended_ = true;
+                return TraceReadStatus::End;
+            }
+            fail(&error_, ProtocolErrorCode::Truncated,
+                 "viewer trace frame length is truncated");
+            return TraceReadStatus::Error;
+        }
+
+        pendingFrameSize_ = littleAt<std::uint64_t>(
+            std::span<const std::uint8_t>(lengthBytes_, sizeof(lengthBytes_)),
+            0);
+        if (pendingFrameSize_ == 0) {
+            lengthBytesRead_ = 0;
+            ended_ = true;
+            return TraceReadStatus::End;
+        }
+        if (pendingFrameSize_ > limits_.maxFrameBytes
+            || pendingFrameSize_ > std::numeric_limits<std::size_t>::max()) {
+            fail(&error_, ProtocolErrorCode::LimitExceeded,
+                 "viewer trace frame exceeds the byte limit");
+            return TraceReadStatus::Error;
+        }
+        try {
+            pendingFrameBytes_.resize(
+                static_cast<std::size_t>(pendingFrameSize_));
+        } catch (const std::bad_alloc&) {
+            fail(&error_, ProtocolErrorCode::LimitExceeded,
+                 "unable to allocate viewer trace frame data");
+            return TraceReadStatus::Error;
+        } catch (const std::length_error&) {
+            fail(&error_, ProtocolErrorCode::LimitExceeded,
+                 "viewer trace frame exceeds the platform limit");
+            return TraceReadStatus::Error;
+        }
     }
-    const std::uint64_t size = littleAt<std::uint64_t>(sizeBytes, 0);
-    if (size > limits_.maxFrameBytes
-        || size > std::numeric_limits<std::size_t>::max()) {
-        fail(&error_, ProtocolErrorCode::LimitExceeded,
-             "viewer trace frame exceeds the byte limit");
-        return TraceReadStatus::Error;
+
+    if (pendingFrameBytesRead_ < pendingFrameBytes_.size()) {
+        input_->read(
+            reinterpret_cast<char*>(pendingFrameBytes_.data()
+                                    + pendingFrameBytesRead_),
+            static_cast<std::streamsize>(pendingFrameBytes_.size()
+                                         - pendingFrameBytesRead_));
+        const std::streamsize received = input_->gcount();
+        if (received > 0) {
+            pendingFrameBytesRead_ += static_cast<std::size_t>(received);
+        }
+        if (input_->bad()) {
+            fail(&error_, ProtocolErrorCode::IoError,
+                 "failed to read viewer trace frame");
+            return TraceReadStatus::Error;
+        }
+        if (pendingFrameBytesRead_ < pendingFrameBytes_.size()) {
+            if (mode_ == TraceReadMode::Follow) {
+                input_->clear();
+                return TraceReadStatus::Pending;
+            }
+            fail(&error_, ProtocolErrorCode::Truncated,
+                 "viewer trace frame is truncated");
+            return TraceReadStatus::Error;
+        }
     }
 
     try {
-        std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
         DiagnosticFrame decoded;
-        if (!readExact(*input_, bytes.data(), bytes.size(), &error_,
-                       "viewer trace frame is truncated")
-            || !deserializeFrame(bytes, decoded, &error_, limits_)) {
+        if (!deserializeFrame(pendingFrameBytes_, decoded, &error_, limits_)) {
             return TraceReadStatus::Error;
         }
         if (decoded.sceneChecksum != header_.sceneChecksum
@@ -1086,6 +1193,10 @@ TraceReadStatus TraceReader::readNext(DiagnosticFrame& frame) {
         return TraceReadStatus::Error;
     }
 
+    lengthBytesRead_ = 0;
+    pendingFrameSize_ = 0;
+    pendingFrameBytes_.clear();
+    pendingFrameBytesRead_ = 0;
     return TraceReadStatus::Frame;
 }
 

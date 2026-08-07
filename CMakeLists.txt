@@ -241,8 +241,20 @@ target_include_directories(simwing_structure_frame PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/viewer"
 )
 target_link_libraries(simwing_structure_frame PUBLIC
+    simwing_scene_structure
     simwing_structure
     simwing_viewer_protocol
+)
+
+add_library(simwing_canonical_case STATIC
+    src/fsi/canonical_case.cpp
+    src/fsi/canonical_case.h
+)
+target_include_directories(simwing_canonical_case PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_canonical_case PUBLIC
+    simwing_structure_frame
 )
 
 # The Playground's wing: mesh parsing, refinement, SoftBody assembly and the
@@ -497,6 +509,12 @@ add_executable(simwing-structure-frame-test
 target_link_libraries(simwing-structure-frame-test
     PRIVATE simwing_structure_frame)
 
+add_executable(simwing-fsi-worker-test
+    tests/simwing_fsi_worker_test.cpp
+)
+target_link_libraries(simwing-fsi-worker-test
+    PRIVATE simwing_canonical_case)
+
 add_executable(playground-cells-test
     tests/playground_cells_test.cpp
 )
@@ -539,6 +557,13 @@ target_link_libraries(simwing-viewer PRIVATE
     Qt6::OpenGL
     Qt6::OpenGLWidgets
     OpenGL::GL
+)
+
+add_executable(simwing-fsi
+    tools/simwing_fsi_main.cpp
+)
+target_link_libraries(simwing-fsi PRIVATE
+    simwing_canonical_case
 )
 
 qt_add_executable(LEparagliding WIN32
@@ -646,7 +671,9 @@ set_target_properties(
     simwing-scene-structure-test
     simwing-viewer-protocol-test
     simwing-structure-frame-test
+    simwing-fsi-worker-test
     simwing-viewer
+    simwing-fsi
     playground-cells-test
     playground-material-test
     playground-contact-test
@@ -678,7 +705,9 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-scene-structure-test
         simwing-viewer-protocol-test
         simwing-structure-frame-test
+        simwing-fsi-worker-test
         simwing-viewer
+        simwing-fsi
         playground-cells-test
         playground-material-test
         playground-contact-test
@@ -793,6 +822,8 @@ add_test(NAME simwing_structure COMMAND simwing-structure-test)
 add_test(NAME simwing_scene_structure COMMAND simwing-scene-structure-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
+add_test(NAME simwing_fsi_worker COMMAND simwing-fsi-worker-test)
+add_test(NAME simwing_fsi_help COMMAND simwing-fsi --help)
 add_test(NAME simwing_viewer_help COMMAND simwing-viewer --help)
 if(NOT WIN32)
     set_tests_properties(simwing_viewer_help PROPERTIES
@@ -892,7 +923,7 @@ if(WIN32
     )
 endif()
 
-install(TARGETS LEparagliding leparagliding-engine
+install(TARGETS LEparagliding leparagliding-engine simwing-fsi simwing-viewer
     RUNTIME DESTINATION .
     BUNDLE DESTINATION .
 )

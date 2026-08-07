@@ -1,5 +1,8 @@
 #include "structure_frame.h"
 
+#include "scene_structure.h"
+
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
@@ -108,6 +111,57 @@ StructureFrameContext sampleContext() {
     context.conservation.fluidMassKilograms = 3.5;
     context.conservation.totalEnergyJoules = 9.0;
     return context;
+}
+
+simwing::fsi::Scene sampleAssemblyScene() {
+    using namespace simwing::fsi;
+    Scene scene;
+    scene.metadata.designChecksum = "sha256:structure-frame-scene";
+    scene.metadata.exporterVersion = "structure-frame-test/1";
+    scene.regions = {
+        {91, RegionKind::Cell, "cell"},
+        {90, RegionKind::Outside, "outside"},
+    };
+    scene.vertices = {
+        {13, {0.0, 1.0, 0.0}},
+        {11, {2.0, 0.0, 0.0}},
+        {10, {0.0, 0.0, 0.0}},
+        {12, {2.0, 1.0, 0.0}},
+    };
+    scene.fabricMaterials = {
+        {100, "viewer fabric", 900.0, 650.0, 220.0, 0.015,
+         0.05, 0.02, 0.0, 0.0},
+    };
+    scene.triangles = {
+        {501, {10, 12, 13}, {{{0.0, 0.0}, {2.0, 1.0}, {0.0, 1.0}}},
+         91, 90, 100, SurfaceRole::Rib},
+        {500, {10, 11, 12}, {{{0.0, 0.0}, {2.0, 0.0}, {2.0, 1.0}}},
+         90, 91, 100, SurfaceRole::Skin},
+    };
+    scene.lineMaterials = {
+        {110, "viewer line", 0.001, 0.0008, 1000.0, 1.0},
+    };
+    scene.attachments = {
+        {313, AttachmentKind::SurfaceVertex, 13, 0, {}},
+        {311, AttachmentKind::SurfaceVertex, 12, 0, {}},
+        {310, AttachmentKind::SurfaceVertex, 10, 0, {}},
+        {312, AttachmentKind::SurfaceVertex, 11, 0, {}},
+    };
+    scene.suspensionLines = {
+        {701, 312, 313, 110, 1.5, SuspensionLineRole::Riser},
+        {700, 310, 311, 110, 2.5, SuspensionLineRole::Brake},
+    };
+    return scene;
+}
+
+void reverseSceneCollections(simwing::fsi::Scene& scene) {
+    std::ranges::reverse(scene.regions);
+    std::ranges::reverse(scene.vertices);
+    std::ranges::reverse(scene.fabricMaterials);
+    std::ranges::reverse(scene.triangles);
+    std::ranges::reverse(scene.lineMaterials);
+    std::ranges::reverse(scene.attachments);
+    std::ranges::reverse(scene.suspensionLines);
 }
 
 void testExactInitialFrame() {
@@ -346,6 +400,119 @@ void testInvalidMappings() {
         "mapping: invalid provenance is rejected before publication");
 }
 
+void testSceneAssemblyMappingAndReordering() {
+    using namespace simwing::fsi;
+    const Scene scene = sampleAssemblyScene();
+    const SceneStructureAssembly assembly = assembleSceneStructure(scene);
+    check(assembly.ok(), "scene mapping: fixture assembly succeeds");
+    Structure structure(assembly.definition);
+    const StructureFrameMapping mapping =
+        makeStructureFrameMapping(scene, assembly, structure);
+
+    check(mapping.vertexStableIds()
+              == std::vector<StableId>({10, 11, 12, 13}),
+          "scene mapping: vertex IDs come from canonical assembly order");
+    check(mapping.triangles().size() == 2
+              && mapping.triangles()[0].stableId == 500
+              && mapping.triangles()[0].negativeRegionId == 90
+              && mapping.triangles()[0].positiveRegionId == 91
+              && mapping.triangles()[1].stableId == 501
+              && mapping.triangles()[1].negativeRegionId == 91
+              && mapping.triangles()[1].positiveRegionId == 90,
+          "scene mapping: triangle IDs and oriented side regions are exact");
+    check(mapping.lines().size() == 2
+              && mapping.lines()[0].stableId == 700
+              && mapping.lines()[0].role
+                     == static_cast<std::uint32_t>(
+                         SuspensionLineRole::Brake)
+              && mapping.lines()[1].stableId == 701
+              && mapping.lines()[1].role
+                     == static_cast<std::uint32_t>(
+                         SuspensionLineRole::Riser),
+          "scene mapping: suspension-line IDs and roles are exact");
+
+    Scene reordered = scene;
+    reverseSceneCollections(reordered);
+    const SceneStructureAssembly reorderedAssembly =
+        assembleSceneStructure(reordered);
+    check(reorderedAssembly.ok(),
+          "scene mapping: reordered fixture assembly succeeds");
+    Structure reorderedStructure(reorderedAssembly.definition);
+    const StructureFrameMapping reorderedMapping =
+        makeStructureFrameMapping(
+            reordered, reorderedAssembly, reorderedStructure);
+
+    const StructureFrameContext context = sampleContext();
+    const DiagnosticFrame first =
+        buildStructureFrame(structure, mapping, context);
+    const DiagnosticFrame second = buildStructureFrame(
+        reorderedStructure, reorderedMapping, context);
+    ProtocolError error;
+    std::vector<std::uint8_t> firstBytes;
+    std::vector<std::uint8_t> secondBytes;
+    check(serializeFrame(first, firstBytes, &error)
+              && serializeFrame(second, secondBytes, &error)
+              && firstBytes == secondBytes,
+          "scene mapping: collection reordering produces identical frames");
+}
+
+void testSceneAssemblyMappingRejections() {
+    using namespace simwing::fsi;
+    const Scene scene = sampleAssemblyScene();
+    const SceneStructureAssembly assembly = assembleSceneStructure(scene);
+    Structure structure(assembly.definition);
+
+    Scene staleScene = scene;
+    staleScene.vertices[0].positionMeters.z = 0.25;
+    checkInvalid(
+        [&] {
+            static_cast<void>(makeStructureFrameMapping(
+                staleScene, assembly, structure));
+        },
+        "scene mapping: assembly from an older scene is rejected");
+
+    SceneStructureAssembly alteredMapping = assembly;
+    std::ranges::reverse(alteredMapping.mappings.triangleIds);
+    checkInvalid(
+        [&] {
+            static_cast<void>(makeStructureFrameMapping(
+                scene, alteredMapping, structure));
+        },
+        "scene mapping: hand-edited stable-ID mapping is rejected");
+
+    SceneStructureAssembly alteredDefinition = assembly;
+    alteredDefinition.definition.nodes[0].massKg *= 2.0;
+    checkInvalid(
+        [&] {
+            static_cast<void>(makeStructureFrameMapping(
+                scene, alteredDefinition, structure));
+        },
+        "scene mapping: hand-edited assembly definition is rejected");
+
+    StructureDefinition foreignDefinition = assembly.definition;
+    foreignDefinition.nodes[0].massKg *= 2.0;
+    Structure foreign(std::move(foreignDefinition));
+    checkInvalid(
+        [&] {
+            static_cast<void>(makeStructureFrameMapping(
+                scene, assembly, foreign));
+        },
+        "scene mapping: Structure from another assembly is rejected");
+
+    Scene invalidScene = scene;
+    invalidScene.triangles[0].materialId = 999;
+    const SceneStructureAssembly failed =
+        assembleSceneStructure(invalidScene);
+    check(!failed.ok(),
+          "scene mapping: invalid fixture produces a failed assembly");
+    checkInvalid(
+        [&] {
+            static_cast<void>(makeStructureFrameMapping(
+                invalidScene, failed, structure));
+        },
+        "scene mapping: failed assembly is rejected transactionally");
+}
+
 } // namespace
 
 int main() {
@@ -353,6 +520,8 @@ int main() {
     testSerializationCompatibility();
     testEvolvingStructureFrames();
     testInvalidMappings();
+    testSceneAssemblyMappingAndReordering();
+    testSceneAssemblyMappingRejections();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing structure-frame check(s) failed\n",

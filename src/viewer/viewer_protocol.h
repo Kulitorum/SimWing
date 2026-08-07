@@ -194,6 +194,10 @@ public:
 
     [[nodiscard]] bool writeHeader(const TraceHeader& header);
     [[nodiscard]] bool writeFrame(const DiagnosticFrame& frame);
+    // Writes an explicit successful end marker. Growing-file readers remain
+    // pending at a temporary physical EOF and stop only when this marker is
+    // visible. A writer cannot append frames after finishing.
+    [[nodiscard]] bool finish();
     [[nodiscard]] const ProtocolError& error() const noexcept;
 
 private:
@@ -202,18 +206,36 @@ private:
     TraceHeader header_;
     ProtocolError error_;
     bool headerWritten_ = false;
+    bool finished_ = false;
 };
 
 enum class TraceReadStatus {
     Frame,
+    // Follow-mode only: the physical file currently ends between records or
+    // partway through a record. Calling readNext again resumes transactionally
+    // without rereading or discarding the bytes already received.
+    Pending,
     End,
     Error
+};
+
+enum class TraceReadMode {
+    // A natural physical EOF between records is the end of a completed legacy
+    // trace. A partial record remains an error.
+    Replay,
+    // A natural or partial EOF is temporary. Only an explicit end marker is
+    // End; callers should poll at a bounded rate.
+    Follow
 };
 
 class TraceReader {
 public:
     explicit TraceReader(
         std::istream& input,
+        ProtocolLimits limits = ProtocolLimits{});
+    TraceReader(
+        std::istream& input,
+        TraceReadMode mode,
         ProtocolLimits limits = ProtocolLimits{});
 
     [[nodiscard]] bool readHeader(TraceHeader& header);
@@ -226,6 +248,13 @@ private:
     TraceHeader header_;
     ProtocolError error_;
     bool headerRead_ = false;
+    bool ended_ = false;
+    TraceReadMode mode_ = TraceReadMode::Replay;
+    std::uint8_t lengthBytes_[sizeof(std::uint64_t)]{};
+    std::size_t lengthBytesRead_ = 0;
+    std::uint64_t pendingFrameSize_ = 0;
+    std::vector<std::uint8_t> pendingFrameBytes_;
+    std::size_t pendingFrameBytesRead_ = 0;
 };
 
 } // namespace simwing::viewer

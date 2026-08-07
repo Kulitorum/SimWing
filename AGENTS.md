@@ -96,6 +96,8 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
+.\build\bin\Release\simwing-fsi.exe [--steps N] [--trace <file>] [--no-viewer]
+.\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
 Engine flags are `--preview`, `--no-construction-curves`, and
@@ -450,8 +452,12 @@ makes this a certified aerodynamic solver.
 - `src/viewer/structure_frame.{h,cpp}` maps committed structure state to those
   immutable frames without inventing unavailable per-element quantities.
 - `src/viewer/viewer_window.{h,cpp}` and `tools/simwing_viewer_main.cpp` form
-  the separate Qt/OpenGL trace viewer. Live worker follow/control remains a
-  later boundary; ordinary trace replay must stay bounded and asynchronous.
+  the separate Qt/OpenGL trace viewer. Replay and growing-trace follow remain
+  bounded and asynchronous.
+- `src/fsi/canonical_case.{h,cpp}` and `tools/simwing_fsi_main.cpp` are the
+  first end-to-end worker slice. The case is an analytic structural harness,
+  not aerodynamic truth; it writes only accepted steps and launches the
+  sibling viewer by default. `--no-viewer` must remain Qt-free and unthrottled.
 - New numerical targets must not link the inherited `playground_*` libraries.
   Cross the scene/structure/viewer boundaries through explicit adapters and
   versioned data only.
@@ -478,7 +484,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 33 configured tests on Windows. The Fortran-reference test is
+There are 35 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 

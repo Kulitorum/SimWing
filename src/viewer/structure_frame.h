@@ -7,6 +7,11 @@
 #include <string>
 #include <vector>
 
+namespace simwing::fsi {
+struct Scene;
+struct SceneStructureAssembly;
+}
+
 namespace simwing::viewer {
 
 struct StructureFrameTriangleMapping {
@@ -56,6 +61,16 @@ private:
     const std::vector<StructureFrameTriangleMapping> triangles_;
     const std::vector<StructureFrameLineMapping> lines_;
 };
+
+// Derives viewer identity exclusively from a successful scene-v2 structural
+// assembly. The supplied assembly is checked against a canonical assembly of
+// the validated scene, and both are checked against the live Structure before
+// any mapping is returned. Scene collection order therefore cannot change the
+// result, while stale, failed, or hand-edited assemblies are rejected.
+[[nodiscard]] StructureFrameMapping makeStructureFrameMapping(
+    const fsi::Scene& scene,
+    const fsi::SceneStructureAssembly& assembly,
+    const fsi::Structure& structure);
 
 struct StructureFrameContext {
     std::string sceneChecksum;

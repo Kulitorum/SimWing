@@ -17,7 +17,8 @@ public:
 
     [[nodiscard]] bool loadTrace(
         const QString& fileName,
-        QString* errorMessage = nullptr);
+        QString* errorMessage = nullptr,
+        bool follow = false);
     void showSmokeFrame();
 
     [[nodiscard]] QString renderError() const;

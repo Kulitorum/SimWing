@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstddef>
@@ -110,11 +111,13 @@ public:
 
     TraceStream(
         QString fileName,
+        bool follow,
         HeaderCallback headerCallback,
         FrameCallback frameCallback,
         ErrorCallback errorCallback,
         EndCallback endCallback)
         : fileName_(std::move(fileName)),
+          follow_(follow),
           headerCallback_(std::move(headerCallback)),
           frameCallback_(std::move(frameCallback)),
           errorCallback_(std::move(errorCallback)),
@@ -162,7 +165,8 @@ private:
             return;
         }
 
-        TraceReader reader(input);
+        TraceReader reader(
+            input, follow_ ? TraceReadMode::Follow : TraceReadMode::Replay);
         TraceHeader header;
         if (!reader.readHeader(header)) {
             errorCallback_(QStringLiteral("Cannot read trace header: %1")
@@ -189,6 +193,19 @@ private:
                 continue;
             }
 
+            if (status == TraceReadStatus::Pending) {
+                // Follow mode deliberately treats both clean and partial
+                // physical EOF as temporary. A condition-variable timeout
+                // bounds polling and lets shutdown wake the reader at once.
+                std::unique_lock lock(mutex_);
+                if (condition_.wait_for(
+                        lock, std::chrono::milliseconds(100),
+                        [this] { return stopping_; })) {
+                    return;
+                }
+                continue;
+            }
+
             {
                 std::lock_guard lock(mutex_);
                 ended_ = true;
@@ -204,6 +221,7 @@ private:
     }
 
     QString fileName_;
+    bool follow_ = false;
     HeaderCallback headerCallback_;
     FrameCallback frameCallback_;
     ErrorCallback errorCallback_;
@@ -224,6 +242,14 @@ public:
     }
 
     void setFrame(std::shared_ptr<const DiagnosticFrame> frame) {
+        // Keep a moving simulation in the same camera-relative position. A
+        // free-flying wing must not simply leave the viewport after the first
+        // frame was fitted; manual orbit, pan, and zoom remain relative to the
+        // tracked surface centre.
+        if (frame_ != nullptr && frame != nullptr
+            && !frame_->vertices.empty() && !frame->vertices.empty()) {
+            target_ += frameCentre(*frame) - frameCentre(*frame_);
+        }
         frame_ = std::move(frame);
         geometryDirty_ = true;
         update();
@@ -271,7 +297,10 @@ public:
         }
         target_ = 0.5F * (minimum + maximum);
         const float radius = std::max(0.5F * (maximum - minimum).length(), 0.05F);
-        distance_ = std::max(radius * 2.8F, 0.2F);
+        // Leave enough perspective margin for modest deformation after a live
+        // fit; the theoretical bounding-sphere minimum has no visual gutter
+        // and clips as soon as a structural case changes shape.
+        distance_ = std::max(radius * 3.8F, 0.2F);
         update();
     }
 
@@ -401,6 +430,31 @@ protected:
     }
 
 private:
+    [[nodiscard]] static QVector3D frameCentre(
+        const DiagnosticFrame& frame) {
+        QVector3D minimum(
+            std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max(),
+            std::numeric_limits<float>::max());
+        QVector3D maximum(
+            std::numeric_limits<float>::lowest(),
+            std::numeric_limits<float>::lowest(),
+            std::numeric_limits<float>::lowest());
+        for (const DiagnosticVertex& vertex : frame.vertices) {
+            const QVector3D point(
+                static_cast<float>(vertex.positionMetres.x),
+                static_cast<float>(vertex.positionMetres.y),
+                static_cast<float>(vertex.positionMetres.z));
+            minimum.setX(std::min(minimum.x(), point.x()));
+            minimum.setY(std::min(minimum.y(), point.y()));
+            minimum.setZ(std::min(minimum.z(), point.z()));
+            maximum.setX(std::max(maximum.x(), point.x()));
+            maximum.setY(std::max(maximum.y(), point.y()));
+            maximum.setZ(std::max(maximum.z(), point.z()));
+        }
+        return 0.5F * (minimum + maximum);
+    }
+
     [[nodiscard]] QMatrix4x4 viewMatrix() const {
         QMatrix4x4 view;
         view.translate(0.0F, 0.0F, -distance_);
@@ -740,7 +794,7 @@ public:
         });
         QObject::connect(restartAction_, &QAction::triggered, owner_, [this] {
             if (!traceFile_.isEmpty()) {
-                startTrace(traceFile_);
+                startTrace(traceFile_, follow_);
             }
         });
         QObject::connect(fitAction_, &QAction::triggered, view_, [this] {
@@ -760,7 +814,10 @@ public:
 
     ~Impl() { stream_.reset(); }
 
-    bool loadTrace(const QString& fileName, QString* errorMessage) {
+    bool loadTrace(
+        const QString& fileName,
+        QString* errorMessage,
+        bool follow) {
         const QFileInfo info(fileName);
         if (!info.exists() || !info.isFile() || !info.isReadable()) {
             const QString message = QStringLiteral("Trace file is not readable: %1")
@@ -770,7 +827,7 @@ public:
             }
             return false;
         }
-        startTrace(info.absoluteFilePath());
+        startTrace(info.absoluteFilePath(), follow);
         return true;
     }
 
@@ -800,11 +857,12 @@ private:
                                   Qt::QueuedConnection);
     }
 
-    void startTrace(const QString& fileName) {
+    void startTrace(const QString& fileName, bool follow) {
         ++generation_;
         const std::uint64_t generation = generation_;
         stream_.reset();
         traceFile_ = fileName;
+        follow_ = follow;
         traceHeader_ = {};
         currentFrame_.reset();
         pendingFrame_.reset();
@@ -819,9 +877,14 @@ private:
         restartAction_->setEnabled(true);
         updatePlayAction();
         owner_->setWindowTitle(
-            QStringLiteral("SimWing diagnostic viewer - %1")
-                .arg(QFileInfo(fileName).fileName()));
-        owner_->statusBar()->showMessage(QStringLiteral("Reading trace..."));
+            follow
+                ? QStringLiteral("SimWing diagnostic viewer - %1 (following)")
+                      .arg(QFileInfo(fileName).fileName())
+                : QStringLiteral("SimWing diagnostic viewer - %1")
+                      .arg(QFileInfo(fileName).fileName()));
+        owner_->statusBar()->showMessage(
+            follow ? QStringLiteral("Waiting for live trace frames...")
+                   : QStringLiteral("Reading trace..."));
 
         auto headerCallback = [this, generation](TraceHeader header) {
             post([this, generation, header = std::move(header)]() mutable {
@@ -880,12 +943,21 @@ private:
                         playing_ = false;
                         updatePlayAction();
                     }
+                    owner_->statusBar()->showMessage(
+                        follow_ ? QStringLiteral("Live trace completed")
+                                : QStringLiteral("Trace completed"));
+                    if (follow_) {
+                        owner_->setWindowTitle(
+                            QStringLiteral("SimWing diagnostic viewer - %1 (complete)")
+                                .arg(QFileInfo(traceFile_).fileName()));
+                    }
                 }
             });
         };
         stream_ = std::make_unique<TraceStream>(
-            fileName, std::move(headerCallback), std::move(frameCallback),
-            std::move(errorCallback), std::move(endCallback));
+            fileName, follow, std::move(headerCallback),
+            std::move(frameCallback), std::move(errorCallback),
+            std::move(endCallback));
     }
 
     void requestNext() {
@@ -984,6 +1056,7 @@ private:
     QTimer timer_;
     QElapsedTimer playbackClock_;
     QString traceFile_;
+    bool follow_ = false;
     QString desiredField_;
     TraceHeader traceHeader_;
     std::unique_ptr<TraceStream> stream_;
@@ -1001,8 +1074,11 @@ ViewerWindow::ViewerWindow(QWidget* parent)
 
 ViewerWindow::~ViewerWindow() = default;
 
-bool ViewerWindow::loadTrace(const QString& fileName, QString* errorMessage) {
-    return impl_->loadTrace(fileName, errorMessage);
+bool ViewerWindow::loadTrace(
+    const QString& fileName,
+    QString* errorMessage,
+    bool follow) {
+    return impl_->loadTrace(fileName, errorMessage, follow);
 }
 
 void ViewerWindow::showSmokeFrame() {

@@ -1,8 +1,11 @@
 #include "structure_frame.h"
 
+#include "scene_structure.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -86,6 +89,104 @@ void addGlobalVector(
          {toViewer(value)}});
 }
 
+[[nodiscard]] bool sameMappings(
+    const fsi::SceneStructureMappings& first,
+    const fsi::SceneStructureMappings& second) {
+    return first.nodeVertexIds == second.nodeVertexIds
+        && first.triangleIds == second.triangleIds
+        && first.membraneTriangleIds == second.membraneTriangleIds
+        && first.constraintSuspensionLineIds
+               == second.constraintSuspensionLineIds;
+}
+
+[[nodiscard]] bool sameDefinition(
+    const fsi::StructureDefinition& first,
+    const fsi::StructureDefinition& second) {
+    if (first.nodes.size() != second.nodes.size()
+        || first.triangles.size() != second.triangles.size()
+        || first.constraints.size() != second.constraints.size()
+        || first.membranes.size() != second.membranes.size()
+        || first.dihedrals.size() != second.dihedrals.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < first.nodes.size(); ++index) {
+        const fsi::StructureNodeDefinition& left = first.nodes[index];
+        const fsi::StructureNodeDefinition& right = second.nodes[index];
+        if (left.positionMeters != right.positionMeters
+            || left.massKg != right.massKg || left.fixed != right.fixed) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0; index < first.triangles.size(); ++index) {
+        if (first.triangles[index].nodes != second.triangles[index].nodes) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0; index < first.constraints.size(); ++index) {
+        const fsi::StructureConstraintDefinition& left =
+            first.constraints[index];
+        const fsi::StructureConstraintDefinition& right =
+            second.constraints[index];
+        if (left.kind != right.kind || left.firstNode != right.firstNode
+            || left.secondNode != right.secondNode
+            || left.restLengthMeters != right.restLengthMeters
+            || left.complianceMetersPerNewton
+                   != right.complianceMetersPerNewton) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0; index < first.membranes.size(); ++index) {
+        const fsi::StructureMembraneDefinition& left =
+            first.membranes[index];
+        const fsi::StructureMembraneDefinition& right =
+            second.membranes[index];
+        if (left.triangle != right.triangle || left.role != right.role) {
+            return false;
+        }
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            if (left.materialCoordinates[corner].x
+                    != right.materialCoordinates[corner].x
+                || left.materialCoordinates[corner].y
+                       != right.materialCoordinates[corner].y) {
+                return false;
+            }
+        }
+        const fsi::StructureMembraneMaterial& leftMaterial = left.material;
+        const fsi::StructureMembraneMaterial& rightMaterial = right.material;
+        if (leftMaterial.warpStiffnessNewtonsPerMeter
+                != rightMaterial.warpStiffnessNewtonsPerMeter
+            || leftMaterial.weftStiffnessNewtonsPerMeter
+                   != rightMaterial.weftStiffnessNewtonsPerMeter
+            || leftMaterial.couplingStiffnessNewtonsPerMeter
+                   != rightMaterial.couplingStiffnessNewtonsPerMeter
+            || leftMaterial.shearStiffnessNewtonsPerMeter
+                   != rightMaterial.shearStiffnessNewtonsPerMeter
+            || leftMaterial.warpPreTensionNewtonsPerMeter
+                   != rightMaterial.warpPreTensionNewtonsPerMeter
+            || leftMaterial.weftPreTensionNewtonsPerMeter
+                   != rightMaterial.weftPreTensionNewtonsPerMeter
+            || leftMaterial.dampingSeconds
+                   != rightMaterial.dampingSeconds
+            || leftMaterial.compressionStiffnessRatio
+                   != rightMaterial.compressionStiffnessRatio) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0; index < first.dihedrals.size(); ++index) {
+        const fsi::StructureDihedralDefinition& left =
+            first.dihedrals[index];
+        const fsi::StructureDihedralDefinition& right =
+            second.dihedrals[index];
+        if (left.nodes != right.nodes
+            || left.restAngleRadians != right.restAngleRadians
+            || left.complianceRadiansPerNewtonMeter
+                   != right.complianceRadiansPerNewtonMeter) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 StructureFrameMapping::StructureFrameMapping(
@@ -163,6 +264,73 @@ StructureFrameMapping::triangles() const noexcept {
 const std::vector<StructureFrameLineMapping>&
 StructureFrameMapping::lines() const noexcept {
     return lines_;
+}
+
+StructureFrameMapping makeStructureFrameMapping(
+    const fsi::Scene& scene,
+    const fsi::SceneStructureAssembly& assembly,
+    const fsi::Structure& structure) {
+    if (!assembly.ok()) {
+        throw std::invalid_argument(
+            "Cannot map a failed scene-to-structure assembly");
+    }
+
+    // Reassembly is intentional here. It validates the scene and provides a
+    // transactional oracle for every conversion rule owned by scene_structure
+    // without copying those material, mass, or topology rules into the viewer.
+    const fsi::SceneStructureAssembly canonical =
+        fsi::assembleSceneStructure(scene);
+    if (!canonical.ok()) {
+        throw std::invalid_argument(
+            "Cannot map a scene that fails structural assembly");
+    }
+    if (!sameMappings(assembly.mappings, canonical.mappings)) {
+        throw std::invalid_argument(
+            "Scene structure stable-ID mappings do not match the scene");
+    }
+
+    if (!sameDefinition(canonical.definition, assembly.definition)
+        || !sameDefinition(assembly.definition, structure.definition())) {
+        throw std::invalid_argument(
+            "Scene, assembly, and Structure definitions do not match");
+    }
+
+    std::map<fsi::StableId, const fsi::Triangle*> trianglesById;
+    for (const fsi::Triangle& triangle : scene.triangles) {
+        trianglesById.emplace(triangle.id, &triangle);
+    }
+    std::map<fsi::StableId, const fsi::SuspensionLine*> linesById;
+    for (const fsi::SuspensionLine& line : scene.suspensionLines) {
+        linesById.emplace(line.id, &line);
+    }
+
+    StructureFrameMappingDefinition definition;
+    definition.vertexStableIds = canonical.mappings.nodeVertexIds;
+    definition.triangles.reserve(canonical.mappings.triangleIds.size());
+    for (const fsi::StableId id : canonical.mappings.triangleIds) {
+        const auto found = trianglesById.find(id);
+        if (found == trianglesById.end()) {
+            throw std::invalid_argument(
+                "Scene structure triangle mapping references an unknown ID");
+        }
+        definition.triangles.push_back(
+            {id,
+             found->second->negativeSideRegionId,
+             found->second->positiveSideRegionId});
+    }
+    definition.lines.reserve(
+        canonical.mappings.constraintSuspensionLineIds.size());
+    for (const fsi::StableId id :
+         canonical.mappings.constraintSuspensionLineIds) {
+        const auto found = linesById.find(id);
+        if (found == linesById.end()) {
+            throw std::invalid_argument(
+                "Scene structure line mapping references an unknown ID");
+        }
+        definition.lines.push_back(
+            {id, static_cast<std::uint32_t>(found->second->role)});
+    }
+    return StructureFrameMapping(structure, std::move(definition));
 }
 
 DiagnosticFrame buildStructureFrame(

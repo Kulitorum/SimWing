@@ -1,12 +1,18 @@
 #include "viewer_protocol.h"
 
+#include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <sstream>
+#include <streambuf>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -14,6 +20,26 @@ namespace {
 using namespace simwing::viewer;
 
 int failures = 0;
+
+class GrowingStreamBuffer final : public std::streambuf {
+public:
+    explicit GrowingStreamBuffer(std::string_view initial) {
+        append(initial);
+    }
+
+    void append(std::string_view bytes) {
+        const std::ptrdiff_t readOffset = gptr() != nullptr
+            ? gptr() - eback() : 0;
+        storage_.append(bytes);
+        char* begin = storage_.data();
+        const std::ptrdiff_t boundedOffset = std::min<std::ptrdiff_t>(
+            readOffset, static_cast<std::ptrdiff_t>(storage_.size()));
+        setg(begin, begin + boundedOffset, begin + storage_.size());
+    }
+
+private:
+    std::string storage_;
+};
 
 void check(bool condition, const char* message) {
     if (!condition) {
@@ -134,6 +160,13 @@ void testMultiFrameTrace() {
     check(writer.writeHeader(header), "trace: header write succeeds");
     check(writer.writeFrame(first), "trace: first frame write succeeds");
     check(writer.writeFrame(second), "trace: second frame write succeeds");
+    check(writer.finish(), "trace: explicit finish succeeds");
+    check(!writer.writeFrame(first)
+              && writer.error().code == ProtocolErrorCode::InvalidData,
+          "trace: frames after finish are rejected");
+    check(!writer.finish()
+              && writer.error().code == ProtocolErrorCode::InvalidData,
+          "trace: a second finish is rejected");
 
     const std::string trace = output.str();
     std::istringstream input(trace, std::ios::binary);
@@ -150,7 +183,23 @@ void testMultiFrameTrace() {
               && frame.vertices[2].positionMetres.z == 0.15,
           "trace: second frame replays in order");
     check(reader.readNext(frame) == TraceReadStatus::End,
-          "trace: clean record boundary reports end of trace");
+          "trace: explicit finish reports end of trace");
+    check(reader.readNext(frame) == TraceReadStatus::End,
+          "trace: explicit finish remains at end");
+
+    std::ostringstream unfinishedOutput(std::ios::binary);
+    TraceWriter unfinishedWriter(unfinishedOutput);
+    check(unfinishedWriter.writeHeader(header)
+              && unfinishedWriter.writeFrame(first),
+          "trace compatibility: unfinished legacy trace writes");
+    std::istringstream unfinishedInput(
+        unfinishedOutput.str(), std::ios::binary);
+    TraceReader unfinishedReader(unfinishedInput);
+    check(unfinishedReader.readHeader(decodedHeader)
+              && unfinishedReader.readNext(frame) == TraceReadStatus::Frame,
+          "trace compatibility: legacy frame reads");
+    check(unfinishedReader.readNext(frame) == TraceReadStatus::End,
+          "trace compatibility: natural EOF remains End in replay mode");
 
     std::ostringstream wrongOutput(std::ios::binary);
     TraceWriter wrongWriter(wrongOutput);
@@ -160,6 +209,135 @@ void testMultiFrameTrace() {
     check(!wrongWriter.writeFrame(second)
               && wrongWriter.error().code == ProtocolErrorCode::InvalidData,
           "trace provenance: mismatched frame is rejected");
+
+    std::ostringstream noHeaderOutput(std::ios::binary);
+    TraceWriter noHeaderWriter(noHeaderOutput);
+    check(!noHeaderWriter.finish()
+              && noHeaderWriter.error().code == ProtocolErrorCode::InvalidData,
+          "trace: finish before the header is rejected");
+}
+
+void testGrowingTraceResume() {
+    const DiagnosticFrame expected = sampleFrame();
+    const TraceHeader header{expected.sceneChecksum, expected.solverCommit};
+
+    std::ostringstream headerOutput(std::ios::binary);
+    TraceWriter headerWriter(headerOutput);
+    check(headerWriter.writeHeader(header),
+          "follow fixture: standalone header writes");
+    const std::string headerBytes = headerOutput.str();
+
+    std::ostringstream completeOutput(std::ios::binary);
+    TraceWriter completeWriter(completeOutput);
+    check(completeWriter.writeHeader(header)
+              && completeWriter.writeFrame(expected)
+              && completeWriter.finish(),
+          "follow fixture: complete trace writes");
+    const std::string completeBytes = completeOutput.str();
+    check(completeBytes.size() > headerBytes.size() + 16,
+          "follow fixture: trace contains a frame and end marker");
+    const std::string records = completeBytes.substr(headerBytes.size());
+
+    std::uint64_t frameSize = 0;
+    for (std::size_t i = 0; i < sizeof(frameSize); ++i) {
+        frameSize |= static_cast<std::uint64_t>(
+                         static_cast<unsigned char>(records[i]))
+                     << (8U * i);
+    }
+    check(records.size() == sizeof(frameSize) + frameSize + sizeof(frameSize),
+          "follow fixture: record sizes are understood");
+
+    GrowingStreamBuffer buffer(headerBytes);
+    std::istream input(&buffer);
+    TraceReader reader(input, TraceReadMode::Follow);
+    TraceHeader decodedHeader;
+    check(reader.readHeader(decodedHeader), "follow: complete header reads");
+
+    DiagnosticFrame frame = sampleFrame();
+    frame.step = 999;
+    check(reader.readNext(frame) == TraceReadStatus::Pending,
+          "follow: natural temporary EOF is Pending");
+    check(frame.step == 999,
+          "follow: pending natural EOF preserves the caller frame");
+
+    buffer.append(std::string_view(records).substr(0, 3));
+    check(reader.readNext(frame) == TraceReadStatus::Pending,
+          "follow: partial record prefix is Pending");
+    check(frame.step == 999,
+          "follow: partial prefix preserves the caller frame");
+
+    const std::size_t halfPayload = static_cast<std::size_t>(frameSize / 2);
+    buffer.append(std::string_view(records).substr(
+        3, sizeof(frameSize) - 3 + halfPayload));
+    check(reader.readNext(frame) == TraceReadStatus::Pending,
+          "follow: partial frame payload is Pending");
+    check(frame.step == 999,
+          "follow: partial payload preserves the caller frame");
+
+    const std::size_t frameRecordSize =
+        sizeof(frameSize) + static_cast<std::size_t>(frameSize);
+    const std::size_t supplied = sizeof(frameSize) + halfPayload;
+    buffer.append(std::string_view(records).substr(
+        supplied, frameRecordSize - supplied));
+    check(reader.readNext(frame) == TraceReadStatus::Frame
+              && frame.step == expected.step
+              && frame.vertices.size() == expected.vertices.size(),
+          "follow: completed payload resumes without losing prefix bytes");
+    check(reader.readNext(frame) == TraceReadStatus::Pending,
+          "follow: EOF after a complete frame remains Pending");
+
+    buffer.append(std::string_view(records).substr(frameRecordSize, 4));
+    check(reader.readNext(frame) == TraceReadStatus::Pending,
+          "follow: partial explicit end marker is Pending");
+    buffer.append(std::string_view(records).substr(frameRecordSize + 4, 4));
+    check(reader.readNext(frame) == TraceReadStatus::End,
+          "follow: completed explicit marker is End");
+    check(reader.readNext(frame) == TraceReadStatus::End,
+          "follow: explicit marker remains at End");
+}
+
+void testGrowingPhysicalFile() {
+    const DiagnosticFrame expected = sampleFrame();
+    const TraceHeader header{expected.sceneChecksum, expected.solverCommit};
+    const auto unique = std::chrono::steady_clock::now()
+                            .time_since_epoch().count();
+    const std::filesystem::path path = std::filesystem::temp_directory_path()
+        / ("simwing-viewer-follow-" + std::to_string(unique) + ".swtrace");
+
+    {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        TraceWriter writer(output);
+        check(writer.writeHeader(header),
+              "physical follow: flushed header writes");
+
+        std::ifstream input(path, std::ios::binary);
+        TraceReader reader(input, TraceReadMode::Follow);
+        TraceHeader decodedHeader;
+        check(reader.readHeader(decodedHeader),
+              "physical follow: header is immediately visible");
+        DiagnosticFrame frame = expected;
+        frame.step = 999;
+        check(reader.readNext(frame) == TraceReadStatus::Pending,
+              "physical follow: current file EOF is Pending");
+
+        check(writer.writeFrame(expected),
+              "physical follow: flushed frame appends");
+        check(reader.readNext(frame) == TraceReadStatus::Frame
+                  && frame.step == expected.step,
+              "physical follow: ifstream resumes after the file grows");
+        check(reader.readNext(frame) == TraceReadStatus::Pending,
+              "physical follow: reader waits for completion marker");
+
+        check(writer.finish(),
+              "physical follow: flushed completion marker appends");
+        check(reader.readNext(frame) == TraceReadStatus::End,
+              "physical follow: completion marker stops following");
+    }
+
+    std::error_code removeError;
+    const bool removed = std::filesystem::remove(path, removeError);
+    check(removed && !removeError,
+          "physical follow: temporary trace is removed");
 }
 
 void testFrameCorruptionAndTruncation() {
@@ -312,6 +490,8 @@ void testTraceCorruptionAndTruncation() {
 int main() {
     testDeterministicRoundTrip();
     testMultiFrameTrace();
+    testGrowingTraceResume();
+    testGrowingPhysicalFile();
     testFrameCorruptionAndTruncation();
     testValidationAndLimits();
     testTraceCorruptionAndTruncation();
