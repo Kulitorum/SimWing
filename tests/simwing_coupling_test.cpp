@@ -1,0 +1,388 @@
+#include "coupling.h"
+
+#include <array>
+#include <cmath>
+#include <cstdio>
+#include <limits>
+#include <stdexcept>
+#include <vector>
+
+namespace {
+
+using simwing::fsi::ConservativeMacroStepCoupling;
+using simwing::fsi::ConservativeSurfaceTransfer;
+using simwing::fsi::ConservativeTransferResult;
+using simwing::fsi::ConservativeTransferSettings;
+using simwing::fsi::CouplingNodeKinematics;
+using simwing::fsi::CouplingSurfaceNodeDefinition;
+using simwing::fsi::CouplingSurfaceTriangleDefinition;
+using simwing::fsi::CouplingTriangleTraction;
+using simwing::fsi::Structure;
+using simwing::fsi::StructureDefinition;
+using simwing::fsi::StructureStepSettings;
+using simwing::fsi::StructureVector3;
+
+int failures = 0;
+
+void check(const bool condition, const char* message) {
+    if (!condition) {
+        std::fprintf(stderr, "FAIL: %s\n", message);
+        ++failures;
+    }
+}
+
+void checkNear(const double actual,
+               const double expected,
+               const double tolerance,
+               const char* message) {
+    if (!std::isfinite(actual) || std::abs(actual - expected) > tolerance) {
+        std::fprintf(stderr,
+                     "FAIL: %s (actual %.17g, expected %.17g, tolerance %.3g)\n",
+                     message, actual, expected, tolerance);
+        ++failures;
+    }
+}
+
+void checkVectorNear(const StructureVector3& actual,
+                     const StructureVector3& expected,
+                     const double tolerance,
+                     const char* message) {
+    if (!std::isfinite(actual.x) || !std::isfinite(actual.y)
+        || !std::isfinite(actual.z)
+        || std::abs(actual.x - expected.x) > tolerance
+        || std::abs(actual.y - expected.y) > tolerance
+        || std::abs(actual.z - expected.z) > tolerance) {
+        std::fprintf(
+            stderr,
+            "FAIL: %s (actual [%.17g %.17g %.17g], expected [%.17g %.17g %.17g])\n",
+            message, actual.x, actual.y, actual.z,
+            expected.x, expected.y, expected.z);
+        ++failures;
+    }
+}
+
+template<typename Callback>
+void expectRejected(Callback&& callback, const char* message) {
+    bool rejected = false;
+    try {
+        callback();
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected, message);
+}
+
+StructureDefinition pistonDefinition(const double zOffset = 0.0) {
+    StructureDefinition definition;
+    // Mass follows the two-triangle barycentric tributary area. A uniform
+    // pressure impulse therefore gives every unconstrained node the same
+    // velocity increment in the structural acceptance check.
+    definition.nodes = {
+        {{1.0, -1.0, zOffset}, 2.0, false},
+        {{3.0, -1.0, zOffset}, 1.0, false},
+        {{3.0, 2.0, zOffset}, 2.0, false},
+        {{1.0, 2.0, zOffset}, 1.0, false},
+    };
+    definition.triangles = {{{0, 1, 2}}, {{0, 2, 3}}};
+    return definition;
+}
+
+std::vector<CouplingSurfaceNodeDefinition> pistonNodes(
+    const std::uint64_t offset = 0) {
+    return {
+        {40 + offset, 3},
+        {10 + offset, 0},
+        {30 + offset, 2},
+        {20 + offset, 1},
+    };
+}
+
+std::vector<CouplingSurfaceTriangleDefinition> pistonTriangles(
+    const std::uint64_t offset = 0) {
+    return {
+        {200 + offset, {10 + offset, 30 + offset, 40 + offset}},
+        {100 + offset, {10 + offset, 20 + offset, 30 + offset}},
+    };
+}
+
+struct PistonFixture {
+    Structure structure{pistonDefinition()};
+    ConservativeSurfaceTransfer transfer{
+        structure, pistonNodes(), pistonTriangles()};
+    ConservativeMacroStepCoupling coupling{transfer};
+};
+
+std::vector<CouplingNodeKinematics> pistonKinematics(
+    const ConservativeSurfaceTransfer& transfer,
+    const Structure& structure,
+    const double timeSeconds) {
+    constexpr double speedMetersPerSecond = 0.25;
+    std::vector<CouplingNodeKinematics> result;
+    for (const auto& node : transfer.nodes()) {
+        auto position =
+            structure.definition().nodes[node.structureNode].positionMeters;
+        position.z += speedMetersPerSecond * timeSeconds;
+        result.push_back(
+            {node.stableId, position, {0.0, 0.0, speedMetersPerSecond}});
+    }
+    return result;
+}
+
+std::vector<CouplingTriangleTraction> pistonTractions(
+    const ConservativeSurfaceTransfer& transfer,
+    const double timeSeconds) {
+    const double pressurePascals = 100.0 + 50.0 * timeSeconds;
+    std::vector<CouplingTriangleTraction> result;
+    for (const auto& triangle : transfer.triangles()) {
+        result.push_back(
+            {triangle.stableId, {0.0, 0.0, pressurePascals}});
+    }
+    return result;
+}
+
+std::vector<ConservativeTransferResult> pistonSamples(
+    const PistonFixture& fixture,
+    const std::span<const double> offsets,
+    const StructureVector3 reference = {2.0, 0.5, 0.0}) {
+    ConservativeTransferSettings settings;
+    settings.momentReferenceMeters = reference;
+    std::vector<ConservativeTransferResult> samples;
+    samples.reserve(offsets.size());
+    for (const double offset : offsets) {
+        samples.push_back(fixture.transfer.evaluate(
+            pistonKinematics(fixture.transfer, fixture.structure, offset),
+            pistonTractions(fixture.transfer, offset), settings));
+    }
+    return samples;
+}
+
+void testMovingPistonImpulseVolumeAndWork() {
+    PistonFixture fixture;
+    constexpr std::array<double, 3> offsets{0.0, 0.1, 0.4};
+    const auto samples = pistonSamples(fixture, offsets);
+    const auto result = fixture.coupling.integrate(offsets, samples);
+    const auto replay = fixture.coupling.integrate(offsets, samples);
+    const auto& diagnostics = result.diagnostics();
+
+    constexpr double areaSquareMeters = 6.0;
+    constexpr double durationSeconds = 0.4;
+    constexpr double meanPressurePascals = 110.0;
+    const auto startKinematics = pistonKinematics(
+        fixture.transfer, fixture.structure, offsets.front());
+    const auto endKinematics = pistonKinematics(
+        fixture.transfer, fixture.structure, offsets.back());
+    const double sweptVolumeCubicMeters = areaSquareMeters
+        * (endKinematics.front().positionMeters.z
+           - startKinematics.front().positionMeters.z);
+    constexpr double analyticImpulseNewtonSeconds =
+        areaSquareMeters * meanPressurePascals * durationSeconds;
+    const double analyticPressureWorkJoules =
+        meanPressurePascals * sweptVolumeCubicMeters;
+
+    check(result == replay,
+          "piston: identical temporal samples integrate bit-for-bit");
+    check(result.version()
+              == simwing::fsi::interfaceImpulseExchangeVersion,
+          "piston: immutable result carries the exchange contract version");
+    check(result.surfaceFingerprint() == fixture.transfer.fingerprint()
+              && result.targetDefinitionFingerprint()
+                  == fixture.structure.definitionFingerprint(),
+          "piston: immutable result remains bound to surface and Structure");
+    check(diagnostics.sampleCount == offsets.size()
+              && diagnostics.intervalCount == offsets.size() - 1
+              && diagnostics.durationSeconds == durationSeconds,
+          "piston: nonuniform sample intervals retain explicit macro-step time");
+    checkVectorNear(diagnostics.integratedSurfaceImpulseNewtonSeconds,
+                    {0.0, 0.0, analyticImpulseNewtonSeconds}, 2.0e-13,
+                    "piston: linear pressure gives the analytic surface impulse");
+    checkVectorNear(diagnostics.transferredNodalImpulseNewtonSeconds,
+                    {0.0, 0.0, analyticImpulseNewtonSeconds}, 2.0e-13,
+                    "piston: barycentric node impulses preserve total impulse");
+    checkVectorNear(
+        diagnostics.integratedSurfaceAngularImpulseNewtonMeterSeconds,
+        {}, 2.0e-13,
+        "piston: pressure through the moving centroid has zero angular impulse");
+    checkVectorNear(
+        diagnostics.transferredNodalAngularImpulseNewtonMeterSeconds,
+        {}, 2.0e-13,
+        "piston: nodal angular impulse preserves the zero analytic value");
+    checkNear(sweptVolumeCubicMeters, 0.6, 2.0e-16,
+              "piston: prescribed translation sweeps the analytic volume");
+    checkNear(diagnostics.integratedSurfaceWorkJoules,
+              analyticPressureWorkJoules, 5.0e-14,
+              "piston: integrated surface power equals pressure-volume work");
+    checkNear(diagnostics.transferredNodalWorkJoules,
+              analyticPressureWorkJoules, 5.0e-14,
+              "piston: nodal work preserves pressure-volume work");
+    check(diagnostics.impulseResidualNormNewtonSeconds < 3.0e-13
+              && diagnostics.angularImpulseResidualNormNewtonMeterSeconds
+                  < 3.0e-13
+              && std::abs(diagnostics.workResidualJoules) < 1.0e-13
+              && diagnostics.finite,
+          "piston: temporal impulse, angular impulse, and work ledgers close");
+
+    const auto impulses = result.nodeImpulses();
+    check(impulses.size() == 4
+              && impulses[0].stableId == 10
+              && impulses[3].stableId == 40,
+          "piston: node impulses preserve canonical stable-ID order");
+    checkVectorNear(impulses[0].impulseNewtonSeconds,
+                    {0.0, 0.0, 88.0}, 5.0e-14,
+                    "piston: shared diagonal node receives two temporal shares");
+    checkVectorNear(impulses[1].impulseNewtonSeconds,
+                    {0.0, 0.0, 44.0}, 3.0e-14,
+                    "piston: boundary node receives one temporal share");
+    checkVectorNear(impulses[2].impulseNewtonSeconds,
+                    {0.0, 0.0, 88.0}, 5.0e-14,
+                    "piston: second shared node receives two temporal shares");
+    checkVectorNear(impulses[3].impulseNewtonSeconds,
+                    {0.0, 0.0, 44.0}, 3.0e-14,
+                    "piston: final boundary node receives one temporal share");
+}
+
+void testAcceptedImpulseReachesStructure() {
+    PistonFixture fixture;
+    constexpr std::array<double, 3> offsets{0.0, 0.1, 0.4};
+    const auto samples = pistonSamples(fixture, offsets);
+    const auto transfer = fixture.coupling.integrate(offsets, samples);
+    StructureStepSettings settings;
+    settings.timeStepSeconds = offsets.back();
+    settings.substeps = 4;
+    settings.constraintIterations = 0;
+    settings.gravityMetersPerSecondSquared = {};
+    settings.velocityDampingPerSecond = 0.0;
+    const auto diagnostics = fixture.coupling.advanceStructure(
+        fixture.structure, transfer, settings);
+
+    check(fixture.structure.acceptedStepCount() == 1
+              && fixture.structure.simulationTimeSeconds() == offsets.back(),
+          "acceptance: one integrated exchange advances one macro-step");
+    checkVectorNear(diagnostics.lastAppliedExternalForceNewtons,
+                    {0.0, 0.0, 660.0}, 2.0e-13,
+                    "acceptance: average load times duration equals the impulse");
+    checkVectorNear(diagnostics.linearMomentumKgMetersPerSecond,
+                    {0.0, 0.0, 264.0}, 3.0e-13,
+                    "acceptance: actual XPBD momentum gain equals interface impulse");
+    checkVectorNear(diagnostics.pendingExternalForceNewtons, {}, 0.0,
+                    "acceptance: accepted Structure step consumes the average load");
+    const auto states = fixture.structure.nodeStates();
+    for (const auto& state : states) {
+        checkVectorNear(state.velocityMetersPerSecond,
+                        {0.0, 0.0, 44.0}, 8.0e-14,
+                        "acceptance: tributary mass gives uniform piston velocity increment");
+    }
+}
+
+void testValidationAndTransactionalFailure() {
+    PistonFixture fixture;
+    constexpr std::array<double, 3> offsets{0.0, 0.1, 0.4};
+    auto samples = pistonSamples(fixture, offsets);
+    const auto integrated = fixture.coupling.integrate(offsets, samples);
+
+    const std::array<double, 1> oneOffset{0.0};
+    expectRejected(
+        [&] { static_cast<void>(fixture.coupling.integrate(
+            oneOffset, std::span<const ConservativeTransferResult>(samples).first(1))); },
+        "validation: at least two temporal samples are required");
+    const std::array<double, 3> nonzeroStart{0.01, 0.1, 0.4};
+    expectRejected(
+        [&] { static_cast<void>(fixture.coupling.integrate(nonzeroStart, samples)); },
+        "validation: macro-step-local offsets must start at zero");
+    const std::array<double, 3> repeatedOffset{0.0, 0.1, 0.1};
+    expectRejected(
+        [&] { static_cast<void>(fixture.coupling.integrate(repeatedOffset, samples)); },
+        "validation: temporal samples must be strictly increasing");
+    const std::array<double, 3> nonfiniteOffset{
+        0.0, 0.1, std::numeric_limits<double>::quiet_NaN()};
+    expectRejected(
+        [&] { static_cast<void>(fixture.coupling.integrate(nonfiniteOffset, samples)); },
+        "validation: temporal sample offsets must be finite");
+
+    ConservativeTransferSettings differentReference;
+    differentReference.momentReferenceMeters = {2.0, 0.5, 1.0};
+    samples.back() = fixture.transfer.evaluate(
+        pistonKinematics(fixture.transfer, fixture.structure, offsets.back()),
+        pistonTractions(fixture.transfer, offsets.back()),
+        differentReference);
+    expectRejected(
+        [&] { static_cast<void>(fixture.coupling.integrate(offsets, samples)); },
+        "validation: one macro-step cannot mix moment references");
+
+    ConservativeSurfaceTransfer otherSurface(
+        fixture.structure, pistonNodes(1000), pistonTriangles(1000));
+    ConservativeMacroStepCoupling otherCoupling(otherSurface);
+    std::vector<ConservativeTransferResult> otherSamples;
+    ConservativeTransferSettings reference;
+    reference.momentReferenceMeters = {2.0, 0.5, 0.0};
+    for (const double offset : offsets) {
+        otherSamples.push_back(otherSurface.evaluate(
+            pistonKinematics(otherSurface, fixture.structure, offset),
+            pistonTractions(otherSurface, offset), reference));
+    }
+    expectRejected(
+        [&] { static_cast<void>(fixture.coupling.integrate(
+            offsets, otherSamples)); },
+        "validation: instantaneous samples from another surface are rejected");
+    const auto otherIntegrated = otherCoupling.integrate(offsets, otherSamples);
+    expectRejected(
+        [&] { static_cast<void>(fixture.coupling.advanceStructure(
+            fixture.structure, otherIntegrated, StructureStepSettings{})); },
+        "validation: an exchange from another surface is rejected before mutation");
+
+    StructureStepSettings settings;
+    settings.timeStepSeconds = offsets.back();
+    settings.substeps = 0;
+    settings.constraintIterations = 0;
+    settings.gravityMetersPerSecondSquared = {};
+    settings.velocityDampingPerSecond = 0.0;
+    fixture.structure.addExternalForce(0, {1.0, 2.0, 3.0});
+    const auto before = fixture.structure.checkpoint();
+    expectRejected(
+        [&] { static_cast<void>(fixture.coupling.advanceStructure(
+            fixture.structure, integrated, settings)); },
+        "rollback: rejected XPBD settings propagate to the coupling caller");
+    const auto after = fixture.structure.checkpoint();
+    check(after.acceptedStepCount == before.acceptedStepCount
+              && after.simulationTimeSeconds == before.simulationTimeSeconds
+              && after.nodes == before.nodes
+              && after.pendingExternalForcesNewtons
+                  == before.pendingExternalForcesNewtons
+              && after.lastAppliedExternalForceNewtons
+                  == before.lastAppliedExternalForceNewtons,
+          "rollback: failed acceptance restores state from before impulse application");
+
+    settings.substeps = 1;
+    settings.timeStepSeconds = 0.2;
+    const auto beforeDurationMismatch = fixture.structure.checkpoint();
+    expectRejected(
+        [&] { static_cast<void>(fixture.coupling.advanceStructure(
+            fixture.structure, integrated, settings)); },
+        "validation: exchange duration must equal the structural macro-step");
+    check(fixture.structure.checkpoint().pendingExternalForcesNewtons
+              == beforeDurationMismatch.pendingExternalForcesNewtons,
+          "validation: duration mismatch is rejected before pending-load mutation");
+
+    Structure foreign(pistonDefinition(0.25));
+    settings.timeStepSeconds = offsets.back();
+    const auto foreignBefore = foreign.checkpoint();
+    expectRejected(
+        [&] { static_cast<void>(fixture.coupling.advanceStructure(
+            foreign, integrated, settings)); },
+        "validation: foreign Structure definition is rejected");
+    check(foreign.checkpoint().nodes == foreignBefore.nodes,
+          "validation: foreign Structure rejection is transactional");
+}
+
+} // namespace
+
+int main() {
+    testMovingPistonImpulseVolumeAndWork();
+    testAcceptedImpulseReachesStructure();
+    testValidationAndTransactionalFailure();
+    if (failures != 0) {
+        std::fprintf(stderr, "%d SimWing coupling check(s) failed\n", failures);
+        return 1;
+    }
+    std::puts("all SimWing coupling checks passed");
+    return 0;
+}

@@ -39,11 +39,16 @@ field now preserves a prescribed two-sided static pressure jump without
 smearing or spurious flow, including across the periodic domain boundary. A
 topology-bound conservative transfer layer integrates uniform triangle
 traction into barycentric structural loads while independently closing force,
-moment, and rigid-motion power ledgers. A real 3.28 fixture also crosses export,
-structural assembly, one coupled pilot/suspension step, checkpoint replay, and
-completed trace using synthetic physical settings. Export still requires
-explicit physical material/pilot settings; manufacturing-pattern UVs, exact
-authored attachment vertices, structural seam assembly, and the grid-side,
+moment, and rigid-motion power ledgers. A versioned macro-step coupling layer
+now integrates nonuniform temporal samples into nodal impulse, angular impulse,
+and work, and applies the result transactionally across XPBD substeps. Its
+prescribed moving-piston canonical closes analytic pressure-volume work and
+delivers the same total impulse to structural momentum. A real 3.28 fixture
+also crosses export, structural assembly, one coupled pilot/suspension step,
+checkpoint replay, and completed trace using synthetic physical settings.
+Export still requires explicit physical material/pilot settings;
+manufacturing-pattern UVs, exact authored attachment vertices, structural seam
+assembly, and the grid-side,
 moving/multiple-interface, and AMR CFD work remain open. These worker cases
 validate the pipeline; they are not yet wing CFD or aerodynamic truth.
 The inherited Playground is not used by these targets.

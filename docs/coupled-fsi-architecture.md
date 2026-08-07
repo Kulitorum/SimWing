@@ -437,8 +437,9 @@ structural step and replayable diagnostic trace with synthetic physical export
 settings. Manufacturing flat-pattern UVs, exact authored line-attachment
 vertices, authored paired seams and stitch mechanics, live bidirectional
 control, an authoritative settings source/engine CLI, and the moving-interface,
-transfer, AMR, and full CFD evolution kernels remain open work. Phase 2 has
-started with a dependency-free uniform periodic MAC-grid verification kernel:
+grid-side transfer, AMR, and full CFD evolution kernels remain open work.
+Phase 2 has started with a dependency-free uniform periodic MAC-grid
+verification kernel:
 its finite-volume gradient and divergence are a tested adjoint pair, its
 zero-mean conjugate-gradient pressure projection commits transactionally, and
 the focused regression covers Taylor-Green invariance, a discretely
@@ -458,10 +459,15 @@ traction is integrated at the centroid and distributed in equal barycentric
 shares, which exactly preserves its resultant, moment, and work against linear
 triangle kinematics. Surface and nodal ledgers are accumulated independently,
 and immutable results are applied additively through the real Structure nodal
-load path only after all bindings validate. This does not yet implement the
-paired Cartesian-grid traction sampler, nonuniform triangle quadrature, or a
-time-integrated multirate impulse exchange or fluid/structure coupling
-iteration.
+load path only after all bindings validate. A separate versioned macro-step
+coupling layer trapezoidally integrates nonuniform local-time samples into
+immutable nodal impulses and independent surface/nodal impulse, angular
+impulse, and work ledgers. Its acceptance boundary requires the exact exchange
+duration, applies the equivalent average force through Structure's internal
+XPBD substeps, and restores the checkpoint from before load application on any
+failure. This does not yet implement the paired Cartesian-grid traction
+sampler, nonuniform triangle quadrature, moving-wall fluid condition, or
+strong-coupling iteration/convergence decision.
 
 ### Phase 0 — Establish the remake boundary
 
@@ -525,7 +531,13 @@ analytic force `[12, -18, 30] N` and moment `[12, -57, -39] N*m`; force,
 moment, translation-power, and rotation-power residual budgets are `2e-14 N`,
 `3e-14 N*m`, `1e-14 W`, and `2e-14 W`, respectively. It also verifies cyclic
 topology canonicalization, bit-identical replay, foreign-result rejection
-before mutation, and the resulting velocity through an accepted XPBD step.
+before mutation, and the resulting velocity through an accepted XPBD step. The
+temporal canonical prescribes a `6 m^2` piston moving at `0.25 m/s` for `0.4 s`
+under pressure rising linearly from `100 Pa` to `120 Pa`. Nonuniform samples at
+`0`, `0.1`, and `0.4 s` must reproduce the analytic `0.6 m^3` swept volume,
+`264 N*s` impulse, and `66 J` pressure-volume work. Impulse and angular-impulse
+residuals are each below `3e-13` in their SI units, work residual is below
+`1e-13 J`, and the accepted XPBD momentum gain is the same `264 kg*m/s`.
 
 Work:
 
@@ -533,8 +545,8 @@ Work:
   discrete-surface layer;
 - in parallel conceptually, use IBAMR or OpenFOAM/preCICE as an external
   reference for selected canonical cases, not as a required GUI dependency;
-- implement projection, moving-interface jump conditions, conservative
-  transfer, refinement, and checkpoints;
+- implement projection, moving-interface jump conditions, paired grid-side
+  transfer, refinement, and fluid checkpoints;
 - add rate-limited AMR, pressure, velocity, divergence, traction, and
   pressure-jump viewer layers as each field becomes available;
 - verify CPU first, then add GPU kernels behind identical numerical tests.
@@ -549,6 +561,11 @@ Required canonical cases:
 - two closely spaced and folded sheets with multiple crossings per cell;
 - resolved opening that closes below grid scale and reopens;
 - force, moment, and power transfer under rigid translation and rotation.
+
+The structure-side half of the moving-piston case now verifies prescribed
+volume, interface work, temporal impulse transfer, and transactional XPBD
+acceptance. Moving-wall enforcement and the fluid mass/energy half remain open,
+so the complete piston canonical has not yet passed the Phase 2 gate.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

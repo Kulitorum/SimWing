@@ -234,6 +234,15 @@ target_include_directories(simwing_transfer PUBLIC
 )
 target_link_libraries(simwing_transfer PUBLIC simwing_structure)
 
+add_library(simwing_coupling STATIC
+    src/fsi/coupling.cpp
+    src/fsi/coupling.h
+)
+target_include_directories(simwing_coupling PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_coupling PUBLIC simwing_transfer)
+
 add_library(simwing_scene_structure STATIC
     src/fsi/scene_structure.cpp
     src/fsi/scene_structure.h
@@ -590,6 +599,11 @@ add_executable(simwing-transfer-test
 )
 target_link_libraries(simwing-transfer-test PRIVATE simwing_transfer)
 
+add_executable(simwing-coupling-test
+    tests/simwing_coupling_test.cpp
+)
+target_link_libraries(simwing-coupling-test PRIVATE simwing_coupling)
+
 add_executable(playground-cells-test
     tests/playground_cells_test.cpp
 )
@@ -753,6 +767,7 @@ set_target_properties(
     simwing-fluid-projection-test
     simwing-fluid-interface-jump-test
     simwing-transfer-test
+    simwing-coupling-test
     simwing-viewer
     simwing-fsi
     playground-cells-test
@@ -793,6 +808,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-fluid-projection-test
         simwing-fluid-interface-jump-test
         simwing-transfer-test
+        simwing-coupling-test
         simwing-viewer
         simwing-fsi
         playground-cells-test
@@ -922,6 +938,7 @@ add_test(NAME simwing_fluid_projection COMMAND simwing-fluid-projection-test)
 add_test(NAME simwing_fluid_interface_jump
     COMMAND simwing-fluid-interface-jump-test)
 add_test(NAME simwing_transfer COMMAND simwing-transfer-test)
+add_test(NAME simwing_coupling COMMAND simwing-coupling-test)
 add_test(NAME simwing_fsi_help COMMAND simwing-fsi --help)
 add_test(NAME simwing_viewer_help COMMAND simwing-viewer --help)
 if(NOT WIN32)
