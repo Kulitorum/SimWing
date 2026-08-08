@@ -981,8 +981,9 @@ prescribed `0.4 m/s` plane starts at unwrapped `x=3.48 m`, crosses
 samples, and advances through a second wrap while retaining the accumulated
 fluid field. The final constitutive sheet jump and fixed pump are published as
 separate quads with both unwrapped stage epochs and the closed kinematic,
-dissipation, work, momentum, and energy diagnostics. It is a Qt-free
-library/test canonical and is not yet a CLI worker or coupled structure.
+dissipation, work, momentum, and energy diagnostics. The Qt-free
+`simwing-fsi --case moving-porous-flow` path publishes the accepted frames and
+completed trace headlessly; it is not yet coupled structure.
 A pressure-driven uniform-plug companion uses the exact nonlinear implicit
 midpoint to close pressure impulse and the
 driving-work/porous-dissipation/kinetic-energy identity on every step. Its

@@ -35,6 +35,8 @@ public:
     [[nodiscard]] const fluid::CellScalarField& pressure() const noexcept;
     [[nodiscard]] const fluid::SharpPressureJumpField&
     pressureJumps() const noexcept;
+    [[nodiscard]] const fluid::PeriodicFlowStrangSspRk2Settings&
+    stepSettings() const noexcept;
     [[nodiscard]] const fluid::MovingPlanarPorousFlowStrangSspRk2Diagnostics&
     diagnostics() const noexcept;
     [[nodiscard]] const fluid::MovingPorousFaceTopology&

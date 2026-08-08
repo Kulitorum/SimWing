@@ -1048,6 +1048,7 @@ target_link_libraries(simwing-fsi PRIVATE
     simwing_canonical_case
     simwing_open_piston_control
     simwing_open_piston_case
+    simwing_moving_porous_flow_case
     simwing_periodic_flow_control
     simwing_periodic_flow_case
     simwing_piston_case
@@ -1484,6 +1485,15 @@ add_test(NAME simwing_fsi_porous_flow_headless
         --trace "${CMAKE_BINARY_DIR}/simwing-porous-flow-headless.swtrace")
 set_tests_properties(simwing_fsi_porous_flow_headless PROPERTIES
     PASS_REGULAR_EXPRESSION "completed 120 porous-flow step\\(s\\)")
+add_test(NAME simwing_fsi_moving_porous_flow_headless
+    COMMAND simwing-fsi
+        --case moving-porous-flow
+        --steps 101
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-moving-porous-flow-headless.swtrace")
+set_tests_properties(simwing_fsi_moving_porous_flow_headless PROPERTIES
+    PASS_REGULAR_EXPRESSION
+        "completed 101 moving-porous-flow step\\(s\\).*topology-rebases=5, face=0, image=2")
 add_test(NAME simwing_fsi_control_stdio
     COMMAND ${CMAKE_COMMAND}
         "-DSIMWING_FSI=$<TARGET_FILE:simwing-fsi>"

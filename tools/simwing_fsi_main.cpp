@@ -1,4 +1,5 @@
 #include "canonical_case.h"
+#include "moving_porous_flow_case.h"
 #include "open_piston_case.h"
 #include "open_piston_checkpoint_persistence.h"
 #include "open_piston_control.h"
@@ -60,6 +61,7 @@ enum class WorkerCase {
     OpenPiston,
     PeriodicFlow,
     PorousFlow,
+    MovingPorousFlow,
     PorousSheet,
     PressureJump,
 };
@@ -79,7 +81,7 @@ struct Options {
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: simwing-fsi [--case structural|piston|open-piston|periodic-flow|porous-flow|porous-sheet|pressure-jump]\n"
+        "Usage: simwing-fsi [--case structural|piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
         "                   [--checkpoint-in PATH]\n"
@@ -98,6 +100,8 @@ void printUsage(FILE* stream) {
         "canonical and publishes cell-centred pressure/velocity points.\n"
         "'porous-flow' advances a pressure-driven Darcy-Forchheimer plug and\n"
         "publishes its porous and periodic gauge-closure planes.\n"
+        "'moving-porous-flow' advances a prescribed translating porous plane\n"
+        "through both symmetric pressure stages and periodic topology wraps.\n"
         "'porous-sheet' couples a translating Darcy sheet to XPBD while a\n"
         "periodic pump drives fluid through it across one MAC-face rebase.\n"
         "'pressure-jump' repeatedly verifies a static split-region slab and\n"
@@ -134,6 +138,10 @@ bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
     }
     if (text == "porous-flow") {
         workerCase = WorkerCase::PorousFlow;
+        return true;
+    }
+    if (text == "moving-porous-flow") {
+        workerCase = WorkerCase::MovingPorousFlow;
         return true;
     }
     if (text == "porous-sheet") {
@@ -181,6 +189,7 @@ bool parseOptions(int argc,
                 || !parseWorkerCase(argv[index], options.workerCase)) {
                 error = "--case requires 'structural', 'piston', "
                     "'open-piston', 'periodic-flow', 'porous-flow', "
+                    "'moving-porous-flow', "
                     "'porous-sheet', or "
                     "'pressure-jump'";
                 return false;
@@ -189,6 +198,7 @@ bool parseOptions(int argc,
             if (!parseWorkerCase(argument.substr(7), options.workerCase)) {
                 error = "--case requires 'structural', 'piston', "
                     "'open-piston', 'periodic-flow', 'porous-flow', "
+                    "'moving-porous-flow', "
                     "'porous-sheet', or "
                     "'pressure-jump'";
                 return false;
@@ -1224,6 +1234,27 @@ int main(int argc, char* argv[]) {
                     options.tracePath.string().c_str());
             } else if constexpr (std::is_same_v<
                                      Simulation,
+                                     simwing::fsi::MovingPorousFlowCase>) {
+                const auto& diagnostics = simulation.diagnostics();
+                std::printf(
+                    "simwing-fsi completed %llu moving-porous-flow step(s), "
+                    "t=%.9g s, topology-rebases=%llu, face=%zu, image=%lld, "
+                    "sheet-position=%.9g m, kinematic-residual=%.3g m, "
+                    "momentum-residual=%.3g N*s, trace=%s\n",
+                    static_cast<unsigned long long>(
+                        simulation.acceptedStepCount()),
+                    simulation.simulationTimeSeconds(),
+                    static_cast<unsigned long long>(
+                        simulation.topologyRebaseCount()),
+                    simulation.porousTopology().faceCoordinate,
+                    static_cast<long long>(
+                        simulation.porousTopology().periodicImage),
+                    simulation.sheetPositionMeters(),
+                    diagnostics.kinematicResidualMeters,
+                    diagnostics.flow.momentumResidualNormNewtonSeconds,
+                    options.tracePath.string().c_str());
+            } else if constexpr (std::is_same_v<
+                                     Simulation,
                                      simwing::fsi::PorousFlowCase>) {
                 const auto& plug = simulation.plugDiagnostics();
                 std::printf(
@@ -1283,6 +1314,10 @@ int main(int argc, char* argv[]) {
         }
         if (options.workerCase == WorkerCase::PorousFlow) {
             simwing::fsi::PorousFlowCase simulation;
+            return run(simulation);
+        }
+        if (options.workerCase == WorkerCase::MovingPorousFlow) {
+            simwing::fsi::MovingPorousFlowCase simulation;
             return run(simulation);
         }
         if (options.workerCase == WorkerCase::PorousSheet) {

@@ -267,6 +267,11 @@ MovingPorousFlowCase::pressureJumps() const noexcept {
     return pressureJumps_;
 }
 
+const fluid::PeriodicFlowStrangSspRk2Settings&
+MovingPorousFlowCase::stepSettings() const noexcept {
+    return flowSettings_;
+}
+
 const fluid::MovingPlanarPorousFlowStrangSspRk2Diagnostics&
 MovingPorousFlowCase::diagnostics() const noexcept {
     return diagnostics_;

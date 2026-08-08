@@ -217,8 +217,9 @@ canonical: a prescribed `0.4 m/s` sheet begins just before the positive domain
 wrap, crosses `face=3,image=0` to `face=0,image=1` inside its first macro-step,
 and continues through a second periodic wrap without resetting the fluid. Each
 frame owns the final sheet and pump planes plus both stage epochs, kinematic
-residual, porous loss, jump work, and flow conservation residual. It remains a
-Qt-free library/test harness; no CLI case is exposed yet.
+residual, porous loss, jump work, and flow conservation residual. The Qt-free
+`--case moving-porous-flow` worker publishes accepted frames to a completed trace
+headlessly; the harness is not yet coupled structure.
 The nonlinear porous iteration can also use the disconnected moving-interface
 projector as its inner solve. A translating two-region slab retains exact wall
 velocities while endpoint or midpoint porous slip closes on unconstrained
@@ -461,6 +462,7 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case open-piston --checkpoint-in open-piston.swop --steps 600 --checkpoint-out open-piston.swop --checkpoint-every 600
 .\build\bin\Release\simwing-fsi.exe --case pressure-jump --steps 4 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case porous-flow --steps 120 --no-viewer
+.\build\bin\Release\simwing-fsi.exe --case moving-porous-flow --steps 101 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case porous-sheet --steps 120 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case porous-sheet --steps 330 --no-viewer --checkpoint-out porous-sheet.swps --checkpoint-every 165
 .\build\bin\Release\simwing-fsi.exe --case porous-sheet --checkpoint-in porous-sheet.swps --steps 30 --checkpoint-out porous-sheet.swps --checkpoint-every 30
