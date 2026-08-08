@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <exception>
 #include <ranges>
 #include <vector>
 
@@ -17,6 +18,17 @@ void check(const bool condition, const char* message) {
         std::fprintf(stderr, "FAIL: %s\n", message);
         ++failures;
     }
+}
+
+template<typename Callback>
+void expectRejected(Callback&& callback, const char* message) {
+    bool rejected = false;
+    try {
+        callback();
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected, message);
 }
 
 std::vector<std::uint8_t> serialized(
@@ -115,10 +127,161 @@ void testMovingPorousWorker() {
           "moving porous-flow frames remain owning after later advances");
 }
 
+void testCheckpointReplayAndValidation() {
+    fsi::MovingPorousFlowCase initialOwner;
+    const auto initial = initialOwner.checkpoint();
+    const auto expectedFirst = initialOwner.advance();
+    fsi::MovingPorousFlowCase initialReplay;
+    initialReplay.restore(initial);
+    check(initial.version == fsi::movingPorousFlowCaseCheckpointVersion
+              && initial.caseDefinitionFingerprint
+                  == fsi::movingPorousFlowCaseDefinitionFingerprint
+              && initial.cellCounts == initialReplay.grid().cellCounts()
+              && initial.scalarSampleCount
+                  == initialReplay.grid().cellCount()
+              && initial.pressureJumpCount == 0
+              && initial.acceptedStepCount == 0
+              && serialized(expectedFirst)
+                  == serialized(initialReplay.advance()),
+          "moving porous-flow initial checkpoint replays its first wrap");
+
+    fsi::MovingPorousFlowCase owner;
+    constexpr std::uint64_t savedSteps = 37;
+    for (std::uint64_t step = 0; step < savedSteps; ++step) {
+        static_cast<void>(owner.advance());
+    }
+    const auto saved = owner.checkpoint();
+    const auto savedVelocity = owner.velocity();
+    const auto savedPressure = owner.pressure();
+    const auto savedJumps = owner.pressureJumps();
+    const auto savedDiagnostics = owner.diagnostics();
+    const auto expectedNext = owner.advance();
+    for (std::size_t step = 0; step < 5; ++step) {
+        static_cast<void>(owner.advance());
+    }
+    owner.restore(saved);
+    check(owner.velocity() == savedVelocity
+              && owner.pressure() == savedPressure
+              && owner.pressureJumps() == savedJumps
+              && owner.diagnostics() == savedDiagnostics
+              && owner.porousTopology() == saved.porousTopology
+              && owner.topologyRebaseCount()
+                  == saved.topologyRebaseCount
+              && owner.sheetPositionMeters()
+                  == saved.sheetPositionMeters
+              && owner.sheetVelocityMetersPerSecond()
+                  == saved.sheetVelocityMetersPerSecond
+              && owner.acceptedStepCount() == savedSteps
+              && owner.simulationTimeSeconds()
+                  == saved.simulationTimeSeconds,
+          "moving porous-flow checkpoint restores every accepted field and epoch");
+    check(serialized(owner.advance()) == serialized(expectedNext),
+          "moving porous-flow checkpoint continuation replays bit-for-bit");
+    fsi::MovingPorousFlowCase rebuilt;
+    rebuilt.restore(saved);
+    check(serialized(rebuilt.advance()) == serialized(expectedNext),
+          "rebuilt moving porous-flow worker resumes bit-for-bit");
+
+    fsi::MovingPorousFlowCase wrappedOwner;
+    for (std::uint64_t step = 0; step < 101; ++step) {
+        static_cast<void>(wrappedOwner.advance());
+    }
+    const auto wrapped = wrappedOwner.checkpoint();
+    const auto expectedWrappedNext = wrappedOwner.advance();
+    fsi::MovingPorousFlowCase wrappedReplay;
+    wrappedReplay.restore(wrapped);
+    check(wrapped.topologyRebaseCount == 5
+              && wrapped.porousTopology.faceCoordinate == 0
+              && wrapped.porousTopology.periodicImage == 2
+              && serialized(wrappedReplay.advance())
+                  == serialized(expectedWrappedNext),
+          "moving porous-flow checkpoint crosses the second wrap exactly");
+
+    const auto beforeVelocity = owner.velocity();
+    const auto beforePressure = owner.pressure();
+    const auto beforeJumps = owner.pressureJumps();
+    const auto beforeDiagnostics = owner.diagnostics();
+    const auto beforeTopology = owner.porousTopology();
+    const auto beforeStep = owner.acceptedStepCount();
+    const auto beforeTime = owner.simulationTimeSeconds();
+    const auto beforePosition = owner.sheetPositionMeters();
+    const auto beforeRebases = owner.topologyRebaseCount();
+    auto wrongVersion = saved;
+    ++wrongVersion.version;
+    expectRejected(
+        [&] { owner.restore(wrongVersion); },
+        "moving porous-flow checkpoint rejects unsupported versions");
+    auto wrongDefinition = saved;
+    ++wrongDefinition.caseDefinitionFingerprint;
+    expectRejected(
+        [&] { owner.restore(wrongDefinition); },
+        "moving porous-flow checkpoint rejects foreign definitions");
+    auto wrongGrid = saved;
+    ++wrongGrid.cellCounts.x;
+    expectRejected(
+        [&] { owner.restore(wrongGrid); },
+        "moving porous-flow checkpoint rejects edited grid metadata");
+    auto wrongSamples = saved;
+    ++wrongSamples.scalarSampleCount;
+    expectRejected(
+        [&] { owner.restore(wrongSamples); },
+        "moving porous-flow checkpoint rejects edited sample counts");
+    auto wrongJumps = saved;
+    ++wrongJumps.pressureJumpCount;
+    expectRejected(
+        [&] { owner.restore(wrongJumps); },
+        "moving porous-flow checkpoint rejects edited jump counts");
+    auto wrongStep = saved;
+    ++wrongStep.acceptedStepCount;
+    expectRejected(
+        [&] { owner.restore(wrongStep); },
+        "moving porous-flow checkpoint rejects edited step metadata");
+    auto wrongTime = saved;
+    wrongTime.simulationTimeSeconds += 0.1;
+    expectRejected(
+        [&] { owner.restore(wrongTime); },
+        "moving porous-flow checkpoint rejects edited time metadata");
+    auto wrongPosition = saved;
+    wrongPosition.sheetPositionMeters += 0.01;
+    expectRejected(
+        [&] { owner.restore(wrongPosition); },
+        "moving porous-flow checkpoint rejects edited sheet position");
+    auto wrongSheetVelocity = saved;
+    wrongSheetVelocity.sheetVelocityMetersPerSecond = -0.4;
+    expectRejected(
+        [&] { owner.restore(wrongSheetVelocity); },
+        "moving porous-flow checkpoint rejects edited sheet velocity");
+    auto wrongRebaseCount = saved;
+    ++wrongRebaseCount.topologyRebaseCount;
+    expectRejected(
+        [&] { owner.restore(wrongRebaseCount); },
+        "moving porous-flow checkpoint rejects edited rebase count");
+    auto wrongTopology = saved;
+    wrongTopology.porousTopology.axis = fsi::fluid::GridFaceAxis::Y;
+    expectRejected(
+        [&] { owner.restore(wrongTopology); },
+        "moving porous-flow checkpoint rejects edited topology");
+    const fsi::MovingPorousFlowCaseCheckpoint empty;
+    expectRejected(
+        [&] { owner.restore(empty); },
+        "moving porous-flow checkpoint rejects a missing private payload");
+    check(owner.velocity() == beforeVelocity
+              && owner.pressure() == beforePressure
+              && owner.pressureJumps() == beforeJumps
+              && owner.diagnostics() == beforeDiagnostics
+              && owner.porousTopology() == beforeTopology
+              && owner.acceptedStepCount() == beforeStep
+              && owner.simulationTimeSeconds() == beforeTime
+              && owner.sheetPositionMeters() == beforePosition
+              && owner.topologyRebaseCount() == beforeRebases,
+          "rejected moving porous-flow checkpoints leave state untouched");
+}
+
 } // namespace
 
 int main() {
     testMovingPorousWorker();
+    testCheckpointReplayAndValidation();
     if (failures != 0) {
         std::fprintf(
             stderr,

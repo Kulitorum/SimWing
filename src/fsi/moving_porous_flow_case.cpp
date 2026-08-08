@@ -2,12 +2,33 @@
 
 #include "fluid/planar_porous_sheet.h"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
 namespace simwing::fsi {
+
+struct MovingPorousFlowCaseCheckpoint::Detail {
+    fluid::GridCellCounts cellCounts;
+    fluid::Vector3 lowerMeters;
+    fluid::Vector3 upperMeters;
+    std::size_t scalarSampleCount = 0;
+    std::size_t pressureJumpCount = 0;
+    fluid::MacVelocityField velocityMetersPerSecond;
+    fluid::CellScalarField pressurePascals;
+    fluid::SharpPressureJumpField pressureJumps;
+    fluid::MovingPlanarPorousFlowStrangSspRk2Diagnostics diagnostics;
+    fluid::MovingPorousFaceTopology porousTopology;
+    double sheetPositionMeters = 0.0;
+    double sheetVelocityMetersPerSecond = 0.0;
+    std::uint64_t topologyRebaseCount = 0;
+    std::uint64_t acceptedStepCount = 0;
+    double simulationTimeSeconds = 0.0;
+};
+
 namespace {
 
 constexpr std::uint64_t sheetSurfaceStableId = 100;
@@ -116,6 +137,99 @@ void addGlobalScalar(viewer::DiagnosticFrame& frame,
         name, unit, viewer::FieldAssociation::Global, {value}});
 }
 
+bool validCommittedState(
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::MacVelocityField& velocity,
+    const fluid::CellScalarField& pressure,
+    const fluid::SharpPressureJumpField& pressureJumps,
+    const fluid::MovingPlanarPorousFlowStrangSspRk2Diagnostics& diagnostics,
+    const fluid::MovingPorousFaceTopology& topology,
+    const double sheetPositionMeters,
+    const double sheetVelocityMetersPerSecond,
+    const std::uint64_t topologyRebaseCount,
+    const std::uint64_t acceptedStepCount,
+    const double simulationTimeSeconds,
+    const fluid::PeriodicFlowStrangSspRk2Settings& settings) {
+    if (!velocity.matches(grid) || !pressure.matches(grid)
+        || !pressureJumps.matches(grid)
+        || !fluid::isFinite(velocity) || !fluid::isFinite(pressure)
+        || !std::isfinite(sheetPositionMeters)
+        || sheetVelocityMetersPerSecond
+            != movingPorousFlowSheetVelocityMetersPerSecond
+        || !std::isfinite(simulationTimeSeconds)
+        || simulationTimeSeconds < 0.0
+        || topology.version != fluid::movingPorousFaceTopologyVersion
+        || topology.axis != fluid::GridFaceAxis::X
+        || topology.faceCoordinate >= grid.cellCounts().x
+        || topology.periodicImage < 0) {
+        return false;
+    }
+    const double expectedTime = static_cast<double>(acceptedStepCount)
+        * settings.timeStepSeconds;
+    const double expectedPosition = movingPorousFlowInitialSheetPositionMeters
+        + expectedTime * sheetVelocityMetersPerSecond;
+    if (!std::isfinite(expectedTime) || !std::isfinite(expectedPosition)) {
+        return false;
+    }
+    const double tolerance = 4.0e-14
+        + 8.0 * std::numeric_limits<double>::epsilon()
+            * std::max(1.0, static_cast<double>(acceptedStepCount))
+            * std::max({1.0, std::abs(expectedTime),
+                        std::abs(expectedPosition)});
+    if (std::abs(simulationTimeSeconds - expectedTime) > tolerance
+        || std::abs(sheetPositionMeters - expectedPosition) > tolerance) {
+        return false;
+    }
+    const auto image = static_cast<std::uint64_t>(topology.periodicImage);
+    const auto counts = grid.cellCounts();
+    if (image > (std::numeric_limits<std::uint64_t>::max()
+                 - topology.faceCoordinate) / counts.x) {
+        return false;
+    }
+    const std::uint64_t unwrappedFace = image * counts.x
+        + topology.faceCoordinate;
+    if (unwrappedFace < movingPorousFlowInitialFaceCoordinate
+        || unwrappedFace - movingPorousFlowInitialFaceCoordinate
+            != topologyRebaseCount) {
+        return false;
+    }
+    if (acceptedStepCount == 0) {
+        return topologyRebaseCount == 0
+            && topology.faceCoordinate
+                == movingPorousFlowInitialFaceCoordinate
+            && topology.periodicImage == 0
+            && pressureJumps.empty()
+            && diagnostics
+                == fluid::MovingPlanarPorousFlowStrangSspRk2Diagnostics{}
+            && velocity == fluid::MacVelocityField(grid)
+            && pressure == fluid::CellScalarField(grid);
+    }
+    if (pressureJumps.faceCount() != 2 * counts.y * counts.z
+        || diagnostics.version
+            != fluid::movingPlanarPorousFlowStrangSspRk2Version
+        || !diagnostics.finite || !diagnostics.accepted
+        || !diagnostics.flow.finite || !diagnostics.flow.accepted
+        || diagnostics.secondHalfSheet.topology != topology
+        || diagnostics.firstHalfSheet.surfaceNormalVelocityMetersPerSecond
+            != sheetVelocityMetersPerSecond
+        || diagnostics.secondHalfSheet.surfaceNormalVelocityMetersPerSecond
+            != sheetVelocityMetersPerSecond) {
+        return false;
+    }
+    try {
+        static_cast<void>(fluid::movingPorousCrossingFraction(
+            grid, diagnostics.firstHalfSheet.topology,
+            diagnostics.firstHalfSheet.physicalPlaneCoordinateMeters));
+        static_cast<void>(fluid::movingPorousCrossingFraction(
+            grid, diagnostics.secondHalfSheet.topology,
+            diagnostics.secondHalfSheet.physicalPlaneCoordinateMeters));
+    } catch (const std::exception&) {
+        return false;
+    }
+    return pressureJumps == makeAcceptedJumps(
+        grid, diagnostics.flow.secondHalfPorous, makePump(grid));
+}
+
 } // namespace
 
 MovingPorousFlowCase::MovingPorousFlowCase()
@@ -128,7 +242,7 @@ MovingPorousFlowCase::MovingPorousFlowCase()
       porousTopology_{
           fluid::movingPorousFaceTopologyVersion,
           fluid::GridFaceAxis::X,
-          3,
+          movingPorousFlowInitialFaceCoordinate,
           0,
       } {}
 
@@ -245,6 +359,110 @@ viewer::DiagnosticFrame MovingPorousFlowCase::advance() {
     acceptedStepCount_ = candidateStep;
     simulationTimeSeconds_ = candidateTime;
     return frame;
+}
+
+MovingPorousFlowCaseCheckpoint MovingPorousFlowCase::checkpoint() const {
+    if (!validCommittedState(
+            grid_, velocity_, pressure_, pressureJumps_, diagnostics_,
+            porousTopology_, sheetPositionMeters_,
+            sheetVelocityMetersPerSecond_, topologyRebaseCount_,
+            acceptedStepCount_, simulationTimeSeconds_, flowSettings_)) {
+        throw std::logic_error(
+            "moving porous-flow case cannot checkpoint invalid state");
+    }
+    MovingPorousFlowCaseCheckpoint result;
+    result.cellCounts = grid_.cellCounts();
+    result.lowerMeters = grid_.lowerMeters();
+    result.upperMeters = grid_.upperMeters();
+    result.scalarSampleCount = grid_.cellCount();
+    result.pressureJumpCount = pressureJumps_.faceCount();
+    result.acceptedStepCount = acceptedStepCount_;
+    result.simulationTimeSeconds = simulationTimeSeconds_;
+    result.sheetPositionMeters = sheetPositionMeters_;
+    result.sheetVelocityMetersPerSecond = sheetVelocityMetersPerSecond_;
+    result.topologyRebaseCount = topologyRebaseCount_;
+    result.porousTopology = porousTopology_;
+    result.detail = std::make_shared<
+        MovingPorousFlowCaseCheckpoint::Detail>(
+            MovingPorousFlowCaseCheckpoint::Detail{
+                result.cellCounts,
+                result.lowerMeters,
+                result.upperMeters,
+                result.scalarSampleCount,
+                result.pressureJumpCount,
+                velocity_,
+                pressure_,
+                pressureJumps_,
+                diagnostics_,
+                porousTopology_,
+                sheetPositionMeters_,
+                sheetVelocityMetersPerSecond_,
+                topologyRebaseCount_,
+                acceptedStepCount_,
+                simulationTimeSeconds_,
+            });
+    return result;
+}
+
+void MovingPorousFlowCase::restore(
+    const MovingPorousFlowCaseCheckpoint& checkpointValue) {
+    if (checkpointValue.version
+            != movingPorousFlowCaseCheckpointVersion
+        || checkpointValue.caseDefinitionFingerprint
+            != movingPorousFlowCaseDefinitionFingerprint
+        || !checkpointValue.detail) {
+        throw std::invalid_argument(
+            "moving porous-flow checkpoint metadata is invalid");
+    }
+    const auto& detail = *checkpointValue.detail;
+    if (checkpointValue.cellCounts != detail.cellCounts
+        || checkpointValue.lowerMeters != detail.lowerMeters
+        || checkpointValue.upperMeters != detail.upperMeters
+        || checkpointValue.scalarSampleCount != detail.scalarSampleCount
+        || checkpointValue.pressureJumpCount != detail.pressureJumpCount
+        || checkpointValue.acceptedStepCount != detail.acceptedStepCount
+        || checkpointValue.simulationTimeSeconds
+            != detail.simulationTimeSeconds
+        || checkpointValue.sheetPositionMeters
+            != detail.sheetPositionMeters
+        || checkpointValue.sheetVelocityMetersPerSecond
+            != detail.sheetVelocityMetersPerSecond
+        || checkpointValue.topologyRebaseCount
+            != detail.topologyRebaseCount
+        || checkpointValue.porousTopology != detail.porousTopology
+        || checkpointValue.cellCounts != grid_.cellCounts()
+        || checkpointValue.lowerMeters != grid_.lowerMeters()
+        || checkpointValue.upperMeters != grid_.upperMeters()
+        || checkpointValue.scalarSampleCount != grid_.cellCount()
+        || checkpointValue.pressureJumpCount
+            != detail.pressureJumps.faceCount()
+        || !validCommittedState(
+            grid_, detail.velocityMetersPerSecond,
+            detail.pressurePascals, detail.pressureJumps,
+            detail.diagnostics, detail.porousTopology,
+            detail.sheetPositionMeters,
+            detail.sheetVelocityMetersPerSecond,
+            detail.topologyRebaseCount, detail.acceptedStepCount,
+            detail.simulationTimeSeconds, flowSettings_)) {
+        throw std::invalid_argument(
+            "moving porous-flow checkpoint state is invalid");
+    }
+
+    auto candidateVelocity = detail.velocityMetersPerSecond;
+    auto candidatePressure = detail.pressurePascals;
+    auto candidateJumps = detail.pressureJumps;
+    auto candidateDiagnostics = detail.diagnostics;
+    velocity_ = std::move(candidateVelocity);
+    pressure_ = std::move(candidatePressure);
+    pressureJumps_ = std::move(candidateJumps);
+    diagnostics_ = std::move(candidateDiagnostics);
+    porousTopology_ = checkpointValue.porousTopology;
+    sheetPositionMeters_ = checkpointValue.sheetPositionMeters;
+    sheetVelocityMetersPerSecond_ =
+        checkpointValue.sheetVelocityMetersPerSecond;
+    topologyRebaseCount_ = checkpointValue.topologyRebaseCount;
+    acceptedStepCount_ = checkpointValue.acceptedStepCount;
+    simulationTimeSeconds_ = checkpointValue.simulationTimeSeconds;
 }
 
 const fluid::PeriodicCartesianGrid&

@@ -219,7 +219,10 @@ and continues through a second periodic wrap without resetting the fluid. Each
 frame owns the final sheet and pump planes plus both stage epochs, kinematic
 residual, porous loss, jump work, and flow conservation residual. The Qt-free
 `--case moving-porous-flow` worker publishes accepted frames to a completed trace
-headlessly; the harness is not yet coupled structure.
+headlessly. Its immutable in-memory checkpoint owns the fluid fields, accepted
+jumps and diagnostics, sheet kinematics, and unwrapped topology epoch, with
+bit-identical replay at the initial state and through the second wrap.
+Persistent restart and coupled structure remain open.
 The nonlinear porous iteration can also use the disconnected moving-interface
 projector as its inner solve. A translating two-region slab retains exact wall
 velocities while endpoint or midpoint porous slip closes on unconstrained
