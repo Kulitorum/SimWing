@@ -163,10 +163,12 @@ The first viewer renders:
 - selectable clipping planes, camera presets, wireframe, normals, and stable
   entity IDs.
 
-As CFD fields arrive, add AMR blocks, velocity glyphs/streamlines, pressure and
-vorticity slices, divergence, interface pressure jump, porous flux, and wake
-tracers. Field extraction is explicit and rate-limited; the default stream is a
-surface/diagnostic subset rather than a copy of the whole volume.
+The first periodic CFD subset now renders scalar-coloured cell-centre points
+and bounded selectable velocity glyphs. As later fields arrive, add AMR blocks,
+streamlines, pressure and vorticity slices, divergence, interface pressure jump,
+porous flux, and wake tracers. Field extraction is explicit and rate-limited;
+the default stream is a surface/diagnostic subset rather than a copy of the
+whole volume.
 
 Support recording the same frame stream to a replayable trace. A visual anomaly
 can then be inspected frame-by-frame, shared without rerunning an expensive
@@ -407,6 +409,7 @@ src/gui/
 src/viewer/
     viewer_protocol.*       immutable frame/control schema and trace files
     fluid_frame.*           owning accepted MAC-to-cell diagnostic adapter
+    vector_glyphs.*         bounded deterministic vertex-vector arrows
     viewer_window.*         standalone Qt/OpenGL diagnostics
     viewer_layers.*         structure, interface, grid, field, and HUD layers
 
@@ -421,7 +424,7 @@ Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
 `simwing_open_piston_case`, `simwing_fluid_frame`,
-`simwing_periodic_flow_case`, `simwing-fsi`,
+`simwing_periodic_flow_case`, `simwing_viewer_geometry`, `simwing-fsi`,
 `simwing_viewer_protocol`,
 `simwing-viewer`, and focused test executables. Keep Qt out of the numerical
 targets; only the viewer/UI targets link it. Backend interfaces must not be so
@@ -438,8 +441,11 @@ growing-trace follower; it is a pipeline harness, not a fluid or flight model.
 The same worker can now select a smooth periodic Taylor-Green CFD case. Its
 owning adapter copies accepted cell pressure and averaged MAC velocity into
 stable cell-centre points, which the unchanged frame protocol carries to the
-viewer for scalar-coloured point rendering. This is inspectable verification
-flow, not a whole-wing CFD claim.
+viewer for scalar-coloured point rendering. A separate Qt-free geometry target
+turns selected vertex vectors into normalized arrows with a deterministic glyph
+budget, allowing pressure or speed colouring and velocity direction to remain
+visible together. This is inspectable verification flow, not a whole-wing CFD
+claim.
 The exact-model capture now exports validated scene-v2.1 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical
@@ -732,6 +738,10 @@ per cell plus pressure, speed, and velocity fields and remains byte-identical
 after the solver advances again. A completed five-frame trace must replay
 consecutive accepted steps, and the headless CLI must write a completed trace
 without linking or launching Qt.
+The Qt-free viewer-geometry regression separately requires exact arrow shaft
+direction and relative magnitude, one shaft plus two arrowhead segments per
+retained nonzero vector, dimensional automatic scaling, owning deterministic
+output, finite derived geometry, and bounded integer-stride sampling.
 The
 static 250 Pa slab must retain its two pressure levels within `2e-12 Pa` and
 keep spurious velocity below `2e-13 m/s`; a jump placed on periodic face zero

@@ -87,8 +87,11 @@ on an `18 x 18 x 2` Galilean-shifted Taylor-Green field. Every accepted state
 is copied into an immutable trace frame with one cell-centre point per cell,
 exact cell pressure, averaged MAC velocity, speed, and conservation ledgers.
 The standalone viewer renders those otherwise-unconnected points with selectable
-scalar colouring. This makes the verification flow inspectable without making
-it a cut-cell, canopy, or aerodynamic-truth case.
+scalar colouring. Its independent vector selector adds normalized velocity
+arrows while retaining the chosen scalar colour field. Arrow construction is
+Qt-free, owning, deterministically bounded for large fields, and has no path
+back into solver data. This makes the verification flow inspectable without
+making it a cut-cell, canopy, or aerodynamic-truth case.
 Both the projected transport and Strang flow paths select donor-cell or limited
 monotonized-central reconstruction explicitly; donor-cell remains the default.
 The original single-stage transport and Euler/SSPRK2 viscosity modes compose

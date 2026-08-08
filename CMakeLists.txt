@@ -276,6 +276,17 @@ target_link_libraries(simwing_structure_frame PUBLIC
     simwing_viewer_protocol
 )
 
+add_library(simwing_viewer_geometry STATIC
+    src/viewer/vector_glyphs.cpp
+    src/viewer/vector_glyphs.h
+)
+target_include_directories(simwing_viewer_geometry PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/viewer"
+)
+target_link_libraries(simwing_viewer_geometry PUBLIC
+    simwing_viewer_protocol
+)
+
 add_library(simwing_canonical_case STATIC
     src/fsi/canonical_case.cpp
     src/fsi/canonical_case.h
@@ -651,6 +662,12 @@ add_executable(simwing-viewer-protocol-test
 target_link_libraries(simwing-viewer-protocol-test
     PRIVATE simwing_viewer_protocol)
 
+add_executable(simwing-vector-glyphs-test
+    tests/simwing_vector_glyphs_test.cpp
+)
+target_link_libraries(simwing-vector-glyphs-test
+    PRIVATE simwing_viewer_geometry)
+
 add_executable(simwing-structure-frame-test
     tests/simwing_structure_frame_test.cpp
 )
@@ -791,7 +808,7 @@ target_include_directories(simwing-viewer PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src/viewer"
 )
 target_link_libraries(simwing-viewer PRIVATE
-    simwing_viewer_protocol
+    simwing_viewer_geometry
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
@@ -917,6 +934,7 @@ set_target_properties(
     simwing-structure-test
     simwing-scene-structure-test
     simwing-viewer-protocol-test
+    simwing-vector-glyphs-test
     simwing-structure-frame-test
     simwing-fsi-worker-test
     simwing-periodic-flow-case-test
@@ -971,6 +989,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-structure-test
         simwing-scene-structure-test
         simwing-viewer-protocol-test
+        simwing-vector-glyphs-test
         simwing-structure-frame-test
         simwing-fsi-worker-test
         simwing-periodic-flow-case-test
@@ -1113,6 +1132,7 @@ add_test(NAME simwing_model_scene_real_export
 add_test(NAME simwing_structure COMMAND simwing-structure-test)
 add_test(NAME simwing_scene_structure COMMAND simwing-scene-structure-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
+add_test(NAME simwing_vector_glyphs COMMAND simwing-vector-glyphs-test)
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
 add_test(NAME simwing_fsi_worker COMMAND simwing-fsi-worker-test)
 add_test(NAME simwing_periodic_flow_case

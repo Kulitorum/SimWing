@@ -247,6 +247,9 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
 - `simwing_periodic_flow_case`: Qt-free Taylor-Green verification worker that
   advances the bounded Strang/SSPRK2 subcycler and publishes accepted fluid
   frames. It is not a canopy, cut-cell, or aerodynamic-truth case.
+- `simwing_viewer_geometry`: Qt-free deterministic diagnostic-vector glyph
+  builder. It owns bounded arrow-segment output and links only the viewer
+  protocol; the Qt/OpenGL viewer only uploads the resulting geometry.
 - `simwing_viewer_protocol`: Qt-free immutable diagnostic-frame and trace
   protocol shared by future workers and the standalone viewer.
 - `playground_contact`: Qt-free bounded Playground cloth-contact features,
@@ -563,7 +566,12 @@ makes this a certified aerodynamic solver.
 - `src/viewer/viewer_window.{h,cpp}` and `tools/simwing_viewer_main.cpp` form
   the separate Qt/OpenGL trace viewer. Replay and growing-trace follow remain
   bounded and asynchronous. Unreferenced diagnostic vertices render as
-  scalar-coloured points without changing the trace protocol.
+  scalar-coloured points without changing the trace protocol. Vertex vector
+  fields have an independent selector and render through bounded arrow glyphs,
+  so scalar colouring and vector direction can be inspected together.
+- `src/viewer/vector_glyphs.{h,cpp}` builds those arrows outside Qt/OpenGL.
+  It normalizes length by the field maximum, derives automatic scale from the
+  dimensional point spacing, and caps large fields with a deterministic stride.
 - `src/fsi/canonical_case.{h,cpp}` and `tools/simwing_fsi_main.cpp` are the
   first end-to-end worker slice. The case is an analytic structural harness,
   not aerodynamic truth; it writes only accepted steps and launches the
@@ -753,7 +761,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 59 configured tests on Windows. The Fortran-reference test is
+There are 60 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 
@@ -768,7 +776,7 @@ paths that release CI deliberately excludes from its offscreen test command.
 | flat capture/nesting/PDF/DXF | `flatparts_export`; run `nesting-bench` when placement quality/performance can move |
 | Playground body/pressure/cells/material | `playground_pressure_solve`, `playground_cells`, `playground_metrics`, `playground_material`, `softwing_material`, and the deterministic bench guards below |
 | Playground contact | `playground_contact`, `playground_contact_integration`, plus a relevant bench/GUI scenario |
-| SimWing scene/structure/viewer foundations | `simwing_scene`, `simwing_model_scene_export`, `simwing_model_scene_real_export`, `simwing_structure`, `simwing_scene_structure`, `simwing_viewer_protocol`, `simwing_structure_frame`, plus `softwing_material`/`softwing_cell_volume` when core primitives change and `softwing_suspension_checkpoint` for payload/suspension state |
+| SimWing scene/structure/viewer foundations | `simwing_scene`, `simwing_model_scene_export`, `simwing_model_scene_real_export`, `simwing_structure`, `simwing_scene_structure`, `simwing_viewer_protocol`, `simwing_vector_glyphs`, `simwing_structure_frame`, plus `softwing_material`/`softwing_cell_volume` when core primitives change and `softwing_suspension_checkpoint` for payload/suspension state; preserve owning deterministic vector geometry, relative magnitude/direction, dimensional auto-scaling, and bounded deterministic sampling |
 | SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`, `simwing_fluid_moving_interface`, `simwing_fluid_control_volume`, `simwing_fluid_cut_surface`, `simwing_fluid_checkpoint`, `simwing_fluid_diffusion`, `simwing_fluid_advection`, `simwing_fluid_variable_advection`, `simwing_fluid_projected_advection`, `simwing_fluid_evolution`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing projection/diffusion/committed-transport energy, transactional failure and composed all-stage rollback, deterministic replay, Taylor-Green invariance, manufactured second-order pressure and viscous spatial-eigenvalue convergence, exact zero/uniform/Nyquist viscous modes and the `0.5` per-stage stability boundary, exact Euler-stage SSPRK2 composition and observed second-order viscous temporal convergence, bounded donor-cell uniform transport with exact CFL-one shift and divergence commutation, exact uniform delegation from the variable path, divergence-free staggered control-volume flux closure, safe nonlinear self-advection aliasing, observed first-order uniform and variable-shear refinement, exact limited-MC SSPRK2 stage composition, discontinuous-pulse bounds, confined intermediate Euler energy exception, and near-second-order smooth-wave L1 refinement, exact four-stage projected nonlinear SSPRK2 composition with donor/MC selection, repeated stage eligibility, observed fixed-grid second-order nonlinear temporal refinement, translating Taylor-Green donor/MC spatial refinement with time error suppressed by `dt` proportional to `h^2`, exact symmetric half-viscosity/projected-transport/half-viscosity Strang composition with donor/MC selection, closed sub-integrator energy ledger, full-flow rollback and observed second-order temporal refinement, exact viscous pre-sizing and CFL/limited-bound equal-step subcycling retries, manual final-schedule equivalence, bounded substep-limit rollback, and fatal projection failure without retry, exact standalone-versus-composed uniform/nonlinear and Euler/SSPRK2 stage equivalence, stable region/interface orientation, static sharp-jump balance, exact X/Y/Z face constraints, separate adjacent-pressure and complete direct-enforcement reaction ledgers, canonical face-tile geometry/traction ledgers, per-region compatibility/gauges, analytic translating-slab pressure impulse/work, open-piston partial-cell/surface-sweep/opening-flux GCL closure, exact X/Y/Z one-plane rebase volume continuity, accepted physical cut-plane area/force/moment/power, macro-step-average endpoint resampling, periodic-image closure, and immutable grid/topology-bound accepted-state checkpoint replay |
 | SimWing periodic fluid worker/snapshots | `simwing_periodic_flow_case`, `simwing_fsi_periodic_flow_headless`, `simwing_viewer_protocol`; preserve accepted-only publishing, owning cell-centre pressure/speed/velocity fields, stable IDs, bit-identical deterministic replay, completed traces, and Qt-free headless execution |
 | SimWing conservative transfer | `simwing_transfer`; preserve stable topology/Structure binding, analytic uniform and barycentric-quadrature area/force/moment, rigid translation/rotation power, independent ledger closure, additive nodal load application, and rejection before mutation for foreign results/structures |

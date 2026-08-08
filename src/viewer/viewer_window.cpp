@@ -1,5 +1,6 @@
 #include "viewer_window.h"
 
+#include "vector_glyphs.h"
 #include "viewer_protocol.h"
 
 #include <QAction>
@@ -261,6 +262,12 @@ public:
         update();
     }
 
+    void setVectorField(QString name) {
+        vectorFieldName_ = std::move(name);
+        geometryDirty_ = true;
+        update();
+    }
+
     void setMessage(QString message) {
         message_ = std::move(message);
         update();
@@ -493,6 +500,21 @@ private:
         return &*found;
     }
 
+    const VectorField* selectedVectorField() const {
+        if (frame_ == nullptr || vectorFieldName_.isEmpty()) {
+            return nullptr;
+        }
+        const std::string requested =
+            vectorFieldName_.toUtf8().toStdString();
+        const auto found = std::find_if(
+            frame_->vectorFields.begin(), frame_->vectorFields.end(),
+            [&](const VectorField& field) {
+                return field.name == requested
+                    && field.association == FieldAssociation::Vertex;
+            });
+        return found == frame_->vectorFields.end() ? nullptr : &*found;
+    }
+
     void rebuildGeometry() {
         geometryDirty_ = false;
         vertices_.clear();
@@ -504,6 +526,9 @@ private:
         fieldMinimum_ = 0.0;
         fieldMaximum_ = 0.0;
         haveFieldRange_ = false;
+        vectorMaximum_ = 0.0;
+        vectorGlyphCount_ = 0;
+        haveVectorField_ = false;
         if (frame_ == nullptr) {
             return;
         }
@@ -516,9 +541,18 @@ private:
             fieldMaximum_ = maximum;
             haveFieldRange_ = true;
         }
+        VectorGlyphGeometry glyphs;
+        if (const VectorField* vectorField = selectedVectorField()) {
+            glyphs = buildVertexVectorGlyphs(
+                frame_->vertices, *vectorField);
+            vectorMaximum_ = glyphs.maximumVectorMagnitude;
+            vectorGlyphCount_ = glyphs.glyphCount;
+            haveVectorField_ = true;
+        }
 
         vertices_.reserve(frame_->triangles.size() * 3
                           + frame_->lines.size() * 2
+                          + glyphs.segments.size() * 2
                           + frame_->vertices.size()
                           + frame_->contacts.size() + frame_->sealing.size());
         std::vector<bool> referencedVertices(frame_->vertices.size(), false);
@@ -582,6 +616,20 @@ private:
                          {}, colour);
             appendVertex(vertices_, frame_->vertices[line.vertex1].positionMetres,
                          {}, colour);
+        }
+        for (const VectorGlyphSegment& segment : glyphs.segments) {
+            QVector3D colour(0.98F, 0.82F, 0.25F);
+            if (field != nullptr) {
+                if (field->association == FieldAssociation::Global) {
+                    colour = colourMap(field->values[0], minimum, maximum);
+                } else if (field->association == FieldAssociation::Vertex) {
+                    colour = colourMap(
+                        field->values[segment.sourceVertexIndex],
+                        minimum, maximum);
+                }
+            }
+            appendVertex(vertices_, segment.startMetres, {}, colour);
+            appendVertex(vertices_, segment.endMetres, {}, colour);
         }
         lineCount_ = static_cast<GLsizei>(vertices_.size()) - lineStart_;
 
@@ -698,6 +746,12 @@ private:
                              .arg(fieldMinimum_, 0, 'g', 5)
                              .arg(fieldMaximum_, 0, 'g', 5);
             }
+            if (haveVectorField_) {
+                field += QStringLiteral("   vectors %1 (%2, max %3)")
+                             .arg(vectorFieldName_)
+                             .arg(vectorGlyphCount_)
+                             .arg(vectorMaximum_, 0, 'g', 5);
+            }
             painter.drawText(22, y, field);
         } else {
             painter.drawText(22, y, QStringLiteral("Waiting for a diagnostic frame..."));
@@ -719,6 +773,7 @@ private:
 
     std::shared_ptr<const DiagnosticFrame> frame_;
     QString fieldName_;
+    QString vectorFieldName_;
     QString message_;
     QString glError_;
     bool geometryDirty_ = true;
@@ -731,6 +786,9 @@ private:
     double fieldMinimum_ = 0.0;
     double fieldMaximum_ = 0.0;
     bool haveFieldRange_ = false;
+    double vectorMaximum_ = 0.0;
+    std::uint32_t vectorGlyphCount_ = 0;
+    bool haveVectorField_ = false;
 
     std::unique_ptr<QOpenGLShaderProgram> program_;
     QOpenGLVertexArrayObject vao_;
@@ -801,6 +859,11 @@ public:
         fieldCombo_->addItem(QStringLiteral("Plain"), QString());
         fieldCombo_->setMinimumContentsLength(20);
         toolbar->addWidget(fieldCombo_);
+        toolbar->addWidget(new QLabel(QStringLiteral(" Vectors: "), toolbar));
+        vectorCombo_ = new QComboBox(toolbar);
+        vectorCombo_->addItem(QStringLiteral("None"), QString());
+        vectorCombo_->setMinimumContentsLength(15);
+        toolbar->addWidget(vectorCombo_);
 
         QObject::connect(playAction_, &QAction::triggered, owner_, [this] {
             playing_ = !playing_;
@@ -830,6 +893,13 @@ public:
             desiredField_ = fieldCombo_->itemData(index).toString();
             view_->setField(desiredField_);
         });
+        QObject::connect(
+            vectorCombo_, &QComboBox::currentIndexChanged, owner_,
+            [this](int index) {
+                desiredVectorField_ =
+                    vectorCombo_->itemData(index).toString();
+                view_->setVectorField(desiredVectorField_);
+            });
 
         timer_.setInterval(16);
         QObject::connect(&timer_, &QTimer::timeout, owner_, [this] { tick(); });
@@ -1038,31 +1108,67 @@ private:
             same = fieldCombo_->itemData(i + 1).toString()
                    == fromUtf8(fields[i]->name);
         }
-        if (same) {
-            return;
+        if (!same) {
+            fieldCombo_->blockSignals(true);
+            fieldCombo_->clear();
+            fieldCombo_->addItem(QStringLiteral("Plain"), QString());
+            int desiredIndex = 0;
+            for (std::size_t i = 0; i < fields.size(); ++i) {
+                const ScalarField& field = *fields[i];
+                const QString fieldName = fromUtf8(field.name);
+                QString label = fieldName;
+                if (!field.unit.empty()) {
+                    label += QStringLiteral(" [%1]").arg(fromUtf8(field.unit));
+                }
+                fieldCombo_->addItem(label, fieldName);
+                if (fieldName == desiredField_) {
+                    desiredIndex = static_cast<int>(i + 1);
+                }
+            }
+            fieldCombo_->setCurrentIndex(desiredIndex);
+            fieldCombo_->blockSignals(false);
+            if (desiredIndex == 0 && !desiredField_.isEmpty()) {
+                desiredField_.clear();
+                view_->setField({});
+            }
         }
 
-        fieldCombo_->blockSignals(true);
-        fieldCombo_->clear();
-        fieldCombo_->addItem(QStringLiteral("Plain"), QString());
-        int desiredIndex = 0;
-        for (std::size_t i = 0; i < fields.size(); ++i) {
-            const ScalarField& field = *fields[i];
-            const QString fieldName = fromUtf8(field.name);
-            QString label = fieldName;
-            if (!field.unit.empty()) {
-                label += QStringLiteral(" [%1]").arg(fromUtf8(field.unit));
-            }
-            fieldCombo_->addItem(label, fieldName);
-            if (fieldName == desiredField_) {
-                desiredIndex = static_cast<int>(i + 1);
+        std::vector<const VectorField*> vectorFields;
+        for (const VectorField& field : currentFrame_->vectorFields) {
+            if (field.association == FieldAssociation::Vertex) {
+                vectorFields.push_back(&field);
             }
         }
-        fieldCombo_->setCurrentIndex(desiredIndex);
-        fieldCombo_->blockSignals(false);
-        if (desiredIndex == 0 && !desiredField_.isEmpty()) {
-            desiredField_.clear();
-            view_->setField({});
+        same = vectorCombo_->count()
+            == static_cast<int>(vectorFields.size() + 1);
+        for (int i = 0;
+             same && i < static_cast<int>(vectorFields.size()); ++i) {
+            same = vectorCombo_->itemData(i + 1).toString()
+                == fromUtf8(vectorFields[i]->name);
+        }
+        if (!same) {
+            vectorCombo_->blockSignals(true);
+            vectorCombo_->clear();
+            vectorCombo_->addItem(QStringLiteral("None"), QString());
+            int desiredIndex = 0;
+            for (std::size_t i = 0; i < vectorFields.size(); ++i) {
+                const VectorField& field = *vectorFields[i];
+                const QString fieldName = fromUtf8(field.name);
+                QString label = fieldName;
+                if (!field.unit.empty()) {
+                    label += QStringLiteral(" [%1]").arg(fromUtf8(field.unit));
+                }
+                vectorCombo_->addItem(label, fieldName);
+                if (fieldName == desiredVectorField_) {
+                    desiredIndex = static_cast<int>(i + 1);
+                }
+            }
+            vectorCombo_->setCurrentIndex(desiredIndex);
+            vectorCombo_->blockSignals(false);
+            if (desiredIndex == 0 && !desiredVectorField_.isEmpty()) {
+                desiredVectorField_.clear();
+                view_->setVectorField({});
+            }
         }
     }
 
@@ -1078,11 +1184,13 @@ private:
     QAction* restartAction_ = nullptr;
     QAction* fitAction_ = nullptr;
     QComboBox* fieldCombo_ = nullptr;
+    QComboBox* vectorCombo_ = nullptr;
     QTimer timer_;
     QElapsedTimer playbackClock_;
     QString traceFile_;
     bool follow_ = false;
     QString desiredField_;
+    QString desiredVectorField_;
     TraceHeader traceHeader_;
     std::unique_ptr<TraceStream> stream_;
     std::shared_ptr<const DiagnosticFrame> currentFrame_;
