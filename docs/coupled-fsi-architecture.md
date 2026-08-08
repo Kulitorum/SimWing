@@ -390,7 +390,7 @@ src/fsi/
         advection.*         bounded donor/limited-MC MAC transport
         projected_advection.* projected nonlinear SSPRK2 transport
         diffusion.*         bounded periodic MAC viscosity verification
-        evolution.*         transactional selectable fluid macro-step
+        evolution.*         transactional flow steps and subcycling
         projection.*
         interface_jump.*
         moving_interface.*  grid-face constraints and region topology
@@ -510,7 +510,16 @@ Every sub-integrator works on the same private candidate, their individual
 energy losses sum to the full-step loss, and pressure/velocity commit only
 after the aggregate momentum, energy, and continuity ledger passes. Exact
 manual composition, rollback at the viscous/transport/projection boundaries,
-and fixed-grid refinement verify the Strang path. The original composed
+and fixed-grid refinement verify the Strang path. A bounded outer wrapper now
+pre-sizes equal Strang substeps from the explicit half-viscosity limit. An
+explicit outgoing-CFL or limited-MC maximum-principle rejection restarts the
+whole private interval with a finer equal schedule; projection and ledger
+failures remain fatal. Diagnostics retain the final schedule and the last retry
+trigger, the configured bound cannot exceed 4096 substeps, and caller pressure
+and velocity commit only after an independent outer momentum/energy ledger.
+Exact two-step viscous composition, CFL/limiter retry equivalence to the final
+manual schedule, bounded-limit rollback, and projection-failure non-retry are
+regressed. The original composed
 periodic macro-step still selects a single-stage transport mode and either
 Euler or SSPRK2 viscosity, then runs the zero-mean projection on
 private candidates. Velocity and pressure commit together only after every
@@ -679,7 +688,7 @@ divergence-free variable-flow velocity transport, nonlinear self-advection,
 pressure-projected second-order temporal transport, Euler and second-order
 SSPRK2 laminar velocity diffusion, their
 transactional selectable composed macro-step, the symmetric second-order
-temporal Strang flow path, pressure
+temporal Strang flow path and bounded transactional subcycling, pressure
 projection, and fixed-topology face-aligned moving
 constraints, plus the first open planar one-partial-cell control-volume
 operator, its exact next-plane topology rebase, and the bounded physical
@@ -704,7 +713,11 @@ doublings, projected translating-Taylor-Green donor L1 ratios in `[1.7, 2.2]`
 and limited-MC ratios in `[3.0, 5.0]` across 16/32/64 grids with `dt`
 proportional to `h^2`, exact bounded CFL-one translation, and periodic
 component-momentum sums preserved within `5e-14` in the projection mixed-mode
-case; viscous physical-momentum residual stays below `2e-12 N*s`. The
+case; viscous physical-momentum residual stays below `2e-12 N*s`. Subcycling
+must pre-size the viscous canonical to exactly two equal steps, reproduce that
+manual schedule bit-for-bit, restart a rejected nonlinear CFL/limiter attempt
+to another exact equal-step schedule, and roll back without retry on projection
+failure or when the configured substep bound is exhausted. The
 static 250 Pa slab must retain its two pressure levels within `2e-12 Pa` and
 keep spurious velocity below `2e-13 m/s`; a jump placed on periodic face zero
 has separate `1e-12 Pa` and `1e-13 m/s` budgets. These tolerances apply to the

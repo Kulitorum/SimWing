@@ -19,6 +19,8 @@ using simwing::fsi::fluid::PeriodicFlowFailureStage;
 using simwing::fsi::fluid::PeriodicFlowSettings;
 using simwing::fsi::fluid::PeriodicFlowStrangFailureStage;
 using simwing::fsi::fluid::PeriodicFlowStrangSspRk2Settings;
+using simwing::fsi::fluid::PeriodicFlowStrangSubcyclingFailureStage;
+using simwing::fsi::fluid::PeriodicFlowStrangSubcyclingSettings;
 using simwing::fsi::fluid::PeriodicMacDiffusionSettings;
 using simwing::fsi::fluid::ProjectedMacAdvectionSspRk2Settings;
 using simwing::fsi::fluid::ProjectionSettings;
@@ -27,6 +29,7 @@ using simwing::fsi::fluid::VariableMacAdvectionSettings;
 using simwing::fsi::fluid::VariableMacReconstruction;
 using simwing::fsi::fluid::advancePeriodicFlow;
 using simwing::fsi::fluid::advancePeriodicFlowStrangSspRk2;
+using simwing::fsi::fluid::advancePeriodicFlowStrangSspRk2Subcycled;
 using simwing::fsi::fluid::advectVelocityProjectedSspRk2;
 using simwing::fsi::fluid::advectVelocityByMacFlow;
 using simwing::fsi::fluid::advectVelocityByUniformFlow;
@@ -505,6 +508,176 @@ void testStrangExactCompositionAndDeterminism() {
           "Strang composition: uniform flow is a bit-exact no-op");
 }
 
+void testStrangSubcyclingExactComposition() {
+    const double twoPi = 2.0 * std::numbers::pi;
+    const PeriodicCartesianGrid grid(
+        {12, 10, 2}, {}, {twoPi, twoPi, 1.0});
+    const auto originalVelocity = vorticalVelocity(grid);
+    const CellScalarField originalPressure(grid);
+    PeriodicFlowStrangSubcyclingSettings subcyclingSettings;
+    subcyclingSettings.flow = strangSettings();
+    subcyclingSettings.flow.kinematicViscositySquareMetersPerSecond = 1.2;
+    subcyclingSettings.flow.timeStepSeconds = 0.1;
+    subcyclingSettings.maximumSubsteps = 8;
+
+    auto expectedVelocity = originalVelocity;
+    auto expectedPressure = originalPressure;
+    auto manualSettings = subcyclingSettings.flow;
+    manualSettings.timeStepSeconds = 0.05;
+    const auto expectedFirst = advancePeriodicFlowStrangSspRk2(
+        grid, expectedVelocity, expectedPressure, manualSettings);
+    const auto expectedSecond = advancePeriodicFlowStrangSspRk2(
+        grid, expectedVelocity, expectedPressure, manualSettings);
+
+    auto firstVelocity = originalVelocity;
+    auto secondVelocity = originalVelocity;
+    auto firstPressure = originalPressure;
+    auto secondPressure = originalPressure;
+    const auto first = advancePeriodicFlowStrangSspRk2Subcycled(
+        grid, firstVelocity, firstPressure, subcyclingSettings);
+    const auto second = advancePeriodicFlowStrangSspRk2Subcycled(
+        grid, secondVelocity, secondPressure, subcyclingSettings);
+    check(expectedFirst.accepted && expectedSecond.accepted
+              && first.accepted
+              && first.failureStage
+                  == PeriodicFlowStrangSubcyclingFailureStage::None
+              && first.plannedSubstepCount == 2
+              && first.completedSubstepCount == 2
+              && first.stabilityRetryCount == 0
+              && first.substepSeconds == 0.05
+              && first.substeps.size() == 2
+              && first.substeps[0] == expectedFirst
+              && first.substeps[1] == expectedSecond
+              && firstVelocity == expectedVelocity
+              && firstPressure == expectedPressure,
+          "Strang subcycling: viscosity sizing equals two manual split steps exactly");
+    check(first == second && firstVelocity == secondVelocity
+              && firstPressure == secondPressure,
+          "Strang subcycling: identical outer intervals replay bit-for-bit");
+    check(first.maximumObservedDiffusionNumber <= 0.5
+              && first.momentumResidualNormNewtonSeconds < 4.0e-12
+              && first.kineticEnergyAfterJoules
+                  <= first.kineticEnergyBeforeJoules
+              && first.finalDivergenceL2PerSecond < 2.0e-10,
+          "Strang subcycling: aggregate stability and conservation ledgers close");
+}
+
+void testStrangSubcyclingStabilityRetryAndRollback() {
+    const double twoPi = 2.0 * std::numbers::pi;
+    const PeriodicCartesianGrid grid(
+        {12, 12, 2}, {}, {twoPi, twoPi, 1.0});
+    const auto originalVelocity = vorticalVelocity(grid);
+    const CellScalarField originalPressure(grid, 0.125);
+    PeriodicFlowStrangSubcyclingSettings retrySettings;
+    retrySettings.flow = strangSettings();
+    retrySettings.flow.kinematicViscositySquareMetersPerSecond = 0.0;
+    retrySettings.flow.timeStepSeconds = 1.0;
+    retrySettings.maximumSubsteps = 16;
+
+    auto velocity = originalVelocity;
+    auto pressure = originalPressure;
+    const auto retried = advancePeriodicFlowStrangSspRk2Subcycled(
+        grid, velocity, pressure, retrySettings);
+    auto replayVelocity = originalVelocity;
+    auto replayPressure = originalPressure;
+    const auto replayed = advancePeriodicFlowStrangSspRk2Subcycled(
+        grid, replayVelocity, replayPressure, retrySettings);
+    if (!(retried.accepted && retried.stabilityRetryCount > 0
+          && retried.plannedSubstepCount > 1)) {
+        std::fprintf(
+            stderr,
+            "subcycling retry: accepted=%d stage=%u retries=%zu "
+            "planned=%zu completed=%zu maxCfl=%.17g failed=%u "
+            "nested=%u finite=%d currentCfl=%.17g stable=%d "
+            "bounded=%d div=%d momentum=%.17g energy=%d\n",
+            retried.accepted ? 1 : 0,
+            static_cast<unsigned int>(retried.failureStage),
+            retried.stabilityRetryCount,
+            retried.plannedSubstepCount,
+            retried.completedSubstepCount,
+            retried.maximumObservedOutgoingCourantNumber,
+            static_cast<unsigned int>(retried.failedSubstep.failureStage),
+            static_cast<unsigned int>(
+                retried.failedSubstep.projectedAdvection.failureStage),
+            retried.finite ? 1 : 0,
+            retried.failedSubstep.projectedAdvection.firstAdvection
+                .maximumLocalOutgoingCourantNumber,
+            retried.failedSubstep.projectedAdvection.firstAdvection.stable
+                ? 1 : 0,
+            retried.failedSubstep.projectedAdvection.firstAdvection.bounded
+                ? 1 : 0,
+            retried.failedSubstep.projectedAdvection.firstAdvection
+                .divergenceCompatible ? 1 : 0,
+            retried.failedSubstep.projectedAdvection.firstAdvection
+                .momentumResidualNormNewtonSeconds,
+            retried.failedSubstep.projectedAdvection.firstAdvection
+                .energyNonIncreasing ? 1 : 0);
+    }
+    check(retried.accepted && retried.stabilityRetryCount > 0
+              && retried.plannedSubstepCount > 1
+              && retried.completedSubstepCount
+                  == retried.plannedSubstepCount
+              && retried.maximumObservedOutgoingCourantNumber > 1.0
+              && retried.failedSubstep.failureStage
+                  == PeriodicFlowStrangFailureStage::ProjectedAdvection,
+          "Strang subcycling: an unstable CFL attempt restarts at a safe subdivision");
+    check(retried == replayed && velocity == replayVelocity
+              && pressure == replayPressure,
+          "Strang subcycling: the stability retry replays bit-for-bit");
+    auto expectedVelocity = originalVelocity;
+    auto expectedPressure = originalPressure;
+    auto manualSettings = retrySettings.flow;
+    bool manualAccepted = retried.accepted
+        && retried.plannedSubstepCount != 0
+        && retried.substeps.size() == retried.plannedSubstepCount;
+    if (manualAccepted) {
+        manualSettings.timeStepSeconds = retrySettings.flow.timeStepSeconds
+            / static_cast<double>(retried.plannedSubstepCount);
+        for (std::size_t index = 0;
+             index < retried.plannedSubstepCount; ++index) {
+            const auto manual = advancePeriodicFlowStrangSspRk2(
+                grid, expectedVelocity, expectedPressure, manualSettings);
+            manualAccepted = manualAccepted && manual.accepted
+                && manual == retried.substeps[index];
+        }
+    }
+    check(manualAccepted && velocity == expectedVelocity
+              && pressure == expectedPressure,
+          "Strang subcycling: retried result equals its final equal-step schedule exactly");
+
+    auto limitedVelocity = originalVelocity;
+    auto limitedPressure = originalPressure;
+    auto limitedSettings = retrySettings;
+    limitedSettings.maximumSubsteps = 1;
+    const auto limited = advancePeriodicFlowStrangSspRk2Subcycled(
+        grid, limitedVelocity, limitedPressure, limitedSettings);
+    check(!limited.accepted
+              && limited.failureStage
+                  == PeriodicFlowStrangSubcyclingFailureStage::SubstepLimit
+              && limited.plannedSubstepCount > 1
+              && limitedVelocity == originalVelocity
+              && limitedPressure == originalPressure,
+          "Strang subcycling: a bounded retry limit rolls back the whole interval");
+
+    auto failedVelocity = originalVelocity;
+    auto failedPressure = originalPressure;
+    auto failedSettings = retrySettings;
+    failedSettings.flow.timeStepSeconds = 0.01;
+    failedSettings.flow.projectionAbsoluteResidualTolerance = 1.0e-30;
+    failedSettings.flow.projectionRelativeResidualTolerance = 0.0;
+    failedSettings.flow.projectionMaximumIterations = 1;
+    const auto failed = advancePeriodicFlowStrangSspRk2Subcycled(
+        grid, failedVelocity, failedPressure, failedSettings);
+    check(!failed.accepted && failed.stabilityRetryCount == 0
+              && failed.failureStage
+                  == PeriodicFlowStrangSubcyclingFailureStage::Substep
+              && failed.failedSubstep.failureStage
+                  == PeriodicFlowStrangFailureStage::ProjectedAdvection
+              && failedVelocity == originalVelocity
+              && failedPressure == originalPressure,
+          "Strang subcycling: projection failure is fatal and transactional");
+}
+
 struct StrangState {
     MacVelocityField velocity;
     CellScalarField pressure;
@@ -649,6 +822,18 @@ void testStrangRollback() {
     check(invalidVelocity == originalVelocity
               && invalidPressure == originalPressure,
           "Strang validation: rejected reconstruction mutates neither field");
+
+    PeriodicFlowStrangSubcyclingSettings invalidSubcycling;
+    invalidSubcycling.flow = strangSettings();
+    invalidSubcycling.maximumSubsteps = 0;
+    expectRejected(
+        [&] { static_cast<void>(advancePeriodicFlowStrangSspRk2Subcycled(
+            grid, invalidVelocity, invalidPressure,
+            invalidSubcycling)); },
+        "Strang subcycling validation: a zero retry bound is rejected");
+    check(invalidVelocity == originalVelocity
+              && invalidPressure == originalPressure,
+          "Strang subcycling validation: invalid settings mutate neither field");
 }
 
 void testStageFailureRollback() {
@@ -774,6 +959,8 @@ int main() {
     testExactNonlinearStageComposition();
     testDeterministicNonlinearSequence();
     testStrangExactCompositionAndDeterminism();
+    testStrangSubcyclingExactComposition();
+    testStrangSubcyclingStabilityRetryAndRollback();
     testStrangObservedSecondOrderTemporalRefinement();
     testStrangRollback();
     testStageFailureRollback();

@@ -7,11 +7,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace simwing::fsi::fluid {
 
 inline constexpr std::uint32_t periodicFlowStepVersion = 3;
 inline constexpr std::uint32_t periodicFlowStrangSspRk2Version = 1;
+inline constexpr std::uint32_t periodicFlowStrangSubcyclingVersion = 1;
+inline constexpr std::size_t periodicFlowStrangMaximumSubsteps = 4096;
 
 enum class PeriodicFlowAdvectionMode : std::uint8_t {
     PrescribedUniform = 0,
@@ -164,5 +167,66 @@ advancePeriodicFlowStrangSspRk2(
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
     const PeriodicFlowStrangSspRk2Settings& settings = {});
+
+enum class PeriodicFlowStrangSubcyclingFailureStage : std::uint8_t {
+    None = 0,
+    SubstepLimit = 1,
+    Substep = 2,
+    Conservation = 3,
+};
+
+struct PeriodicFlowStrangSubcyclingSettings {
+    // flow.timeStepSeconds is the requested outer interval. Each private
+    // Strang step receives that interval divided by the current subdivision.
+    PeriodicFlowStrangSspRk2Settings flow;
+    std::size_t maximumSubsteps = 1024;
+};
+
+struct PeriodicFlowStrangSubcyclingDiagnostics {
+    std::uint32_t version = periodicFlowStrangSubcyclingVersion;
+    double requestedIntervalSeconds = 0.0;
+    double substepSeconds = 0.0;
+    std::size_t plannedSubstepCount = 0;
+    std::size_t completedSubstepCount = 0;
+    std::size_t stabilityRetryCount = 0;
+    // substeps contains only the final equal-step attempt. The last rejected
+    // retry trigger remains available even after a later attempt succeeds.
+    std::size_t failedSubstepIndex = 0;
+    std::vector<PeriodicFlowStrangSspRk2Diagnostics> substeps;
+    PeriodicFlowStrangSspRk2Diagnostics failedSubstep;
+    double maximumObservedOutgoingCourantNumber = 0.0;
+    double maximumObservedDiffusionNumber = 0.0;
+    Vector3 momentumBeforeNewtonSeconds;
+    Vector3 momentumAfterNewtonSeconds;
+    Vector3 momentumResidualNewtonSeconds;
+    double momentumResidualNormNewtonSeconds = 0.0;
+    double kineticEnergyBeforeJoules = 0.0;
+    double kineticEnergyAfterJoules = 0.0;
+    double totalEnergyLossJoules = 0.0;
+    double maximumVelocityChangeMetersPerSecond = 0.0;
+    double initialDivergenceL2PerSecond = 0.0;
+    double finalDivergenceL2PerSecond = 0.0;
+    PeriodicFlowStrangSubcyclingFailureStage failureStage =
+        PeriodicFlowStrangSubcyclingFailureStage::None;
+    bool finite = true;
+    bool accepted = false;
+
+    bool operator==(
+        const PeriodicFlowStrangSubcyclingDiagnostics&) const = default;
+};
+
+// Advances one requested outer interval through equal Strang/SSPRK2
+// substeps. The initial subdivision satisfies the explicit viscous limit. A
+// rejected advective CFL, limited maximum-principle, or viscous stability stage
+// increases the subdivision and restarts the complete interval from private
+// original candidates; projection, ledger, and other numerical failures are
+// not hidden by retry. Velocity and pressure commit together only after every
+// substep and an independent outer momentum/energy ledger pass.
+[[nodiscard]] PeriodicFlowStrangSubcyclingDiagnostics
+advancePeriodicFlowStrangSspRk2Subcycled(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const PeriodicFlowStrangSubcyclingSettings& settings = {});
 
 } // namespace simwing::fsi::fluid

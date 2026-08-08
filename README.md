@@ -75,6 +75,13 @@ advances half a step on each side of the full projected nonlinear transport
 step. The resulting Strang composition is transactional across all three
 sub-integrators, closes their energy-loss sum, and observes second-order
 fixed-grid temporal refinement.
+A bounded wrapper advances a requested outer interval through equal Strang
+substeps. It pre-sizes the schedule from the explicit viscous limit, then
+restarts the whole private interval with more substeps only when transport
+reports a CFL or limited-reconstruction bound rejection. Projection and ledger
+failures are never retried, the configured substep count is capped, and caller
+pressure/velocity commit only after the complete outer conservation ledger
+passes.
 Both the projected transport and Strang flow paths select donor-cell or limited
 monotonized-central reconstruction explicitly; donor-cell remains the default.
 The original single-stage transport and Euler/SSPRK2 viscosity modes compose
@@ -83,10 +90,9 @@ pressure solve in one transactional periodic fluid step. Every stage runs on
 candidate fields; velocity and pressure commit together only when transport
 bounds, viscous stability, projection convergence, and the final
 momentum/energy ledger all pass. Focused rollback cases fail each stage
-independently without changing either caller field. This is the first complete
-nonlinear fluid evolution path, but donor-cell convection and first-order
-operator splitting still keep it short of the intended second-order production
-Navier-Stokes scheme.
+independently without changing either caller field. This remains a periodic
+verification kernel; general cut-cell evolution and whole-wing CFD are not yet
+implemented.
 A validated single-crossing sharp-interface
 field now preserves a prescribed two-sided static pressure jump without
 smearing or spurious flow, including across the periodic domain boundary.

@@ -130,6 +130,17 @@ void validateSettings(
     }
 }
 
+void validateSettings(
+    const PeriodicFlowStrangSubcyclingSettings& settings) {
+    validateSettings(settings.flow);
+    if (settings.maximumSubsteps == 0
+        || settings.maximumSubsteps
+            > periodicFlowStrangMaximumSubsteps) {
+        throw std::invalid_argument(
+            "periodic Strang subcycling settings are invalid");
+    }
+}
+
 Vector3 momentumNewtonSeconds(
     const PeriodicCartesianGrid& grid,
     const MacVelocityField& velocity,
@@ -160,6 +171,108 @@ double maximumDifference(const std::span<const double> first,
             result, std::abs(first[index] - second[index]));
     }
     return result;
+}
+
+double maximumOutgoingCourantNumber(
+    const PeriodicFlowStrangSspRk2Diagnostics& diagnostics) noexcept {
+    return std::max(
+        diagnostics.projectedAdvection
+            .firstAdvection.maximumLocalOutgoingCourantNumber,
+        diagnostics.projectedAdvection
+            .secondAdvection.maximumLocalOutgoingCourantNumber);
+}
+
+double maximumDiffusionNumber(
+    const PeriodicFlowStrangSspRk2Diagnostics& diagnostics) noexcept {
+    return std::max({
+        diagnostics.firstHalfDiffusion
+            .firstEulerStage.totalDiffusionNumber,
+        diagnostics.firstHalfDiffusion
+            .secondEulerStage.totalDiffusionNumber,
+        diagnostics.secondHalfDiffusion
+            .firstEulerStage.totalDiffusionNumber,
+        diagnostics.secondHalfDiffusion
+            .secondEulerStage.totalDiffusionNumber,
+    });
+}
+
+double rejectedStabilityRatio(
+    const PeriodicFlowStrangSspRk2Diagnostics& diagnostics) noexcept {
+    if (diagnostics.failureStage
+        == PeriodicFlowStrangFailureStage::FirstHalfDiffusion) {
+        const auto& diffusion = diagnostics.firstHalfDiffusion;
+        if (!diffusion.firstEulerStage.stable
+            || (!diffusion.accepted
+                && !diffusion.secondEulerStage.stable
+                && diffusion.secondEulerStage.timeStepSeconds != 0.0)) {
+            return maximumDiffusionNumber(diagnostics)
+                / diffusion.firstEulerStage
+                    .maximumAcceptedDiffusionNumber;
+        }
+    }
+    if (diagnostics.failureStage
+        == PeriodicFlowStrangFailureStage::SecondHalfDiffusion) {
+        const auto& diffusion = diagnostics.secondHalfDiffusion;
+        if (!diffusion.firstEulerStage.stable
+            || (!diffusion.accepted
+                && !diffusion.secondEulerStage.stable
+                && diffusion.secondEulerStage.timeStepSeconds != 0.0)) {
+            return maximumDiffusionNumber(diagnostics)
+                / diffusion.firstEulerStage
+                    .maximumAcceptedDiffusionNumber;
+        }
+    }
+    if (diagnostics.failureStage
+        == PeriodicFlowStrangFailureStage::ProjectedAdvection) {
+        const auto& transport = diagnostics.projectedAdvection;
+        if (transport.failureStage
+                == ProjectedMacAdvectionFailureStage::FirstAdvection
+            && !transport.firstAdvection.stable) {
+            return transport.firstAdvection
+                .maximumLocalOutgoingCourantNumber
+                / transport.firstAdvection
+                    .maximumAcceptedLocalOutgoingCourantNumber;
+        }
+        if (transport.failureStage
+                == ProjectedMacAdvectionFailureStage::SecondAdvection
+            && !transport.secondAdvection.stable) {
+            return transport.secondAdvection
+                .maximumLocalOutgoingCourantNumber
+                / transport.secondAdvection
+                    .maximumAcceptedLocalOutgoingCourantNumber;
+        }
+        const VariableMacAdvectionDiagnostics* rejectedAdvection = nullptr;
+        if (transport.failureStage
+            == ProjectedMacAdvectionFailureStage::FirstAdvection) {
+            rejectedAdvection = &transport.firstAdvection;
+        } else if (transport.failureStage
+                   == ProjectedMacAdvectionFailureStage::SecondAdvection) {
+            rejectedAdvection = &transport.secondAdvection;
+        }
+        if (rejectedAdvection != nullptr
+            && rejectedAdvection->finite
+            && rejectedAdvection->stable
+            && rejectedAdvection->divergenceCompatible
+            && !rejectedAdvection->bounded) {
+            // Limited reconstruction has a stricter multidimensional
+            // maximum-principle CFL than the donor outgoing-flux ceiling.
+            // Halving the step is the bounded deterministic fallback.
+            return 2.0;
+        }
+    }
+    return 0.0;
+}
+
+std::size_t boundedSubstepCount(
+    const double requestedCount,
+    const std::size_t maximumSubsteps) noexcept {
+    if (!std::isfinite(requestedCount)
+        || requestedCount
+            > static_cast<double>(maximumSubsteps)) {
+        return maximumSubsteps + 1;
+    }
+    return std::max<std::size_t>(
+        1, static_cast<std::size_t>(std::ceil(requestedCount)));
 }
 
 } // namespace
@@ -584,6 +697,202 @@ advancePeriodicFlowStrangSspRk2(
     velocityMetersPerSecond = std::move(candidateVelocity);
     pressurePascals = std::move(candidatePressure);
     return diagnostics;
+}
+
+PeriodicFlowStrangSubcyclingDiagnostics
+advancePeriodicFlowStrangSspRk2Subcycled(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const PeriodicFlowStrangSubcyclingSettings& settings) {
+    validateSettings(settings);
+    if (!velocityMetersPerSecond.matches(grid)
+        || !pressurePascals.matches(grid)) {
+        throw std::invalid_argument(
+            "periodic Strang subcycling fields do not match their grid");
+    }
+    if (!isFinite(velocityMetersPerSecond) || !isFinite(pressurePascals)) {
+        throw std::invalid_argument(
+            "periodic Strang subcycling fields must be finite");
+    }
+
+    PeriodicFlowStrangSubcyclingDiagnostics diagnostics;
+    diagnostics.requestedIntervalSeconds =
+        settings.flow.timeStepSeconds;
+    diagnostics.momentumBeforeNewtonSeconds = momentumNewtonSeconds(
+        grid, velocityMetersPerSecond,
+        settings.flow.densityKgPerCubicMeter);
+    diagnostics.momentumAfterNewtonSeconds =
+        diagnostics.momentumBeforeNewtonSeconds;
+    diagnostics.kineticEnergyBeforeJoules = kineticEnergyJoules(
+        grid, velocityMetersPerSecond,
+        settings.flow.densityKgPerCubicMeter);
+    diagnostics.kineticEnergyAfterJoules =
+        diagnostics.kineticEnergyBeforeJoules;
+    CellScalarField initialDivergence(grid);
+    computeDivergence(
+        grid, velocityMetersPerSecond, initialDivergence);
+    diagnostics.initialDivergenceL2PerSecond = l2Norm(initialDivergence);
+    diagnostics.finalDivergenceL2PerSecond =
+        diagnostics.initialDivergenceL2PerSecond;
+
+    const Vector3 spacing = grid.cellSpacingMeters();
+    const double inverseSpacingSquaredSum =
+        1.0 / (spacing.x * spacing.x)
+        + 1.0 / (spacing.y * spacing.y)
+        + 1.0 / (spacing.z * spacing.z);
+    const double oneStepHalfDiffusionNumber =
+        0.5 * settings.flow.kinematicViscositySquareMetersPerSecond
+        * settings.flow.timeStepSeconds
+        * inverseSpacingSquaredSum;
+    std::size_t substepCount = boundedSubstepCount(
+        oneStepHalfDiffusionNumber
+            / settings.flow.maximumDiffusionNumber,
+        settings.maximumSubsteps);
+
+    while (true) {
+        diagnostics.plannedSubstepCount = substepCount;
+        diagnostics.substepSeconds = settings.flow.timeStepSeconds
+            / static_cast<double>(substepCount);
+        if (substepCount > settings.maximumSubsteps) {
+            diagnostics.failureStage =
+                PeriodicFlowStrangSubcyclingFailureStage::SubstepLimit;
+            return diagnostics;
+        }
+
+        auto candidateVelocity = velocityMetersPerSecond;
+        auto candidatePressure = pressurePascals;
+        diagnostics.substeps.clear();
+        diagnostics.substeps.reserve(substepCount);
+        diagnostics.completedSubstepCount = 0;
+        bool restart = false;
+        for (std::size_t substepIndex = 0;
+             substepIndex < substepCount; ++substepIndex) {
+            auto substepSettings = settings.flow;
+            substepSettings.timeStepSeconds = diagnostics.substepSeconds;
+            const auto substep = advancePeriodicFlowStrangSspRk2(
+                grid, candidateVelocity, candidatePressure,
+                substepSettings);
+            diagnostics.maximumObservedOutgoingCourantNumber = std::max(
+                diagnostics.maximumObservedOutgoingCourantNumber,
+                maximumOutgoingCourantNumber(substep));
+            diagnostics.maximumObservedDiffusionNumber = std::max(
+                diagnostics.maximumObservedDiffusionNumber,
+                maximumDiffusionNumber(substep));
+            if (!substep.accepted) {
+                diagnostics.failedSubstepIndex = substepIndex;
+                diagnostics.failedSubstep = substep;
+                const double stabilityRatio =
+                    rejectedStabilityRatio(substep);
+                if (stabilityRatio > 1.0) {
+                    std::size_t requiredCount = boundedSubstepCount(
+                        static_cast<double>(substepCount)
+                            * stabilityRatio,
+                        settings.maximumSubsteps);
+                    if (requiredCount <= substepCount) {
+                        requiredCount = substepCount + 1;
+                    }
+                    if (requiredCount > settings.maximumSubsteps) {
+                        diagnostics.plannedSubstepCount = requiredCount;
+                        diagnostics.substepSeconds =
+                            settings.flow.timeStepSeconds
+                            / static_cast<double>(requiredCount);
+                        diagnostics.failureStage =
+                            PeriodicFlowStrangSubcyclingFailureStage::
+                                SubstepLimit;
+                        diagnostics.finite = substep.finite;
+                        return diagnostics;
+                    }
+                    ++diagnostics.stabilityRetryCount;
+                    substepCount = requiredCount;
+                    restart = true;
+                    break;
+                }
+                diagnostics.failureStage =
+                    PeriodicFlowStrangSubcyclingFailureStage::Substep;
+                diagnostics.finite = substep.finite;
+                return diagnostics;
+            }
+            diagnostics.substeps.push_back(substep);
+            diagnostics.completedSubstepCount =
+                diagnostics.substeps.size();
+        }
+        if (restart) {
+            continue;
+        }
+
+        diagnostics.momentumAfterNewtonSeconds = momentumNewtonSeconds(
+            grid, candidateVelocity,
+            settings.flow.densityKgPerCubicMeter);
+        diagnostics.momentumResidualNewtonSeconds = subtract(
+            diagnostics.momentumAfterNewtonSeconds,
+            diagnostics.momentumBeforeNewtonSeconds);
+        diagnostics.momentumResidualNormNewtonSeconds = length(
+            diagnostics.momentumResidualNewtonSeconds);
+        diagnostics.kineticEnergyAfterJoules = kineticEnergyJoules(
+            grid, candidateVelocity,
+            settings.flow.densityKgPerCubicMeter);
+        diagnostics.totalEnergyLossJoules =
+            diagnostics.kineticEnergyBeforeJoules
+            - diagnostics.kineticEnergyAfterJoules;
+        diagnostics.maximumVelocityChangeMetersPerSecond = std::max({
+            maximumDifference(
+                velocityMetersPerSecond.xFaces(),
+                candidateVelocity.xFaces()),
+            maximumDifference(
+                velocityMetersPerSecond.yFaces(),
+                candidateVelocity.yFaces()),
+            maximumDifference(
+                velocityMetersPerSecond.zFaces(),
+                candidateVelocity.zFaces()),
+        });
+        CellScalarField finalDivergence(grid);
+        computeDivergence(grid, candidateVelocity, finalDivergence);
+        diagnostics.finalDivergenceL2PerSecond = l2Norm(finalDivergence);
+        diagnostics.finite = isFinite(candidateVelocity)
+            && isFinite(candidatePressure)
+            && finite(diagnostics.momentumBeforeNewtonSeconds)
+            && finite(diagnostics.momentumAfterNewtonSeconds)
+            && finite(diagnostics.momentumResidualNewtonSeconds)
+            && std::isfinite(
+                diagnostics.momentumResidualNormNewtonSeconds)
+            && std::isfinite(diagnostics.kineticEnergyBeforeJoules)
+            && std::isfinite(diagnostics.kineticEnergyAfterJoules)
+            && std::isfinite(diagnostics.totalEnergyLossJoules)
+            && std::isfinite(
+                diagnostics.maximumVelocityChangeMetersPerSecond)
+            && std::isfinite(diagnostics.initialDivergenceL2PerSecond)
+            && std::isfinite(diagnostics.finalDivergenceL2PerSecond)
+            && std::isfinite(
+                diagnostics.maximumObservedOutgoingCourantNumber)
+            && std::isfinite(
+                diagnostics.maximumObservedDiffusionNumber);
+        const double momentumTolerance = combinedTolerance(
+            settings.flow.absoluteMomentumToleranceNewtonSeconds,
+            settings.flow.relativeMomentumTolerance,
+            length(diagnostics.momentumBeforeNewtonSeconds),
+            length(diagnostics.momentumAfterNewtonSeconds));
+        const double energyTolerance = combinedTolerance(
+            settings.flow.absoluteEnergyToleranceJoules,
+            settings.flow.relativeEnergyTolerance,
+            std::abs(diagnostics.kineticEnergyBeforeJoules),
+            std::abs(diagnostics.kineticEnergyAfterJoules));
+        diagnostics.accepted = diagnostics.finite
+            && diagnostics.momentumResidualNormNewtonSeconds
+                <= momentumTolerance
+            && diagnostics.kineticEnergyAfterJoules
+                <= diagnostics.kineticEnergyBeforeJoules
+                    + energyTolerance;
+        if (!diagnostics.accepted) {
+            diagnostics.failureStage =
+                PeriodicFlowStrangSubcyclingFailureStage::Conservation;
+            return diagnostics;
+        }
+
+        velocityMetersPerSecond = std::move(candidateVelocity);
+        pressurePascals = std::move(candidatePressure);
+        return diagnostics;
+    }
 }
 
 } // namespace simwing::fsi::fluid
