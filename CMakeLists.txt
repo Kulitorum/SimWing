@@ -324,6 +324,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/planar_cut_surface.h
     src/fsi/fluid/porous_interface.cpp
     src/fsi/fluid/porous_interface.h
+    src/fsi/fluid/porous_flow.cpp
+    src/fsi/fluid/porous_flow.h
     src/fsi/fluid/projection.cpp
     src/fsi/fluid/projection.h
     src/fsi/fluid/projected_advection.cpp
@@ -355,6 +357,17 @@ target_include_directories(simwing_pressure_jump_case PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
 )
 target_link_libraries(simwing_pressure_jump_case PUBLIC
+    simwing_fluid_frame
+)
+
+add_library(simwing_porous_flow_case STATIC
+    src/fsi/porous_flow_case.cpp
+    src/fsi/porous_flow_case.h
+)
+target_include_directories(simwing_porous_flow_case PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_porous_flow_case PUBLIC
     simwing_fluid_frame
 )
 
@@ -788,6 +801,12 @@ add_executable(simwing-fluid-porous-interface-test
 target_link_libraries(simwing-fluid-porous-interface-test
     PRIVATE simwing_fluid)
 
+add_executable(simwing-porous-flow-case-test
+    tests/simwing_porous_flow_case_test.cpp
+)
+target_link_libraries(simwing-porous-flow-case-test
+    PRIVATE simwing_porous_flow_case)
+
 add_executable(simwing-worker-control-protocol-test
     tests/simwing_worker_control_protocol_test.cpp
 )
@@ -962,6 +981,7 @@ target_link_libraries(simwing-fsi PRIVATE
     simwing_periodic_flow_control
     simwing_periodic_flow_case
     simwing_piston_case
+    simwing_porous_flow_case
     simwing_pressure_jump_case
     simwing_worker_control_stream
 )
@@ -1081,6 +1101,7 @@ set_target_properties(
     simwing-pressure-jump-frame-test
     simwing-pressure-jump-case-test
     simwing-fluid-porous-interface-test
+    simwing-porous-flow-case-test
     simwing-worker-control-protocol-test
     simwing-worker-control-stream-test
     simwing-control-stdio-fixture
@@ -1145,6 +1166,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-pressure-jump-frame-test
         simwing-pressure-jump-case-test
         simwing-fluid-porous-interface-test
+        simwing-porous-flow-case-test
         simwing-worker-control-protocol-test
         simwing-worker-control-stream-test
         simwing-control-stdio-fixture
@@ -1302,6 +1324,8 @@ add_test(NAME simwing_pressure_jump_case
     COMMAND simwing-pressure-jump-case-test)
 add_test(NAME simwing_fluid_porous_interface
     COMMAND simwing-fluid-porous-interface-test)
+add_test(NAME simwing_porous_flow_case
+    COMMAND simwing-porous-flow-case-test)
 add_test(NAME simwing_worker_control_protocol
     COMMAND simwing-worker-control-protocol-test)
 add_test(NAME simwing_worker_control_stream
@@ -1358,6 +1382,14 @@ add_test(NAME simwing_fsi_pressure_jump_headless
         --trace "${CMAKE_BINARY_DIR}/simwing-pressure-jump-headless.swtrace")
 set_tests_properties(simwing_fsi_pressure_jump_headless PROPERTIES
     PASS_REGULAR_EXPRESSION "completed 4 pressure-jump step\\(s\\)")
+add_test(NAME simwing_fsi_porous_flow_headless
+    COMMAND simwing-fsi
+        --case porous-flow
+        --steps 120
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-porous-flow-headless.swtrace")
+set_tests_properties(simwing_fsi_porous_flow_headless PROPERTIES
+    PASS_REGULAR_EXPRESSION "completed 120 porous-flow step\\(s\\)")
 add_test(NAME simwing_fsi_control_stdio
     COMMAND ${CMAKE_COMMAND}
         "-DSIMWING_FSI=$<TARGET_FILE:simwing-fsi>"

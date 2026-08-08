@@ -155,8 +155,12 @@ relative to a fabric tile into the same signed sharp-jump representation. Its
 exact monotone inverse, canonical X/Y/Z MAC sampling, tile volume flux, and
 nonnegative pressure dissipation are tested. A periodic prescribed-flux plane
 with an explicit balancing pressure source retains its analytic `195 Pa` loss
-without spurious velocity. This first constitutive path is explicit and
-flux-driven; implicit pressure/porous-flux coupling remains future work.
+without spurious velocity. A pressure-driven companion advances a uniform
+fluid plug with an implicit-midpoint nonlinear solve; every step independently
+closes pressure impulse, driving work, porous dissipation, and kinetic energy.
+Its viewable worker converges to the analytic `1.74165739 m/s` speed and `250 Pa`
+loss. This is still a one-degree-of-freedom oracle; general nonuniform or moving
+porous coupling remains future work.
 Face-aligned moving membranes can now partition stable fluid regions, impose
 an exact normal MAC velocity, and project each region transactionally while
 retaining its prior pressure gauge. A translating sealed-slab canonical closes
@@ -343,6 +347,7 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case open-piston --steps 1200 --no-viewer --checkpoint-out open-piston.swop --checkpoint-every 600
 .\build\bin\Release\simwing-fsi.exe --case open-piston --checkpoint-in open-piston.swop --steps 600 --checkpoint-out open-piston.swop --checkpoint-every 600
 .\build\bin\Release\simwing-fsi.exe --case pressure-jump --steps 4 --no-viewer
+.\build\bin\Release\simwing-fsi.exe --case porous-flow --steps 120 --no-viewer
 ```
 
 The first SimWing command launches the standalone trace viewer by default. The

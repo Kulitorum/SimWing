@@ -1,4 +1,5 @@
 #include "fluid/porous_interface.h"
+#include "fluid/porous_flow.h"
 #include "fluid/projection.h"
 
 #include <algorithm>
@@ -268,12 +269,93 @@ void testAxisAreaAndValidation() {
         "porous field delegates stable topology validation");
 }
 
+PorousPlugFlowSettings plugSettings() {
+    PorousPlugFlowSettings settings;
+    settings.resistance = {100.0, 25.0};
+    settings.densityKgPerCubicMeter = 1.2;
+    settings.flowLengthMeters = 4.0;
+    settings.crossSectionAreaSquareMeters = 3.0;
+    settings.drivingPressureRisePascals = 250.0;
+    settings.timeStepSeconds = 1.0 / 60.0;
+    return settings;
+}
+
+void testPressureDrivenPlugFlow() {
+    const auto settings = plugSettings();
+    double velocity = 0.0;
+    const auto first = advancePorousPlugFlow(velocity, settings);
+    check(first.accepted
+              && velocity == first.velocityAfterMetersPerSecond
+              && first.midpointVelocityMetersPerSecond
+                  == 0.5 * first.velocityAfterMetersPerSecond,
+          "porous plug flow commits its implicit midpoint candidate");
+    checkNear(first.momentumResidualNewtonSeconds,
+              0.0, 4.0e-15,
+              "porous plug flow closes pressure impulse");
+    checkNear(first.energyResidualJoules,
+              0.0, 4.0e-15,
+              "porous plug flow closes pressure work and dissipation");
+    check(first.porousDissipationJoules > 0.0
+              && first.drivingPressureWorkJoules
+                  > first.porousDissipationJoules,
+          "accelerating porous plug retains positive dissipation");
+
+    for (std::size_t step = 1; step < 600; ++step) {
+        static_cast<void>(advancePorousPlugFlow(velocity, settings));
+    }
+    const double steady = 0.5 * (std::sqrt(56.0) - 4.0);
+    checkNear(velocity, steady, 2.0e-15,
+              "porous plug flow converges to the analytic pressure-driven speed");
+    const auto steadyStep = advancePorousPlugFlow(velocity, settings);
+    checkNear(steadyStep.endpointPressureDropPascals,
+              settings.drivingPressureRisePascals, 3.0e-13,
+              "porous steady pressure loss balances the driving rise");
+    checkNear(steadyStep.drivingPressureWorkJoules,
+              steadyStep.porousDissipationJoules, 4.0e-14,
+              "porous steady pressure work becomes material dissipation");
+
+    auto reverseSettings = settings;
+    reverseSettings.drivingPressureRisePascals *= -1.0;
+    double reverseVelocity = 0.0;
+    for (std::size_t step = 0; step < 600; ++step) {
+        static_cast<void>(advancePorousPlugFlow(
+            reverseVelocity, reverseSettings));
+    }
+    checkNear(reverseVelocity, -steady, 2.0e-15,
+              "porous plug flow is orientation symmetric");
+
+    auto decaySettings = settings;
+    decaySettings.drivingPressureRisePascals = 0.0;
+    double decayingVelocity = 2.0;
+    const auto decay = advancePorousPlugFlow(
+        decayingVelocity, decaySettings);
+    check(decayingVelocity > 0.0 && decayingVelocity < 2.0
+              && decay.drivingPressureWorkJoules == 0.0
+              && decay.porousDissipationJoules > 0.0,
+          "unforced porous plug flow decelerates dissipatively");
+    checkNear(decay.kineticEnergyAfterJoules
+                  - decay.kineticEnergyBeforeJoules,
+              -decay.porousDissipationJoules, 4.0e-14,
+              "unforced porous loss becomes the exact kinetic-energy change");
+
+    auto invalidSettings = settings;
+    invalidSettings.timeStepSeconds = 0.0;
+    const double preserved = velocity;
+    expectInvalid(
+        [&] { static_cast<void>(advancePorousPlugFlow(
+            velocity, invalidSettings)); },
+        "porous plug flow rejects a nonpositive time step");
+    check(velocity == preserved,
+          "rejected porous plug flow leaves caller state unchanged");
+}
+
 } // namespace
 
 int main() {
     testConstitutiveLawAndInverse();
     testFluxDrivenProjectionCanonical();
     testAxisAreaAndValidation();
+    testPressureDrivenPlugFlow();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing porous-interface check(s) failed\n",

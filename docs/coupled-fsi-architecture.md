@@ -414,6 +414,7 @@ src/fsi/
     open_piston_checkpoint_persistence.* bounded composite restart codec
     periodic_flow_case.*    visible periodic CFD verification worker
     pressure_jump_case.*    visible static layered-jump worker oracle
+    porous_flow_case.*      visible pressure-driven porous plug oracle
     periodic_flow_checkpoint.cpp bounded persistent worker restart codec
     worker_control_protocol.* transport-neutral safe-point messages
     worker_control_stream.*  bounded self-framing binary stream adapter
@@ -433,6 +434,7 @@ src/fsi/
         projection.*
         interface_jump.*
         porous_interface.* calibrated flux-driven porous jump and ledger
+        porous_flow.*       midpoint pressure-driven plug and ledgers
         moving_interface.*  grid-face constraints and region topology
         moving_control_volume.* open planar GCL and topology epochs
         checkpoint.*        accepted fluid/topology checkpoint + persistence
@@ -463,6 +465,7 @@ Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
 `simwing_open_piston_case`, `simwing_fluid_frame`,
 `simwing_periodic_flow_case`, `simwing_pressure_jump_case`,
+`simwing_porous_flow_case`,
 `simwing_worker_control_protocol`,
 `simwing_worker_control_stream`,
 `simwing_worker_control_session`, `simwing_periodic_flow_control`,
@@ -866,9 +869,15 @@ signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
 dissipation, and its exact monotone inverse is stable across the pure-linear,
 pure-quadratic, and combined fits. A periodic prescribed-flux plane with an
 explicit balancing pressure source preserves a `195 Pa` porous loss without
-changing its uniform velocity. This establishes the constitutive and ledger
-boundary only; pressure-driven implicit porous coupling is still required for
-the full porous-sheet canonical.
+changing its uniform velocity. A pressure-driven uniform-plug companion uses
+the exact nonlinear implicit midpoint to close pressure impulse and the
+driving-work/porous-dissipation/kinetic-energy identity on every step. Its
+endpoint MAC projection retains the accepted plug while exposing the porous
+and zero-net-jump periodic gauge-closure planes in owning frames; the physical
+driving rise stays separate in the impulse/work ledger. The case converges to
+the analytic `1.74165739 m/s`, `250 Pa` steady state. This closes a
+one-degree-of-freedom porous-flow oracle; general nonuniform or moving porous
+coupling remains open.
 The case checkpoint must restore the initial state and a later accepted state,
 then reproduce the next frame bit-for-bit in both the original and an equivalent
 rebuilt worker. Version, case fingerprint, grid, sample count, step, time, and
@@ -1012,8 +1021,9 @@ Required canonical cases:
 
 - Taylor-Green vortex and manufactured divergence/pressure solutions;
 - channel/flat-plate flow and a static pressure jump across a membrane;
-- flow through a calibrated porous sheet (the explicit prescribed-flux
-  constitutive subset is complete; implicit pressure/flux coupling remains);
+- flow through a calibrated porous sheet (the prescribed-flux constitutive and
+  pressure-driven uniform-plug subsets are complete; general grid coupling
+  remains);
 - moving piston/membrane with analytic volume and work balance;
 - flexible flag and a thin shell with one interface per cell;
 - two closely spaced and folded sheets with multiple crossings per cell;
