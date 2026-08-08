@@ -674,6 +674,59 @@ StrongCoupledPistonCase::stepSettings() const noexcept {
     return stepSettings_;
 }
 
+StrongCoupledPistonCheckpoint
+StrongCoupledPistonCase::checkpoint() const {
+    StrongCoupledPistonCheckpoint result;
+    result.interfaceDefinitionFingerprint = coupling_.surfaceFingerprint();
+    result.structure = structure_.checkpoint();
+    result.fluid = fluid::checkpointMovingInterfaceFluidState(
+        grid_,
+        fluidState_.velocityMetersPerSecond,
+        fluidState_.pressurePascals,
+        fluidState_.interfaces,
+        fluidState_.diagnostics);
+    return result;
+}
+
+void StrongCoupledPistonCase::restore(
+    const StrongCoupledPistonCheckpoint& checkpointValue) {
+    if (checkpointValue.version != strongCoupledPistonCheckpointVersion
+        || checkpointValue.interfaceDefinitionFingerprint
+            != coupling_.surfaceFingerprint()) {
+        throw std::invalid_argument(
+            "strong piston checkpoint identity is invalid");
+    }
+
+    Structure restoredStructure(structure_.definition());
+    restoredStructure.restore(checkpointValue.structure);
+    fluid::MovingInterfaceFluidState restoredFluid =
+        fluid::restoreMovingInterfaceFluidState(
+            grid_, checkpointValue.fluid);
+    const auto kinematics =
+        bridge_.transfer().captureKinematics(restoredStructure);
+    if (kinematics.empty() || restoredFluid.interfaces.faces().empty()) {
+        throw std::invalid_argument(
+            "strong piston checkpoint has incomplete coupling state");
+    }
+    const double structureSpeed =
+        kinematics.front().velocityMetersPerSecond.x;
+    const double interfaceSpeed = restoredFluid.interfaces.faces().front()
+        .normalVelocityMetersPerSecond;
+    if (maximumVelocityDifference(
+            restoredStructure.nodeStates(), structureSpeed) > 1.0e-12
+        || maximumUniformFluidVelocityDifference(
+               restoredFluid, interfaceSpeed) > 1.0e-9
+        || std::abs(structureSpeed - interfaceSpeed) > 1.0e-9) {
+        throw std::invalid_argument(
+            "strong piston checkpoint velocity closure is invalid");
+    }
+    static_cast<void>(bridge_.evaluate(
+        restoredFluid.diagnostics, kinematics));
+
+    structure_ = std::move(restoredStructure);
+    fluidState_ = std::move(restoredFluid);
+}
+
 StrongCoupledPistonWorkerCase::StrongCoupledPistonWorkerCase()
     : frameMapping_(simulation_.structure(), makeFrameMapping()) {}
 
@@ -754,6 +807,17 @@ viewer::DiagnosticFrame StrongCoupledPistonWorkerCase::advance() {
             + error.message);
     }
     return frame;
+}
+
+StrongCoupledPistonCheckpoint
+StrongCoupledPistonWorkerCase::checkpoint() const {
+    return simulation_.checkpoint();
+}
+
+void StrongCoupledPistonWorkerCase::restore(
+    const StrongCoupledPistonCheckpoint& checkpointValue) {
+    simulation_.restore(checkpointValue);
+    diagnostics_ = {};
 }
 
 const Structure&

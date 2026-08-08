@@ -344,6 +344,11 @@ projection's endpoint force slope recovers its analytic `10.8 kg` discrete
 added mass. Because force is trapezoidally integrated from the unchanged start
 load, the accepted speed matches `F0*dt/(6 kg + 10.8 kg/2)` rather than the
 unstable weak one-pass acceleration; both mass and speed residual are published.
+Its in-memory accepted-state checkpoint composes the real Structure and
+moving-interface fluid payloads, rejects foreign public identities/topology
+transactionally, and reproduces the exact next strong-coupled result and frame.
+No in-progress iteration or rejected attempt is checkpointable, and this
+checkpoint does not yet have a persistent CLI envelope.
 The
 `simwing-fsi --case porous-sheet` harness drives fluid through a translating
 linear-resistance sheet, transfers only the sheet reaction to XPBD, and closes

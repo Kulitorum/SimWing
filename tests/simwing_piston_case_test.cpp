@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <sstream>
+#include <stdexcept>
 #include <string_view>
 #include <vector>
 
@@ -31,6 +32,17 @@ void checkNear(const double actual,
                      message, actual, expected, tolerance);
         ++failures;
     }
+}
+
+template<typename Callback>
+void expectRejected(Callback&& callback, const char* message) {
+    bool rejected = false;
+    try {
+        callback();
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected, message);
 }
 
 std::vector<std::uint8_t> serialized(
@@ -280,6 +292,84 @@ void testStrongCoupledPistonFrames() {
           "strong piston frame: projected fluid mass is explicit");
 }
 
+void testStrongPistonAcceptedCheckpointReplay() {
+    fsi::StrongCoupledPistonCase simulation;
+    for (std::uint64_t step = 0; step < 4; ++step) {
+        static_cast<void>(simulation.advance());
+    }
+    const auto saved = simulation.checkpoint();
+    const auto expectedStep = simulation.advance();
+    const auto expectedStructure = simulation.structure().checkpoint();
+    const auto expectedVelocity =
+        simulation.fluidState().velocityMetersPerSecond;
+    const auto expectedPressure = simulation.fluidState().pressurePascals;
+    const auto expectedInterfaces = simulation.fluidState().interfaces;
+    const auto expectedFluidDiagnostics =
+        simulation.fluidState().diagnostics;
+
+    simulation.restore(saved);
+    const auto replayedStep = simulation.advance();
+    const auto replayedStructure = simulation.structure().checkpoint();
+    check(replayedStep == expectedStep
+              && replayedStructure.nodes == expectedStructure.nodes
+              && replayedStructure.acceptedStepCount
+                  == expectedStructure.acceptedStepCount
+              && replayedStructure.simulationTimeSeconds
+                  == expectedStructure.simulationTimeSeconds
+              && simulation.fluidState().velocityMetersPerSecond
+                  == expectedVelocity
+              && simulation.fluidState().pressurePascals
+                  == expectedPressure
+              && simulation.fluidState().interfaces == expectedInterfaces
+              && simulation.fluidState().diagnostics
+                  == expectedFluidDiagnostics,
+          "strong piston checkpoint: restore replays the exact next coupled step");
+
+    const auto stableStructure = simulation.structure().checkpoint();
+    const auto stableVelocity =
+        simulation.fluidState().velocityMetersPerSecond;
+    const auto stablePressure = simulation.fluidState().pressurePascals;
+    const auto stableInterfaces = simulation.fluidState().interfaces;
+    auto corrupt = saved;
+    ++corrupt.version;
+    expectRejected(
+        [&] { simulation.restore(corrupt); },
+        "strong piston checkpoint: foreign version is rejected");
+    corrupt = saved;
+    ++corrupt.interfaceDefinitionFingerprint;
+    expectRejected(
+        [&] { simulation.restore(corrupt); },
+        "strong piston checkpoint: foreign interface identity is rejected");
+    corrupt = saved;
+    ++corrupt.structure.definitionFingerprint;
+    expectRejected(
+        [&] { simulation.restore(corrupt); },
+        "strong piston checkpoint: foreign Structure is rejected");
+    corrupt = saved;
+    ++corrupt.fluid.topologyFingerprint;
+    expectRejected(
+        [&] { simulation.restore(corrupt); },
+        "strong piston checkpoint: foreign fluid topology is rejected");
+    check(simulation.structure().checkpoint().nodes
+              == stableStructure.nodes
+              && simulation.fluidState().velocityMetersPerSecond
+                  == stableVelocity
+              && simulation.fluidState().pressurePascals == stablePressure
+              && simulation.fluidState().interfaces == stableInterfaces,
+          "strong piston checkpoint: rejected restores preserve accepted state");
+
+    fsi::StrongCoupledPistonWorkerCase worker;
+    for (std::uint64_t step = 0; step < 3; ++step) {
+        static_cast<void>(worker.advance());
+    }
+    const auto workerSaved = worker.checkpoint();
+    const auto expectedFrame = serialized(worker.advance());
+    worker.restore(workerSaved);
+    const auto replayedFrame = serialized(worker.advance());
+    check(replayedFrame == expectedFrame,
+          "strong piston checkpoint: immutable next frame replays exactly");
+}
+
 } // namespace
 
 int main() {
@@ -287,6 +377,7 @@ int main() {
     testCompletedPistonTrace();
     testStrongCoupledLightPiston();
     testStrongCoupledPistonFrames();
+    testStrongPistonAcceptedCheckpointReplay();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing coupled piston check(s) failed\n",

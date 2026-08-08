@@ -749,7 +749,9 @@ makes this a certified aerodynamic solver.
   new persistent Structure/fluid state. The endpoint pressure-force slope must
   recover the canonical `10.8 kg` discrete added mass; trapezoidal force
   integration then gives the fixed point with `10.8/2 kg` added to the `6 kg`
-  structural denominator.
+  structural denominator. Its in-memory checkpoint contains only accepted
+  Structure and moving-interface fluid state, validates their shared velocity
+  closure before no-throw commit, and replays the exact next result/frame.
 - `src/fsi/porous_sheet_case.{h,cpp}` is selected with `--case porous-sheet`.
   Its analytic linear-resistance midpoint relation drives the same accepted
   nonuniform porous projection, sheet-reaction bridge, temporal transfer, and
@@ -1125,7 +1127,9 @@ The light added-mass path is covered both inside `simwing_piston_case` and by
 weak-response separation, accepted interface/Structure velocity closure,
 deterministic persistent Structure/fluid state, immutable-frame provenance and
 residual fields, the `10.8 kg` discrete pressure added-mass slope and matching
-trapezoidal fixed-point speed, and accepted-only CLI trace publication.
+trapezoidal fixed-point speed, accepted checkpoint next-step/frame replay,
+transactional public-version/interface/Structure/fluid-topology rejection, and
+accepted-only CLI trace publication.
 For second-order fixed-grid porous evolution, `simwing_fluid_evolution` must
 also preserve exact porous-half/bulk-Strang/porous-half composition, summed
 interface ledgers, later-stage rollback, bit-exact empty-topology bulk

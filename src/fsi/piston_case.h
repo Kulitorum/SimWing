@@ -20,6 +20,7 @@ inline constexpr char strongCoupledPistonCaseSolverId[] =
     "simwing-fsi-strong-light-piston-v1";
 inline constexpr double strongCoupledPistonStructuralMassKilograms = 6.0;
 inline constexpr double strongCoupledPistonDiscreteAddedMassKilograms = 10.8;
+inline constexpr std::uint32_t strongCoupledPistonCheckpointVersion = 1;
 
 // Visible end-to-end verification harness for the current fixed-topology
 // numerical foundations. A uniform face-aligned pressure solve is bridged by
@@ -66,6 +67,13 @@ struct StrongCoupledPistonStepDiagnostics {
         const StrongCoupledPistonStepDiagnostics&) const = default;
 };
 
+struct StrongCoupledPistonCheckpoint {
+    std::uint32_t version = strongCoupledPistonCheckpointVersion;
+    std::uint64_t interfaceDefinitionFingerprint = 0;
+    StructureCheckpoint structure;
+    fluid::MovingInterfaceFluidCheckpoint fluid;
+};
+
 // Added-mass canonical for the generic strong-coupling loop. The light rigid
 // XPBD plate is driven by the actual moving-interface pressure projection.
 // Each fixed-point solve starts from the same accepted Structure/fluid epoch;
@@ -82,6 +90,8 @@ public:
         StrongCoupledPistonCase&&) = delete;
 
     [[nodiscard]] StrongCoupledPistonStepDiagnostics advance();
+    [[nodiscard]] StrongCoupledPistonCheckpoint checkpoint() const;
+    void restore(const StrongCoupledPistonCheckpoint& checkpoint);
 
     [[nodiscard]] const Structure& structure() const noexcept;
     [[nodiscard]] const fluid::MovingInterfaceFluidState&
@@ -117,6 +127,8 @@ public:
 
     [[nodiscard]] viewer::TraceHeader traceHeader() const;
     [[nodiscard]] viewer::DiagnosticFrame advance();
+    [[nodiscard]] StrongCoupledPistonCheckpoint checkpoint() const;
+    void restore(const StrongCoupledPistonCheckpoint& checkpoint);
 
     [[nodiscard]] const Structure& structure() const noexcept;
     [[nodiscard]] const StructureStepSettings& stepSettings() const noexcept;
