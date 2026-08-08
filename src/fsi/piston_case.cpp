@@ -15,16 +15,18 @@ constexpr double pistonPressurePascals = 110.0;
 constexpr double fluidDensityKgPerCubicMeter = 1.2;
 constexpr double fluidMassKilograms = 28.8;
 constexpr double structuralMassKilograms = 6000.0;
+constexpr double strongStructuralMassKilograms = 6.0;
 
-StructureDefinition makeDefinition() {
+StructureDefinition makeDefinition(
+    const double totalMassKilograms = structuralMassKilograms) {
     StructureDefinition definition;
     // The two-triangle barycentric load shares are 2:1:2:1. Mass follows the
     // same ratio so uniform pressure preserves rigid piston translation.
     definition.nodes = {
-        {{3.0, 0.0, 0.0}, 2000.0, false},
-        {{3.0, 2.0, 0.0}, 1000.0, false},
-        {{3.0, 2.0, 3.0}, 2000.0, false},
-        {{3.0, 0.0, 3.0}, 1000.0, false},
+        {{3.0, 0.0, 0.0}, totalMassKilograms / 3.0, false},
+        {{3.0, 2.0, 0.0}, totalMassKilograms / 6.0, false},
+        {{3.0, 2.0, 3.0}, totalMassKilograms / 3.0, false},
+        {{3.0, 0.0, 3.0}, totalMassKilograms / 6.0, false},
     };
     definition.triangles = {{{0, 1, 2}}, {{0, 2, 3}}};
     return definition;
@@ -89,7 +91,7 @@ fluid::MovingInterfaceProjectionDiagnostics solveFluidSample(
     const double speedMetersPerSecond,
     const double timeStepSeconds) {
     const auto grid = pistonGrid();
-    const fluid::FaceAlignedMovingInterface interfaces(
+    fluid::FaceAlignedMovingInterface interfaces(
         grid, slabFaces(grid, speedMetersPerSecond));
     fluid::MacVelocityField velocity(grid);
     std::ranges::fill(velocity.xFaces(), speedMetersPerSecond);
@@ -117,6 +119,57 @@ fluid::MovingInterfaceProjectionDiagnostics solveFluidSample(
             "coupled piston fluid projection was not accepted");
     }
     return diagnostics;
+}
+
+fluid::MovingInterfaceFluidState initialFluidState(
+    const fluid::PeriodicCartesianGrid& grid,
+    const double speedMetersPerSecond,
+    const double timeStepSeconds) {
+    fluid::MacVelocityField velocity(grid);
+    std::ranges::fill(velocity.xFaces(), speedMetersPerSecond);
+    fluid::CellScalarField pressure(grid);
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                pressure.values()[grid.cellIndex(i, j, k)] =
+                    i >= 2 && i < 6 ? pistonPressurePascals : 0.0;
+            }
+        }
+    }
+    fluid::FaceAlignedMovingInterface interfaces(
+        grid, slabFaces(grid, speedMetersPerSecond));
+    fluid::MovingInterfaceProjectionSettings settings;
+    settings.projection.densityKgPerCubicMeter =
+        fluidDensityKgPerCubicMeter;
+    settings.projection.timeStepSeconds = timeStepSeconds;
+    settings.projection.absoluteResidualTolerance = 1.0e-11;
+    settings.projection.relativeResidualTolerance = 1.0e-13;
+    settings.projection.maximumIterations = 1000;
+    const auto diagnostics = fluid::projectVelocityWithMovingInterfaces(
+        grid, velocity, pressure, interfaces, settings);
+    if (!diagnostics.projection.converged || !diagnostics.finite) {
+        throw std::runtime_error(
+            "strong piston initial fluid projection was not accepted");
+    }
+    return {
+        std::move(velocity),
+        std::move(pressure),
+        std::move(interfaces),
+        diagnostics,
+    };
+}
+
+fluid::MovingInterfaceProjectionSettings fluidProjectionSettings(
+    const double timeStepSeconds) {
+    fluid::MovingInterfaceProjectionSettings settings;
+    settings.projection.densityKgPerCubicMeter =
+        fluidDensityKgPerCubicMeter;
+    settings.projection.timeStepSeconds = timeStepSeconds;
+    settings.projection.absoluteResidualTolerance = 1.0e-11;
+    settings.projection.relativeResidualTolerance = 1.0e-13;
+    settings.projection.maximumIterations = 1000;
+    return settings;
 }
 
 const fluid::MovingInterfaceSurfaceDiagnostics& rightSurface(
@@ -339,6 +392,192 @@ const Structure& CoupledPistonCase::structure() const noexcept {
 }
 
 const StructureStepSettings& CoupledPistonCase::stepSettings() const noexcept {
+    return stepSettings_;
+}
+
+StrongCoupledPistonCase::StrongCoupledPistonCase()
+    : structure_(makeDefinition(strongStructuralMassKilograms)),
+      grid_(pistonGrid()),
+      fluidState_(initialFluidState(
+          grid_, 0.0, makeStepSettings().timeStepSeconds)),
+      bridge_(structure_, rightPistonSurfaceStableId,
+              makeCouplingNodes(), makeCouplingTriangles(),
+              fluidState_.diagnostics.faces),
+      coupling_(bridge_.transfer()),
+      stepSettings_(makeStepSettings()) {
+    relaxationSettings_.initialRelaxation = 0.25;
+    relaxationSettings_.minimumRelaxation = 0.02;
+    relaxationSettings_.maximumRelaxation = 1.0;
+    convergenceSettings_.minimumIterations = 3;
+    convergenceSettings_.maximumIterations = 10;
+    convergenceSettings_.absoluteDisplacementToleranceMetres = 1.0e-10;
+    convergenceSettings_.relativeDisplacementTolerance = 1.0e-9;
+    convergenceSettings_.absoluteVelocityToleranceMetersPerSecond = 1.0e-9;
+    convergenceSettings_.relativeVelocityTolerance = 1.0e-9;
+    convergenceSettings_.absoluteTractionToleranceNewtons = 1.0e-7;
+    convergenceSettings_.relativeTractionTolerance = 1.0e-9;
+    retrySettings_.maximumRetries = 2;
+    retrySettings_.reductionFactor = 0.5;
+    retrySettings_.minimumTimeStepSeconds =
+        stepSettings_.timeStepSeconds * 0.25;
+}
+
+StrongCoupledPistonStepDiagnostics StrongCoupledPistonCase::advance() {
+    const auto baselineKinematics =
+        bridge_.transfer().captureKinematics(structure_);
+    if (baselineKinematics.empty()) {
+        throw std::logic_error(
+            "strong piston has no coupling kinematics");
+    }
+    const double startSpeed =
+        baselineKinematics.front().velocityMetersPerSecond.x;
+    if (maximumVelocityDifference(
+            structure_.nodeStates(), startSpeed) > 1.0e-12) {
+        throw std::runtime_error(
+            "strong piston no longer has rigid translational velocity");
+    }
+    const auto baselineTransfer = bridge_.evaluate(
+        fluidState_.diagnostics, baselineKinematics);
+    const std::array<double, 1> initialInterface{startSpeed};
+    const std::uint64_t fingerprint = coupling_.surfaceFingerprint();
+    StrongCouplingIteration iteration(
+        fingerprint,
+        initialInterface,
+        relaxationSettings_,
+        convergenceSettings_);
+    StrongCouplingRollbackState rollback(
+        fingerprint,
+        std::move(structure_),
+        grid_,
+        std::move(fluidState_),
+        std::move(iteration));
+    StrongCouplingMacroStepState macroStep(
+        std::move(rollback),
+        stepSettings_.timeStepSeconds,
+        retrySettings_);
+
+    auto previousKinematics = baselineKinematics;
+    ConservativeTransferResult previousTraction =
+        baselineTransfer.transferResult();
+    double activeTimeStepSeconds = 0.0;
+    const StrongCouplingSolverCallback solve =
+        [&](Structure& structure,
+            const fluid::PeriodicCartesianGrid& grid,
+            fluid::MovingInterfaceFluidState& fluidState,
+            const std::span<const double> relaxedInterface,
+            const double timeStepSeconds) {
+            if (relaxedInterface.size() != 1) {
+                throw std::logic_error(
+                    "strong piston interface vector changed size");
+            }
+            if (timeStepSeconds != activeTimeStepSeconds) {
+                activeTimeStepSeconds = timeStepSeconds;
+                previousKinematics = baselineKinematics;
+                previousTraction = baselineTransfer.transferResult();
+            }
+            const double endSpeed = relaxedInterface.front();
+            fluidState.interfaces = fluid::FaceAlignedMovingInterface(
+                grid, slabFaces(grid, endSpeed));
+            fluidState.diagnostics =
+                fluid::projectVelocityWithMovingInterfaces(
+                    grid,
+                    fluidState.velocityMetersPerSecond,
+                    fluidState.pressurePascals,
+                    fluidState.interfaces,
+                    fluidProjectionSettings(timeStepSeconds));
+            if (!fluidState.diagnostics.projection.converged
+                || !fluidState.diagnostics.finite) {
+                throw std::runtime_error(
+                    "strong piston fluid projection was not accepted");
+            }
+
+            auto guessedKinematics = baselineKinematics;
+            for (auto& node : guessedKinematics) {
+                node.positionMeters.x += endSpeed * timeStepSeconds;
+                node.velocityMetersPerSecond = {endSpeed, 0.0, 0.0};
+            }
+            const auto endTransfer = bridge_.evaluate(
+                fluidState.diagnostics, guessedKinematics);
+            const std::array<double, 2> offsets{
+                0.0, timeStepSeconds};
+            const std::array transferSamples{
+                baselineTransfer.transferResult(),
+                endTransfer.transferResult()};
+            const auto integrated = coupling_.integrate(
+                offsets, transferSamples);
+            StructureStepSettings structuralSettings = stepSettings_;
+            structuralSettings.timeStepSeconds = timeStepSeconds;
+            const auto structureDiagnostics = coupling_.advanceStructure(
+                structure, integrated, structuralSettings);
+            if (!structureDiagnostics.finite) {
+                throw std::runtime_error(
+                    "strong piston structural solve was not accepted");
+            }
+            const auto currentKinematics =
+                bridge_.transfer().captureKinematics(structure);
+            const CouplingResidualNorms residuals =
+                coupling_.measureResiduals(
+                    baselineKinematics,
+                    previousKinematics,
+                    currentKinematics,
+                    previousTraction,
+                    endTransfer.transferResult());
+            previousKinematics = currentKinematics;
+            previousTraction = endTransfer.transferResult();
+
+            const double solvedSpeed =
+                currentKinematics.front().velocityMetersPerSecond.x;
+            for (const auto& node : currentKinematics) {
+                if (std::abs(node.velocityMetersPerSecond.x - solvedSpeed)
+                        > 1.0e-12
+                    || std::abs(node.velocityMetersPerSecond.y) > 1.0e-12
+                    || std::abs(node.velocityMetersPerSecond.z) > 1.0e-12) {
+                    throw std::runtime_error(
+                        "strong piston structural solve lost rigid translation");
+                }
+            }
+            return StrongCouplingSolverResult{{solvedSpeed}, residuals};
+        };
+
+    StrongCouplingMacroStepRunResult run;
+    try {
+        run = runStrongCouplingMacroStep(macroStep, solve);
+    } catch (...) {
+        structure_ = std::move(macroStep.rollbackState().structure());
+        fluidState_ = std::move(macroStep.rollbackState().fluidState());
+        throw;
+    }
+    structure_ = std::move(macroStep.rollbackState().structure());
+    fluidState_ = std::move(macroStep.rollbackState().fluidState());
+
+    const double acceptedSpeed =
+        structure_.nodeStates().front().velocityMetersPerSecond.x;
+    const double interfaceSpeed = fluidState_.interfaces.faces().front()
+        .normalVelocityMetersPerSecond;
+    StrongCoupledPistonStepDiagnostics result;
+    result.coupling = std::move(run);
+    result.startSpeedMetersPerSecond = startSpeed;
+    result.acceptedSpeedMetersPerSecond = acceptedSpeed;
+    result.acceptedInterfaceSpeedMetersPerSecond = interfaceSpeed;
+    result.velocityClosureMetersPerSecond =
+        std::abs(acceptedSpeed - interfaceSpeed);
+    result.finite = std::isfinite(acceptedSpeed)
+        && std::isfinite(interfaceSpeed)
+        && std::isfinite(result.velocityClosureMetersPerSecond);
+    return result;
+}
+
+const Structure& StrongCoupledPistonCase::structure() const noexcept {
+    return structure_;
+}
+
+const fluid::MovingInterfaceFluidState&
+StrongCoupledPistonCase::fluidState() const noexcept {
+    return fluidState_;
+}
+
+const StructureStepSettings&
+StrongCoupledPistonCase::stepSettings() const noexcept {
     return stepSettings_;
 }
 

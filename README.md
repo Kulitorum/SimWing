@@ -331,7 +331,13 @@ plane moves and the Eulerian grid plane rebases, provided transverse geometry
 remains fixed and fluid/structural normal velocities agree. The
 `simwing-fsi --case piston` harness crosses that
 face-resolved bridge, temporal coupling, XPBD acceptance, and replayable viewer
-frames with visible deterministic motion. The
+frames with visible deterministic motion. The same production target now also
+contains a headless strong-coupling canonical: a `6 kg` tributary-mass piston
+against `28.8 kg` of projected fluid. Its scalar interface speed is solved by
+the generic Aitken loop, while every iteration reruns the actual moving-interface
+projection, face-resolved pressure transfer, temporal integration, and XPBD
+step from the accepted baseline. Only the converged Structure/fluid epoch
+persists; this diagnostic canonical is not yet a CLI worker. The
 `simwing-fsi --case porous-sheet` harness drives fluid through a translating
 linear-resistance sheet, transfers only the sheet reaction to XPBD, and closes
 the pump impulse/work, porous dissipation, and fluid/structure kinetic-energy

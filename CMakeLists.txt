@@ -490,7 +490,7 @@ target_include_directories(simwing_piston_case PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
 )
 target_link_libraries(simwing_piston_case PUBLIC
-    simwing_coupling
+    simwing_coupled_state
     simwing_fluid_structure_bridge
     simwing_structure_frame
 )

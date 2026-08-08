@@ -167,11 +167,67 @@ void testCompletedPistonTrace() {
           "piston trace: replay contains every accepted frame");
 }
 
+void testStrongCoupledLightPiston() {
+    fsi::StrongCoupledPistonCase first;
+    fsi::StrongCoupledPistonCase observed;
+    fsi::StrongCoupledPistonStepDiagnostics firstStep;
+    fsi::StrongCoupledPistonStepDiagnostics finalStep;
+    constexpr std::uint64_t steps = 8;
+    for (std::uint64_t step = 0; step < steps; ++step) {
+        const auto firstResult = first.advance();
+        const auto observedResult = observed.advance();
+        if (step == 0) {
+            firstStep = firstResult;
+        }
+        finalStep = observedResult;
+        check(firstResult == observedResult,
+              "strong piston: repeated solver runs are deterministic");
+        check(observedResult.finite
+                  && observedResult.coupling.decision.status
+                      == fsi::CouplingMacroStepRetryStatus::Accepted
+                  && observedResult.coupling.solverRunCount >= 3
+                  && observedResult.coupling.solverRunCount <= 30
+                  && observedResult.coupling.lastIteration.status
+                      == fsi::StrongCouplingIterationStatus::Converged,
+              "strong piston: the real callback converges inside bounded strong coupling");
+    }
+
+    const auto firstStructure = first.structure().checkpoint();
+    const auto observedStructure = observed.structure().checkpoint();
+    check(firstStructure.nodes == observedStructure.nodes
+              && firstStructure.acceptedStepCount == steps
+              && firstStructure.acceptedStepCount
+                  == observedStructure.acceptedStepCount
+              && firstStructure.simulationTimeSeconds
+                  == observedStructure.simulationTimeSeconds
+              && first.fluidState().velocityMetersPerSecond
+                  == observed.fluidState().velocityMetersPerSecond
+              && first.fluidState().pressurePascals
+                  == observed.fluidState().pressurePascals
+              && first.fluidState().interfaces
+                  == observed.fluidState().interfaces
+              && first.fluidState().diagnostics
+                  == observed.fluidState().diagnostics,
+          "strong piston: accepted Structure and persistent fluid state replay exactly");
+    const double explicitWeakSpeed = 660.0
+        * observed.stepSettings().timeStepSeconds / 6.0;
+    check(firstStep.acceptedSpeedMetersPerSecond > 0.0
+              && firstStep.acceptedSpeedMetersPerSecond
+                  < explicitWeakSpeed
+              && firstStep.coupling.solverRunCount > 1,
+          "strong piston: light added mass changes the weak one-pass response and requires iteration");
+    check(finalStep.acceptedSpeedMetersPerSecond
+              > firstStep.acceptedSpeedMetersPerSecond
+              && finalStep.velocityClosureMetersPerSecond <= 1.0e-9,
+          "strong piston: accepted interface and structure velocity close after repeated steps");
+}
+
 } // namespace
 
 int main() {
     testDeterministicEndToEndPistonFrames();
     testCompletedPistonTrace();
+    testStrongCoupledLightPiston();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing coupled piston check(s) failed\n",

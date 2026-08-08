@@ -800,7 +800,14 @@ rigid-normal translated correspondence are supported; general deforming or
 nonplanar porous-sheet mapping is not. The `--case piston` worker now evaluates compatible
 start/end face-resolved fluid samples, trapezoidally integrates them, accepts
 the impulse through XPBD, and publishes the resulting moving two-triangle
-surface and CFD ledger fields to the standalone viewer. The
+surface and CFD ledger fields to the standalone viewer. A distinct headless
+light-piston canonical now exercises the actual strong-coupling driver. Its
+`6 kg` plate is lighter than the `28.8 kg` projected fluid, and every iteration
+repeats moving-interface projection, face-resolved pressure mapping, temporal
+integration, and XPBD acceptance from one physical baseline. Aitken relaxes the
+scalar terminal speed, topology-bound motion/traction residuals decide
+convergence, and only the converged Structure/fluid state persists. This is not
+yet exposed as a CLI worker. The
 `--case open-piston` worker adds the nonseparating connected-fluid projection,
 partial-cell geometry, resolved-opening GCL ledger, an explicit plate actuator,
 and a separately reported resisting CFD load. Its pressure reaction now crosses
@@ -1225,7 +1232,11 @@ planes, failed projections, corrupted aggregates, and altered cut geometry are
 rejected. The visible
 piston worker repeats the face-resolved full chain at `120 Hz` with a synthetic
 `6000 kg` tributary-mass plate so 600 default frames show about `1.38 m` of
-deterministic translation without leaving the initial viewer scale. The open
+deterministic translation without leaving the initial viewer scale. Its
+headless strong-coupling counterpart instead uses `6 kg`; its deterministic
+multi-iteration solution differs from the weak one-pass response and closes
+accepted interface/structural velocity before retaining persistent Structure
+and fluid fields. The open
 piston worker uses the same mass and rate but drives at `0.05 m/s`: 600 frames
 move `0.25 m`, grow the analytic chamber from `12` to `13.5 m^3`, expose the
 actuator impulse separately from the moving face-resolved CFD pressure reaction,
