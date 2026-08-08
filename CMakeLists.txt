@@ -456,6 +456,9 @@ target_link_libraries(simwing_piston_case PUBLIC
 add_library(simwing_porous_sheet_case STATIC
     src/fsi/porous_sheet_case.cpp
     src/fsi/porous_sheet_case.h
+    src/fsi/porous_sheet_checkpoint_detail.h
+    src/fsi/porous_sheet_checkpoint_persistence.cpp
+    src/fsi/porous_sheet_checkpoint_persistence.h
 )
 target_include_directories(simwing_porous_sheet_case PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
@@ -463,6 +466,7 @@ target_include_directories(simwing_porous_sheet_case PUBLIC
 target_link_libraries(simwing_porous_sheet_case PUBLIC
     simwing_coupling
     simwing_fluid_structure_bridge
+    simwing_structure
     simwing_structure_frame
 )
 

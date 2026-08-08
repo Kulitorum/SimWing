@@ -411,6 +411,7 @@ src/fsi/
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     piston_case.*           sealed fixed-topology worker canonical
     porous_sheet_case.*     coupled midpoint porous-sheet oracle
+    porous_sheet_checkpoint_persistence.* bounded composite restart codec
     open_piston_case.*      driven open-control-volume worker canonical
     open_piston_checkpoint_persistence.* bounded composite restart codec
     periodic_flow_case.*    visible periodic CFD verification worker
@@ -976,6 +977,14 @@ the case identity, exact step/time epoch, rigid sheet state, uniform fluid
 state, field energy, and cumulative pump momentum before one transactional
 commit; initial and accepted checkpoints reproduce the exact next frame in an
 equivalent rebuilt worker.
+The distinct `SWPS` persistent envelope reuses the validated Structure codec
+and stores all three MAC velocity components plus pressure explicitly. Because
+this canonical has no controls and terminates within one topology epoch, decode
+regenerates its coupled diagnostic by bounded replay and requires the decoded
+Structure and every field sample to match that replay bit-for-bit. Magic,
+protocol, reserved bits, payload size, checksum, nested Structure state, total
+bytes, scalar samples, and replay steps are bounded and rejected before the
+destination checkpoint changes.
 The case checkpoint must restore the initial state and a later accepted state,
 then reproduce the next frame bit-for-bit in both the original and an equivalent
 rebuilt worker. Version, case fingerprint, grid, sample count, step, time, and

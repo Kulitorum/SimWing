@@ -1,0 +1,60 @@
+#pragma once
+
+#include "porous_sheet_case.h"
+#include "structure_checkpoint_persistence.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <span>
+#include <string>
+#include <vector>
+
+namespace simwing::fsi {
+
+inline constexpr std::uint16_t
+    coupledPorousSheetCheckpointProtocolVersion = 1;
+
+struct CoupledPorousSheetCheckpointPersistenceLimits {
+    std::size_t maximumEncodedBytes = 256u * 1024u * 1024u;
+    std::size_t maximumScalarSamples = 5'000'000;
+    std::uint64_t maximumReplaySteps = 10'000;
+    StructureCheckpointPersistenceLimits structure;
+};
+
+enum class CoupledPorousSheetCheckpointPersistenceErrorCode {
+    None,
+    InvalidData,
+    InvalidMagic,
+    UnsupportedVersion,
+    LimitExceeded,
+    Truncated,
+    TrailingData,
+    ChecksumMismatch,
+};
+
+struct CoupledPorousSheetCheckpointPersistenceError {
+    CoupledPorousSheetCheckpointPersistenceErrorCode code =
+        CoupledPorousSheetCheckpointPersistenceErrorCode::None;
+    std::string message;
+};
+
+// Deterministic little-endian composite persistence for the fixed canonical
+// epoch. Structure uses its existing bounded codec; velocity and pressure are
+// stored explicitly. The last coupled diagnostic is deliberately regenerated
+// by bounded deterministic replay, then every decoded state field must match
+// that replay bit-for-bit before the immutable checkpoint is published.
+[[nodiscard]] bool serializeCoupledPorousSheetCheckpoint(
+    const CoupledPorousSheetCase& owner,
+    const CoupledPorousSheetCheckpoint& checkpoint,
+    std::vector<std::uint8_t>& bytes,
+    CoupledPorousSheetCheckpointPersistenceError* error = nullptr,
+    const CoupledPorousSheetCheckpointPersistenceLimits& limits = {});
+
+[[nodiscard]] bool deserializeCoupledPorousSheetCheckpoint(
+    std::span<const std::uint8_t> bytes,
+    const CoupledPorousSheetCase& owner,
+    CoupledPorousSheetCheckpoint& checkpoint,
+    CoupledPorousSheetCheckpointPersistenceError* error = nullptr,
+    const CoupledPorousSheetCheckpointPersistenceLimits& limits = {});
+
+} // namespace simwing::fsi

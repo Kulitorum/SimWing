@@ -249,7 +249,9 @@ linear-resistance sheet, transfers only the sheet reaction to XPBD, and closes
 the pump impulse/work, porous dissipation, and fluid/structure kinetic-energy
 ledgers before publishing a frame. It is a fixed-topology midpoint oracle and
 stops before the sheet leaves its current MAC segment. Its in-memory composite
-checkpoint restores the complete accepted state with exact next-frame replay.
+checkpoint restores the complete accepted state with exact next-frame replay;
+the checksummed persistent form reuses Structure's codec, stores the MAC fields,
+and validates them against bounded deterministic replay before decode.
 The
 `simwing-fsi --case open-piston` harness drives a `6000 kg` plate at
 `0.05 m/s`, exposes the resisting CFD pressure separately from its actuator,

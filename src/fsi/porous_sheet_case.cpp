@@ -1,4 +1,5 @@
 #include "porous_sheet_case.h"
+#include "porous_sheet_checkpoint_detail.h"
 
 #include <algorithm>
 #include <array>
@@ -9,23 +10,6 @@
 #include <vector>
 
 namespace simwing::fsi {
-
-struct CoupledPorousSheetCheckpoint::Detail {
-    StructureCheckpoint structure;
-    fluid::MacVelocityField velocity;
-    fluid::CellScalarField pressure;
-    CoupledPorousSheetStepDiagnostics diagnostics;
-
-    Detail(StructureCheckpoint structureValue,
-           fluid::MacVelocityField velocityValue,
-           fluid::CellScalarField pressureValue,
-           CoupledPorousSheetStepDiagnostics diagnosticsValue)
-        : structure(std::move(structureValue)),
-          velocity(std::move(velocityValue)),
-          pressure(std::move(pressureValue)),
-          diagnostics(std::move(diagnosticsValue)) {}
-};
-
 namespace {
 
 constexpr std::uint64_t porousSheetSurfaceStableId = 300;

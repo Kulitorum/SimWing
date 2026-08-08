@@ -1,7 +1,9 @@
 #include "porous_sheet_case.h"
+#include "porous_sheet_checkpoint_persistence.h"
 #include "viewer_protocol.h"
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <exception>
@@ -305,6 +307,220 @@ void testCheckpointReplayAndValidation() {
         "porous-sheet checkpoint validation: empty payload is transactional");
 }
 
+std::uint64_t readU64(
+    const std::vector<std::uint8_t>& bytes,
+    const std::size_t offset) {
+    std::uint64_t result = 0;
+    for (unsigned shift = 0; shift < 64; shift += 8) {
+        result |= static_cast<std::uint64_t>(
+            bytes[offset + shift / 8]) << shift;
+    }
+    return result;
+}
+
+void writeU64(std::vector<std::uint8_t>& bytes,
+              const std::size_t offset,
+              const std::uint64_t value) {
+    for (unsigned shift = 0; shift < 64; shift += 8) {
+        bytes[offset + shift / 8] =
+            static_cast<std::uint8_t>(value >> shift);
+    }
+}
+
+std::uint64_t payloadChecksum(
+    const std::span<const std::uint8_t> bytes) {
+    std::uint64_t result = 14695981039346656037ULL;
+    for (const std::uint8_t byte : bytes) {
+        result ^= byte;
+        result *= 1099511628211ULL;
+    }
+    return result;
+}
+
+void recomputeEnvelopeChecksum(std::vector<std::uint8_t>& bytes) {
+    constexpr std::size_t prefix = 16;
+    constexpr std::size_t checksumBytes = 8;
+    const std::size_t payloadSize = static_cast<std::size_t>(
+        readU64(bytes, 8));
+    check(bytes.size() == prefix + payloadSize + checksumBytes,
+          "porous-sheet persistence fixture: envelope size is canonical");
+    writeU64(
+        bytes, prefix + payloadSize,
+        payloadChecksum(std::span<const std::uint8_t>(
+            bytes.data() + prefix, payloadSize)));
+}
+
+std::vector<std::uint8_t> encodeCheckpoint(
+    const fsi::CoupledPorousSheetCase& owner,
+    const fsi::CoupledPorousSheetCheckpoint& checkpoint) {
+    std::vector<std::uint8_t> bytes;
+    fsi::CoupledPorousSheetCheckpointPersistenceError error;
+    check(fsi::serializeCoupledPorousSheetCheckpoint(
+              owner, checkpoint, bytes, &error),
+          "porous-sheet persistence: valid checkpoint serializes");
+    return bytes;
+}
+
+void expectDecodeRejected(
+    const std::vector<std::uint8_t>& bytes,
+    const fsi::CoupledPorousSheetCase& owner,
+    fsi::CoupledPorousSheetCheckpoint& destination,
+    const fsi::CoupledPorousSheetCheckpointPersistenceErrorCode expectedCode,
+    const char* message,
+    const fsi::CoupledPorousSheetCheckpointPersistenceLimits& limits = {}) {
+    const auto before = destination;
+    fsi::CoupledPorousSheetCheckpointPersistenceError error;
+    const bool decoded = fsi::deserializeCoupledPorousSheetCheckpoint(
+        bytes, owner, destination, &error, limits);
+    fsi::CoupledPorousSheetCase expected;
+    fsi::CoupledPorousSheetCase actual;
+    expected.restore(before);
+    actual.restore(destination);
+    check(!decoded && error.code == expectedCode
+              && destination.version == before.version
+              && destination.caseFingerprint == before.caseFingerprint
+              && destination.acceptedStepCount == before.acceptedStepCount
+              && destination.simulationTimeSeconds
+                  == before.simulationTimeSeconds
+              && serialized(expected.advance())
+                  == serialized(actual.advance()),
+          message);
+}
+
+void testPersistentCheckpoint() {
+    fsi::CoupledPorousSheetCase initialOwner;
+    const auto initialBytes = encodeCheckpoint(
+        initialOwner, initialOwner.checkpoint());
+    fsi::CoupledPorousSheetCheckpoint decodedInitial;
+    fsi::CoupledPorousSheetCheckpointPersistenceError error;
+    check(fsi::deserializeCoupledPorousSheetCheckpoint(
+              initialBytes, initialOwner, decodedInitial, &error),
+          "porous-sheet persistence: initial checkpoint decodes");
+    fsi::CoupledPorousSheetCase initialReplay;
+    initialReplay.restore(decodedInitial);
+    check(serialized(initialOwner.advance())
+              == serialized(initialReplay.advance()),
+          "porous-sheet persistence: decoded initial state reproduces the first frame");
+
+    fsi::CoupledPorousSheetCase owner;
+    constexpr std::uint64_t stepCount = 60;
+    for (std::uint64_t step = 0; step < stepCount; ++step) {
+        static_cast<void>(owner.advance());
+    }
+    const auto checkpoint = owner.checkpoint();
+    const auto first = encodeCheckpoint(owner, checkpoint);
+    const auto second = encodeCheckpoint(owner, checkpoint);
+    check(first == second && first.size() > 256,
+          "porous-sheet persistence: repeated encoding is byte-deterministic");
+
+    fsi::CoupledPorousSheetCase destinationOwner;
+    for (std::size_t step = 0; step < 5; ++step) {
+        static_cast<void>(destinationOwner.advance());
+    }
+    auto destination = destinationOwner.checkpoint();
+    check(fsi::deserializeCoupledPorousSheetCheckpoint(
+              first, destinationOwner, destination, &error)
+              && destination.acceptedStepCount == stepCount,
+          "porous-sheet persistence: accepted checkpoint decodes transactionally");
+    const auto reencoded = encodeCheckpoint(destinationOwner, destination);
+    check(reencoded == first,
+          "porous-sheet persistence: decode and re-encode preserve exact bytes");
+    fsi::CoupledPorousSheetCase replay;
+    replay.restore(destination);
+    check(serialized(owner.advance()) == serialized(replay.advance()),
+          "porous-sheet persistence: decoded accepted state reproduces the exact next frame");
+
+    auto invalid = first;
+    invalid[0] ^= 1;
+    expectDecodeRejected(
+        invalid, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::InvalidMagic,
+        "porous-sheet persistence validation: bad magic is transactional");
+    invalid = first;
+    invalid[4] += 1;
+    expectDecodeRejected(
+        invalid, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::UnsupportedVersion,
+        "porous-sheet persistence validation: protocol version is transactional");
+    invalid = first;
+    invalid[6] = 1;
+    expectDecodeRejected(
+        invalid, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::InvalidData,
+        "porous-sheet persistence validation: reserved bits are transactional");
+    invalid = first;
+    invalid.pop_back();
+    expectDecodeRejected(
+        invalid, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::Truncated,
+        "porous-sheet persistence validation: truncation is transactional");
+    invalid = first;
+    invalid.push_back(0);
+    expectDecodeRejected(
+        invalid, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::TrailingData,
+        "porous-sheet persistence validation: trailing bytes are transactional");
+    invalid = first;
+    invalid[32] ^= 1;
+    expectDecodeRejected(
+        invalid, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::ChecksumMismatch,
+        "porous-sheet persistence validation: checksum damage is transactional");
+
+    fsi::CoupledPorousSheetCheckpointPersistenceLimits limits;
+    limits.maximumEncodedBytes = first.size() - 1;
+    expectDecodeRejected(
+        first, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::LimitExceeded,
+        "porous-sheet persistence validation: byte limit is transactional",
+        limits);
+    limits = {};
+    limits.maximumScalarSamples = 191;
+    expectDecodeRejected(
+        first, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::LimitExceeded,
+        "porous-sheet persistence validation: field limit is transactional",
+        limits);
+    limits = {};
+    limits.maximumReplaySteps = stepCount - 1;
+    expectDecodeRejected(
+        first, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::LimitExceeded,
+        "porous-sheet persistence validation: replay limit is transactional",
+        limits);
+    limits = {};
+    limits.maximumScalarSamples = 191;
+    std::vector<std::uint8_t> preservedOutput{7, 8, 9};
+    check(!fsi::serializeCoupledPorousSheetCheckpoint(
+              owner, checkpoint, preservedOutput, &error, limits)
+              && error.code
+                  == fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::LimitExceeded
+              && preservedOutput == std::vector<std::uint8_t>({7, 8, 9}),
+          "porous-sheet persistence validation: failed encoding preserves caller output");
+
+    invalid = first;
+    constexpr std::size_t payloadOffset = 16;
+    constexpr std::size_t structureSizeOffsetInPayload = 108;
+    constexpr std::size_t structureOffsetInPayload = 116;
+    const std::size_t structureSize = static_cast<std::size_t>(readU64(
+        invalid, payloadOffset + structureSizeOffsetInPayload));
+    check(structureSize > 32,
+          "porous-sheet persistence fixture: nested Structure envelope is present");
+    invalid[payloadOffset + structureOffsetInPayload + 24] ^= 1;
+    recomputeEnvelopeChecksum(invalid);
+    expectDecodeRejected(
+        invalid, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::InvalidData,
+        "porous-sheet persistence validation: nested Structure corruption is transactional");
+    invalid = first;
+    invalid[payloadOffset + structureOffsetInPayload + structureSize] ^= 1;
+    recomputeEnvelopeChecksum(invalid);
+    expectDecodeRejected(
+        invalid, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::InvalidData,
+        "porous-sheet persistence validation: recomputed field corruption cannot evade replay");
+}
+
 } // namespace
 
 int main() {
@@ -312,6 +528,7 @@ int main() {
     testCompletedTrace();
     testTopologyBoundaryRollback();
     testCheckpointReplayAndValidation();
+    testPersistentCheckpoint();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing coupled porous-sheet check(s) failed\n",

@@ -11,6 +11,8 @@
 
 namespace simwing::fsi {
 
+struct CoupledPorousSheetCheckpointCodecAccess;
+
 inline constexpr char coupledPorousSheetCaseChecksum[] =
     "sha256:simwing-coupled-porous-sheet-case-v1";
 inline constexpr char coupledPorousSheetCaseSolverId[] =
@@ -66,6 +68,7 @@ struct CoupledPorousSheetCheckpoint {
 
 private:
     friend class CoupledPorousSheetCase;
+    friend struct CoupledPorousSheetCheckpointCodecAccess;
     struct Detail;
     std::shared_ptr<const Detail> detail;
 };
