@@ -388,7 +388,7 @@ src/fsi/
         grid.*              block hierarchy and field storage
         geometry.*          discrete surface and region reconstruction
         advection.*
-        diffusion.*
+        diffusion.*         bounded periodic MAC viscosity verification
         projection.*
         interface_jump.*
         moving_interface.*  grid-face constraints and region topology
@@ -452,7 +452,14 @@ its finite-volume gradient and divergence are a tested adjoint pair, its
 zero-mean conjugate-gradient pressure projection commits transactionally, and
 the focused regression covers Taylor-Green invariance, a discretely
 manufactured exact projection, observed second-order pressure convergence, and
-periodic momentum/kinetic-energy budgets. A canonical single-crossing
+periodic momentum/kinetic-energy budgets. A first explicit laminar diffusion
+operator applies the centred seven-point Laplacian independently on the three
+translated MAC-component lattices. The exact stability boundary is
+`nu*dt*(1/dx^2+1/dy^2+1/dz^2) <= 0.5`; excessive steps preserve the input
+bit-for-bit. Accepted steps preserve all three component momenta, do not add
+kinetic energy, keep solenoidal Fourier modes divergence-free, and reproduce
+the discrete Fourier eigenvalue. This forward-Euler verification step is not
+yet the intended second-order production time integrator. A canonical single-crossing
 grid-face field now retains stable surface IDs, two distinct fluid-region IDs,
 and the signed pressure discontinuity. Its paired sharp gradient and Poisson
 source preserve a static pressurized slab without smoothing the pressure or
@@ -607,7 +614,8 @@ cases meet their declared tolerances.
 ### Phase 2 — CFD verification kernel
 
 Status: in progress. `simwing_fluid` currently owns the uniform periodic
-verification grid, pressure projection, and fixed-topology face-aligned moving
+verification grid, explicit laminar velocity diffusion, pressure projection,
+and fixed-topology face-aligned moving
 constraints, plus the first open planar one-partial-cell control-volume
 operator, its exact next-plane topology rebase, and the bounded physical
 cut-surface reaction geometry described above. On solve failure it preserves
@@ -621,8 +629,12 @@ gradient/divergence adjoint error at or below `2e-14` in the canonical
 integral, Taylor-Green maximum divergence below `2e-14 1/s` with a
 bit-identical zero correction, discretely manufactured post-projection L2
 divergence below `2e-12 1/s`, pressure convergence ratios in `[3.9, 4.2]` for
-two successive resolution doublings, no kinetic-energy increase, and periodic
-component-momentum sums preserved within `5e-14` in the mixed-mode case. The
+two successive resolution doublings, viscous eigenvalue convergence ratios in
+`[3.95, 4.05]` then `[3.98, 4.02]`, exact zero and uniform viscous modes, exact
+acceptance of the non-amplifying diffusion-number `0.5` boundary, no
+kinetic-energy increase, and periodic
+component-momentum sums preserved within `5e-14` in the projection mixed-mode
+case; viscous physical-momentum residual stays below `2e-12 N*s`. The
 static 250 Pa slab must retain its two pressure levels within `2e-12 Pa` and
 keep spurious velocity below `2e-13 m/s`; a jump placed on periodic face zero
 has separate `1e-12 Pa` and `1e-13 m/s` budgets. These tolerances apply to the

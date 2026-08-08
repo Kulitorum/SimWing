@@ -34,7 +34,12 @@ the viewer by default and streams accepted XPBD steps through a replayable
 growing trace. The first Qt-free fluid kernel adds a periodic staggered-grid
 pressure projection with deterministic rollback behavior, exact discrete
 gradient/divergence pairing, Taylor-Green preservation, and manufactured
-second-order pressure convergence. A validated single-crossing sharp-interface
+second-order pressure convergence. Its first velocity-evolution operator adds
+explicit laminar viscosity directly on the periodic MAC components, preserves
+momentum and solenoidal Fourier modes, dissipates kinetic energy, and rejects
+steps above the sharp diffusion-number limit without mutating the field. It is
+a verification integrator, not yet the second-order production time scheme.
+A validated single-crossing sharp-interface
 field now preserves a prescribed two-sided static pressure jump without
 smearing or spurious flow, including across the periodic domain boundary.
 Face-aligned moving membranes can now partition stable fluid regions, impose
