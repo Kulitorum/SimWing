@@ -817,7 +817,10 @@ in-memory checkpoint composes only the accepted Structure and fixed-topology
 moving-interface fluid epoch, validates their velocity closure before commit,
 and replays the exact next coupled result and immutable frame. Iteration and
 rejected-attempt state remain deliberately outside that accepted restart
-boundary; a persistent envelope remains future work. The
+boundary. The deterministic bounded `SWSPCKP1` envelope nests the existing
+Structure and moving-interface fluid codecs, revalidates their coupled
+canonical owner, and enforces outer checksum plus nested byte limits before
+transactional decode. Persistent CLI routing remains future work. The
 `--case open-piston` worker adds the nonseparating connected-fluid projection,
 partial-cell geometry, resolved-opening GCL ledger, an explicit plate actuator,
 and a separately reported resisting CFD load. Its pressure reaction now crosses

@@ -206,7 +206,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   immutable viewer frames. It also owns the headless light-piston strong-
   coupling canonical that supplies a real moving-interface/transfer/XPBD
   callback to `simwing_coupled_state`. `--case strong-piston` publishes its
-  accepted immutable diagnostic frames without checkpoint/control mode.
+  accepted immutable diagnostic frames without control mode. Its bounded
+  persistence codec exists, but CLI checkpoint flags are not connected yet.
 - `simwing_porous_sheet_case`: Qt-free midpoint oracle coupling a
   pressure-driven porous sheet to XPBD. It closes fluid/sheet/pump momentum,
   pump work, porous dissipation, and kinetic-energy ledgers before publishing
@@ -752,6 +753,9 @@ makes this a certified aerodynamic solver.
   structural denominator. Its in-memory checkpoint contains only accepted
   Structure and moving-interface fluid state, validates their shared velocity
   closure before no-throw commit, and replays the exact next result/frame.
+  `strong_piston_checkpoint_persistence.*` wraps those accepted nested codecs
+  in the deterministic checksummed `SWSPCKP1` envelope; it never stores an
+  in-progress iteration or rejected attempt.
 - `src/fsi/porous_sheet_case.{h,cpp}` is selected with `--case porous-sheet`.
   Its analytic linear-resistance midpoint relation drives the same accepted
   nonuniform porous projection, sheet-reaction bridge, temporal transfer, and
@@ -1129,7 +1133,9 @@ deterministic persistent Structure/fluid state, immutable-frame provenance and
 residual fields, the `10.8 kg` discrete pressure added-mass slope and matching
 trapezoidal fixed-point speed, accepted checkpoint next-step/frame replay,
 transactional public-version/interface/Structure/fluid-topology rejection, and
-accepted-only CLI trace publication.
+deterministic persistent decode/re-encode and continuation, bounded outer and
+nested sizes, magic/protocol/reserved/checksum/truncation/trailing/identity
+rejection without output mutation, and accepted-only CLI trace publication.
 For second-order fixed-grid porous evolution, `simwing_fluid_evolution` must
 also preserve exact porous-half/bulk-Strang/porous-half composition, summed
 interface ledgers, later-stage rollback, bit-exact empty-topology bulk

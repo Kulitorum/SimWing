@@ -485,6 +485,8 @@ target_link_libraries(simwing_fluid_structure_bridge PUBLIC
 add_library(simwing_piston_case STATIC
     src/fsi/piston_case.cpp
     src/fsi/piston_case.h
+    src/fsi/strong_piston_checkpoint_persistence.cpp
+    src/fsi/strong_piston_checkpoint_persistence.h
 )
 target_include_directories(simwing_piston_case PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"

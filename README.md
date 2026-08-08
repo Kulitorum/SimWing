@@ -348,7 +348,12 @@ Its in-memory accepted-state checkpoint composes the real Structure and
 moving-interface fluid payloads, rejects foreign public identities/topology
 transactionally, and reproduces the exact next strong-coupled result and frame.
 No in-progress iteration or rejected attempt is checkpointable, and this
-checkpoint does not yet have a persistent CLI envelope.
+accepted boundary now has a deterministic bounded `SWSPCKP1` envelope that
+nests the existing Structure and moving-interface fluid codecs. It validates a
+fresh canonical owner before encode/decode, checks an outer checksum and nested
+length limits, rejects corrupt/truncated/trailing data without changing output,
+and resumes the next coupled step exactly. CLI checkpoint flags are not wired
+to this case yet.
 The
 `simwing-fsi --case porous-sheet` harness drives fluid through a translating
 linear-resistance sheet, transfers only the sheet reaction to XPBD, and closes

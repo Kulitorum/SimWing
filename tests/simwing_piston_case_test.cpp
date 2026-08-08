@@ -1,9 +1,12 @@
 #include "piston_case.h"
+#include "strong_piston_checkpoint_persistence.h"
 #include "viewer_protocol.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -52,6 +55,34 @@ std::vector<std::uint8_t> serialized(
     check(viewer::serializeFrame(frame, bytes, &error),
           "piston: deterministic frame serializes");
     return bytes;
+}
+
+std::uint64_t checkpointChecksum(
+    const std::span<const std::uint8_t> bytes) {
+    std::uint64_t result = 14695981039346656037ULL;
+    for (const std::uint8_t value : bytes) {
+        result ^= value;
+        result *= 1099511628211ULL;
+    }
+    return result;
+}
+
+void writeU64(
+    std::vector<std::uint8_t>& bytes,
+    const std::size_t offset,
+    std::uint64_t value) {
+    for (std::size_t index = 0; index < sizeof(value); ++index) {
+        bytes[offset + index] = static_cast<std::uint8_t>(value & 0xffU);
+        value >>= 8U;
+    }
+}
+
+void refreshStrongCheckpointChecksum(std::vector<std::uint8_t>& bytes) {
+    constexpr std::size_t envelopeBytes = 28;
+    writeU64(
+        bytes, 20,
+        checkpointChecksum(std::span<const std::uint8_t>(bytes)
+                               .subspan(envelopeBytes)));
 }
 
 const viewer::ScalarField* scalarField(
@@ -370,6 +401,128 @@ void testStrongPistonAcceptedCheckpointReplay() {
           "strong piston checkpoint: immutable next frame replays exactly");
 }
 
+void testStrongPistonPersistentCheckpoint() {
+    fsi::StrongCoupledPistonCase simulation;
+    for (std::uint64_t step = 0; step < 5; ++step) {
+        static_cast<void>(simulation.advance());
+    }
+    const auto checkpoint = simulation.checkpoint();
+    std::vector<std::uint8_t> firstBytes;
+    std::vector<std::uint8_t> secondBytes;
+    fsi::StrongPistonCheckpointPersistenceError error;
+    check(fsi::serializeStrongPistonCheckpoint(
+              checkpoint, firstBytes, &error)
+              && fsi::serializeStrongPistonCheckpoint(
+                  checkpoint, secondBytes, &error)
+              && !firstBytes.empty()
+              && firstBytes == secondBytes,
+          "strong piston persistence: accepted state encodes deterministically");
+
+    fsi::StrongCoupledPistonCase unchangedOwner;
+    const auto unchanged = unchangedOwner.checkpoint();
+    fsi::StrongCoupledPistonCheckpoint decoded = unchanged;
+    check(fsi::deserializeStrongPistonCheckpoint(
+              firstBytes, decoded, &error),
+          "strong piston persistence: encoded state decodes");
+    std::vector<std::uint8_t> reencoded;
+    check(fsi::serializeStrongPistonCheckpoint(
+              decoded, reencoded, &error)
+              && reencoded == firstBytes,
+          "strong piston persistence: decode and re-encode are byte exact");
+    const auto expectedNext = simulation.advance();
+    fsi::StrongCoupledPistonCase resumed;
+    resumed.restore(decoded);
+    const auto resumedNext = resumed.advance();
+    check(resumedNext == expectedNext
+              && resumed.structure().checkpoint().nodes
+                  == simulation.structure().checkpoint().nodes
+              && resumed.fluidState().velocityMetersPerSecond
+                  == simulation.fluidState().velocityMetersPerSecond
+              && resumed.fluidState().pressurePascals
+                  == simulation.fluidState().pressurePascals,
+          "strong piston persistence: rebuilt owner continues exactly");
+
+    const auto outputUnchanged = [&] {
+        return decoded.version == checkpoint.version
+            && decoded.interfaceDefinitionFingerprint
+                == checkpoint.interfaceDefinitionFingerprint
+            && decoded.structure.acceptedStepCount
+                == checkpoint.structure.acceptedStepCount
+            && decoded.fluid.topologyFingerprint
+                == checkpoint.fluid.topologyFingerprint;
+    };
+    const auto expectDecodeFailure = [&] (
+        const std::vector<std::uint8_t>& bytes,
+        const fsi::StrongPistonCheckpointPersistenceErrorCode code,
+        const char* message,
+        const fsi::StrongPistonCheckpointPersistenceLimits& limits = {}) {
+        error = {};
+        const bool accepted = fsi::deserializeStrongPistonCheckpoint(
+            bytes, decoded, &error, limits);
+        check(!accepted && error.code == code && outputUnchanged(), message);
+    };
+
+    auto corrupt = firstBytes;
+    corrupt.front() ^= 0xffU;
+    expectDecodeFailure(
+        corrupt,
+        fsi::StrongPistonCheckpointPersistenceErrorCode::InvalidMagic,
+        "strong piston persistence: invalid magic is transactional");
+    corrupt = firstBytes;
+    corrupt[8] ^= 0x01U;
+    expectDecodeFailure(
+        corrupt,
+        fsi::StrongPistonCheckpointPersistenceErrorCode::UnsupportedVersion,
+        "strong piston persistence: protocol version is bounded");
+    corrupt = firstBytes;
+    corrupt[10] = 1U;
+    expectDecodeFailure(
+        corrupt,
+        fsi::StrongPistonCheckpointPersistenceErrorCode::UnsupportedVersion,
+        "strong piston persistence: reserved envelope bits are rejected");
+    corrupt = firstBytes;
+    corrupt.back() ^= 0x01U;
+    expectDecodeFailure(
+        corrupt,
+        fsi::StrongPistonCheckpointPersistenceErrorCode::ChecksumMismatch,
+        "strong piston persistence: checksum corruption is transactional");
+    corrupt = firstBytes;
+    corrupt.pop_back();
+    expectDecodeFailure(
+        corrupt,
+        fsi::StrongPistonCheckpointPersistenceErrorCode::Truncated,
+        "strong piston persistence: truncation is rejected");
+    corrupt = firstBytes;
+    corrupt.push_back(0U);
+    expectDecodeFailure(
+        corrupt,
+        fsi::StrongPistonCheckpointPersistenceErrorCode::TrailingData,
+        "strong piston persistence: trailing data is rejected");
+
+    corrupt = firstBytes;
+    corrupt[32] ^= 0x01U;
+    refreshStrongCheckpointChecksum(corrupt);
+    expectDecodeFailure(
+        corrupt,
+        fsi::StrongPistonCheckpointPersistenceErrorCode::InvalidData,
+        "strong piston persistence: recomputed-checksum identity edits are rejected");
+    corrupt = firstBytes;
+    writeU64(corrupt, 40, std::numeric_limits<std::uint64_t>::max());
+    refreshStrongCheckpointChecksum(corrupt);
+    expectDecodeFailure(
+        corrupt,
+        fsi::StrongPistonCheckpointPersistenceErrorCode::LimitExceeded,
+        "strong piston persistence: nested length is bounded before allocation");
+
+    auto smallLimits = fsi::StrongPistonCheckpointPersistenceLimits{};
+    smallLimits.maximumEncodedBytes = firstBytes.size() - 1;
+    expectDecodeFailure(
+        firstBytes,
+        fsi::StrongPistonCheckpointPersistenceErrorCode::LimitExceeded,
+        "strong piston persistence: outer byte limit is enforced",
+        smallLimits);
+}
+
 } // namespace
 
 int main() {
@@ -378,6 +531,7 @@ int main() {
     testStrongCoupledLightPiston();
     testStrongCoupledPistonFrames();
     testStrongPistonAcceptedCheckpointReplay();
+    testStrongPistonPersistentCheckpoint();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing coupled piston check(s) failed\n",
