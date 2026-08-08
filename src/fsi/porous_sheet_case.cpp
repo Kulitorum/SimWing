@@ -9,6 +9,23 @@
 #include <vector>
 
 namespace simwing::fsi {
+
+struct CoupledPorousSheetCheckpoint::Detail {
+    StructureCheckpoint structure;
+    fluid::MacVelocityField velocity;
+    fluid::CellScalarField pressure;
+    CoupledPorousSheetStepDiagnostics diagnostics;
+
+    Detail(StructureCheckpoint structureValue,
+           fluid::MacVelocityField velocityValue,
+           fluid::CellScalarField pressureValue,
+           CoupledPorousSheetStepDiagnostics diagnosticsValue)
+        : structure(std::move(structureValue)),
+          velocity(std::move(velocityValue)),
+          pressure(std::move(pressureValue)),
+          diagnostics(std::move(diagnosticsValue)) {}
+};
+
 namespace {
 
 constexpr std::uint64_t porousSheetSurfaceStableId = 300;
@@ -643,6 +660,119 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
         structure_.restore(structureBefore);
         throw;
     }
+}
+
+CoupledPorousSheetCheckpoint
+CoupledPorousSheetCase::checkpoint() const {
+    CoupledPorousSheetCheckpoint result;
+    result.acceptedStepCount = structure_.acceptedStepCount();
+    result.simulationTimeSeconds = structure_.simulationTimeSeconds();
+    result.detail = std::make_shared<
+        CoupledPorousSheetCheckpoint::Detail>(
+            structure_.checkpoint(), velocity_, pressure_, diagnostics_);
+    return result;
+}
+
+void CoupledPorousSheetCase::restore(
+    const CoupledPorousSheetCheckpoint& checkpointValue) {
+    if (checkpointValue.version != coupledPorousSheetCheckpointVersion
+        || checkpointValue.caseFingerprint
+            != coupledPorousSheetCaseFingerprint
+        || !std::isfinite(checkpointValue.simulationTimeSeconds)
+        || checkpointValue.simulationTimeSeconds < 0.0
+        || !checkpointValue.detail) {
+        throw std::invalid_argument(
+            "coupled porous sheet checkpoint metadata is invalid");
+    }
+    const auto& detail = *checkpointValue.detail;
+    if (!detail.velocity.matches(grid_)
+        || !detail.pressure.matches(grid_)
+        || !fluid::isFinite(detail.velocity)
+        || !fluid::isFinite(detail.pressure)
+        || detail.structure.acceptedStepCount
+            != checkpointValue.acceptedStepCount
+        || detail.structure.simulationTimeSeconds
+            != checkpointValue.simulationTimeSeconds) {
+        throw std::invalid_argument(
+            "coupled porous sheet checkpoint fields are invalid");
+    }
+
+    Structure candidateStructure(makeDefinition());
+    candidateStructure.restore(detail.structure);
+    const auto candidateStates = candidateStructure.nodeStates();
+    double positionResidual = 0.0;
+    double velocityResidual = 0.0;
+    const double sheetPosition = rigidSheetState(
+        candidateStates, false, positionResidual);
+    const double sheetVelocity = rigidSheetState(
+        candidateStates, true, velocityResidual);
+    double fluidUniformity = 0.0;
+    const double fluidVelocity = uniformFluidVelocity(
+        detail.velocity, fluidUniformity);
+    const double expectedTime = static_cast<double>(
+        checkpointValue.acceptedStepCount)
+        * stepSettings_.timeStepSeconds;
+    if (positionResidual > 1.0e-12
+        || velocityResidual > 1.0e-12
+        || fluidUniformity > 2.0e-12
+        || std::abs(checkpointValue.simulationTimeSeconds - expectedTime)
+            > 2.0e-14) {
+        throw std::invalid_argument(
+            "coupled porous sheet checkpoint state is not a canonical epoch");
+    }
+
+    if (checkpointValue.acceptedStepCount == 0) {
+        if (detail.diagnostics
+                != CoupledPorousSheetStepDiagnostics{}
+            || sheetPosition != initialSheetPositionMeters
+            || sheetVelocity != 0.0 || fluidVelocity != 0.0) {
+            throw std::invalid_argument(
+                "coupled porous sheet initial checkpoint is inconsistent");
+        }
+    } else {
+        const auto& diagnostics = detail.diagnostics;
+        const auto structureDiagnostics = candidateStructure.diagnostics();
+        const double fluidMass = fluidMassKilograms(grid_);
+        const double expectedSystemMomentum =
+            sheetAreaSquareMeters(grid_)
+            * pumpPressureJumpPascals
+            * checkpointValue.simulationTimeSeconds;
+        const double actualSystemMomentum =
+            structureDiagnostics.linearMomentumKgMetersPerSecond.x
+            + fluidMass * fluidVelocity;
+        const double fieldKineticEnergy = fluid::kineticEnergyJoules(
+            grid_, detail.velocity, fluidDensityKgPerCubicMeter);
+        if (!diagnostics.accepted || !diagnostics.finite
+            || diagnostics.version
+                != coupledPorousSheetDiagnosticsVersion
+            || diagnostics.acceptedStepCount
+                != checkpointValue.acceptedStepCount
+            || diagnostics.simulationTimeSeconds
+                != checkpointValue.simulationTimeSeconds
+            || diagnostics.sheetPositionAfterMeters != sheetPosition
+            || diagnostics.sheetVelocityAfterMetersPerSecond
+                != sheetVelocity
+            || diagnostics.fluidVelocityAfterMetersPerSecond
+                != fluidVelocity
+            || !diagnostics.fluidProjection.accepted
+            || !diagnostics.porousTraction.accepted
+            || !diagnostics.bridge.accepted
+            || !diagnostics.transfer.finite
+            || std::abs(
+                diagnostics.fluidProjection.projection
+                    .kineticEnergyAfterJoules
+                - fieldKineticEnergy) > 2.0e-10
+            || std::abs(actualSystemMomentum - expectedSystemMomentum)
+                > 2.0e-8) {
+            throw std::invalid_argument(
+                "coupled porous sheet checkpoint diagnostics are inconsistent");
+        }
+    }
+
+    structure_.restore(detail.structure);
+    velocity_ = detail.velocity;
+    pressure_ = detail.pressure;
+    diagnostics_ = detail.diagnostics;
 }
 
 const Structure& CoupledPorousSheetCase::structure() const noexcept {

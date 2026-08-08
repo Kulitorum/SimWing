@@ -970,6 +970,12 @@ accepted step. The immutable trace shows the translated two-sided sheet and
 keeps pressure jump, sheet impulse, pump work, and porous loss separate. It is
 fixed-topology by construction and rejects the sheet at its current MAC-segment
 boundary; it is not a moving cut-cell remap or a general strong-coupling solve.
+Its immutable in-memory checkpoint owns the nested Structure state, MAC
+velocity, pressure, and last accepted coupled diagnostics. Restore validates
+the case identity, exact step/time epoch, rigid sheet state, uniform fluid
+state, field energy, and cumulative pump momentum before one transactional
+commit; initial and accepted checkpoints reproduce the exact next frame in an
+equivalent rebuilt worker.
 The case checkpoint must restore the initial state and a later accepted state,
 then reproduce the next frame bit-for-bit in both the original and an equivalent
 rebuilt worker. Version, case fingerprint, grid, sample count, step, time, and

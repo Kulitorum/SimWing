@@ -248,7 +248,9 @@ frames with visible deterministic motion. The
 linear-resistance sheet, transfers only the sheet reaction to XPBD, and closes
 the pump impulse/work, porous dissipation, and fluid/structure kinetic-energy
 ledgers before publishing a frame. It is a fixed-topology midpoint oracle and
-stops before the sheet leaves its current MAC segment. The
+stops before the sheet leaves its current MAC segment. Its in-memory composite
+checkpoint restores the complete accepted state with exact next-frame replay.
+The
 `simwing-fsi --case open-piston` harness drives a `6000 kg` plate at
 `0.05 m/s`, exposes the resisting CFD pressure separately from its actuator,
 and publishes accepted partial-cell and geometric-conservation ledgers. Before

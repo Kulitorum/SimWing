@@ -7,6 +7,7 @@
 #include "viewer_protocol.h"
 
 #include <cstdint>
+#include <memory>
 
 namespace simwing::fsi {
 
@@ -15,6 +16,9 @@ inline constexpr char coupledPorousSheetCaseChecksum[] =
 inline constexpr char coupledPorousSheetCaseSolverId[] =
     "simwing-fsi-coupled-porous-sheet-worker-v1";
 inline constexpr std::uint32_t coupledPorousSheetDiagnosticsVersion = 1;
+inline constexpr std::uint32_t coupledPorousSheetCheckpointVersion = 1;
+inline constexpr std::uint64_t coupledPorousSheetCaseFingerprint =
+    0x8b43f6c2d9157ea1ULL;
 
 struct CoupledPorousSheetStepDiagnostics {
     std::uint32_t version = coupledPorousSheetDiagnosticsVersion;
@@ -54,6 +58,18 @@ struct CoupledPorousSheetStepDiagnostics {
         const CoupledPorousSheetStepDiagnostics&) const = default;
 };
 
+struct CoupledPorousSheetCheckpoint {
+    std::uint32_t version = coupledPorousSheetCheckpointVersion;
+    std::uint64_t caseFingerprint = coupledPorousSheetCaseFingerprint;
+    std::uint64_t acceptedStepCount = 0;
+    double simulationTimeSeconds = 0.0;
+
+private:
+    friend class CoupledPorousSheetCase;
+    struct Detail;
+    std::shared_ptr<const Detail> detail;
+};
+
 // A fixed-topology, one-degree-of-freedom coupled verification oracle. A
 // periodic pump drives flow through one planar Darcy sheet. The midpoint
 // porous solve owns fluid pressure work and dissipation; the stable-ID bridge
@@ -73,6 +89,8 @@ public:
 
     [[nodiscard]] viewer::TraceHeader traceHeader() const;
     [[nodiscard]] viewer::DiagnosticFrame advance();
+    [[nodiscard]] CoupledPorousSheetCheckpoint checkpoint() const;
+    void restore(const CoupledPorousSheetCheckpoint& checkpoint);
 
     [[nodiscard]] const Structure& structure() const noexcept;
     [[nodiscard]] const fluid::PeriodicCartesianGrid& grid() const noexcept;

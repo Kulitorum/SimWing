@@ -210,12 +210,108 @@ void testTopologyBoundaryRollback() {
           "porous-sheet topology: fixed epoch rejects before an implicit remap");
 }
 
+void expectRestoreRejected(
+    fsi::CoupledPorousSheetCase& simulation,
+    const fsi::CoupledPorousSheetCheckpoint& checkpoint,
+    const char* message) {
+    const auto before = simulation.checkpoint();
+    const auto structureBefore = simulation.structure().checkpoint();
+    const auto velocityBefore = simulation.velocity();
+    const auto pressureBefore = simulation.pressure();
+    const auto diagnosticsBefore = simulation.diagnostics();
+    bool rejected = false;
+    try {
+        simulation.restore(checkpoint);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    const auto structureAfter = simulation.structure().checkpoint();
+    const auto after = simulation.checkpoint();
+    check(rejected
+              && after.acceptedStepCount == before.acceptedStepCount
+              && after.simulationTimeSeconds == before.simulationTimeSeconds
+              && structureAfter.acceptedStepCount
+                  == structureBefore.acceptedStepCount
+              && structureAfter.nodes == structureBefore.nodes
+              && simulation.velocity() == velocityBefore
+              && simulation.pressure() == pressureBefore
+              && simulation.diagnostics() == diagnosticsBefore,
+          message);
+}
+
+void testCheckpointReplayAndValidation() {
+    fsi::CoupledPorousSheetCase initialOwner;
+    const auto initial = initialOwner.checkpoint();
+    fsi::CoupledPorousSheetCase initialRestored;
+    static_cast<void>(initialRestored.advance());
+    initialRestored.restore(initial);
+    check(serialized(initialOwner.advance())
+              == serialized(initialRestored.advance()),
+          "porous-sheet checkpoint: initial state reproduces the first frame");
+
+    fsi::CoupledPorousSheetCase owner;
+    constexpr std::uint64_t checkpointStep = 60;
+    for (std::uint64_t step = 0; step < checkpointStep; ++step) {
+        static_cast<void>(owner.advance());
+    }
+    const auto checkpoint = owner.checkpoint();
+    fsi::CoupledPorousSheetCase restored;
+    restored.restore(checkpoint);
+    check(checkpoint.version == fsi::coupledPorousSheetCheckpointVersion
+              && checkpoint.caseFingerprint
+                  == fsi::coupledPorousSheetCaseFingerprint
+              && checkpoint.acceptedStepCount == checkpointStep
+              && restored.diagnostics() == owner.diagnostics()
+              && restored.velocity() == owner.velocity()
+              && restored.pressure() == owner.pressure(),
+          "porous-sheet checkpoint: accepted structure, fluid, and diagnostics restore exactly");
+    checkNear(
+        checkpoint.simulationTimeSeconds,
+        checkpointStep * owner.stepSettings().timeStepSeconds,
+        2.0e-15,
+        "porous-sheet checkpoint: public time retains the accepted step epoch");
+    const auto expected = owner.advance();
+    const auto replay = restored.advance();
+    check(serialized(expected) == serialized(replay)
+              && owner.diagnostics() == restored.diagnostics(),
+          "porous-sheet checkpoint: restored worker reproduces the exact next frame");
+    restored.restore(checkpoint);
+    const auto repeated = restored.advance();
+    check(serialized(expected) == serialized(repeated),
+          "porous-sheet checkpoint: repeated restore replays deterministically");
+
+    auto invalid = checkpoint;
+    invalid.version += 1;
+    expectRestoreRejected(
+        restored, invalid,
+        "porous-sheet checkpoint validation: unsupported version is transactional");
+    invalid = checkpoint;
+    invalid.caseFingerprint ^= 1;
+    expectRestoreRejected(
+        restored, invalid,
+        "porous-sheet checkpoint validation: foreign case is transactional");
+    invalid = checkpoint;
+    invalid.acceptedStepCount += 1;
+    expectRestoreRejected(
+        restored, invalid,
+        "porous-sheet checkpoint validation: public step must match private state");
+    invalid = checkpoint;
+    invalid.simulationTimeSeconds += 0.5;
+    expectRestoreRejected(
+        restored, invalid,
+        "porous-sheet checkpoint validation: public time must match private state");
+    expectRestoreRejected(
+        restored, {},
+        "porous-sheet checkpoint validation: empty payload is transactional");
+}
+
 } // namespace
 
 int main() {
     testCoupledPorousSheet();
     testCompletedTrace();
     testTopologyBoundaryRollback();
+    testCheckpointReplayAndValidation();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing coupled porous-sheet check(s) failed\n",
