@@ -387,7 +387,7 @@ src/fsi/
     fluid/
         grid.*              block hierarchy and field storage
         geometry.*          discrete surface and region reconstruction
-        advection.*
+        advection.*         bounded uniform-flow MAC transport oracle
         diffusion.*         bounded periodic MAC viscosity verification
         projection.*
         interface_jump.*
@@ -459,7 +459,16 @@ translated MAC-component lattices. The exact stability boundary is
 bit-for-bit. Accepted steps preserve all three component momenta, do not add
 kinetic energy, keep solenoidal Fourier modes divergence-free, and reproduce
 the discrete Fourier eigenvalue. This forward-Euler verification step is not
-yet the intended second-order production time integrator. A canonical single-crossing
+yet the intended second-order production time integrator. A companion unsplit
+donor-cell oracle transports every MAC component by one prescribed uniform
+velocity. Its update is a conservative convex combination for
+`sum(abs(U_i)*dt/h_i) <= 1`: it preserves periodic component momentum, cannot
+create a new component extremum or increase kinetic energy, commutes with the
+discrete divergence, and becomes an exact one-cell periodic translation at the
+sharp CFL-one boundary. Its full-period sine regression converges at the
+expected first order. This is the bounded baseline for later second-order
+variable/nonlinear convection, not that production operator itself. A
+canonical single-crossing
 grid-face field now retains stable surface IDs, two distinct fluid-region IDs,
 and the signed pressure discontinuity. Its paired sharp gradient and Poisson
 source preserve a static pressurized slab without smoothing the pressure or
@@ -614,8 +623,8 @@ cases meet their declared tolerances.
 ### Phase 2 — CFD verification kernel
 
 Status: in progress. `simwing_fluid` currently owns the uniform periodic
-verification grid, explicit laminar velocity diffusion, pressure projection,
-and fixed-topology face-aligned moving
+verification grid, bounded uniform-flow velocity transport, explicit laminar
+velocity diffusion, pressure projection, and fixed-topology face-aligned moving
 constraints, plus the first open planar one-partial-cell control-volume
 operator, its exact next-plane topology rebase, and the bounded physical
 cut-surface reaction geometry described above. On solve failure it preserves
@@ -632,7 +641,8 @@ divergence below `2e-12 1/s`, pressure convergence ratios in `[3.9, 4.2]` for
 two successive resolution doublings, viscous eigenvalue convergence ratios in
 `[3.95, 4.05]` then `[3.98, 4.02]`, exact zero and uniform viscous modes, exact
 acceptance of the non-amplifying diffusion-number `0.5` boundary, no
-kinetic-energy increase, and periodic
+kinetic-energy increase, donor-cell full-period error ratios in `[1.7, 2.2]`
+then `[1.8, 2.1]`, exact bounded CFL-one translation, and periodic
 component-momentum sums preserved within `5e-14` in the projection mixed-mode
 case; viscous physical-momentum residual stays below `2e-12 N*s`. The
 static 250 Pa slab must retain its two pressure levels within `2e-12 Pa` and

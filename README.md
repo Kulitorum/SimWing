@@ -39,6 +39,12 @@ explicit laminar viscosity directly on the periodic MAC components, preserves
 momentum and solenoidal Fourier modes, dissipates kinetic energy, and rejects
 steps above the sharp diffusion-number limit without mutating the field. It is
 a verification integrator, not yet the second-order production time scheme.
+A companion uniform-flow transport oracle applies an unsplit conservative
+donor-cell update to all periodic MAC components. At total absolute CFL one it
+performs an exact one-cell periodic shift; below that limit it preserves
+component momentum, the maximum principle, non-increasing kinetic energy, and
+discrete solenoidal modes. It is intentionally first order and does not yet
+claim higher-order or nonlinear self-advection.
 A validated single-crossing sharp-interface
 field now preserves a prescribed two-sided static pressure jump without
 smearing or spurious flow, including across the periodic domain boundary.
