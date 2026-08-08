@@ -14,9 +14,9 @@ namespace {
 
 constexpr double radiusMeters = 1.0;
 constexpr double fabricArealDensityKgPerSquareMeter = 0.08;
-constexpr double basePressurePascals = 55.0;
-constexpr double pressureAmplitudePascals = 45.0;
-constexpr double pressureFrequencyHertz = 0.4;
+constexpr double basePressurePascals = 20.0;
+constexpr double pressureAmplitudePascals = 55.0;
+constexpr double pressureFrequencyHertz = 0.65;
 
 [[nodiscard]] StructureVector3 subtract(const StructureVector3& first,
                                         const StructureVector3& second) {
@@ -54,14 +54,14 @@ constexpr double pressureFrequencyHertz = 0.4;
 
 [[nodiscard]] StructureMembraneMaterial membraneMaterial() {
     StructureMembraneMaterial material;
-    material.warpStiffnessNewtonsPerMeter = 9000.0;
-    material.weftStiffnessNewtonsPerMeter = 9000.0;
-    material.couplingStiffnessNewtonsPerMeter = 2400.0;
-    material.shearStiffnessNewtonsPerMeter = 3300.0;
+    material.warpStiffnessNewtonsPerMeter = 3000.0;
+    material.weftStiffnessNewtonsPerMeter = 3000.0;
+    material.couplingStiffnessNewtonsPerMeter = 800.0;
+    material.shearStiffnessNewtonsPerMeter = 1100.0;
     material.warpPreTensionNewtonsPerMeter = 0.0;
     material.weftPreTensionNewtonsPerMeter = 0.0;
     material.dampingSeconds = 0.015;
-    material.compressionStiffnessRatio = 0.2;
+    material.compressionStiffnessRatio = 0.1;
     return material;
 }
 
@@ -309,11 +309,29 @@ viewer::DiagnosticFrame AnchoredHemisphereCase::advance() {
         + pressureAmplitudePascals
             * std::sin(2.0 * std::numbers::pi
                        * pressureFrequencyHertz * loadTime);
+    const double modalPressurePascals =
+        pressurePascals_ - basePressurePascals;
 
     const StructureDefinition& definition = structure_.definition();
     const std::vector<StructureNodeState> states = structure_.nodeStates();
     std::vector<StructureVector3> forces(states.size());
+    std::vector<double> trianglePressures;
+    trianglePressures.reserve(definition.triangles.size());
     for (const StructureTriangleDefinition& triangle : definition.triangles) {
+        const StructureVector3& restFirst =
+            definition.nodes[triangle.nodes[0]].positionMeters;
+        const StructureVector3& restSecond =
+            definition.nodes[triangle.nodes[1]].positionMeters;
+        const StructureVector3& restThird =
+            definition.nodes[triangle.nodes[2]].positionMeters;
+        const double materialAzimuth = std::atan2(
+            restFirst.y + restSecond.y + restThird.y,
+            restFirst.x + restSecond.x + restThird.x);
+        // A second azimuthal mode has no rigid first-harmonic torque. It
+        // alternately pushes and pulls four fabric lobes between the supports.
+        const double localPressurePascals = basePressurePascals
+            + modalPressurePascals * std::sin(2.0 * materialAzimuth);
+        trianglePressures.push_back(localPressurePascals);
         const StructureVector3& first =
             states[triangle.nodes[0]].positionMeters;
         const StructureVector3& second =
@@ -322,7 +340,7 @@ viewer::DiagnosticFrame AnchoredHemisphereCase::advance() {
             states[triangle.nodes[2]].positionMeters;
         const StructureVector3 nodalForce = scaled(
             cross(subtract(second, first), subtract(third, first)),
-            pressurePascals_ / 6.0);
+            localPressurePascals / 6.0);
         for (const std::size_t node : triangle.nodes) {
             forces[node].x += nodalForce.x;
             forces[node].y += nodalForce.y;
@@ -364,7 +382,7 @@ viewer::DiagnosticFrame AnchoredHemisphereCase::advance() {
         {"dome.pressure",
          "Pa",
          viewer::FieldAssociation::Triangle,
-         std::vector<double>(frame.triangles.size(), pressurePascals_)});
+         std::move(trianglePressures)});
     std::vector<viewer::Vec3d> pressureForces;
     pressureForces.reserve(forces.size());
     for (const StructureVector3& force : forces) {

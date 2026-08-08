@@ -10,19 +10,18 @@
 namespace simwing::fsi {
 
 inline constexpr char anchoredHemisphereCaseChecksum[] =
-    "sha256:simwing-two-point-anchored-hemisphere-case-v3";
+    "sha256:simwing-three-point-flapping-hemisphere-case-v4";
 inline constexpr char anchoredHemisphereCaseSolverId[] =
-    "simwing-fsi-two-point-anchored-hemisphere-worker-v3";
+    "simwing-fsi-three-point-flapping-hemisphere-worker-v4";
 inline constexpr std::size_t hemisphereRadialSegments = 36;
 inline constexpr std::size_t hemisphereLatitudeSegments = 10;
-// Retain two points from the previous three-point set and release the third.
-// The unequal arcs deliberately leave an asymmetric, visibly flapping case.
-inline constexpr std::array<std::size_t, 2> hemisphereAnchorLongitudes{0, 12};
+inline constexpr std::array<std::size_t, 3> hemisphereAnchorLongitudes{
+    0, 12, 24};
 inline constexpr std::size_t hemisphereAnchorCount =
     hemisphereAnchorLongitudes.size();
-// A finite 10 kN/m segment stiffness keeps the diagnostic outline visible
+// A finite 2 kN/m segment stiffness keeps the diagnostic outline visible
 // without imposing the old exact-length (zero-compliance) rim.
-inline constexpr double hemisphereRimComplianceMetersPerNewton = 1.0e-4;
+inline constexpr double hemisphereRimComplianceMetersPerNewton = 5.0e-4;
 
 [[nodiscard]] constexpr bool isHemisphereAnchorLongitude(
     const std::size_t longitude) noexcept {
@@ -34,12 +33,12 @@ inline constexpr double hemisphereRimComplianceMetersPerNewton = 1.0e-4;
     return false;
 }
 
-// A pressure-loaded fabric hemisphere held by two points from the original
-// three-point set. Its compliant free rim exposes the dynamic membrane modes
-// hidden by the original fully clamped boundary. Pressure traction is
-// integrated on the accepted surface geometry and conservatively shared by
-// each triangle's three nodes; it remains an analytic structural case rather
-// than a CFD claim.
+// A fabric hemisphere held by three points on its compliant rim. A spatially
+// alternating follower-pressure mode drives actual membrane deformation while
+// the non-collinear supports remove the rigid-body rotation admitted by only
+// two positional pins. Pressure traction is integrated on the accepted surface
+// geometry and conservatively shared by each triangle's three nodes; it
+// remains an analytic structural case rather than a CFD claim.
 class AnchoredHemisphereCase final {
 public:
     AnchoredHemisphereCase();

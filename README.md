@@ -606,9 +606,10 @@ Run:
 ```
 
 The hemisphere command launches the standalone trace viewer by default and
-shows a pressure-driven fabric dome held at two equatorial points with a
-compliant rim. It is an analytic structural canonical, not a CFD result. The
-following commands show
+shows a soft fabric dome held at three equatorial points with a compliant rim.
+A spatially alternating analytic pressure mode deforms four lobes without
+exciting a free rigid-body rotation. It is a structural canonical, not a CFD
+result. The following commands show
 the other canonical cases; commands with `--no-viewer` run unthrottled for
 tests and scripted verification.
 The checkpoint commands save and resume exact accepted worker state. Resumed

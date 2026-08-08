@@ -68,7 +68,7 @@ void testTopologyAndBoundary() {
         }
     }
     check(fixedNodes == fsi::hemisphereAnchorCount,
-          "exactly two original equatorial points are anchored");
+          "exactly three equatorial points are anchored");
     const bool compliantRim = std::all_of(
         definition.constraints.begin(), definition.constraints.end(),
         [](const fsi::StructureConstraintDefinition& constraint) {
@@ -138,9 +138,9 @@ void testDeterministicPressureMotion() {
         }
     }
     check(anchorsUnchanged,
-          "pressure motion preserves both anchors exactly");
-    check(maximumFreeBoundaryMotion > 0.5,
-          "pressure motion produces a large free-rim flap");
+          "pressure motion preserves all three anchors exactly");
+    check(maximumFreeBoundaryMotion > 0.1,
+          "pressure mode produces visible free-rim deformation");
     check(first.maximumFreeRimDisplacementMeters()
               == maximumFreeBoundaryMotion,
           "reported free-rim motion matches the accepted structure state");
@@ -154,6 +154,25 @@ void testDeterministicPressureMotion() {
               && radialField->association == viewer::FieldAssociation::Vertex
               && radialField->values.size() == frame.vertices.size(),
           "hemisphere frames expose radial deformation for colouring");
+    const auto pressureField = std::find_if(
+        frame.scalarFields.begin(), frame.scalarFields.end(),
+        [](const viewer::ScalarField& field) {
+            return field.name == "dome.pressure";
+        });
+    bool pressureVaries = false;
+    if (pressureField != frame.scalarFields.end()
+        && !pressureField->values.empty()) {
+        const auto pressureRange = std::minmax_element(
+            pressureField->values.begin(), pressureField->values.end());
+        pressureVaries =
+            *pressureRange.second - *pressureRange.first > 10.0;
+    }
+    check(pressureField != frame.scalarFields.end()
+              && pressureField->association
+                     == viewer::FieldAssociation::Triangle
+              && pressureField->values.size() == frame.triangles.size()
+              && pressureVaries,
+          "hemisphere pressure field drives a nonuniform deformation mode");
 }
 
 } // namespace

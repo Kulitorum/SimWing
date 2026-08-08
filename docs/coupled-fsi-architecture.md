@@ -1394,11 +1394,12 @@ case-specific control messages remain open, so the
 full Phase 2 piston gate is not yet closed.
 
 The standalone worker also includes a deliberately non-CFD curved structural
-canonical: a one-metre fabric hemisphere held by two equatorial anchors and a
-compliant rim. Intrinsic per-triangle charts, signed rest-shape bending hinges,
-and a
-time-varying analytic follower-pressure load exercise hundreds of membrane
-elements and immutable viewer topology. This `--case hemisphere` path is a
+canonical: a one-metre soft fabric hemisphere held by three equatorial anchors
+and a compliant rim. Intrinsic per-triangle charts, signed rest-shape bending
+hinges, and a time-varying four-lobe analytic follower-pressure mode exercise
+hundreds of membrane elements and immutable viewer topology without exciting
+the free rigid rotation admitted by two positional pins. This `--case
+hemisphere` path is a
 visual and structural regression only; it must not be cited as curved-interface
 fluid coupling or aerodynamic validation.
 
