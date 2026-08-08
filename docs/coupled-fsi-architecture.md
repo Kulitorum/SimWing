@@ -459,8 +459,13 @@ translated MAC-component lattices. The exact stability boundary is
 `nu*dt*(1/dx^2+1/dy^2+1/dz^2) <= 0.5`; excessive steps preserve the input
 bit-for-bit. Accepted steps preserve all three component momenta, do not add
 kinetic energy, keep solenoidal Fourier modes divergence-free, and reproduce
-the discrete Fourier eigenvalue. This forward-Euler verification step is not
-yet the intended second-order production time integrator. A companion unsplit
+the discrete Fourier eigenvalue. A two-stage SSPRK2 companion uses that exact
+Euler path twice and convexly averages the twice-advanced candidate with the
+old field. It retains the same sharp per-stage stability boundary, periodic
+momentum and non-increasing energy contracts, returns the Nyquist mode exactly
+after its two boundary sign flips, and shows second-order temporal convergence
+against the discrete Fourier decay. Coupled operator splitting is not yet the
+intended second-order production time integrator. A companion unsplit
 donor-cell oracle transports every MAC component by one prescribed uniform
 velocity. Its update is a conservative convex combination for
 `sum(abs(U_i)*dt/h_i) <= 1`: it preserves periodic component momentum, cannot
@@ -478,13 +483,14 @@ field path supplies first-order nonlinear self-advection. A periodic shear
 fixture observes the expected first-order refinement. This is the conservative
 variable-flow baseline for later second-order reconstruction, not that
 production operator itself. The composed periodic macro-step selects either
-transport, then runs explicit viscosity and the zero-mean projection on private
-candidates. Velocity and pressure commit together only after every stage and
-an independent aggregate momentum/kinetic-energy ledger pass. Regressions are
-bit-identical to their standalone uniform or nonlinear stages, retain every
-stage diagnostic, and reject at advection, diffusion, or projection without
-changing either input field. This is the first complete nonlinear evolution
-path, but its transport and time integration remain first order. A canonical single-crossing
+transport and Euler or SSPRK2 viscosity, then runs the zero-mean projection on
+private candidates. Velocity and pressure commit together only after every
+stage and an independent aggregate momentum/kinetic-energy ledger pass.
+Regressions are bit-identical to their standalone uniform/nonlinear transport
+and Euler/SSPRK2 diffusion stages, retain every stage diagnostic, and reject at
+advection, diffusion, or projection without changing either input field. This
+is the first complete nonlinear evolution path, but donor-cell transport and
+first-order operator splitting remain. A canonical single-crossing
 grid-face field now retains stable surface IDs, two distinct fluid-region IDs,
 and the signed pressure discontinuity. Its paired sharp gradient and Poisson
 source preserve a static pressurized slab without smoothing the pressure or
@@ -640,8 +646,9 @@ cases meet their declared tolerances.
 
 Status: in progress. `simwing_fluid` currently owns the uniform periodic
 verification grid, bounded uniform and divergence-free variable-flow velocity
-transport, nonlinear self-advection, explicit laminar velocity diffusion,
-their transactional selectable composed macro-step, pressure
+transport, nonlinear self-advection, Euler and second-order SSPRK2 laminar
+velocity diffusion, their transactional selectable composed macro-step,
+pressure
 projection, and fixed-topology face-aligned moving
 constraints, plus the first open planar one-partial-cell control-volume
 operator, its exact next-plane topology rebase, and the bounded physical

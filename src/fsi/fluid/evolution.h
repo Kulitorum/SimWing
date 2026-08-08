@@ -9,11 +9,16 @@
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t periodicFlowStepVersion = 2;
+inline constexpr std::uint32_t periodicFlowStepVersion = 3;
 
 enum class PeriodicFlowAdvectionMode : std::uint8_t {
     PrescribedUniform = 0,
     SelfAdvectingMac = 1,
+};
+
+enum class PeriodicFlowDiffusionMode : std::uint8_t {
+    ForwardEuler = 0,
+    SspRk2 = 1,
 };
 
 enum class PeriodicFlowFailureStage : std::uint8_t {
@@ -30,6 +35,8 @@ struct PeriodicFlowSettings {
         PeriodicFlowAdvectionMode::PrescribedUniform;
     Vector3 transportVelocityMetersPerSecond;
     double kinematicViscositySquareMetersPerSecond = 1.5e-5;
+    PeriodicFlowDiffusionMode diffusionMode =
+        PeriodicFlowDiffusionMode::ForwardEuler;
     double timeStepSeconds = 1.0 / 60.0;
     double maximumTotalCourantNumber = 1.0;
     double advectionAbsoluteDivergenceTolerancePerSecond = 1.0e-11;
@@ -50,7 +57,10 @@ struct PeriodicFlowDiagnostics {
         PeriodicFlowAdvectionMode::PrescribedUniform;
     UniformMacAdvectionDiagnostics uniformAdvection;
     VariableMacAdvectionDiagnostics variableAdvection;
-    PeriodicMacDiffusionDiagnostics diffusion;
+    PeriodicFlowDiffusionMode diffusionMode =
+        PeriodicFlowDiffusionMode::ForwardEuler;
+    PeriodicMacDiffusionDiagnostics explicitDiffusion;
+    PeriodicMacDiffusionSspRk2Diagnostics sspRk2Diffusion;
     ProjectionDiagnostics projection;
     Vector3 momentumBeforeNewtonSeconds;
     Vector3 momentumAfterNewtonSeconds;
@@ -73,11 +83,12 @@ struct PeriodicFlowDiagnostics {
         const PeriodicFlowDiagnostics&) const = default;
 };
 
-// Complete periodic verification step: bounded donor-cell transport, explicit
-// laminar viscosity, then the zero-mean pressure projection. Transport may be
+// Complete periodic verification step: bounded donor-cell transport, laminar
+// viscosity, then the zero-mean pressure projection. Transport may be
 // the exact prescribed-uniform oracle or first-order nonlinear MAC
-// self-advection. All stages run on candidates; velocity and pressure commit
-// together only after every stage and the final momentum/energy ledger pass.
+// self-advection; viscosity may use forward Euler or second-order SSPRK2. All
+// stages run on candidates; velocity and pressure commit together only after
+// every stage and the final momentum/energy ledger pass.
 [[nodiscard]] PeriodicFlowDiagnostics advancePeriodicFlow(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& velocityMetersPerSecond,

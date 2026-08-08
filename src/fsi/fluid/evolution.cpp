@@ -59,6 +59,10 @@ void validateSettings(const PeriodicFlowSettings& settings) {
                 != PeriodicFlowAdvectionMode::PrescribedUniform
             && settings.advectionMode
                 != PeriodicFlowAdvectionMode::SelfAdvectingMac)
+        || (settings.diffusionMode
+                != PeriodicFlowDiffusionMode::ForwardEuler
+            && settings.diffusionMode
+                != PeriodicFlowDiffusionMode::SspRk2)
         || settings.densityKgPerCubicMeter <= 0.0
         || settings.kinematicViscositySquareMetersPerSecond < 0.0
         || settings.timeStepSeconds <= 0.0
@@ -122,6 +126,7 @@ PeriodicFlowDiagnostics advancePeriodicFlow(
 
     PeriodicFlowDiagnostics diagnostics;
     diagnostics.advectionMode = settings.advectionMode;
+    diagnostics.diffusionMode = settings.diffusionMode;
     diagnostics.momentumBeforeNewtonSeconds = momentumNewtonSeconds(
         grid, velocityMetersPerSecond, settings.densityKgPerCubicMeter);
     diagnostics.momentumAfterNewtonSeconds =
@@ -219,9 +224,30 @@ PeriodicFlowDiagnostics advancePeriodicFlow(
         settings.absoluteEnergyToleranceJoules;
     diffusionSettings.relativeEnergyTolerance =
         settings.relativeEnergyTolerance;
-    diagnostics.diffusion = diffuseVelocityExplicit(
-        grid, candidateVelocity, diffusionSettings);
-    if (!diagnostics.diffusion.accepted) {
+    bool diffusionAccepted = false;
+    bool diffusionFinite = true;
+    switch (settings.diffusionMode) {
+    case PeriodicFlowDiffusionMode::ForwardEuler:
+        diagnostics.explicitDiffusion = diffuseVelocityExplicit(
+            grid, candidateVelocity, diffusionSettings);
+        diffusionAccepted = diagnostics.explicitDiffusion.accepted;
+        diffusionFinite = diagnostics.explicitDiffusion.finite;
+        diagnostics.viscousEnergyLossJoules =
+            diagnostics.explicitDiffusion.dissipatedKineticEnergyJoules;
+        break;
+    case PeriodicFlowDiffusionMode::SspRk2:
+        diagnostics.sspRk2Diffusion = diffuseVelocitySspRk2(
+            grid, candidateVelocity, diffusionSettings);
+        diffusionAccepted = diagnostics.sspRk2Diffusion.accepted;
+        diffusionFinite = diagnostics.sspRk2Diffusion.finite;
+        diagnostics.viscousEnergyLossJoules =
+            diagnostics.sspRk2Diffusion.dissipatedKineticEnergyJoules;
+        break;
+    default:
+        throw std::invalid_argument(
+            "periodic flow diffusion mode is invalid");
+    }
+    if (!diffusionAccepted) {
         diagnostics.failureStage =
             PeriodicFlowFailureStage::Diffusion;
         const bool advectionFinite = settings.advectionMode
@@ -229,11 +255,9 @@ PeriodicFlowDiagnostics advancePeriodicFlow(
             ? diagnostics.uniformAdvection.finite
             : diagnostics.variableAdvection.finite;
         diagnostics.finite = advectionFinite
-            && diagnostics.diffusion.finite;
+            && diffusionFinite;
         return diagnostics;
     }
-    diagnostics.viscousEnergyLossJoules =
-        diagnostics.diffusion.dissipatedKineticEnergyJoules;
 
     ProjectionSettings projectionSettings;
     projectionSettings.densityKgPerCubicMeter =
@@ -255,7 +279,7 @@ PeriodicFlowDiagnostics advancePeriodicFlow(
             ? diagnostics.uniformAdvection.finite
             : diagnostics.variableAdvection.finite;
         diagnostics.finite = advectionFinite
-            && diagnostics.diffusion.finite;
+            && diffusionFinite;
         return diagnostics;
     }
 
@@ -281,7 +305,7 @@ PeriodicFlowDiagnostics advancePeriodicFlow(
         ? diagnostics.uniformAdvection.finite
         : diagnostics.variableAdvection.finite;
     diagnostics.finite = advectionFinite
-        && diagnostics.diffusion.finite
+        && diffusionFinite
         && finite(diagnostics.momentumAfterNewtonSeconds)
         && finite(diagnostics.momentumResidualNewtonSeconds)
         && std::isfinite(

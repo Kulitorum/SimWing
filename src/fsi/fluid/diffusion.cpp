@@ -130,6 +130,20 @@ void diffuseComponent(const GridCellCounts counts,
     }
 }
 
+void averageSspRk2Component(
+    const std::span<const double> original,
+    const std::span<const double> twiceAdvanced,
+    const std::span<double> destination,
+    double& maximumChange) {
+    for (std::size_t index = 0; index < original.size(); ++index) {
+        destination[index] = original[index]
+            + 0.5 * (twiceAdvanced[index] - original[index]);
+        maximumChange = std::max(
+            maximumChange,
+            std::abs(destination[index] - original[index]));
+    }
+}
+
 } // namespace
 
 PeriodicMacDiffusionDiagnostics diffuseVelocityExplicit(
@@ -224,6 +238,104 @@ PeriodicMacDiffusionDiagnostics diffuseVelocityExplicit(
         && finite(diagnostics.momentumResidualNewtonSeconds)
         && std::isfinite(
             diagnostics.momentumResidualNormNewtonSeconds)
+        && std::isfinite(diagnostics.kineticEnergyAfterJoules)
+        && std::isfinite(diagnostics.dissipatedKineticEnergyJoules)
+        && std::isfinite(
+            diagnostics.maximumVelocityChangeMetersPerSecond);
+    const double momentumTolerance = combinedTolerance(
+        settings.absoluteMomentumToleranceNewtonSeconds,
+        settings.relativeMomentumTolerance,
+        length(diagnostics.momentumBeforeNewtonSeconds),
+        length(diagnostics.momentumAfterNewtonSeconds));
+    const double energyTolerance = combinedTolerance(
+        settings.absoluteEnergyToleranceJoules,
+        settings.relativeEnergyTolerance,
+        std::abs(diagnostics.kineticEnergyBeforeJoules),
+        std::abs(diagnostics.kineticEnergyAfterJoules));
+    diagnostics.accepted = diagnostics.finite
+        && diagnostics.momentumResidualNormNewtonSeconds
+            <= momentumTolerance
+        && diagnostics.kineticEnergyAfterJoules
+            <= diagnostics.kineticEnergyBeforeJoules + energyTolerance;
+    if (diagnostics.accepted) {
+        velocityMetersPerSecond = std::move(candidate);
+    }
+    return diagnostics;
+}
+
+PeriodicMacDiffusionSspRk2Diagnostics diffuseVelocitySspRk2(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    const PeriodicMacDiffusionSettings& settings) {
+    validateSettings(settings);
+    if (!velocityMetersPerSecond.matches(grid)) {
+        throw std::invalid_argument(
+            "periodic MAC SSPRK2 diffusion velocity does not match its grid");
+    }
+    if (!isFinite(velocityMetersPerSecond)) {
+        throw std::invalid_argument(
+            "periodic MAC SSPRK2 diffusion velocity must be finite");
+    }
+
+    PeriodicMacDiffusionSspRk2Diagnostics diagnostics;
+    diagnostics.momentumBeforeNewtonSeconds = momentumNewtonSeconds(
+        grid, velocityMetersPerSecond, settings.densityKgPerCubicMeter);
+    diagnostics.momentumAfterNewtonSeconds =
+        diagnostics.momentumBeforeNewtonSeconds;
+    diagnostics.kineticEnergyBeforeJoules = kineticEnergyJoules(
+        grid, velocityMetersPerSecond, settings.densityKgPerCubicMeter);
+    diagnostics.kineticEnergyAfterJoules =
+        diagnostics.kineticEnergyBeforeJoules;
+
+    auto twiceAdvanced = velocityMetersPerSecond;
+    diagnostics.firstEulerStage = diffuseVelocityExplicit(
+        grid, twiceAdvanced, settings);
+    if (!diagnostics.firstEulerStage.accepted) {
+        diagnostics.finite = diagnostics.firstEulerStage.finite;
+        return diagnostics;
+    }
+    diagnostics.secondEulerStage = diffuseVelocityExplicit(
+        grid, twiceAdvanced, settings);
+    if (!diagnostics.secondEulerStage.accepted) {
+        diagnostics.finite = diagnostics.firstEulerStage.finite
+            && diagnostics.secondEulerStage.finite;
+        return diagnostics;
+    }
+
+    MacVelocityField candidate = velocityMetersPerSecond;
+    averageSspRk2Component(
+        velocityMetersPerSecond.xFaces(), twiceAdvanced.xFaces(),
+        candidate.xFaces(),
+        diagnostics.maximumVelocityChangeMetersPerSecond);
+    averageSspRk2Component(
+        velocityMetersPerSecond.yFaces(), twiceAdvanced.yFaces(),
+        candidate.yFaces(),
+        diagnostics.maximumVelocityChangeMetersPerSecond);
+    averageSspRk2Component(
+        velocityMetersPerSecond.zFaces(), twiceAdvanced.zFaces(),
+        candidate.zFaces(),
+        diagnostics.maximumVelocityChangeMetersPerSecond);
+    diagnostics.momentumAfterNewtonSeconds = momentumNewtonSeconds(
+        grid, candidate, settings.densityKgPerCubicMeter);
+    diagnostics.momentumResidualNewtonSeconds = subtract(
+        diagnostics.momentumAfterNewtonSeconds,
+        diagnostics.momentumBeforeNewtonSeconds);
+    diagnostics.momentumResidualNormNewtonSeconds = length(
+        diagnostics.momentumResidualNewtonSeconds);
+    diagnostics.kineticEnergyAfterJoules = kineticEnergyJoules(
+        grid, candidate, settings.densityKgPerCubicMeter);
+    diagnostics.dissipatedKineticEnergyJoules =
+        diagnostics.kineticEnergyBeforeJoules
+        - diagnostics.kineticEnergyAfterJoules;
+    diagnostics.finite = diagnostics.firstEulerStage.finite
+        && diagnostics.secondEulerStage.finite
+        && isFinite(candidate)
+        && finite(diagnostics.momentumBeforeNewtonSeconds)
+        && finite(diagnostics.momentumAfterNewtonSeconds)
+        && finite(diagnostics.momentumResidualNewtonSeconds)
+        && std::isfinite(
+            diagnostics.momentumResidualNormNewtonSeconds)
+        && std::isfinite(diagnostics.kineticEnergyBeforeJoules)
         && std::isfinite(diagnostics.kineticEnergyAfterJoules)
         && std::isfinite(diagnostics.dissipatedKineticEnergyJoules)
         && std::isfinite(

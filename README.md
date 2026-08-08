@@ -38,7 +38,10 @@ second-order pressure convergence. Its first velocity-evolution operator adds
 explicit laminar viscosity directly on the periodic MAC components, preserves
 momentum and solenoidal Fourier modes, dissipates kinetic energy, and rejects
 steps above the sharp diffusion-number limit without mutating the field. It is
-a verification integrator, not yet the second-order production time scheme.
+a stage oracle for a two-stage SSPRK2 viscosity path. The SSPRK2 result is a
+convex average of the old field and two accepted Euler candidates, retains the
+same per-stage stability/conservation contract, and exhibits second-order
+temporal convergence against the exact discrete Fourier decay.
 A companion uniform-flow transport oracle applies an unsplit conservative
 donor-cell update to all periodic MAC components. At total absolute CFL one it
 performs an exact one-cell periodic shift; below that limit it preserves
@@ -50,15 +53,15 @@ requires a divergence-free MAC advector, delegates uniform fields bit-exactly
 to the oracle, and supports safe nonlinear self-advection. Under its local
 outgoing-CFL limit it preserves component momentum and bounds without adding
 kinetic energy; a periodic shear fixture observes first-order convergence.
-The transport mode now composes with viscosity and the zero-mean pressure solve
-in one transactional periodic fluid step. Every stage runs on candidate
-fields; velocity and pressure commit together only when transport bounds,
-viscous stability, projection convergence, and the final momentum/energy
-ledger all pass. Focused rollback cases fail each stage independently without
-changing either caller field. This is the first complete nonlinear fluid
-evolution path, but its donor-cell convection and forward-Euler viscosity are
-still first-order verification operators rather than the intended second-order
-production Navier-Stokes scheme.
+The transport and Euler/SSPRK2 viscosity modes now compose with the zero-mean
+pressure solve in one transactional periodic fluid step. Every stage runs on
+candidate fields; velocity and pressure commit together only when transport
+bounds, viscous stability, projection convergence, and the final
+momentum/energy ledger all pass. Focused rollback cases fail each stage
+independently without changing either caller field. This is the first complete
+nonlinear fluid evolution path, but donor-cell convection and first-order
+operator splitting still keep it short of the intended second-order production
+Navier-Stokes scheme.
 A validated single-crossing sharp-interface
 field now preserves a prescribed two-sided static pressure jump without
 smearing or spurious flow, including across the periodic domain boundary.

@@ -16,6 +16,7 @@ using simwing::fsi::fluid::MacVelocityField;
 using simwing::fsi::fluid::PeriodicCartesianGrid;
 using simwing::fsi::fluid::PeriodicMacDiffusionSettings;
 using simwing::fsi::fluid::diffuseVelocityExplicit;
+using simwing::fsi::fluid::diffuseVelocitySspRk2;
 using simwing::fsi::fluid::computeDivergence;
 using simwing::fsi::fluid::maximumAbsoluteValue;
 
@@ -339,6 +340,150 @@ void testSharpStabilityBoundary() {
               && std::abs(diagnostics.dissipatedKineticEnergyJoules)
                   < 2.0e-12,
           "stability boundary: Nyquist mode flips sign without energy growth");
+
+    auto sspRk2Velocity = before;
+    const auto sspRk2 = diffuseVelocitySspRk2(
+        grid, sspRk2Velocity, boundarySettings);
+    check(sspRk2.accepted
+              && sspRk2.firstEulerStage.accepted
+              && sspRk2.secondEulerStage.accepted
+              && sspRk2Velocity == before,
+          "stability boundary: SSPRK2 returns the Nyquist mode exactly after two flips");
+}
+
+void testSspRk2ExactCompositionAndInvariants() {
+    const PeriodicCartesianGrid grid(
+        {7, 6, 5}, {}, {2.0, 3.0, 4.0});
+    const auto original = deterministicVelocity(grid);
+    auto twiceAdvanced = original;
+    const auto diffusionSettings = settings();
+    const auto expectedFirst = diffuseVelocityExplicit(
+        grid, twiceAdvanced, diffusionSettings);
+    const auto expectedSecond = diffuseVelocityExplicit(
+        grid, twiceAdvanced, diffusionSettings);
+    auto expected = original;
+    const auto average = [](const std::span<const double> before,
+                            const std::span<const double> twice,
+                            const std::span<double> destination) {
+        for (std::size_t index = 0; index < before.size(); ++index) {
+            destination[index] = before[index]
+                + 0.5 * (twice[index] - before[index]);
+        }
+    };
+    average(original.xFaces(), twiceAdvanced.xFaces(), expected.xFaces());
+    average(original.yFaces(), twiceAdvanced.yFaces(), expected.yFaces());
+    average(original.zFaces(), twiceAdvanced.zFaces(), expected.zFaces());
+
+    auto first = original;
+    auto second = original;
+    const auto firstDiagnostics = diffuseVelocitySspRk2(
+        grid, first, diffusionSettings);
+    const auto secondDiagnostics = diffuseVelocitySspRk2(
+        grid, second, diffusionSettings);
+    check(firstDiagnostics.accepted
+              && firstDiagnostics.firstEulerStage == expectedFirst
+              && firstDiagnostics.secondEulerStage == expectedSecond
+              && first == expected,
+          "SSPRK2 composition: result and stages equal the explicit oracle exactly");
+    check(first == second && firstDiagnostics == secondDiagnostics,
+          "SSPRK2 composition: identical inputs replay bit-for-bit");
+    check(firstDiagnostics.momentumResidualNormNewtonSeconds < 2.0e-12
+              && firstDiagnostics.kineticEnergyAfterJoules
+                  < firstDiagnostics.kineticEnergyBeforeJoules
+              && firstDiagnostics.dissipatedKineticEnergyJoules > 0.0,
+          "SSPRK2 composition: aggregate momentum and energy ledgers close");
+
+    auto noOp = original;
+    auto zeroSettings = diffusionSettings;
+    zeroSettings.kinematicViscositySquareMetersPerSecond = 0.0;
+    const auto zero = diffuseVelocitySspRk2(
+        grid, noOp, zeroSettings);
+    check(zero.accepted && noOp == original
+              && zero.maximumVelocityChangeMetersPerSecond == 0.0
+              && zero.dissipatedKineticEnergyJoules == 0.0,
+          "SSPRK2 composition: zero viscosity remains a bit-exact no-op");
+}
+
+double sspRk2TemporalError(const std::size_t steps) {
+    const double twoPi = 2.0 * std::numbers::pi;
+    const PeriodicCartesianGrid grid(
+        {24, 2, 2}, {}, {twoPi, twoPi, twoPi});
+    MacVelocityField velocity(grid);
+    const auto counts = grid.cellCounts();
+    constexpr double waveNumber = 3.0;
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                velocity.xFaces()[grid.cellIndex(i, j, k)] = std::sin(
+                    waveNumber * grid.xFaceCenterMeters(i, j, k).x);
+            }
+        }
+    }
+    const auto before = velocity;
+    constexpr double finalTime = 2.0;
+    auto diffusionSettings = settings();
+    diffusionSettings.kinematicViscositySquareMetersPerSecond = 0.1;
+    diffusionSettings.timeStepSeconds =
+        finalTime / static_cast<double>(steps);
+    for (std::size_t step = 0; step < steps; ++step) {
+        const auto diagnostics = diffuseVelocitySspRk2(
+            grid, velocity, diffusionSettings);
+        check(diagnostics.accepted,
+              "SSPRK2 convergence: every temporal refinement step is accepted");
+    }
+    const double spacing = grid.cellSpacingMeters().x;
+    const double discreteEigenvalue = 4.0
+        * std::pow(std::sin(
+            waveNumber * spacing * 0.5), 2)
+        / (spacing * spacing);
+    const double exactFactor = std::exp(
+        -diffusionSettings.kinematicViscositySquareMetersPerSecond
+        * discreteEigenvalue * finalTime);
+    double squaredError = 0.0;
+    for (std::size_t index = 0; index < grid.cellCount(); ++index) {
+        const double error = velocity.xFaces()[index]
+            - exactFactor * before.xFaces()[index];
+        squaredError += error * error;
+    }
+    return std::sqrt(
+        squaredError / static_cast<double>(grid.cellCount()));
+}
+
+void testSspRk2SecondOrderTemporalConvergence() {
+    const double coarseError = sspRk2TemporalError(10);
+    const double mediumError = sspRk2TemporalError(20);
+    const double fineError = sspRk2TemporalError(40);
+    const double coarseRatio = coarseError / mediumError;
+    const double fineRatio = mediumError / fineError;
+    check(coarseRatio > 3.7 && coarseRatio < 4.5,
+          "SSPRK2 convergence: first time-step refinement is second order");
+    check(fineRatio > 3.8 && fineRatio < 4.3,
+          "SSPRK2 convergence: second time-step refinement is second order");
+}
+
+void testSspRk2TransactionalRejection() {
+    const PeriodicCartesianGrid grid(
+        {7, 6, 5}, {}, {2.0, 3.0, 4.0});
+    const auto original = deterministicVelocity(grid);
+    auto unstable = original;
+    auto unstableSettings = settings();
+    unstableSettings.kinematicViscositySquareMetersPerSecond = 10.0;
+    unstableSettings.timeStepSeconds = 1.0;
+    const auto rejected = diffuseVelocitySspRk2(
+        grid, unstable, unstableSettings);
+    check(!rejected.firstEulerStage.stable
+              && !rejected.accepted && unstable == original,
+          "SSPRK2 rollback: an unstable first stage leaves the field unchanged");
+
+    auto invalid = original;
+    auto invalidSettings = settings();
+    invalidSettings.maximumDiffusionNumber = 0.51;
+    expectRejected(
+        [&] { static_cast<void>(diffuseVelocitySspRk2(
+            grid, invalid, invalidSettings)); },
+        "SSPRK2 validation: an unsafe stability ceiling is rejected");
+    check(invalid == original,
+          "SSPRK2 validation: invalid settings are transactional");
 }
 
 } // namespace
@@ -349,6 +494,9 @@ int main() {
     testSecondOrderSpatialConvergence();
     testConservationDeterminismAndRejection();
     testSharpStabilityBoundary();
+    testSspRk2ExactCompositionAndInvariants();
+    testSspRk2SecondOrderTemporalConvergence();
+    testSspRk2TransactionalRejection();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing fluid diffusion check(s) failed\n",

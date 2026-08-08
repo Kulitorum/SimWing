@@ -12,6 +12,7 @@ using simwing::fsi::fluid::CellScalarField;
 using simwing::fsi::fluid::MacVelocityField;
 using simwing::fsi::fluid::PeriodicCartesianGrid;
 using simwing::fsi::fluid::PeriodicFlowAdvectionMode;
+using simwing::fsi::fluid::PeriodicFlowDiffusionMode;
 using simwing::fsi::fluid::PeriodicFlowFailureStage;
 using simwing::fsi::fluid::PeriodicFlowSettings;
 using simwing::fsi::fluid::PeriodicMacDiffusionSettings;
@@ -22,6 +23,7 @@ using simwing::fsi::fluid::advancePeriodicFlow;
 using simwing::fsi::fluid::advectVelocityByMacFlow;
 using simwing::fsi::fluid::advectVelocityByUniformFlow;
 using simwing::fsi::fluid::diffuseVelocityExplicit;
+using simwing::fsi::fluid::diffuseVelocitySspRk2;
 using simwing::fsi::fluid::projectVelocity;
 
 int failures = 0;
@@ -160,7 +162,7 @@ void testExactStageCompositionAndDeterminism() {
               && firstPressure == expectedPressure,
           "composition: accepted macro-step equals its three verified stages exactly");
     check(first.uniformAdvection == expectedAdvection
-              && first.diffusion == expectedDiffusion
+              && first.explicitDiffusion == expectedDiffusion
               && first.projection == expectedProjection,
           "composition: stage diagnostics retain their exact standalone contracts");
     check(first == second
@@ -211,6 +213,7 @@ void testExactNonlinearStageComposition() {
     auto flowSettings = settings();
     flowSettings.advectionMode =
         PeriodicFlowAdvectionMode::SelfAdvectingMac;
+    flowSettings.diffusionMode = PeriodicFlowDiffusionMode::SspRk2;
     flowSettings.timeStepSeconds = 0.02;
     flowSettings.advectionAbsoluteDivergenceTolerancePerSecond = 3.0e-12;
 
@@ -253,7 +256,7 @@ void testExactNonlinearStageComposition() {
         flowSettings.absoluteEnergyToleranceJoules;
     diffusionSettings.relativeEnergyTolerance =
         flowSettings.relativeEnergyTolerance;
-    const auto expectedDiffusion = diffuseVelocityExplicit(
+    const auto expectedDiffusion = diffuseVelocitySspRk2(
         grid, expectedVelocity, diffusionSettings);
 
     ProjectionSettings projectionSettings;
@@ -281,7 +284,7 @@ void testExactNonlinearStageComposition() {
               && actualPressure == expectedPressure,
           "nonlinear composition: macro-step equals its standalone stages exactly");
     check(actual.variableAdvection == expectedAdvection
-              && actual.diffusion == expectedDiffusion
+              && actual.sspRk2Diffusion == expectedDiffusion
               && actual.projection == expectedProjection,
           "nonlinear composition: variable-advection diagnostics remain exact");
     check(actual.variableAdvection.numericalKineticEnergyLossJoules > 0.0
@@ -301,6 +304,7 @@ void testDeterministicNonlinearSequence() {
     auto flowSettings = settings();
     flowSettings.advectionMode =
         PeriodicFlowAdvectionMode::SelfAdvectingMac;
+    flowSettings.diffusionMode = PeriodicFlowDiffusionMode::SspRk2;
     flowSettings.timeStepSeconds = 0.01;
     flowSettings.kinematicViscositySquareMetersPerSecond = 0.01;
     for (std::size_t step = 0; step < 12; ++step) {
@@ -399,6 +403,17 @@ void testInvalidInputsAreTransactional() {
         "validation: an unknown composed advection mode is rejected");
     check(velocity == originalVelocity && pressure == originalPressure,
           "validation: rejected advection mode mutates neither field");
+
+    velocity = originalVelocity;
+    pressure = originalPressure;
+    invalid = settings();
+    invalid.diffusionMode = static_cast<PeriodicFlowDiffusionMode>(255);
+    expectRejected(
+        [&] { static_cast<void>(advancePeriodicFlow(
+            grid, velocity, pressure, invalid)); },
+        "validation: an unknown composed diffusion mode is rejected");
+    check(velocity == originalVelocity && pressure == originalPressure,
+          "validation: rejected diffusion mode mutates neither field");
 
     velocity = originalVelocity;
     pressure = originalPressure;
