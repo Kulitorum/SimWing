@@ -825,6 +825,10 @@ StrongCoupledPistonWorkerCase::acceptedStepCount() const noexcept {
     return simulation_.structure().acceptedStepCount();
 }
 
+double StrongCoupledPistonWorkerCase::simulationTimeSeconds() const noexcept {
+    return simulation_.structure().simulationTimeSeconds();
+}
+
 const Structure&
 StrongCoupledPistonWorkerCase::structure() const noexcept {
     return simulation_.structure();

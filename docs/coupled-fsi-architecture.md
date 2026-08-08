@@ -520,8 +520,8 @@ nonzero request IDs, while ready/advanced/checkpointed/stopped/error responses
 always expose absolute accepted step and time. It deliberately chooses no
 named-pipe, socket, or scheduler transport. A shared Qt-free control session
 executes decoded messages synchronously on a worker owner thread. Typed
-periodic-flow, moving-porous-flow, open-piston, and porous-sheet adapters bind
-numerical advance, absolute state, and their distinct complete checkpoint
+periodic-flow, moving-porous-flow, open-piston, strong-piston, and porous-sheet
+adapters bind numerical advance, absolute state, and their distinct complete checkpoint
 payloads. Each publishes
 immutable
 accepted frames, delegates checkpoint persistence, and makes stop terminal
@@ -529,8 +529,8 @@ without putting output or file policy in the numerical worker. A bounded
 self-framing stream adapter now reads the
 envelope payload length without a host-native prefix and flushes every response.
 `simwing-fsi --control-stdio` binds that stream to binary stdin/stdout for
-all four adapters, suppresses viewer launch and textual stdout, and completes the
-trace before acknowledging stop. A restored worker reports its checkpoint's
+all five adapters, suppresses viewer launch and textual stdout, and completes
+the trace before acknowledging stop. A restored worker reports its checkpoint's
 absolute step/time in Ready and writes only newly accepted frames to its trace.
 The moving porous regression crosses the second wrap, checkpoints step 101,
 verifies exact step-102 continuation, then restores and publishes only that
@@ -822,7 +822,10 @@ Structure and moving-interface fluid codecs, revalidates their coupled
 canonical owner, and enforces outer checksum plus nested byte limits before
 transactional decode. The headless batch worker routes that accepted boundary
 through atomic `--checkpoint-in`/`--checkpoint-out` replacement and absolute
-`--checkpoint-every` autosaves. The
+`--checkpoint-every` autosaves. A typed control adapter likewise exposes only
+accepted macro-step safe points. Its separate-process regression checkpoints
+step two, matches the exact third frame in the original trace, and restores a
+one-frame continuation with identical bytes. The
 `--case open-piston` worker adds the nonseparating connected-fluid projection,
 partial-cell geometry, resolved-opening GCL ledger, an explicit plate actuator,
 and a separately reported resisting CFD load. Its pressure reaction now crosses
@@ -1175,8 +1178,9 @@ failure after acceptance reports that absolute committed step in a valid
 bounded error response and continuation starts there. Stop prevents later
 advance/checkpoint mutation, while a repeated stop is idempotent and receives
 a newly correlated response.
-The periodic and open-piston stdio integrations each send advance-two,
-checkpoint, advance-one, and stop to a separate worker process. They require
+The periodic, open-piston, and strong-piston stdio integrations each send
+advance-two, checkpoint, advance-one, and stop to a separate worker process.
+They require
 an exact ready/advanced/checkpointed/
 advanced/stopped response stream with no trailing stdout, a completed
 three-frame trace, and a step-two checkpoint whose next frame is byte-identical
@@ -1185,7 +1189,7 @@ step two, advances once, and produces a completed one-frame trace whose step
 three is byte-identical to independent replay. The in-process open-piston
 adapter additionally advances through the first topology rebase in one command,
 delegates that composite checkpoint, and reproduces the next frame exactly.
-Control mode is rejected for structural and sealed-piston cases.
+Control mode is rejected for the structural and weak sealed-piston cases.
 The Qt-free viewer-geometry regression separately requires exact arrow shaft
 direction and relative magnitude, one shaft plus two arrowhead segments per
 retained nonzero vector, dimensional automatic scaling, owning deterministic

@@ -189,7 +189,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   Its generic loop driver validates each callback-produced physical epoch,
   advances convergence, performs both rollback modes, retains only converged
   output, and restores the baseline on callback or terminal retry failure. No
-  real worker supplies that strong-coupling callback yet.
+  general wing worker supplies that callback yet; the strong-piston canonical
+  is the first real solver-chain callback and regression owner.
 - `simwing_fluid_structure_bridge`: Qt-free stable-ID bridges from one
   face-aligned fluid-pressure surface to one structural coupling surface. The
   first is the exact uniform subset; the planar face-resolved path clips fixed
@@ -206,9 +207,10 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   immutable viewer frames. It also owns the headless light-piston strong-
   coupling canonical that supplies a real moving-interface/transfer/XPBD
   callback to `simwing_coupled_state`. `--case strong-piston` publishes its
-  accepted immutable diagnostic frames without control mode. Its bounded
+  accepted immutable diagnostic frames. Its bounded
   persistence codec is routed through the batch checkpoint flags with atomic
-  same-file replacement.
+  same-file replacement, and its typed standard-I/O control adapter exposes
+  only complete accepted macro-steps.
 - `simwing_porous_sheet_case`: Qt-free midpoint oracle coupling a
   pressure-driven porous sheet to XPBD. It closes fluid/sheet/pump momentum,
   pump work, porous dissipation, and kinetic-energy ledgers before publishing
@@ -370,7 +372,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   checkpoint persistence is an injected action, and stop is terminal. It owns
   no pipe, socket, file, viewer, or scheduling policy.
 - `simwing_periodic_flow_control`, `simwing_moving_porous_flow_control`,
-  `simwing_open_piston_control`, and `simwing_porous_sheet_control`: typed
+  `simwing_open_piston_control`, `simwing_strong_piston_control`, and
+  `simwing_porous_sheet_control`: typed
   adapters binding their numerical owners and complete checkpoint payloads to
   the shared control session.
 - `simwing_viewer_geometry`: Qt-free deterministic diagnostic-vector glyph
@@ -757,7 +760,8 @@ makes this a certified aerodynamic solver.
   `strong_piston_checkpoint_persistence.*` wraps those accepted nested codecs
   in the deterministic checksummed `SWSPCKP1` envelope; it never stores an
   in-progress iteration or rejected attempt. The batch CLI accepts the normal
-  checkpoint flags for this case; standard-I/O control remains unsupported.
+  checkpoint flags for this case. Its typed standard-I/O control binding
+  publishes and checkpoints only completed accepted macro-steps.
 - `src/fsi/porous_sheet_case.{h,cpp}` is selected with `--case porous-sheet`.
   Its analytic linear-resistance midpoint relation drives the same accepted
   nonuniform porous projection, sheet-reaction bridge, temporal transfer, and
@@ -822,9 +826,9 @@ makes this a certified aerodynamic solver.
   by atomic replacement. Periodic autosave occurs only after accepted frame
   publication, uses absolute accepted-step multiples so cadence survives
   restart, skips a duplicate final write, and reports its write count;
-  checkpoint flags are also supported by open-piston but rejected for the
-  structural and sealed-piston cases, and interval mode requires an output
-  path.
+  checkpoint flags are also supported by open-piston, strong-piston,
+  moving-porous-flow, and porous-sheet but rejected for the structural and weak
+  sealed-piston cases; interval mode requires an output path.
 - `src/fsi/worker_control_protocol.{h,cpp}` owns the first
   transport-independent safe-point message contract. Command and response
   envelopes have distinct magic, one protocol version, a bounded payload
@@ -846,6 +850,9 @@ makes this a certified aerodynamic solver.
   advance/checkpoint commands and repeated stop remains idempotent.
   `periodic_flow_control.{h,cpp}` and `open_piston_control.{h,cpp}` bind the
   corresponding case, absolute step/time queries, and typed checkpoint sink.
+  `strong_piston_control.{h,cpp}` applies the same boundary to whole accepted
+  strong-coupling macro-steps; active iterations and rejected retries remain
+  invisible.
 - `src/fsi/fluid/grid.{h,cpp}` owns the uniform periodic Cartesian grid,
   cell-centred scalar fields, unique periodic MAC face velocities, and the
   paired finite-volume divergence/gradient operators.
@@ -1167,7 +1174,7 @@ consistent, while rejecting incomplete or internally inconsistent wrappers.
 | SimWing periodic fluid worker/snapshots | `simwing_periodic_flow_case`, `simwing_fsi_periodic_flow_headless`, `simwing_fsi_periodic_flow_checkpoint_write`, `simwing_fsi_periodic_flow_checkpoint_resume`, `simwing_fsi_periodic_flow_checkpoint_verify`, `simwing_fsi_checkpoint_rejects_foreign_case`, `simwing_fsi_checkpoint_interval_requires_output`, `simwing_viewer_protocol`; preserve transactional advance through frame validation, accepted-only publishing, owning cell-centre pressure/speed/velocity fields, exact MAC divergence, diagnostic centred-curl vorticity, the discrete Taylor-Green vorticity oracle, stable IDs, immutable grid/definition-bound checkpoint metadata and payload, initial/same/rebuilt-worker bit-identical replay, deterministic bounded little-endian persistent round trips, payload checksum, corruption/truncation/trailing-data/limit rejection without output mutation, additional-step CLI resume, same-path atomic checkpoint replacement followed by successful decode, absolute accepted-step autosave cadence, duplicate-final-write suppression, exact checkpoint-write telemetry, required autosave output, foreign-case flag rejection, rejected-restore non-mutation, completed traces, and Qt-free headless execution |
 | SimWing pressure-jump snapshots/worker | `simwing_pressure_jump_frame`, `simwing_pressure_jump_case`, `simwing_fsi_pressure_jump_headless`, `simwing_viewer_protocol`; preserve owning deterministic cell samples, a separate oriented quad and triangle fields for every ordered crossing, periodic X/Y/Z placement, region-sided normals, diagnostic layered pressure reconstruction, the 48-crossing `-125/+125 Pa` split slab, zero spurious flow, bit-identical repeated static projection, completed traces, and Qt-free headless execution |
 | SimWing porous-flow worker | `simwing_fluid_porous_interface`, `simwing_porous_flow_case`, `simwing_fsi_porous_flow_headless`, `simwing_pressure_jump_frame`; preserve the implicit-midpoint nonlinear plug solve, orientation symmetry, unforced dissipation, transactional invalid-input rejection, independently closed pressure impulse and driving-work/porous-loss/kinetic-energy ledgers, analytic steady Darcy-Forchheimer speed and pressure loss, complete endpoint Strang/SSPRK2 evolution with both pressure stages retaining all crossings and no spurious velocity, owning porous-layer/global diagnostics, deterministic replay, completed traces, and Qt-free headless execution |
-| SimWing worker control | `simwing_worker_control_protocol`, `simwing_worker_control_stream`, `simwing_periodic_flow_control`, `simwing_moving_porous_flow_control`, `simwing_open_piston_control`, `simwing_porous_sheet_control`, `simwing_fsi_control_stdio`, `simwing_fsi_moving_porous_flow_control_stdio`, `simwing_fsi_open_piston_control_stdio`, `simwing_fsi_porous_sheet_control_stdio`, `simwing_fsi_porous_sheet_collision_control_stdio`, `simwing_fsi_control_rejects_unsupported_case`; preserve distinct command/response magic, versioned bounded little-endian envelopes, checksums, nonzero request correlation outside the ready response, positive bounded advances, exact absolute step/time responses, produced-frame counts only on advance, bounded coded error text only on error, byte-deterministic round trips, cross-type rejection, transactional corruption/truncation/trailing-data/limit failures, self-framing without a host prefix, pre-allocation stream bounds, clean EOF only between envelopes, per-message flush, case-neutral execution with typed checkpoint adapters, accepted-frame publication at individual safe points, exact periodic, moving-porous-flow, open-piston, and porous-sheet checkpoint delegation, moving porous control advance through both wraps and exact next-frame replay, visible absolute state after output or numerical failure, no solver mutation on checkpoint/protocol failure, terminal stop, idempotent repeated stop, binary-only protocol stdout, explicit-stop trace completion, no viewer launch, exact end-to-end response sequences for all four CLI workers, moving-porous step-101 checkpoint and exact original/resumed step-102 traces, typed open-piston and porous-sheet replay through their first topology rebases, periodic/open-piston three-frame traces with step-two checkpoint replay into step three, porous-sheet rebased step-330 checkpoint replay into step 331 followed by pump-collision failure with no rejected frame, process-level terminal checkpoint persistence, restored terminal Ready and repeated failure with an empty completed trace, restored ordinary Ready absolute state, and resumed ordinary traces containing only the exact next accepted frame |
+| SimWing worker control | `simwing_worker_control_protocol`, `simwing_worker_control_stream`, `simwing_periodic_flow_control`, `simwing_moving_porous_flow_control`, `simwing_open_piston_control`, `simwing_strong_piston_control`, `simwing_porous_sheet_control`, `simwing_fsi_control_stdio`, `simwing_fsi_moving_porous_flow_control_stdio`, `simwing_fsi_open_piston_control_stdio`, `simwing_fsi_strong_piston_control_stdio`, `simwing_fsi_porous_sheet_control_stdio`, `simwing_fsi_porous_sheet_collision_control_stdio`, `simwing_fsi_control_rejects_unsupported_case`; preserve distinct command/response magic, versioned bounded little-endian envelopes, checksums, nonzero request correlation outside the ready response, positive bounded advances, exact absolute step/time responses, produced-frame counts only on advance, bounded coded error text only on error, byte-deterministic round trips, cross-type rejection, transactional corruption/truncation/trailing-data/limit failures, self-framing without a host prefix, pre-allocation stream bounds, clean EOF only between envelopes, per-message flush, case-neutral execution with typed checkpoint adapters, accepted-frame publication at individual safe points, exact periodic, moving-porous-flow, open-piston, strong-piston, and porous-sheet checkpoint delegation, moving porous control advance through both wraps and exact next-frame replay, visible absolute state after output or numerical failure, no solver mutation on checkpoint/protocol failure, terminal stop, idempotent repeated stop, binary-only protocol stdout, explicit-stop trace completion, no viewer launch, exact end-to-end response sequences for all five CLI workers, moving-porous step-101 checkpoint and exact original/resumed step-102 traces, typed open-piston and porous-sheet replay through their first topology rebases, periodic/open-piston/strong-piston three-frame traces with step-two checkpoint replay into step three, porous-sheet rebased step-330 checkpoint replay into step 331 followed by pump-collision failure with no rejected frame, process-level terminal checkpoint persistence, restored terminal Ready and repeated failure with an empty completed trace, restored ordinary Ready absolute state, and resumed ordinary traces containing only the exact next accepted frame |
 | SimWing conservative transfer | `simwing_transfer`; preserve stable topology/Structure binding, analytic uniform and barycentric-quadrature area/force/moment, rigid translation/rotation power, independent ledger closure, additive nodal load application, and rejection before mutation for foreign results/structures |
 | SimWing macro-step coupling | `simwing_coupling`; preserve strictly ordered local sample time, topology/duration binding, analytic moving-piston impulse and pressure-volume work, independent temporal ledger closure, momentum delivery through XPBD, deterministic replay, pre-load checkpoint rollback on failure, definition-bound vector Aitken relaxation with analytic affine convergence, explicit factor bounds, deterministic degenerate fallback, exact iteration replay, and transactional update/restore rejection, topology-bound maximum-nodal residual reduction from saved-baseline/previous/current kinematics and consecutive tractions with world-origin/bulk-velocity invariance and foreign-binding rejection, deterministic convergence decisions that require displacement/velocity/traction to each pass absolute and floor-stabilized relative tolerances, enforce minimum iterations, and distinguish convergence from iteration-budget exhaustion, and a checkpointable macro-step iteration owner with exact replay, transactional failure, and terminal convergence/exhaustion |
 | SimWing composite coupling rollback | `simwing_coupled_state`; preserve interface-identity binding, accepted moving-interface fluid capture, complete Structure/fluid/iteration replacement validation before commit, no-throw three-owner commit, exact baseline and next-mutation replay, current unaccepted-fluid checkpoint rejection, transactional foreign composite/Structure/fluid-topology/iteration rejection, definition-bound bounded macro-step retries with hard minimum-step/retry-count failure, exact replay, and transactional sequencing/checkpoint rejection, fresh-baseline macro-step ownership whose integrated retry transition restores all three owners before activating the reduced step, a distinct transactional solver-only rewind that returns Structure/fluid to baseline while preserving advanced iteration state, and the bounded generic loop's large-step exhaustion/reduced-step convergence, per-run physical baseline, accepted final state, terminal-failure rollback, unaccepted-epoch rejection, and exception rollback |

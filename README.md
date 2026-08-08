@@ -119,10 +119,10 @@ correlated `ready`, `advanced`, `checkpointed`, `stopped`, and coded-error
 responses. Every response carries the absolute accepted step and simulated
 time. A shared Qt-free control session executes those decoded commands on the
 worker owner thread, with typed periodic-flow, moving-porous-flow, open-piston,
-and porous-sheet adapters. Each
+strong-piston, and porous-sheet adapters. Each
 publishes immutable accepted frames through an injected sink, delegates its
 own complete checkpoint codec, and makes stop terminal. `simwing-fsi
---control-stdio` exposes that boundary for all four cases as self-framed binary
+--control-stdio` exposes that boundary for all five cases as self-framed binary
 stdin/stdout messages. It launches no viewer,
 puts no human-readable text on protocol stdout, completes the trace before the
 stopped response, and uses `--checkpoint-out` as the checkpoint-command target.
@@ -354,7 +354,10 @@ fresh canonical owner before encode/decode, checks an outer checksum and nested
 length limits, rejects corrupt/truncated/trailing data without changing output,
 and resumes the next coupled step exactly. The headless `--checkpoint-in`,
 `--checkpoint-out`, and absolute `--checkpoint-every` workflow now routes this
-accepted boundary through atomic same-file replacement.
+accepted boundary through atomic same-file replacement. Its typed safe-point
+control adapter also exposes only whole accepted macro-steps; the process-level
+stdio regression checkpoints step two, verifies the exact third frame, and
+resumes that continuation in a fresh worker.
 The
 `simwing-fsi --case porous-sheet` harness drives fluid through a translating
 linear-resistance sheet, transfers only the sheet reaction to XPBD, and closes
