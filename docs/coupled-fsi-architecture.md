@@ -436,6 +436,7 @@ src/fsi/
         grid.*              block hierarchy and field storage
         scene_surface_geometry.* accepted triangle/cell broad phase
         scene_surface_intersection.* exact triangle/cell narrow phase
+        scene_surface_clipping.* barycentric per-cell surface polygons
         geometry.*          exact surface and region reconstruction
         advection.*         bounded donor/limited-MC MAC transport
         projected_advection.* projected nonlinear SSPRK2 transport
@@ -508,8 +509,11 @@ cell-major candidates bound to the complete accepted-state fingerprint. It
 handles internal grid-plane ambiguity by retaining both adjacent cells and
 rejects out-of-domain geometry. A normalized separating-axis narrow phase
 then removes false positives, retains contact conservatively, and revalidates
-the complete expected pair set. Clipped polygons, volume fractions, face
-crossings, and region reconstruction remain open. A canonical Qt-free
+the complete expected pair set. Exact pairs are clipped into flattened
+barycentric point/segment/area patches with analytic area and centroids.
+Coincident shared-plane area remains duplicated and visibly flagged until a
+unique face owner is selected. Volume fractions, face crossings, and region
+reconstruction remain open. A canonical Qt-free
 structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.

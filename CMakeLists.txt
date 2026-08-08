@@ -287,6 +287,8 @@ add_library(simwing_scene_fluid_geometry STATIC
     src/fsi/fluid/scene_surface_geometry.h
     src/fsi/fluid/scene_surface_intersection.cpp
     src/fsi/fluid/scene_surface_intersection.h
+    src/fsi/fluid/scene_surface_clipping.cpp
+    src/fsi/fluid/scene_surface_clipping.h
 )
 target_include_directories(simwing_scene_fluid_geometry PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
@@ -899,6 +901,12 @@ add_executable(simwing-scene-surface-intersection-test
 target_link_libraries(simwing-scene-surface-intersection-test
     PRIVATE simwing_scene_fluid_geometry)
 
+add_executable(simwing-scene-surface-clipping-test
+    tests/simwing_scene_surface_clipping_test.cpp
+)
+target_link_libraries(simwing-scene-surface-clipping-test
+    PRIVATE simwing_scene_fluid_geometry)
+
 add_executable(simwing-viewer-protocol-test
     tests/simwing_viewer_protocol_test.cpp
 )
@@ -1294,6 +1302,7 @@ set_target_properties(
     simwing-scene-fluid-surface-transfer-test
     simwing-scene-surface-geometry-test
     simwing-scene-surface-intersection-test
+    simwing-scene-surface-clipping-test
     simwing-viewer-protocol-test
     simwing-vector-glyphs-test
     simwing-structure-frame-test
@@ -1368,6 +1377,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-scene-fluid-surface-transfer-test
         simwing-scene-surface-geometry-test
         simwing-scene-surface-intersection-test
+        simwing-scene-surface-clipping-test
         simwing-viewer-protocol-test
         simwing-vector-glyphs-test
         simwing-structure-frame-test
@@ -1535,6 +1545,8 @@ add_test(NAME simwing_scene_surface_geometry
     COMMAND simwing-scene-surface-geometry-test)
 add_test(NAME simwing_scene_surface_intersection
     COMMAND simwing-scene-surface-intersection-test)
+add_test(NAME simwing_scene_surface_clipping
+    COMMAND simwing-scene-surface-clipping-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
 add_test(NAME simwing_vector_glyphs COMMAND simwing-vector-glyphs-test)
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)

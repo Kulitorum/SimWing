@@ -446,9 +446,12 @@ cell-major candidates tied to the complete accepted surface-state fingerprint.
 It covers both adjacent cells on internal grid planes and rejects geometry
 outside the selected domain. A normalized separating-axis narrow phase now
 removes triangle/AABB false positives, retains exact or explicitly tolerated
-contact, and revalidates every expected pair. These exact cell intersections
-still do not supply clipped polygons, cut-cell fractions, face crossings, or
-region reconstruction.
+contact, and revalidates every expected pair. Exact zero-tolerance pairs are
+now clipped against all six cell planes with original-triangle barycentric
+coordinates, analytic area/centroid data, and explicit point/segment contact.
+Coincident grid-plane area remains duplicated and flagged on both adjacent
+cells until a unique face owner is selected. Cut-cell volume fractions, face
+crossings, and region reconstruction remain open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,
