@@ -470,6 +470,18 @@ target_link_libraries(simwing_porous_sheet_case PUBLIC
     simwing_structure_frame
 )
 
+add_library(simwing_porous_sheet_control STATIC
+    src/fsi/porous_sheet_control.cpp
+    src/fsi/porous_sheet_control.h
+)
+target_include_directories(simwing_porous_sheet_control PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_porous_sheet_control PUBLIC
+    simwing_porous_sheet_case
+    simwing_worker_control_session
+)
+
 add_library(simwing_open_piston_case STATIC
     src/fsi/open_piston_case.cpp
     src/fsi/open_piston_case.h
@@ -842,6 +854,7 @@ add_executable(simwing-control-stdio-fixture
 target_link_libraries(simwing-control-stdio-fixture PRIVATE
     simwing_open_piston_case
     simwing_periodic_flow_case
+    simwing_porous_sheet_case
     simwing_worker_control_stream
 )
 
@@ -856,6 +869,12 @@ add_executable(simwing-open-piston-control-test
 )
 target_link_libraries(simwing-open-piston-control-test
     PRIVATE simwing_open_piston_control)
+
+add_executable(simwing-porous-sheet-control-test
+    tests/simwing_porous_sheet_control_test.cpp
+)
+target_link_libraries(simwing-porous-sheet-control-test
+    PRIVATE simwing_porous_sheet_control)
 
 add_executable(simwing-fluid-projection-test
     tests/simwing_fluid_projection_test.cpp
@@ -1007,6 +1026,7 @@ target_link_libraries(simwing-fsi PRIVATE
     simwing_piston_case
     simwing_porous_flow_case
     simwing_porous_sheet_case
+    simwing_porous_sheet_control
     simwing_pressure_jump_case
     simwing_worker_control_stream
 )
@@ -1132,6 +1152,7 @@ set_target_properties(
     simwing-control-stdio-fixture
     simwing-periodic-flow-control-test
     simwing-open-piston-control-test
+    simwing-porous-sheet-control-test
     simwing-fluid-projection-test
     simwing-fluid-interface-jump-test
     simwing-fluid-moving-interface-test
@@ -1197,6 +1218,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-control-stdio-fixture
         simwing-periodic-flow-control-test
         simwing-open-piston-control-test
+        simwing-porous-sheet-control-test
         simwing-fluid-projection-test
         simwing-fluid-interface-jump-test
         simwing-fluid-moving-interface-test
@@ -1359,6 +1381,8 @@ add_test(NAME simwing_periodic_flow_control
     COMMAND simwing-periodic-flow-control-test)
 add_test(NAME simwing_open_piston_control
     COMMAND simwing-open-piston-control-test)
+add_test(NAME simwing_porous_sheet_control
+    COMMAND simwing-porous-sheet-control-test)
 add_test(NAME simwing_fluid_projection COMMAND simwing-fluid-projection-test)
 add_test(NAME simwing_fluid_interface_jump
     COMMAND simwing-fluid-interface-jump-test)
@@ -1461,6 +1485,25 @@ add_test(NAME simwing_fsi_open_piston_control_stdio
         "-DRESUME_ERROR_FILE=${CMAKE_BINARY_DIR}/simwing-open-control-resume-stderr.txt"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunSimWingControlStdioTest.cmake")
 set_tests_properties(simwing_fsi_open_piston_control_stdio PROPERTIES
+    TIMEOUT 45)
+add_test(NAME simwing_fsi_porous_sheet_control_stdio
+    COMMAND ${CMAKE_COMMAND}
+        "-DSIMWING_FSI=$<TARGET_FILE:simwing-fsi>"
+        "-DCONTROL_FIXTURE=$<TARGET_FILE:simwing-control-stdio-fixture>"
+        "-DWORKER_CASE=porous-sheet"
+        "-DVERIFY_MODE=verify-porous"
+        "-DRESUME_VERIFY_MODE=verify-porous-resume"
+        "-DCOMMAND_FILE=${CMAKE_BINARY_DIR}/simwing-porous-control-commands.swcc"
+        "-DRESPONSE_FILE=${CMAKE_BINARY_DIR}/simwing-porous-control-responses.swcr"
+        "-DCHECKPOINT_FILE=${CMAKE_BINARY_DIR}/simwing-porous-control-checkpoint.swps"
+        "-DTRACE_FILE=${CMAKE_BINARY_DIR}/simwing-porous-control.swtrace"
+        "-DERROR_FILE=${CMAKE_BINARY_DIR}/simwing-porous-control-stderr.txt"
+        "-DRESUME_COMMAND_FILE=${CMAKE_BINARY_DIR}/simwing-porous-control-resume-commands.swcc"
+        "-DRESUME_RESPONSE_FILE=${CMAKE_BINARY_DIR}/simwing-porous-control-resume-responses.swcr"
+        "-DRESUME_TRACE_FILE=${CMAKE_BINARY_DIR}/simwing-porous-control-resume.swtrace"
+        "-DRESUME_ERROR_FILE=${CMAKE_BINARY_DIR}/simwing-porous-control-resume-stderr.txt"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunSimWingControlStdioTest.cmake")
+set_tests_properties(simwing_fsi_porous_sheet_control_stdio PROPERTIES
     TIMEOUT 45)
 add_test(NAME simwing_fsi_control_rejects_unsupported_case
     COMMAND simwing-fsi --case structural --control-stdio --no-viewer)

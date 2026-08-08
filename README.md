@@ -114,10 +114,11 @@ checksummed, byte-bounded `advance`, `checkpoint`, and `stop` commands with
 correlated `ready`, `advanced`, `checkpointed`, `stopped`, and coded-error
 responses. Every response carries the absolute accepted step and simulated
 time. A shared Qt-free control session executes those decoded commands on the
-worker owner thread, with typed periodic-flow and open-piston adapters. Each
+worker owner thread, with typed periodic-flow, open-piston, and porous-sheet
+adapters. Each
 publishes immutable accepted frames through an injected sink, delegates its
 own complete checkpoint codec, and makes stop terminal. `simwing-fsi
---control-stdio` exposes that boundary for either case as self-framed binary
+--control-stdio` exposes that boundary for all three cases as self-framed binary
 stdin/stdout messages. It launches no viewer,
 puts no human-readable text on protocol stdout, completes the trace before the
 stopped response, and uses `--checkpoint-out` as the checkpoint-command target.
@@ -420,7 +421,8 @@ second is the unthrottled headless form for tests and scripted verification.
 The checkpoint commands save and resume exact accepted worker state. Resumed
 steps are additional, autosave cadence uses absolute accepted-step multiples,
 and input/output may name the same atomically replaced file.
-For periodic flow or open piston, programmatic controllers can replace
+For periodic flow, open piston, or porous sheet, programmatic controllers can
+replace
 `--steps` with `--control-stdio`; that mode requires binary protocol input and
 an explicit stop command, so it is not an interactive terminal interface.
 

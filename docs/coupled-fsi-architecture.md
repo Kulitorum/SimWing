@@ -423,6 +423,7 @@ src/fsi/
     worker_control_session.* case-neutral safe-point command execution
     periodic_flow_control.* typed periodic worker control adapter
     open_piston_control.*   typed open-piston worker control adapter
+    porous_sheet_control.*  typed coupled porous-sheet control adapter
     diagnostics.*           conservation, residuals, events, profiling
     checkpoint.*            versioned restart state
     scenarios.*             tunnel, glide, inflation, collapse definitions
@@ -471,7 +472,8 @@ Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_worker_control_protocol`,
 `simwing_worker_control_stream`,
 `simwing_worker_control_session`, `simwing_periodic_flow_control`,
-`simwing_open_piston_control`, `simwing_viewer_geometry`, `simwing-fsi`,
+`simwing_open_piston_control`, `simwing_porous_sheet_control`,
+`simwing_viewer_geometry`, `simwing-fsi`,
 `simwing_viewer_protocol`,
 `simwing-viewer`, and focused test executables. Keep Qt out of the numerical
 targets; only the viewer/UI targets link it. Backend interfaces must not be so
@@ -514,14 +516,15 @@ nonzero request IDs, while ready/advanced/checkpointed/stopped/error responses
 always expose absolute accepted step and time. It deliberately chooses no
 named-pipe, socket, or scheduler transport. A shared Qt-free control session
 executes decoded messages synchronously on a worker owner thread. Typed
-periodic-flow and open-piston adapters bind numerical advance, absolute state,
-and their distinct complete checkpoint payloads. Each publishes immutable
+periodic-flow, open-piston, and porous-sheet adapters bind numerical advance,
+absolute state, and their distinct complete checkpoint payloads. Each publishes
+immutable
 accepted frames, delegates checkpoint persistence, and makes stop terminal
 without putting output or file policy in the numerical worker. A bounded
 self-framing stream adapter now reads the
 envelope payload length without a host-native prefix and flushes every response.
 `simwing-fsi --control-stdio` binds that stream to binary stdin/stdout for
-either adapter, suppresses viewer launch and textual stdout, and completes the
+all three adapters, suppresses viewer launch and textual stdout, and completes the
 trace before acknowledging stop. A restored worker reports its checkpoint's
 absolute step/time in Ready and writes only newly accepted frames to its trace.
 The exact-model capture now exports validated scene-v2.1 skins, authored open

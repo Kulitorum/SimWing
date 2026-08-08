@@ -1,6 +1,8 @@
 #include "open_piston_case.h"
 #include "open_piston_checkpoint_persistence.h"
 #include "periodic_flow_case.h"
+#include "porous_sheet_case.h"
+#include "porous_sheet_checkpoint_persistence.h"
 #include "viewer_protocol.h"
 #include "worker_control_stream.h"
 
@@ -77,6 +79,26 @@ bool readOpenPistonCheckpoint(
     if (!fsi::deserializeOpenPistonCheckpoint(
             bytes, checkpoint, &error, limits)) {
         std::fprintf(stderr, "open-piston control checkpoint is invalid: %s\n",
+                     error.message.c_str());
+        return false;
+    }
+    return true;
+}
+
+bool readPorousSheetCheckpoint(
+    const std::string& path,
+    fsi::CoupledPorousSheetCheckpoint& checkpoint) {
+    const fsi::CoupledPorousSheetCheckpointPersistenceLimits limits;
+    std::vector<std::uint8_t> bytes;
+    if (!readFile(path, limits.maximumEncodedBytes, bytes)) {
+        return false;
+    }
+    fsi::CoupledPorousSheetCase owner;
+    fsi::CoupledPorousSheetCheckpointPersistenceError error;
+    if (!fsi::deserializeCoupledPorousSheetCheckpoint(
+            bytes, owner, checkpoint, &error, limits)) {
+        std::fprintf(stderr,
+                     "porous-sheet control checkpoint is invalid: %s\n",
                      error.message.c_str());
         return false;
     }
@@ -444,6 +466,143 @@ int verifyOpenPistonResume(
     return 0;
 }
 
+int verifyPorousSheetResponses(
+    const std::string& responsePath,
+    const std::string& checkpointPath,
+    const std::string& tracePath) {
+    fsi::CoupledPorousSheetCase definition;
+    const double stepSeconds = definition.stepSettings().timeStepSeconds;
+    const double timeAtStep2 = stepSeconds + stepSeconds;
+    const double timeAtStep3 = timeAtStep2 + stepSeconds;
+    const std::vector<fsi::WorkerControlResponse> expected{
+        {fsi::WorkerControlResponseKind::Ready, 0, 0, 0.0, 0,
+         fsi::WorkerControlFailureCode::None, {}},
+        {fsi::WorkerControlResponseKind::Advanced, 101, 2, timeAtStep2, 2,
+         fsi::WorkerControlFailureCode::None, {}},
+        {fsi::WorkerControlResponseKind::Checkpointed, 102, 2, timeAtStep2, 0,
+         fsi::WorkerControlFailureCode::None, {}},
+        {fsi::WorkerControlResponseKind::Advanced, 103, 3, timeAtStep3, 1,
+         fsi::WorkerControlFailureCode::None, {}},
+        {fsi::WorkerControlResponseKind::Stopped, 104, 3, timeAtStep3, 0,
+         fsi::WorkerControlFailureCode::None, {}},
+    };
+    if (!verifyResponseFile(responsePath, expected)) {
+        return 1;
+    }
+
+    fsi::CoupledPorousSheetCheckpoint checkpoint;
+    if (!readPorousSheetCheckpoint(checkpointPath, checkpoint)) {
+        return 1;
+    }
+    if (checkpoint.acceptedStepCount != 2
+        || checkpoint.simulationTimeSeconds != timeAtStep2) {
+        std::fprintf(stderr,
+                     "porous-sheet control checkpoint is not step two\n");
+        return 1;
+    }
+
+    std::ifstream traceInput(tracePath, std::ios::binary);
+    if (!traceInput) {
+        std::fprintf(stderr,
+                     "cannot open porous-sheet control trace: %s\n",
+                     tracePath.c_str());
+        return 1;
+    }
+    viewer::TraceReader reader(traceInput, viewer::TraceReadMode::Follow);
+    viewer::TraceHeader header;
+    if (!reader.readHeader(header)
+        || header.sceneChecksum != fsi::coupledPorousSheetCaseChecksum
+        || header.solverCommit != fsi::coupledPorousSheetCaseSolverId) {
+        std::fprintf(stderr, "porous-sheet control trace header is invalid\n");
+        return 1;
+    }
+    std::vector<viewer::DiagnosticFrame> frames;
+    for (;;) {
+        viewer::DiagnosticFrame frame;
+        const viewer::TraceReadStatus status = reader.readNext(frame);
+        if (status == viewer::TraceReadStatus::Frame) {
+            frames.push_back(std::move(frame));
+        } else if (status == viewer::TraceReadStatus::End) {
+            break;
+        } else {
+            std::fprintf(stderr,
+                         "porous-sheet control trace is incomplete: %s\n",
+                         reader.error().message.c_str());
+            return 1;
+        }
+    }
+    if (frames.size() != 3
+        || frames[0].step != 1
+        || frames[1].step != 2
+        || frames[2].step != 3
+        || frames[1].simulationTimeSeconds != timeAtStep2
+        || frames[2].simulationTimeSeconds != timeAtStep3) {
+        std::fprintf(stderr,
+                     "porous-sheet control trace lacks three accepted steps\n");
+        return 1;
+    }
+
+    fsi::CoupledPorousSheetCase resumed;
+    resumed.restore(checkpoint);
+    if (serializedFrame(resumed.advance())
+        != serializedFrame(frames[2])) {
+        std::fprintf(stderr,
+                     "porous-sheet checkpoint does not replay trace step three\n");
+        return 1;
+    }
+    return 0;
+}
+
+int verifyPorousSheetResume(
+    const std::string& responsePath,
+    const std::string& checkpointPath,
+    const std::string& tracePath) {
+    fsi::CoupledPorousSheetCheckpoint checkpoint;
+    if (!readPorousSheetCheckpoint(checkpointPath, checkpoint)) {
+        return 1;
+    }
+    fsi::CoupledPorousSheetCase simulation;
+    simulation.restore(checkpoint);
+    const double checkpointTime = simulation.simulationTimeSeconds();
+    const viewer::DiagnosticFrame expectedFrame = simulation.advance();
+    const std::vector<fsi::WorkerControlResponse> expectedResponses{
+        {fsi::WorkerControlResponseKind::Ready, 0,
+         checkpoint.acceptedStepCount, checkpointTime, 0,
+         fsi::WorkerControlFailureCode::None, {}},
+        {fsi::WorkerControlResponseKind::Advanced, 201,
+         expectedFrame.step, expectedFrame.simulationTimeSeconds, 1,
+         fsi::WorkerControlFailureCode::None, {}},
+        {fsi::WorkerControlResponseKind::Stopped, 202,
+         expectedFrame.step, expectedFrame.simulationTimeSeconds, 0,
+         fsi::WorkerControlFailureCode::None, {}},
+    };
+    if (!verifyResponseFile(responsePath, expectedResponses)) {
+        return 1;
+    }
+
+    std::ifstream traceInput(tracePath, std::ios::binary);
+    if (!traceInput) {
+        std::fprintf(stderr,
+                     "cannot open resumed porous-sheet control trace: %s\n",
+                     tracePath.c_str());
+        return 1;
+    }
+    viewer::TraceReader reader(traceInput, viewer::TraceReadMode::Follow);
+    viewer::TraceHeader header;
+    viewer::DiagnosticFrame frame;
+    if (!reader.readHeader(header)
+        || header.sceneChecksum != fsi::coupledPorousSheetCaseChecksum
+        || header.solverCommit != fsi::coupledPorousSheetCaseSolverId
+        || reader.readNext(frame) != viewer::TraceReadStatus::Frame
+        || serializedFrame(frame) != serializedFrame(expectedFrame)
+        || reader.readNext(frame) != viewer::TraceReadStatus::End) {
+        std::fprintf(stderr,
+                     "resumed porous-sheet trace is not one continued frame\n");
+        return 1;
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -466,12 +625,21 @@ int main(int argc, char* argv[]) {
         && std::string_view(argv[1]) == "verify-open-resume") {
         return verifyOpenPistonResume(argv[2], argv[3], argv[4]);
     }
+    if (argc == 5 && std::string_view(argv[1]) == "verify-porous") {
+        return verifyPorousSheetResponses(argv[2], argv[3], argv[4]);
+    }
+    if (argc == 5
+        && std::string_view(argv[1]) == "verify-porous-resume") {
+        return verifyPorousSheetResume(argv[2], argv[3], argv[4]);
+    }
     std::fprintf(stderr,
                  "usage: simwing-control-stdio-fixture "
                  "write COMMANDS | write-resume COMMANDS | "
                  "verify RESPONSES CHECKPOINT TRACE | "
                  "verify-resume RESPONSES CHECKPOINT TRACE | "
                  "verify-open RESPONSES CHECKPOINT TRACE | "
-                 "verify-open-resume RESPONSES CHECKPOINT TRACE\n");
+                 "verify-open-resume RESPONSES CHECKPOINT TRACE | "
+                 "verify-porous RESPONSES CHECKPOINT TRACE | "
+                 "verify-porous-resume RESPONSES CHECKPOINT TRACE\n");
     return 2;
 }
