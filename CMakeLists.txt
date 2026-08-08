@@ -358,6 +358,18 @@ target_include_directories(simwing_worker_control_protocol PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
 )
 
+add_library(simwing_periodic_flow_control STATIC
+    src/fsi/periodic_flow_control.cpp
+    src/fsi/periodic_flow_control.h
+)
+target_include_directories(simwing_periodic_flow_control PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_periodic_flow_control PUBLIC
+    simwing_periodic_flow_case
+    simwing_worker_control_protocol
+)
+
 add_library(simwing_fluid_structure_bridge STATIC
     src/fsi/face_resolved_bridge.cpp
     src/fsi/face_resolved_bridge.h
@@ -701,6 +713,12 @@ add_executable(simwing-worker-control-protocol-test
 target_link_libraries(simwing-worker-control-protocol-test
     PRIVATE simwing_worker_control_protocol)
 
+add_executable(simwing-periodic-flow-control-test
+    tests/simwing_periodic_flow_control_test.cpp
+)
+target_link_libraries(simwing-periodic-flow-control-test
+    PRIVATE simwing_periodic_flow_control)
+
 add_executable(simwing-fluid-projection-test
     tests/simwing_fluid_projection_test.cpp
 )
@@ -954,6 +972,7 @@ set_target_properties(
     simwing-fsi-worker-test
     simwing-periodic-flow-case-test
     simwing-worker-control-protocol-test
+    simwing-periodic-flow-control-test
     simwing-fluid-projection-test
     simwing-fluid-interface-jump-test
     simwing-fluid-moving-interface-test
@@ -1010,6 +1029,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-fsi-worker-test
         simwing-periodic-flow-case-test
         simwing-worker-control-protocol-test
+        simwing-periodic-flow-control-test
         simwing-fluid-projection-test
         simwing-fluid-interface-jump-test
         simwing-fluid-moving-interface-test
@@ -1156,6 +1176,8 @@ add_test(NAME simwing_periodic_flow_case
     COMMAND simwing-periodic-flow-case-test)
 add_test(NAME simwing_worker_control_protocol
     COMMAND simwing-worker-control-protocol-test)
+add_test(NAME simwing_periodic_flow_control
+    COMMAND simwing-periodic-flow-control-test)
 add_test(NAME simwing_fluid_projection COMMAND simwing-fluid-projection-test)
 add_test(NAME simwing_fluid_interface_jump
     COMMAND simwing-fluid-interface-jump-test)

@@ -113,8 +113,10 @@ A first transport-neutral worker-control protocol now defines versioned,
 checksummed, byte-bounded `advance`, `checkpoint`, and `stop` commands with
 correlated `ready`, `advanced`, `checkpointed`, `stopped`, and coded-error
 responses. Every response carries the absolute accepted step and simulated
-time. This slice is the deterministic message boundary; process I/O and command
-execution are the next layer, so ordinary CLI behavior is unchanged.
+time. A Qt-free periodic-flow control session now executes those decoded
+commands on the worker owner thread: it publishes each immutable accepted frame
+through an injected sink, delegates checkpoint persistence, and makes stop
+terminal. Process I/O is still separate, so ordinary CLI behavior is unchanged.
 Both the projected transport and Strang flow paths select donor-cell or limited
 monotonized-central reconstruction explicitly; donor-cell remains the default.
 The original single-stage transport and Euler/SSPRK2 viscosity modes compose

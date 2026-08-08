@@ -386,6 +386,7 @@ src/fsi/
     periodic_flow_case.*    visible periodic CFD verification worker
     periodic_flow_checkpoint.cpp bounded persistent worker restart codec
     worker_control_protocol.* transport-neutral safe-point messages
+    periodic_flow_control.* decoded periodic worker command execution
     diagnostics.*           conservation, residuals, events, profiling
     checkpoint.*            versioned restart state
     scenarios.*             tunnel, glide, inflation, collapse definitions
@@ -426,7 +427,8 @@ Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
 `simwing_open_piston_case`, `simwing_fluid_frame`,
-`simwing_periodic_flow_case`, `simwing_viewer_geometry`, `simwing-fsi`,
+`simwing_periodic_flow_case`, `simwing_worker_control_protocol`,
+`simwing_periodic_flow_control`, `simwing_viewer_geometry`, `simwing-fsi`,
 `simwing_viewer_protocol`,
 `simwing-viewer`, and focused test executables. Keep Qt out of the numerical
 targets; only the viewer/UI targets link it. Backend interfaces must not be so
@@ -466,8 +468,11 @@ duplicate write. The first transport-neutral control envelope is also present:
 bounded versioned/checksummed `advance`, `checkpoint`, and `stop` commands use
 nonzero request IDs, while ready/advanced/checkpointed/stopped/error responses
 always expose absolute accepted step and time. It deliberately chooses no
-stdin, pipe, socket, or scheduler transport yet and cannot mutate the worker
-until the next execution-adapter slice.
+stdin, pipe, socket, or scheduler transport. A separate Qt-free periodic-flow
+control session executes decoded messages synchronously on the worker owner
+thread. It publishes each immutable accepted frame, delegates checkpoint
+persistence, and makes stop terminal without putting output or file policy in
+the numerical worker.
 The exact-model capture now exports validated scene-v2.1 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical
@@ -793,6 +798,13 @@ rejects cross-decoding, zero request IDs, zero/oversized advances, misplaced
 kind-specific fields, non-finite worker time, oversized error text/messages,
 bad magic/version/reserved bits, corruption, truncation, and trailing bytes;
 every failed decode leaves the caller's prior message unchanged.
+The control-session regression then advances and publishes three consecutive
+accepted frames, delegates a checkpoint that reproduces the exact next frame,
+and requires checkpoint/protocol failure not to advance the solver. A sink
+failure after acceptance reports that absolute committed step in a valid
+bounded error response and continuation starts there. Stop prevents later
+advance/checkpoint mutation, while a repeated stop is idempotent and receives
+a newly correlated response.
 The Qt-free viewer-geometry regression separately requires exact arrow shaft
 direction and relative magnitude, one shaft plus two arrowhead segments per
 retained nonzero vector, dimensional automatic scaling, owning deterministic
