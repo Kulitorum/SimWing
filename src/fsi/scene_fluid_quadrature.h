@@ -55,6 +55,14 @@ struct SceneFluidQuadratureTraction {
     bool operator==(const SceneFluidQuadratureTraction&) const = default;
 };
 
+struct SceneFluidQuadratureKinematics {
+    std::uint64_t stableId = 0;
+    StructureVector3 positionMeters;
+    StructureVector3 velocityMetersPerSecond;
+
+    bool operator==(const SceneFluidQuadratureKinematics&) const = default;
+};
+
 [[nodiscard]] SceneFluidQuadratureDefinition buildSceneFluidQuadrature(
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& state,
@@ -66,6 +74,12 @@ struct SceneFluidQuadratureTraction {
     const SceneFluidSurfaceTransfer& transfer);
 
 void validateSceneFluidQuadratureDefinition(
+    const SceneFluidQuadratureDefinition& definition);
+
+[[nodiscard]] std::vector<SceneFluidQuadratureKinematics>
+sampleSceneFluidQuadratureKinematics(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
     const SceneFluidQuadratureDefinition& definition);
 
 [[nodiscard]] ConservativeTransferResult evaluateSceneFluidQuadrature(

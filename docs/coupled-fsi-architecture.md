@@ -526,7 +526,8 @@ separate ownership stage pairs it into one canonical internal MAC face with
 authored side regions and winding sign. Unique cell and face owners then become
 stable barycentric quadrature points carrying authored physical identity into
 the existing conservative load transfer; shared-plane area is integrated once
-and no traction is invented at this boundary. Explicit ordered one-sided CFD
+while accepted Structure position and velocity are sampled at the identical
+stable points for the reciprocal CFD boundary; no traction is invented here. Explicit ordered one-sided CFD
 pressure samples now map to one pressure-difference normal traction through
 that same conservative path, with exact equal-pressure cancellation and no
 polar or pressure stamp. Ordinary owned polygons also

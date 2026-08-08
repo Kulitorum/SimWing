@@ -456,7 +456,9 @@ explicit winding sign; ordinary areas remain cell-owned and zero-area contacts
 remain diagnostic. Those unique owners now become stable barycentric
 quadrature points which retain the authored material, sheet, role, and both
 fluid regions and feed ordered traction through the conservative Structure
-transfer without integrating shared-plane area twice. This boundary does not
+transfer without integrating shared-plane area twice. The reciprocal adapter
+samples accepted Structure position and velocity at those identical stable
+barycentric points. This boundary does not
 invent traction. Explicit one-sided pressure samples can now produce exactly
 one `(p_negative-p_positive)*normal` load through that same path; equal
 pressures cancel and no polar or pressure stamp is added. Ordinary clipped polygons also expose their exact boundary

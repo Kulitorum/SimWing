@@ -249,12 +249,42 @@ void testTransactionalBindingAndTractionValidation() {
         "scene fluid quadrature: foreign accepted epoch is rejected");
 }
 
+void testAcceptedKinematicsSampling() {
+    Pipeline pipeline(triangleScene());
+    const auto samples = sampleSceneFluidQuadratureKinematics(
+        pipeline.surface.definition,
+        pipeline.state,
+        pipeline.quadrature);
+    check(samples.size() == pipeline.quadrature.points.size(),
+          "scene fluid quadrature: every point receives accepted kinematics");
+    for (std::size_t index = 0; index < samples.size(); ++index) {
+        const auto& sample = samples[index];
+        check(sample.stableId == pipeline.quadrature.points[index].stableId,
+              "scene fluid quadrature: kinematics retain stable point order");
+        checkNear(sample.positionMeters.z, 1.5, 5.0e-16,
+                  "scene fluid quadrature: barycentric position stays on the surface");
+        checkNear(sample.velocityMetersPerSecond.x, 0.0, 0.0,
+                  "scene fluid quadrature: accepted zero X velocity is exact");
+        checkNear(sample.velocityMetersPerSecond.y, 0.0, 0.0,
+                  "scene fluid quadrature: accepted zero Y velocity is exact");
+        checkNear(sample.velocityMetersPerSecond.z, 0.0, 0.0,
+                  "scene fluid quadrature: accepted zero Z velocity is exact");
+    }
+    auto foreign = pipeline.state;
+    ++foreign.acceptedStepCount;
+    expectInvalid(
+        [&] { static_cast<void>(sampleSceneFluidQuadratureKinematics(
+            pipeline.surface.definition, foreign, pipeline.quadrature)); },
+        "scene fluid quadrature: foreign kinematic epoch is rejected");
+}
+
 } // namespace
 
 int main() {
     testCellQuadratureTransfer();
     testFaceQuadratureDoesNotDoubleCount();
     testTransactionalBindingAndTractionValidation();
+    testAcceptedKinematicsSampling();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d scene fluid-quadrature test(s) failed\n",

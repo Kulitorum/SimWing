@@ -786,8 +786,9 @@ makes this a certified aerodynamic solver.
   owner into one stable-ID barycentric quadrature point, preserves authored
   region/material/sheet/role metadata, binds the accepted surface epoch and
   transfer topology, and feeds ordered finite traction through the existing
-  conservative load adapter. Shared-plane area is integrated exactly once;
-  this boundary does not invent pressure or traction.
+  conservative load adapter. The same barycentric points sample accepted
+  Structure position and velocity for the reciprocal CFD boundary. Shared-plane
+  area is integrated exactly once; this boundary does not invent pressure or traction.
 - `src/fsi/scene_fluid_pressure_traction.{h,cpp}` validates ordered one-sided
   pressure samples against that accepted quadrature epoch and converts their
   difference along the current oriented triangle normal before delegating to

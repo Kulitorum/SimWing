@@ -286,4 +286,58 @@ ConservativeTransferResult evaluateSceneFluidQuadrature(
     return transfer.evaluateQuadrature(state, coupling, settings);
 }
 
+std::vector<SceneFluidQuadratureKinematics>
+sampleSceneFluidQuadratureKinematics(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const SceneFluidQuadratureDefinition& definition) {
+    validateSceneFluidSurfaceDefinition(surface);
+    validateSceneFluidSurfaceState(surface, state);
+    validateSceneFluidQuadratureDefinition(definition);
+    if (definition.surfaceDefinitionFingerprint != surface.fingerprint
+        || definition.surfaceStateFingerprint != state.fingerprint
+        || definition.structureDefinitionFingerprint
+            != state.structureDefinitionFingerprint
+        || definition.acceptedStepCount != state.acceptedStepCount
+        || definition.simulationTimeSeconds != state.simulationTimeSeconds) {
+        throw std::invalid_argument(
+            "scene fluid quadrature kinematics binding is invalid");
+    }
+
+    std::vector<SceneFluidQuadratureKinematics> result;
+    result.reserve(definition.points.size());
+    for (const auto& point : definition.points) {
+        const auto triangleIndex = surface.mappings.triangleIndex(
+            point.triangleId);
+        if (!triangleIndex) {
+            throw std::invalid_argument(
+                "scene fluid quadrature kinematics references a foreign triangle");
+        }
+        const auto& triangle = surface.triangles[*triangleIndex];
+        SceneFluidQuadratureKinematics sample;
+        sample.stableId = point.stableId;
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            const double weight = point.barycentricCoordinates[corner];
+            const auto& vertex = state.vertices[
+                triangle.vertexIndices[corner]];
+            sample.positionMeters.x += weight * vertex.positionMeters.x;
+            sample.positionMeters.y += weight * vertex.positionMeters.y;
+            sample.positionMeters.z += weight * vertex.positionMeters.z;
+            sample.velocityMetersPerSecond.x +=
+                weight * vertex.velocityMetersPerSecond.x;
+            sample.velocityMetersPerSecond.y +=
+                weight * vertex.velocityMetersPerSecond.y;
+            sample.velocityMetersPerSecond.z +=
+                weight * vertex.velocityMetersPerSecond.z;
+        }
+        if (!finite(sample.positionMeters)
+            || !finite(sample.velocityMetersPerSecond)) {
+            throw std::overflow_error(
+                "scene fluid quadrature kinematics is not finite");
+        }
+        result.push_back(sample);
+    }
+    return result;
+}
+
 } // namespace simwing::fsi
