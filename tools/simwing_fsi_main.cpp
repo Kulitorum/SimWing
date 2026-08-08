@@ -5,6 +5,7 @@
 #include "periodic_flow_control.h"
 #include "periodic_flow_case.h"
 #include "piston_case.h"
+#include "pressure_jump_case.h"
 #include "viewer_protocol.h"
 #include "worker_control_stream.h"
 
@@ -54,6 +55,7 @@ enum class WorkerCase {
     Piston,
     OpenPiston,
     PeriodicFlow,
+    PressureJump,
 };
 
 struct Options {
@@ -71,7 +73,7 @@ struct Options {
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: simwing-fsi [--case structural|piston|open-piston|periodic-flow]\n"
+        "Usage: simwing-fsi [--case structural|piston|open-piston|periodic-flow|pressure-jump]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
         "                   [--checkpoint-in PATH]\n"
@@ -87,7 +89,9 @@ void printUsage(FILE* stream) {
         "an independently closed opening-flux GCL ledger, and exact one-face\n"
         "topology rebasing; consuming its resolved opening is rejected.\n"
         "'periodic-flow' advances the bounded Strang/SSPRK2 Taylor-Green CFD\n"
-        "canonical and publishes cell-centred pressure/velocity points. Open-piston\n"
+        "canonical and publishes cell-centred pressure/velocity points.\n"
+        "'pressure-jump' repeatedly verifies a static split-region slab and\n"
+        "publishes each ordered sharp-interface layer. Open-piston\n"
         "and periodic-flow checkpoint paths restore/save exact accepted state;\n"
         "--checkpoint-every\n"
         "autosaves at absolute accepted-step multiples and the final state. --steps\n"
@@ -114,6 +118,10 @@ bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
     }
     if (text == "periodic-flow") {
         workerCase = WorkerCase::PeriodicFlow;
+        return true;
+    }
+    if (text == "pressure-jump") {
+        workerCase = WorkerCase::PressureJump;
         return true;
     }
     return false;
@@ -152,13 +160,13 @@ bool parseOptions(int argc,
             if (++index >= argc
                 || !parseWorkerCase(argv[index], options.workerCase)) {
                 error = "--case requires 'structural', 'piston', "
-                    "'open-piston', or 'periodic-flow'";
+                    "'open-piston', 'periodic-flow', or 'pressure-jump'";
                 return false;
             }
         } else if (argument.starts_with("--case=")) {
             if (!parseWorkerCase(argument.substr(7), options.workerCase)) {
                 error = "--case requires 'structural', 'piston', "
-                    "'open-piston', or 'periodic-flow'";
+                    "'open-piston', 'periodic-flow', or 'pressure-jump'";
                 return false;
             }
         } else if (argument == "--steps") {
@@ -1060,6 +1068,21 @@ int main(int argc, char* argv[]) {
                         diagnostics.maximumAbsoluteMembraneStrain,
                         options.tracePath.string().c_str());
                 }
+            } else if constexpr (std::is_same_v<
+                                     Simulation,
+                                     simwing::fsi::PressureJumpCase>) {
+                const auto& diagnostics = simulation.diagnostics();
+                std::printf(
+                    "simwing-fsi completed %llu pressure-jump step(s), "
+                    "t=%.9g s, crossings=%zu, divergence-L2=%.6g 1/s, "
+                    "energy=%.9g J, trace=%s\n",
+                    static_cast<unsigned long long>(
+                        simulation.acceptedStepCount()),
+                    simulation.simulationTimeSeconds(),
+                    simulation.pressureJumps().faceCount(),
+                    diagnostics.divergenceL2AfterPerSecond,
+                    diagnostics.kineticEnergyAfterJoules,
+                    options.tracePath.string().c_str());
             } else {
                 const auto& diagnostics = simulation.diagnostics();
                 std::printf(
@@ -1096,6 +1119,10 @@ int main(int argc, char* argv[]) {
             if (restoredPeriodicFlowCheckpoint) {
                 simulation.restore(*restoredPeriodicFlowCheckpoint);
             }
+            return run(simulation);
+        }
+        if (options.workerCase == WorkerCase::PressureJump) {
+            simwing::fsi::PressureJumpCase simulation;
             return run(simulation);
         }
         simwing::fsi::CanonicalStructuralCase simulation;

@@ -143,6 +143,13 @@ retain their stable surfaces and region sequence while the paired gradient and
 Poisson stencils use their deterministic signed sum. A split-region slab is
 bit-identical to its compact jump and a balanced folded subcell pocket creates
 no spurious pressure or flow.
+The immutable diagnostic adapter keeps the owning cell pressure and velocity
+samples and adds a separate oriented quad for every authored crossing, so
+same-face layers remain visible with their region pairing, signed jump, normal,
+and subcell fraction. The `pressure-jump` worker exercises that path with 48
+ordered transitions in a periodic split slab, preserving the analytic
+`-125/+125 Pa` state without spurious velocity. It is a static visibility
+oracle, not moving folded topology or cut-cell evolution.
 Face-aligned moving membranes can now partition stable fluid regions, impose
 an exact normal MAC velocity, and project each region transactionally while
 retaining its prior pressure gauge. A translating sealed-slab canonical closes
@@ -328,6 +335,7 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --checkpoint-in periodic-flow.swpc --steps 600 --checkpoint-out periodic-flow.swpc --checkpoint-every 60
 .\build\bin\Release\simwing-fsi.exe --case open-piston --steps 1200 --no-viewer --checkpoint-out open-piston.swop --checkpoint-every 600
 .\build\bin\Release\simwing-fsi.exe --case open-piston --checkpoint-in open-piston.swop --steps 600 --checkpoint-out open-piston.swop --checkpoint-every 600
+.\build\bin\Release\simwing-fsi.exe --case pressure-jump --steps 4 --no-viewer
 ```
 
 The first SimWing command launches the standalone trace viewer by default. The

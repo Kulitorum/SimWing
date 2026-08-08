@@ -413,6 +413,7 @@ src/fsi/
     open_piston_case.*      driven open-control-volume worker canonical
     open_piston_checkpoint_persistence.* bounded composite restart codec
     periodic_flow_case.*    visible periodic CFD verification worker
+    pressure_jump_case.*    visible static layered-jump worker oracle
     periodic_flow_checkpoint.cpp bounded persistent worker restart codec
     worker_control_protocol.* transport-neutral safe-point messages
     worker_control_stream.*  bounded self-framing binary stream adapter
@@ -444,6 +445,7 @@ src/gui/
 src/viewer/
     viewer_protocol.*       immutable frame/control schema and trace files
     fluid_frame.*           owning accepted MAC-to-cell diagnostic adapter
+    pressure_jump_frame.*   owning cell and layered-interface diagnostics
     vector_glyphs.*         bounded deterministic vertex-vector arrows
     viewer_window.*         standalone Qt/OpenGL diagnostics
     viewer_layers.*         structure, interface, grid, field, and HUD layers
@@ -459,7 +461,8 @@ Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
 `simwing_open_piston_case`, `simwing_fluid_frame`,
-`simwing_periodic_flow_case`, `simwing_worker_control_protocol`,
+`simwing_periodic_flow_case`, `simwing_pressure_jump_case`,
+`simwing_worker_control_protocol`,
 `simwing_worker_control_stream`,
 `simwing_worker_control_session`, `simwing_periodic_flow_control`,
 `simwing_open_piston_control`, `simwing_viewer_geometry`, `simwing-fsi`,
@@ -813,7 +816,10 @@ also owns a canonical ordered sharp pressure-jump field with explicit
 surface, two-sided region identity, and normal crossing position. Multiple
 crossings on one grid face retain their individual metadata, require a
 continuous region chain, and contribute through one deterministic aggregate
-stencil jump. The regression budgets are:
+stencil jump. An owning frame adapter now retains every individual crossing as
+an oriented quad at its subcell fraction with its two region IDs, signed jump,
+normal, and reconstructed diagnostic pressure. A static headless worker makes
+that layered field replayable without involving Qt. The regression budgets are:
 gradient/divergence adjoint error at or below `2e-14` in the canonical
 integral, Taylor-Green maximum divergence below `2e-14 1/s` with a
 bit-identical zero correction, discretely manufactured post-projection L2
@@ -845,6 +851,14 @@ frames must reproduce the finite-volume divergence bit-for-bit and retain exact
 vorticity vector/magnitude agreement. A completed five-frame trace must replay
 consecutive accepted steps, and the headless CLI must write a completed trace
 without linking or launching Qt.
+The static pressure-jump worker uses a `16 x 4 x 3` periodic slab with two
+ordered transitions on every face at each of two boundaries: 48 crossings,
+384 owning frame vertices, and 96 oriented triangles. Each fresh accepted
+projection must reproduce the analytic `-125/+125 Pa` cell field, remain below
+`2e-13 m/s` maximum velocity and `1e-12 1/s` frame divergence, and serialize
+bit-identically across independent and repeated workers. This makes multiple
+same-face layers inspectable end-to-end but does not claim moving folded or
+cut-cell topology.
 The case checkpoint must restore the initial state and a later accepted state,
 then reproduce the next frame bit-for-bit in both the original and an equivalent
 rebuilt worker. Version, case fingerprint, grid, sample count, step, time, and
@@ -980,9 +994,8 @@ Work:
 - implement arbitrary moving-interface/jump conditions, curved/changing
   paired grid-side correspondence, refinement, and broader case-specific
   control messages;
-- extend the current cell-point pressure, velocity, divergence, and vorticity
-  diagnostics with rate-limited AMR blocks, slices, traction, and pressure-jump
-  layers as each field becomes available;
+- extend the current cell-point and pressure-jump-layer diagnostics with
+  rate-limited AMR blocks, slices, and traction as each field becomes available;
 - verify CPU first, then add GPU kernels behind identical numerical tests.
 
 Required canonical cases:

@@ -334,6 +334,8 @@ target_include_directories(simwing_fluid PUBLIC
 add_library(simwing_fluid_frame STATIC
     src/viewer/fluid_frame.cpp
     src/viewer/fluid_frame.h
+    src/viewer/pressure_jump_frame.cpp
+    src/viewer/pressure_jump_frame.h
 )
 target_include_directories(simwing_fluid_frame PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/viewer"
@@ -341,6 +343,17 @@ target_include_directories(simwing_fluid_frame PUBLIC
 target_link_libraries(simwing_fluid_frame PUBLIC
     simwing_fluid
     simwing_viewer_protocol
+)
+
+add_library(simwing_pressure_jump_case STATIC
+    src/fsi/pressure_jump_case.cpp
+    src/fsi/pressure_jump_case.h
+)
+target_include_directories(simwing_pressure_jump_case PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_pressure_jump_case PUBLIC
+    simwing_fluid_frame
 )
 
 add_library(simwing_periodic_flow_case STATIC
@@ -755,6 +768,18 @@ add_executable(simwing-periodic-flow-case-test
 target_link_libraries(simwing-periodic-flow-case-test
     PRIVATE simwing_periodic_flow_case)
 
+add_executable(simwing-pressure-jump-frame-test
+    tests/simwing_pressure_jump_frame_test.cpp
+)
+target_link_libraries(simwing-pressure-jump-frame-test
+    PRIVATE simwing_fluid_frame)
+
+add_executable(simwing-pressure-jump-case-test
+    tests/simwing_pressure_jump_case_test.cpp
+)
+target_link_libraries(simwing-pressure-jump-case-test
+    PRIVATE simwing_pressure_jump_case)
+
 add_executable(simwing-worker-control-protocol-test
     tests/simwing_worker_control_protocol_test.cpp
 )
@@ -929,6 +954,7 @@ target_link_libraries(simwing-fsi PRIVATE
     simwing_periodic_flow_control
     simwing_periodic_flow_case
     simwing_piston_case
+    simwing_pressure_jump_case
     simwing_worker_control_stream
 )
 
@@ -1044,6 +1070,8 @@ set_target_properties(
     simwing-structure-frame-test
     simwing-fsi-worker-test
     simwing-periodic-flow-case-test
+    simwing-pressure-jump-frame-test
+    simwing-pressure-jump-case-test
     simwing-worker-control-protocol-test
     simwing-worker-control-stream-test
     simwing-control-stdio-fixture
@@ -1105,6 +1133,8 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-structure-frame-test
         simwing-fsi-worker-test
         simwing-periodic-flow-case-test
+        simwing-pressure-jump-frame-test
+        simwing-pressure-jump-case-test
         simwing-worker-control-protocol-test
         simwing-worker-control-stream-test
         simwing-control-stdio-fixture
@@ -1256,6 +1286,10 @@ add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
 add_test(NAME simwing_fsi_worker COMMAND simwing-fsi-worker-test)
 add_test(NAME simwing_periodic_flow_case
     COMMAND simwing-periodic-flow-case-test)
+add_test(NAME simwing_pressure_jump_frame
+    COMMAND simwing-pressure-jump-frame-test)
+add_test(NAME simwing_pressure_jump_case
+    COMMAND simwing-pressure-jump-case-test)
 add_test(NAME simwing_worker_control_protocol
     COMMAND simwing-worker-control-protocol-test)
 add_test(NAME simwing_worker_control_stream
@@ -1304,6 +1338,14 @@ add_test(NAME simwing_fsi_periodic_flow_headless
         --steps 4
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-periodic-flow-headless.swtrace")
+add_test(NAME simwing_fsi_pressure_jump_headless
+    COMMAND simwing-fsi
+        --case pressure-jump
+        --steps 4
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-pressure-jump-headless.swtrace")
+set_tests_properties(simwing_fsi_pressure_jump_headless PROPERTIES
+    PASS_REGULAR_EXPRESSION "completed 4 pressure-jump step\\(s\\)")
 add_test(NAME simwing_fsi_control_stdio
     COMMAND ${CMAKE_COMMAND}
         "-DSIMWING_FSI=$<TARGET_FILE:simwing-fsi>"
