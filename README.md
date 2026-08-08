@@ -212,6 +212,13 @@ unwrapped epochs and the closed kinematic residual; inconsistent motion,
 identity, placement, skipped topology, or a later numerical failure commits
 neither field. This advances moving planar porous sources through the complete
 symmetric flow step; it does not claim a cut-cell remap.
+The `MovingPorousFlowCase` turns that operator into an immutable-frame
+canonical: a prescribed `0.4 m/s` sheet begins just before the positive domain
+wrap, crosses `face=3,image=0` to `face=0,image=1` inside its first macro-step,
+and continues through a second periodic wrap without resetting the fluid. Each
+frame owns the final sheet and pump planes plus both stage epochs, kinematic
+residual, porous loss, jump work, and flow conservation residual. It remains a
+Qt-free library/test harness; no CLI case is exposed yet.
 The nonlinear porous iteration can also use the disconnected moving-interface
 projector as its inner solve. A translating two-region slab retains exact wall
 velocities while endpoint or midpoint porous slip closes on unconstrained

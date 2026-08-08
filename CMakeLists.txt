@@ -375,6 +375,17 @@ target_link_libraries(simwing_porous_flow_case PUBLIC
     simwing_fluid_frame
 )
 
+add_library(simwing_moving_porous_flow_case STATIC
+    src/fsi/moving_porous_flow_case.cpp
+    src/fsi/moving_porous_flow_case.h
+)
+target_include_directories(simwing_moving_porous_flow_case PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_moving_porous_flow_case PUBLIC
+    simwing_fluid_frame
+)
+
 add_library(simwing_periodic_flow_case STATIC
     src/fsi/periodic_flow_case.cpp
     src/fsi/periodic_flow_case.h
@@ -846,6 +857,12 @@ add_executable(simwing-porous-flow-case-test
 target_link_libraries(simwing-porous-flow-case-test
     PRIVATE simwing_porous_flow_case)
 
+add_executable(simwing-moving-porous-flow-case-test
+    tests/simwing_moving_porous_flow_case_test.cpp
+)
+target_link_libraries(simwing-moving-porous-flow-case-test
+    PRIVATE simwing_moving_porous_flow_case)
+
 add_executable(simwing-worker-control-protocol-test
     tests/simwing_worker_control_protocol_test.cpp
 )
@@ -1158,6 +1175,7 @@ set_target_properties(
     simwing-fluid-porous-interface-test
     simwing-fluid-porous-topology-test
     simwing-porous-flow-case-test
+    simwing-moving-porous-flow-case-test
     simwing-worker-control-protocol-test
     simwing-worker-control-stream-test
     simwing-control-stdio-fixture
@@ -1225,6 +1243,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-fluid-porous-interface-test
         simwing-fluid-porous-topology-test
         simwing-porous-flow-case-test
+        simwing-moving-porous-flow-case-test
         simwing-worker-control-protocol-test
         simwing-worker-control-stream-test
         simwing-control-stdio-fixture
@@ -1387,6 +1406,8 @@ add_test(NAME simwing_fluid_porous_topology
     COMMAND simwing-fluid-porous-topology-test)
 add_test(NAME simwing_porous_flow_case
     COMMAND simwing-porous-flow-case-test)
+add_test(NAME simwing_moving_porous_flow_case
+    COMMAND simwing-moving-porous-flow-case-test)
 add_test(NAME simwing_worker_control_protocol
     COMMAND simwing-worker-control-protocol-test)
 add_test(NAME simwing_worker_control_stream
