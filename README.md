@@ -444,8 +444,11 @@ Structure identities through validated XPBD load application. The first
 grid-facing geometry stage now bins padded current-triangle AABBs into bounded,
 cell-major candidates tied to the complete accepted surface-state fingerprint.
 It covers both adjacent cells on internal grid planes and rejects geometry
-outside the selected domain; it does not yet claim exact intersections,
-cut-cell fractions, face crossings, or region reconstruction.
+outside the selected domain. A normalized separating-axis narrow phase now
+removes triangle/AABB false positives, retains exact or explicitly tolerated
+contact, and revalidates every expected pair. These exact cell intersections
+still do not supply clipped polygons, cut-cell fractions, face crossings, or
+region reconstruction.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,
