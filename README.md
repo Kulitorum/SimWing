@@ -504,17 +504,22 @@ self-intersections and degenerate loops reject, while nested loops remain
 separate until a bounded containment stage proves they do not touch, requires
 authored region continuity through every parent, and closes exact per-region
 area over an eligible MAC face. Faces with open chains, coplanar sheets, or
-boundary-touching loops remain explicitly unresolved. Cut-cell volume
-fractions and complete grid-region reconstruction remain open. The versioned
+boundary-touching loops remain explicitly unresolved. The versioned
 `simwing_scene_fluid_grid_epoch` boundary now composes this entire chain plus
 unique conservative quadrature into one immutable accepted-Structure remap.
 Its fingerprint prevents candidates, patches, topology, partitions, or loads
 from being mixed across structural steps; every stage keeps its own bounds and
 the aggregate owned payload has an additional byte ceiling. A focused moving
 regression crosses a fabric triangle through a MAC plane, preserves authored
-region/material/sheet identity, and retains force/moment closure. The epoch is
-geometry and transfer ownership only—it still supplies no volume fractions,
-pressure, or moving-boundary fluid solve.
+region/material/sheet identity, and retains force/moment closure. A first
+`simwing_scene_fluid_cell_volume` subset now reconstructs deterministic sparse
+per-cell region volumes for closed, consistently wound two-sided manifolds
+whose active MAC faces have complete loop partitions. It closes every cell and
+also compares summed cell volumes with an independent whole-surface divergence
+volume, so an enclosed full cell cannot silently become Outside. Authored open
+intakes, coplanar/grid-edge ambiguity, unresolved face topology, boundary
+contact, and general moving-boundary fluid equations still reject or remain
+open; the grid epoch itself continues to own geometry and transfer only.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

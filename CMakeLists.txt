@@ -337,6 +337,17 @@ target_link_libraries(simwing_scene_fluid_grid_epoch PUBLIC
     simwing_scene_fluid_quadrature
 )
 
+add_library(simwing_scene_fluid_cell_volume STATIC
+    src/fsi/scene_fluid_cell_volume.cpp
+    src/fsi/scene_fluid_cell_volume.h
+)
+target_include_directories(simwing_scene_fluid_cell_volume PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_scene_fluid_cell_volume PUBLIC
+    simwing_scene_fluid_grid_epoch
+)
+
 add_library(simwing_viewer_protocol STATIC
     src/viewer/viewer_protocol.cpp
     src/viewer/viewer_protocol.h
@@ -1027,6 +1038,12 @@ add_executable(simwing-scene-fluid-grid-epoch-test
 )
 target_link_libraries(simwing-scene-fluid-grid-epoch-test
     PRIVATE simwing_scene_fluid_grid_epoch)
+
+add_executable(simwing-scene-fluid-cell-volume-test
+    tests/simwing_scene_fluid_cell_volume_test.cpp
+)
+target_link_libraries(simwing-scene-fluid-cell-volume-test
+    PRIVATE simwing_scene_fluid_cell_volume)
 
 add_executable(simwing-scene-fluid-pressure-traction-test
     tests/simwing_scene_fluid_pressure_traction_test.cpp
@@ -1736,6 +1753,8 @@ add_test(NAME simwing_scene_fluid_quadrature
     COMMAND simwing-scene-fluid-quadrature-test)
 add_test(NAME simwing_scene_fluid_grid_epoch
     COMMAND simwing-scene-fluid-grid-epoch-test)
+add_test(NAME simwing_scene_fluid_cell_volume
+    COMMAND simwing-scene-fluid-cell-volume-test)
 add_test(NAME simwing_scene_fluid_pressure_traction
     COMMAND simwing-scene-fluid-pressure-traction-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
