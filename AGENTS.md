@@ -832,6 +832,10 @@ makes this a certified aerodynamic solver.
 - `src/viewer/vector_glyphs.{h,cpp}` builds those arrows outside Qt/OpenGL.
   It normalizes length by the field maximum, derives automatic scale from the
   dimensional point spacing, and caps large fields with a deterministic stride.
+- `src/viewer/viewer_camera.{h,cpp}` owns the tight scene-relative perspective
+  depth range. The OpenGL widget requests and verifies a 24-bit depth buffer,
+  restores depth state after every HUD paint, and offsets filled triangles so
+  coplanar diagnostic lines do not z-fight.
 - `src/fsi/canonical_case.{h,cpp}` and `tools/simwing_fsi_main.cpp` are the
   first end-to-end worker slice. The case is an analytic structural harness,
   not aerodynamic truth; it writes only accepted steps and launches the
@@ -1248,7 +1252,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 129 configured tests on Windows. The Fortran-reference test is
+There are 130 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 The light added-mass path is covered both inside `simwing_piston_case` and by

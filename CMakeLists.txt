@@ -348,6 +348,8 @@ target_link_libraries(simwing_structure_frame PUBLIC
 )
 
 add_library(simwing_viewer_geometry STATIC
+    src/viewer/viewer_camera.cpp
+    src/viewer/viewer_camera.h
     src/viewer/vector_glyphs.cpp
     src/viewer/vector_glyphs.h
 )
@@ -1001,6 +1003,12 @@ add_executable(simwing-vector-glyphs-test
     tests/simwing_vector_glyphs_test.cpp
 )
 target_link_libraries(simwing-vector-glyphs-test
+    PRIVATE simwing_viewer_geometry)
+
+add_executable(simwing-viewer-camera-test
+    tests/simwing_viewer_camera_test.cpp
+)
+target_link_libraries(simwing-viewer-camera-test
     PRIVATE simwing_viewer_geometry)
 
 add_executable(simwing-structure-frame-test
@@ -1675,6 +1683,7 @@ add_test(NAME simwing_scene_fluid_pressure_traction
     COMMAND simwing-scene-fluid-pressure-traction-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
 add_test(NAME simwing_vector_glyphs COMMAND simwing-vector-glyphs-test)
+add_test(NAME simwing_viewer_camera COMMAND simwing-viewer-camera-test)
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
 add_test(NAME simwing_fsi_worker COMMAND simwing-fsi-worker-test)
 add_test(NAME simwing_hemisphere_case COMMAND simwing-hemisphere-case-test)

@@ -3,19 +3,13 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QFileInfo>
-#include <QSurfaceFormat>
 #include <QTimer>
 
 #include <cstdio>
 
 int main(int argc, char* argv[]) {
-    QSurfaceFormat format;
-    format.setRenderableType(QSurfaceFormat::OpenGL);
-    format.setVersion(3, 3);
-    format.setProfile(QSurfaceFormat::CoreProfile);
-    format.setDepthBufferSize(24);
-    format.setSamples(4);
-    QSurfaceFormat::setDefaultFormat(format);
+    QSurfaceFormat::setDefaultFormat(
+        simwing::viewer::diagnosticViewerSurfaceFormat());
 
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("simwing-viewer"));

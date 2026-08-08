@@ -1,6 +1,7 @@
 #include "viewer_window.h"
 
 #include "vector_glyphs.h"
+#include "viewer_camera.h"
 #include "viewer_protocol.h"
 
 #include <QAction>
@@ -43,6 +44,18 @@
 #include <vector>
 
 namespace simwing::viewer {
+
+QSurfaceFormat diagnosticViewerSurfaceFormat() {
+    QSurfaceFormat format;
+    format.setRenderableType(QSurfaceFormat::OpenGL);
+    format.setVersion(3, 3);
+    format.setProfile(QSurfaceFormat::CoreProfile);
+    format.setDepthBufferSize(24);
+    format.setStencilBufferSize(8);
+    format.setSamples(4);
+    return format;
+}
+
 namespace {
 
 QString fromUtf8(const std::string& value) {
@@ -238,6 +251,7 @@ private:
 class TraceView final : public QOpenGLWidget, protected QOpenGLFunctions {
 public:
     explicit TraceView(QWidget* parent = nullptr) : QOpenGLWidget(parent) {
+        setFormat(diagnosticViewerSurfaceFormat());
         setFocusPolicy(Qt::StrongFocus);
         setMinimumSize(640, 420);
     }
@@ -252,6 +266,8 @@ public:
             target_ += frameCentre(*frame) - frameCentre(*frame_);
         }
         frame_ = std::move(frame);
+        sceneRadius_ = frame_ != nullptr && !frame_->vertices.empty()
+            ? frameRadius(*frame_, frameCentre(*frame_)) : 0.05F;
         geometryDirty_ = true;
         update();
     }
@@ -303,16 +319,18 @@ public:
             maximum.setZ(std::max(maximum.z(), point.z()));
         }
         target_ = 0.5F * (minimum + maximum);
-        const float radius = std::max(0.5F * (maximum - minimum).length(), 0.05F);
+        sceneRadius_ = std::max(
+            0.5F * (maximum - minimum).length(), 0.05F);
         // Leave enough perspective margin for modest deformation after a live
         // fit; the theoretical bounding-sphere minimum has no visual gutter
         // and clips as soon as a structural case changes shape.
-        distance_ = std::max(radius * 3.8F, 0.2F);
+        distance_ = std::max(sceneRadius_ * 3.8F, 0.2F);
         update();
     }
 
 protected:
     void initializeGL() override {
+        depthBufferChecked_ = false;
         initializeOpenGLFunctions();
         glEnable(GL_DEPTH_TEST);
         glDisable(GL_CULL_FACE);
@@ -383,8 +401,38 @@ protected:
         }
     }
 
+    void resizeGL(int width, int height) override {
+        static_cast<void>(width);
+        static_cast<void>(height);
+        // QOpenGLWidget replaces its backing FBO on resize. Verify the new
+        // attachment on the next paint rather than trusting the old one.
+        depthBufferChecked_ = false;
+    }
+
     void paintGL() override {
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_CULL_FACE);
+        glDisable(GL_POLYGON_OFFSET_FILL);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        if (!depthBufferChecked_) {
+            GLint depthBits = 0;
+            // QOpenGLWidget renders into its own FBO. GL_DEPTH_BITS describes
+            // the platform default framebuffer on some core-profile drivers,
+            // so inspect the active draw attachment itself.
+            glGetFramebufferAttachmentParameteriv(
+                GL_DRAW_FRAMEBUFFER,
+                GL_DEPTH_ATTACHMENT,
+                GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE,
+                &depthBits);
+            depthBufferChecked_ = true;
+            if (depthBits < 24) {
+                glError_ = QStringLiteral(
+                    "OpenGL framebuffer provides only %1 depth bits; 24 are required")
+                               .arg(depthBits);
+            }
+        }
         if (program_ != nullptr) {
             if (geometryDirty_) {
                 rebuildGeometry();
@@ -462,6 +510,20 @@ private:
         return 0.5F * (minimum + maximum);
     }
 
+    [[nodiscard]] static float frameRadius(
+        const DiagnosticFrame& frame,
+        const QVector3D& centre) {
+        float radius = 0.0F;
+        for (const DiagnosticVertex& vertex : frame.vertices) {
+            const QVector3D point(
+                static_cast<float>(vertex.positionMetres.x),
+                static_cast<float>(vertex.positionMetres.y),
+                static_cast<float>(vertex.positionMetres.z));
+            radius = std::max(radius, (point - centre).length());
+        }
+        return std::max(radius, 0.05F);
+    }
+
     [[nodiscard]] QMatrix4x4 viewMatrix() const {
         QMatrix4x4 view;
         view.translate(0.0F, 0.0F, -distance_);
@@ -473,12 +535,15 @@ private:
 
     [[nodiscard]] QMatrix4x4 viewProjection() const {
         QMatrix4x4 projection;
+        const ViewerDepthRange depth = viewerDepthRange(
+            static_cast<double>(distance_),
+            static_cast<double>(sceneRadius_));
         projection.perspective(
             42.0F,
             static_cast<float>(std::max(width(), 1)) /
                 static_cast<float>(std::max(height(), 1)),
-            std::max(distance_ * 0.001F, 0.0001F),
-            std::max(distance_ * 100.0F, 100.0F));
+            static_cast<float>(depth.nearPlaneMetres),
+            static_cast<float>(depth.farPlaneMetres));
         return projection * viewMatrix();
     }
 
@@ -663,6 +728,15 @@ private:
         }
         pointCount_ = static_cast<GLsizei>(vertices_.size()) - pointStart_;
 
+        const QVector3D centre = frameCentre(*frame_);
+        sceneRadius_ = 0.05F;
+        for (const RenderVertex& vertex : vertices_) {
+            const QVector3D point(
+                vertex.position[0], vertex.position[1], vertex.position[2]);
+            sceneRadius_ = std::max(
+                sceneRadius_, (point - centre).length());
+        }
+
         vao_.bind();
         buffer_.bind();
         buffer_.allocate(vertices_.data(),
@@ -694,7 +768,13 @@ private:
         program_->setUniformValue("mvp", viewProjection());
         if (triangleCount_ > 0) {
             program_->setUniformValue("lit", true);
+            // Filled triangles and their diagnostic boundary lines occupy the
+            // same mathematical surface. Push only the fill into the depth
+            // buffer so lines and points remain stable instead of z-fighting.
+            glEnable(GL_POLYGON_OFFSET_FILL);
+            glPolygonOffset(1.0F, 1.0F);
             glDrawArrays(GL_TRIANGLES, 0, triangleCount_);
+            glDisable(GL_POLYGON_OFFSET_FILL);
         }
         if (lineCount_ > 0) {
             program_->setUniformValue("lit", false);
@@ -789,12 +869,14 @@ private:
     double vectorMaximum_ = 0.0;
     std::uint32_t vectorGlyphCount_ = 0;
     bool haveVectorField_ = false;
+    bool depthBufferChecked_ = false;
 
     std::unique_ptr<QOpenGLShaderProgram> program_;
     QOpenGLVertexArrayObject vao_;
     QOpenGLBuffer buffer_{QOpenGLBuffer::VertexBuffer};
     QVector3D target_;
     float distance_ = 5.0F;
+    float sceneRadius_ = 0.05F;
     float yaw_ = 25.0F;
     float pitch_ = -55.0F;
     QPointF lastMouse_;
