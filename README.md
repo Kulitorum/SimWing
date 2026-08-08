@@ -485,7 +485,8 @@ barycentric points. This boundary does not
 invent traction. Explicit one-sided pressure samples can now produce exactly
 one `(p_negative-p_positive)*normal` load through that same path; equal
 pressures cancel and no polar or pressure stamp is added. Ordinary clipped polygons also expose their exact boundary
-segments: matching copies from adjacent cells become one stable transverse
+segments: independently clipped copies from adjacent cells must agree inside a
+fixed machine-roundoff envelope and become one stable lower-cell transverse
 face crossing with an in-face authored-side direction, while unpaired edges
 remain contact and coplanar area remains separately face-owned. Unpaired
 periodic-domain boundary area and grid-edge crossing ambiguity are rejected.
@@ -504,7 +505,16 @@ separate until a bounded containment stage proves they do not touch, requires
 authored region continuity through every parent, and closes exact per-region
 area over an eligible MAC face. Faces with open chains, coplanar sheets, or
 boundary-touching loops remain explicitly unresolved. Cut-cell volume
-fractions and complete grid-region reconstruction remain open.
+fractions and complete grid-region reconstruction remain open. The versioned
+`simwing_scene_fluid_grid_epoch` boundary now composes this entire chain plus
+unique conservative quadrature into one immutable accepted-Structure remap.
+Its fingerprint prevents candidates, patches, topology, partitions, or loads
+from being mixed across structural steps; every stage keeps its own bounds and
+the aggregate owned payload has an additional byte ceiling. A focused moving
+regression crosses a fabric triangle through a MAC plane, preserves authored
+region/material/sheet identity, and retains force/moment closure. The epoch is
+geometry and transfer ownership only—it still supplies no volume fractions,
+pressure, or moving-boundary fluid solve.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

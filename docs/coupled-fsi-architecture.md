@@ -412,6 +412,7 @@ src/fsi/
     scene_fluid_surface_transfer.* authoritative conservative-load binding
     scene_fluid_quadrature.* unique owned area to stable transfer quadrature
     scene_fluid_pressure_traction.* one-sided pressure to normal traction
+    scene_fluid_grid_epoch.* accepted full geometry/quadrature remap
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -488,6 +489,7 @@ Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_scene_fluid_surface_transfer`,
 `simwing_scene_fluid_geometry`,
 `simwing_scene_fluid_quadrature`,
+`simwing_scene_fluid_grid_epoch`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
 `simwing_coupled_state`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
@@ -535,8 +537,9 @@ stable points for the reciprocal CFD boundary; no traction is invented here. Exp
 pressure samples now map to one pressure-difference normal traction through
 that same conservative path, with exact equal-pressure cancellation and no
 polar or pressure stamp. Ordinary owned polygons also
-yield exact boundary segments: adjacent-cell copies pair into stable transverse
-face crossings with an in-face negative-to-positive direction; unpaired edges
+yield boundary segments: independently clipped adjacent-cell copies must agree
+inside a fixed machine-roundoff envelope and pair into one canonical lower-cell
+transverse crossing with an in-face negative-to-positive direction; unpaired edges
 remain contact and coplanar triangle area remains under face ownership. It
 rejects unresolved periodic-domain boundary area and grid-edge-aligned crossing
 ambiguity. A bounded sparse index groups crossing and coplanar references under
@@ -551,7 +554,17 @@ enclosed/exterior region identity with self-intersection and degenerate-area
 rejection. A bounded containment stage rejects touching loops, requires
 authored parent/child region continuity, and closes exact per-region areas on
 eligible faces; open, coplanar, and boundary-touching cases remain unresolved.
-Volume fractions and complete grid-region reconstruction remain open. A canonical Qt-free
+Volume fractions and complete grid-region reconstruction remain open. The
+implemented stages are now composed by a versioned `SceneFluidGridEpoch`: one
+local build carries a single accepted Structure surface through candidates,
+exact intersections, clipping, ownership, crossings, face topology, graph,
+chains, loops, partitions, and unique quadrature. The result has a complete
+chained fingerprint, individual stage limits, and an aggregate owned-payload
+byte bound. Validation rejects nested corruption or any foreign surface step.
+The moving regression translates an accepted fabric triangle across a MAC
+plane and verifies remapped physical IDs, area, force, and moment. This closes
+orchestration and epoch consistency, not cut-cell volume or the moving-boundary
+fluid equations. A canonical Qt-free
 structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.

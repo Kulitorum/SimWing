@@ -231,12 +231,65 @@ std::size_t commonBoundaryPlaneCount(
     return count;
 }
 
-bool sameSegment(const CandidateSegment& first,
-                 const CandidateSegment& second) {
-    return first.triangleIndex == second.triangleIndex
-        && first.triangleId == second.triangleId
-        && first.first == second.first
-        && first.second == second.second;
+bool near(const double first,
+          const double second,
+          const double tolerance) {
+    return std::isfinite(first) && std::isfinite(second)
+        && std::abs(first - second) <= tolerance;
+}
+
+bool sameVertexWithinRoundoff(
+    const SceneFluidClippedVertex& first,
+    const SceneFluidClippedVertex& second,
+    const double positionTolerance) {
+    constexpr double barycentricTolerance =
+        256.0 * std::numeric_limits<double>::epsilon();
+    return near(first.positionMeters.x, second.positionMeters.x,
+                positionTolerance)
+        && near(first.positionMeters.y, second.positionMeters.y,
+                positionTolerance)
+        && near(first.positionMeters.z, second.positionMeters.z,
+                positionTolerance)
+        && near(first.barycentricCoordinates[0],
+                second.barycentricCoordinates[0], barycentricTolerance)
+        && near(first.barycentricCoordinates[1],
+                second.barycentricCoordinates[1], barycentricTolerance)
+        && near(first.barycentricCoordinates[2],
+                second.barycentricCoordinates[2], barycentricTolerance);
+}
+
+bool sameSegmentWithinRoundoff(const CandidateSegment& first,
+                               const CandidateSegment& second) {
+    if (first.triangleIndex != second.triangleIndex
+        || first.triangleId != second.triangleId) {
+        return false;
+    }
+    const double scale = std::max({
+        1.0,
+        std::abs(first.first.positionMeters.x),
+        std::abs(first.first.positionMeters.y),
+        std::abs(first.first.positionMeters.z),
+        std::abs(first.second.positionMeters.x),
+        std::abs(first.second.positionMeters.y),
+        std::abs(first.second.positionMeters.z),
+        std::abs(second.first.positionMeters.x),
+        std::abs(second.first.positionMeters.y),
+        std::abs(second.first.positionMeters.z),
+        std::abs(second.second.positionMeters.x),
+        std::abs(second.second.positionMeters.y),
+        std::abs(second.second.positionMeters.z),
+    });
+    const double positionTolerance =
+        256.0 * std::numeric_limits<double>::epsilon() * scale;
+    const bool direct = sameVertexWithinRoundoff(
+                            first.first, second.first, positionTolerance)
+        && sameVertexWithinRoundoff(
+            first.second, second.second, positionTolerance);
+    const bool reversed = sameVertexWithinRoundoff(
+                              first.first, second.second, positionTolerance)
+        && sameVertexWithinRoundoff(
+            first.second, second.first, positionTolerance);
+    return direct || reversed;
 }
 
 using FaceKey = std::tuple<std::uint8_t,
@@ -410,9 +463,9 @@ SceneFluidFaceCrossingSet buildCrossings(
             throw std::invalid_argument(
                 "scene fluid crossing on a grid edge needs explicit edge ownership");
         }
-        if (!sameSegment(*pair.lower, *pair.upper)) {
+        if (!sameSegmentWithinRoundoff(*pair.lower, *pair.upper)) {
             throw std::invalid_argument(
-                "scene fluid adjacent face crossings do not share exact geometry");
+                "scene fluid adjacent face crossings disagree beyond roundoff");
         }
         if (result.crossings.size() == limits.maximumCrossings) {
             throw std::length_error(
