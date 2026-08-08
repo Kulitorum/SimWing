@@ -307,6 +307,21 @@ void testImplicitGridPressureFluxCoupling() {
     const double pressureImpulse = (20.0 - 4.0) * 6.0 * 0.1;
     checkNear(fluidMomentum, pressureImpulse, 2.0e-15,
               "coupled porous: pressure impulse matches the uniform fluid momentum");
+    checkNear(diagnostics.totalPressureJumpForceOnFluidNewtons.x,
+              96.0, 1.0e-10,
+              "coupled porous: endpoint jump ledger retains net fluid force");
+    checkNear(diagnostics.totalPressureJumpImpulseOnFluidNewtonSeconds.x,
+              fluidMomentum, 1.0e-10,
+              "coupled porous: endpoint jump impulse produces the fluid momentum");
+    checkNear(diagnostics.totalPressureJumpPowerToFluidWatts,
+              38.4, 1.0e-9,
+              "coupled porous: endpoint jump ledger samples endpoint power");
+    checkNear(diagnostics.totalPressureJumpWorkToFluidJoules,
+              3.84, 1.0e-10,
+              "coupled porous: endpoint pressure work integrates over the step");
+    checkNear(diagnostics.totalPorousDissipationJoules,
+              0.96, 1.0e-10,
+              "coupled porous: endpoint porous loss integrates over the step");
 
     MacVelocityField movingSheetVelocity(grid);
     CellScalarField movingSheetPressure(grid);
@@ -398,6 +413,18 @@ void testImplicitGridPressureFluxCoupling() {
     checkNear(kineticEnergyChange,
               drivingWork - porousDissipation, 4.0e-12,
               "coupled porous: midpoint grid work closes kinetic energy and porous loss");
+    checkNear(midpoint.totalPressureJumpImpulseOnFluidNewtonSeconds.x,
+              fluidMassKilograms * expectedMidpointEndpointVelocity,
+              2.0e-10,
+              "coupled porous: midpoint jump impulse exactly produces endpoint momentum");
+    checkNear(midpoint.totalPressureJumpWorkToFluidJoules,
+              kineticEnergyChange, 2.0e-10,
+              "coupled porous: midpoint net pressure work exactly produces kinetic energy");
+    checkNear(drivingWork,
+              midpoint.totalPressureJumpWorkToFluidJoules
+                  + midpoint.totalPorousDissipationJoules,
+              2.0e-10,
+              "coupled porous: driving work splits into fluid energy and porous loss");
 
     auto oraclePorous = porous;
     for (auto& crossing : oraclePorous) {

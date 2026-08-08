@@ -115,6 +115,14 @@ struct PorousProjectionDiagnostics {
     double finalMaximumNormalVelocityResidualMetersPerSecond = 0.0;
     double finalMaximumPressureJumpResidualPascals = 0.0;
     double totalDissipationWatts = 0.0;
+    double totalPorousDissipationJoules = 0.0;
+    // Sum of every porous and separately prescribed oriented jump acting on
+    // the fluid at the selected constitutive time. For one crossing,
+    // F_fluid = (p_plus - p_minus) * area * positiveAxis.
+    Vector3 totalPressureJumpForceOnFluidNewtons;
+    Vector3 totalPressureJumpImpulseOnFluidNewtonSeconds;
+    double totalPressureJumpPowerToFluidWatts = 0.0;
+    double totalPressureJumpWorkToFluidJoules = 0.0;
     ProjectionDiagnostics projection;
     // Samples at constitutiveEvaluation; midpoint mode therefore deliberately
     // reports midpoint fluid/slip velocity rather than the committed endpoint.

@@ -895,8 +895,13 @@ bound is exhausted. The uniform endpoint canonical reaches the analytic
 moving-sheet-relative, and heterogeneous-tile cases remain deterministic and
 divergence-free. Midpoint mode closes pressure work minus porous dissipation to
 the kinetic-energy change and reproduces the exact nonlinear scalar plug oracle.
-This is not moving cut-cell topology, and midpoint pressure coupling is not yet
-composed into a complete second-order general flow step.
+The accepted diagnostic separately sums every porous and prescribed oriented
+jump into fluid force/impulse and power/work, evaluated at the selected
+constitutive time, while porous dissipation remains its own nonnegative ledger.
+This is the accounting boundary required before a composed flow integrator may
+admit interface-driven momentum or energy. It is not moving cut-cell topology,
+and midpoint pressure coupling is not yet composed into a complete second-order
+general flow step.
 A pressure-driven uniform-plug companion uses the exact nonlinear implicit
 midpoint to close pressure impulse and the
 driving-work/porous-dissipation/kinetic-energy identity on every step. Its

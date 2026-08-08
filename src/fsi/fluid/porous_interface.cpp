@@ -70,6 +70,21 @@ double faceNormalVelocity(
     throw std::invalid_argument("porous crossing has an invalid axis");
 }
 
+double indexedFaceNormalVelocity(
+    const MacVelocityField& velocity,
+    const GridFaceAxis axis,
+    const std::size_t index) {
+    switch (axis) {
+    case GridFaceAxis::X:
+        return velocity.xFaces()[index];
+    case GridFaceAxis::Y:
+        return velocity.yFaces()[index];
+    case GridFaceAxis::Z:
+        return velocity.zFaces()[index];
+    }
+    throw std::invalid_argument("pressure jump has an invalid axis");
+}
+
 double faceArea(const PeriodicCartesianGrid& grid,
                 const GridFaceAxis axis) {
     const auto spacing = grid.cellSpacingMeters();
@@ -176,6 +191,63 @@ void moveToConstitutiveTime(
             * (original.zFaces()[face]
                + endpointOrEvaluation.zFaces()[face]);
     }
+}
+
+void accumulateJumpLedgers(
+    const PeriodicCartesianGrid& grid,
+    const MacVelocityField& constitutiveVelocity,
+    const std::span<const GridFacePressureJump> pressureJumps,
+    PorousProjectionDiagnostics& diagnostics) {
+    for (const auto& jump : pressureJumps) {
+        const double force = jump.pressureJumpPascals
+            * faceArea(grid, jump.axis);
+        const auto index = grid.cellIndex(jump.i, jump.j, jump.k);
+        diagnostics.totalPressureJumpPowerToFluidWatts += force
+            * indexedFaceNormalVelocity(
+                constitutiveVelocity, jump.axis, index);
+        switch (jump.axis) {
+        case GridFaceAxis::X:
+            diagnostics.totalPressureJumpForceOnFluidNewtons.x += force;
+            break;
+        case GridFaceAxis::Y:
+            diagnostics.totalPressureJumpForceOnFluidNewtons.y += force;
+            break;
+        case GridFaceAxis::Z:
+            diagnostics.totalPressureJumpForceOnFluidNewtons.z += force;
+            break;
+        }
+    }
+}
+
+void setJumpLedgers(
+    const PeriodicCartesianGrid& grid,
+    const MacVelocityField& constitutiveVelocity,
+    const PorousPressureJumpField* porous,
+    const SharpPressureJumpField* prescribed,
+    const double timeStepSeconds,
+    PorousProjectionDiagnostics& diagnostics) {
+    diagnostics.totalDissipationWatts = porous == nullptr
+        ? 0.0 : porous->totalDissipationWatts();
+    diagnostics.totalPorousDissipationJoules =
+        diagnostics.totalDissipationWatts * timeStepSeconds;
+    diagnostics.totalPressureJumpForceOnFluidNewtons = {};
+    diagnostics.totalPressureJumpPowerToFluidWatts = 0.0;
+    if (porous != nullptr) {
+        accumulateJumpLedgers(
+            grid, constitutiveVelocity, porous->pressureJumps().faces(),
+            diagnostics);
+    }
+    if (prescribed != nullptr) {
+        accumulateJumpLedgers(
+            grid, constitutiveVelocity, prescribed->faces(), diagnostics);
+    }
+    diagnostics.totalPressureJumpImpulseOnFluidNewtonSeconds = {
+        diagnostics.totalPressureJumpForceOnFluidNewtons.x * timeStepSeconds,
+        diagnostics.totalPressureJumpForceOnFluidNewtons.y * timeStepSeconds,
+        diagnostics.totalPressureJumpForceOnFluidNewtons.z * timeStepSeconds,
+    };
+    diagnostics.totalPressureJumpWorkToFluidJoules =
+        diagnostics.totalPressureJumpPowerToFluidWatts * timeStepSeconds;
 }
 
 } // namespace
@@ -374,6 +446,8 @@ PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
     PorousProjectionDiagnostics diagnostics;
     diagnostics.constitutiveEvaluation = settings.constitutiveEvaluation;
     diagnostics.porousCrossingCount = porousCrossings.size();
+    const MacVelocityField originalVelocity =
+        predictedVelocityMetersPerSecond;
     if (porousCrossings.empty()) {
         if (prescribedPressureJumps == nullptr
             || prescribedPressureJumps->empty()) {
@@ -386,13 +460,27 @@ PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
                 *prescribedPressureJumps, settings.projection);
         }
         diagnostics.accepted = diagnostics.projection.converged;
+        if (diagnostics.accepted) {
+            MacVelocityField constitutiveVelocity =
+                predictedVelocityMetersPerSecond;
+            moveToConstitutiveTime(
+                originalVelocity, settings.constitutiveEvaluation,
+                constitutiveVelocity);
+            setJumpLedgers(
+                grid, constitutiveVelocity, nullptr,
+                prescribedPressureJumps,
+                settings.projection.timeStepSeconds, diagnostics);
+        }
         diagnostics.finite = isFinite(predictedVelocityMetersPerSecond)
-            && isFinite(pressurePascals);
+            && isFinite(pressurePascals)
+            && std::isfinite(diagnostics.totalPressureJumpForceOnFluidNewtons.x)
+            && std::isfinite(diagnostics.totalPressureJumpForceOnFluidNewtons.y)
+            && std::isfinite(diagnostics.totalPressureJumpForceOnFluidNewtons.z)
+            && std::isfinite(diagnostics.totalPressureJumpPowerToFluidWatts)
+            && std::isfinite(diagnostics.totalPressureJumpWorkToFluidJoules);
         return diagnostics;
     }
 
-    const MacVelocityField originalVelocity =
-        predictedVelocityMetersPerSecond;
     const CellScalarField originalPressure = pressurePascals;
     MacVelocityField iterateVelocity = originalVelocity;
     CellScalarField pressureWarmStart = originalPressure;
@@ -416,8 +504,10 @@ PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
         if (!diagnostics.projection.converged) {
             diagnostics.samples.assign(
                 sampled.samples().begin(), sampled.samples().end());
-            diagnostics.totalDissipationWatts =
-                sampled.totalDissipationWatts();
+            setJumpLedgers(
+                grid, sampledVelocity, &sampled,
+                prescribedPressureJumps,
+                settings.projection.timeStepSeconds, diagnostics);
             return diagnostics;
         }
 
@@ -470,13 +560,27 @@ PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
             maximumVelocityResidual;
         diagnostics.finalMaximumPressureJumpResidualPascals =
             maximumJumpResidual;
-        diagnostics.totalDissipationWatts =
-            endpoint.totalDissipationWatts();
         diagnostics.samples.assign(
             endpointFaces.begin(), endpointFaces.end());
+        setJumpLedgers(
+            grid, candidateConstitutiveVelocity, &endpoint,
+            prescribedPressureJumps,
+            settings.projection.timeStepSeconds, diagnostics);
         diagnostics.finite = std::isfinite(maximumVelocityResidual)
             && std::isfinite(maximumJumpResidual)
             && std::isfinite(diagnostics.totalDissipationWatts)
+            && std::isfinite(diagnostics.totalPorousDissipationJoules)
+            && std::isfinite(diagnostics.totalPressureJumpForceOnFluidNewtons.x)
+            && std::isfinite(diagnostics.totalPressureJumpForceOnFluidNewtons.y)
+            && std::isfinite(diagnostics.totalPressureJumpForceOnFluidNewtons.z)
+            && std::isfinite(
+                diagnostics.totalPressureJumpImpulseOnFluidNewtonSeconds.x)
+            && std::isfinite(
+                diagnostics.totalPressureJumpImpulseOnFluidNewtonSeconds.y)
+            && std::isfinite(
+                diagnostics.totalPressureJumpImpulseOnFluidNewtonSeconds.z)
+            && std::isfinite(diagnostics.totalPressureJumpPowerToFluidWatts)
+            && std::isfinite(diagnostics.totalPressureJumpWorkToFluidJoules)
             && isFinite(candidateVelocity) && isFinite(candidatePressure);
         const double velocityTolerance =
             settings.absoluteNormalVelocityToleranceMetersPerSecond

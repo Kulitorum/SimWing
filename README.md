@@ -176,7 +176,10 @@ jumps, moving-sheet-relative velocity, and heterogeneous tile resistance. Its
 uniform endpoint Darcy canonical accelerates to the analytic `0.4 m/s` under
 `20 Pa` and closes `9.6 W` of porous loss. Midpoint mode exactly closes the
 grid pressure-work/porous-loss/kinetic-energy identity and matches the scalar
-nonlinear plug oracle. Exhausting the nonlinear solve changes neither field.
+nonlinear plug oracle. Every accepted result separately exposes total oriented
+jump force/impulse on the fluid, jump power/work at the selected constitutive
+time, and porous dissipation. Exhausting the nonlinear solve changes neither
+field.
 A pressure-driven companion advances a uniform fluid plug with an
 implicit-midpoint nonlinear solve; every step independently closes pressure
 impulse, driving work, porous dissipation, and kinetic energy.
