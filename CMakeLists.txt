@@ -1620,6 +1620,38 @@ add_test(NAME simwing_fsi_porous_sheet_checkpoint_verify
 set_tests_properties(simwing_fsi_porous_sheet_checkpoint_verify PROPERTIES
     DEPENDS simwing_fsi_porous_sheet_checkpoint_resume
     PASS_REGULAR_EXPRESSION "completed 333 porous-sheet step\\(s\\)")
+add_test(NAME simwing_fsi_porous_sheet_wrapped_checkpoint_write
+    COMMAND simwing-fsi
+        --case porous-sheet
+        --steps 900
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-porous-sheet-wrapped-checkpoint-write.swtrace"
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-porous-sheet-wrapped.swps"
+        --checkpoint-every 450)
+set_tests_properties(simwing_fsi_porous_sheet_wrapped_checkpoint_write PROPERTIES
+    PASS_REGULAR_EXPRESSION "completed 900 porous-sheet step\\(s\\).*topology-rebases=5, face=0, image=1, checkpoint-writes=2")
+add_test(NAME simwing_fsi_porous_sheet_wrapped_checkpoint_resume
+    COMMAND simwing-fsi
+        --case porous-sheet
+        --steps 3
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-porous-sheet-wrapped-checkpoint-resume.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-porous-sheet-wrapped.swps"
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-porous-sheet-wrapped.swps"
+        --checkpoint-every 2)
+set_tests_properties(simwing_fsi_porous_sheet_wrapped_checkpoint_resume PROPERTIES
+    DEPENDS simwing_fsi_porous_sheet_wrapped_checkpoint_write
+    PASS_REGULAR_EXPRESSION "completed 903 porous-sheet step\\(s\\).*topology-rebases=5, face=0, image=1, checkpoint-writes=2")
+add_test(NAME simwing_fsi_porous_sheet_wrapped_checkpoint_verify
+    COMMAND simwing-fsi
+        --case porous-sheet
+        --steps 0
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-porous-sheet-wrapped-checkpoint-verify.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-porous-sheet-wrapped.swps")
+set_tests_properties(simwing_fsi_porous_sheet_wrapped_checkpoint_verify PROPERTIES
+    DEPENDS simwing_fsi_porous_sheet_wrapped_checkpoint_resume
+    PASS_REGULAR_EXPRESSION "completed 903 porous-sheet step\\(s\\).*topology-rebases=5, face=0, image=1")
 add_test(NAME simwing_fsi_porous_sheet_rejects_foreign_checkpoint
     COMMAND simwing-fsi
         --case porous-sheet

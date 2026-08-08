@@ -1177,7 +1177,7 @@ int main(int argc, char* argv[]) {
                         "simwing-fsi completed %llu porous-sheet step(s), "
                         "t=%.9g s, sheet-x=%.9g m, sheet-speed=%.9g m/s, "
                         "fluid-speed=%.9g m/s, energy-residual=%.3g J, "
-                        "topology-rebases=%llu, face=%zu, "
+                        "topology-rebases=%llu, face=%zu, image=%lld, "
                         "checkpoint-writes=%llu, trace=%s\n",
                         static_cast<unsigned long long>(
                         checkpoint.acceptedStepCount),
@@ -1189,6 +1189,8 @@ int main(int argc, char* argv[]) {
                         static_cast<unsigned long long>(
                             simulation.topologyRebaseCount()),
                         simulation.porousFaceCoordinate(),
+                        static_cast<long long>(
+                            simulation.porousTopology().periodicImage),
                         static_cast<unsigned long long>(
                             checkpointWriteCount),
                         options.tracePath.string().c_str());

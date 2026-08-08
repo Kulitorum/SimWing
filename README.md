@@ -272,7 +272,8 @@ decode. Every pre-pump rebased epoch is persistable and continues
 bit-identically. Checkpoint topology is validated at the accepted constitutive
 midpoint, so the last accepted endpoint before pump collision can also be
 persisted and deterministically repeats the same transactional rejection after
-restore.
+restore. A process-level restart at step 900 additionally resumes the ordinary
+wrapped `face=0, image=1` epoch and advances only new accepted frames.
 The
 `simwing-fsi --case open-piston` harness drives a `6000 kg` plate at
 `0.05 m/s`, exposes the resisting CFD pressure separately from its actuator,

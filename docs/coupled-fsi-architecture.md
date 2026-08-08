@@ -1029,8 +1029,10 @@ writes through the first topology rebase at step 330, restores it, advances
 three additional steps, atomically replaces the same restart file, and decodes
 it again without launching Qt. The initial interval of 165 writes at steps 165
 and 330; the resumed interval of two writes at absolute step 332 and final step
-333. Interval mode without an output path is rejected before a worker or trace
-is created.
+333. A second process chain writes the ordinary wrapped epoch at step 900
+(`face=0`, signed image `1`), resumes three additional steps, and verifies the
+same wrapped epoch at step 903 with only new trace frames. Interval mode without
+an output path is rejected before a worker or trace is created.
 The open-piston CLI counterpart checkpoints at absolute steps 600 and 1200,
 therefore persisting the first accepted topology rebase. It restores that file,
 advances three additional steps, atomically replaces the same path at step 1202
