@@ -344,6 +344,17 @@ shows pressure, direct constraint traction, complete reaction, mapped nodal
 force, divergence, and normal deformation. The displaced fabric is not fed
 back to the fixed CFD reference, so this is one-way coupling—not a moving
 cut-cell, classical tangential-flow flag, or two-way energy result. The
+`simwing-fsi --case ram-cell` canonical extends that same honest one-way
+boundary to an open five-panel cavity. Back, side, top, and bottom reference
+walls each receive their complete pressure-plus-direct MAC constraint reaction,
+and five independent conservative bridges add those loads to one shared-node
+89-node XPBD shell. Two perimeter rows clamp the open mouth; the remaining
+panels share seam nodes and flex under the projected cross-flow. Frames expose
+panel identity, pressure and complete-reaction traction, mapped nodal force,
+deformation, net and RMS mouth flow, and divergence. Incompressibility closes
+the dead-ended cavity's net mouth flux while permitting local exchange. This
+is still fixed-reference one-way deformation: displaced panels do not yet
+rebuild CFD cut cells or close a two-way energy ledger. The
 `simwing-fsi --case piston` harness crosses that
 face-resolved bridge, temporal coupling, XPBD acceptance, and replayable viewer
 frames with visible deterministic motion. The same production target now also
@@ -599,6 +610,7 @@ Run:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\simwing-fsi.exe --case hemisphere --steps 600
 .\build\bin\Release\simwing-fsi.exe --case flag --steps 600
+.\build\bin\Release\simwing-fsi.exe --case ram-cell --steps 600
 .\build\bin\Release\simwing-fsi.exe --case strong-piston --steps 120 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case strong-piston --steps 120 --no-viewer --checkpoint-out strong-piston.swsp --checkpoint-every 60
 .\build\bin\Release\simwing-fsi.exe --case strong-piston --checkpoint-in strong-piston.swsp --steps 60 --no-viewer --checkpoint-out strong-piston.swsp --checkpoint-every 60
@@ -627,6 +639,9 @@ the other canonical cases. The flag command is the first real CFD-load-driven
 fabric animation while retaining a stationary reference surface on the fluid
 side. Commands with `--no-viewer` run unthrottled for
 tests and scripted verification.
+The ram-cell command shows the same conservative complete-reaction path acting
+on a multi-panel open fabric shell; it is a deformation/inflation precursor,
+not a resolved moving-cavity or aerodynamic-wing result.
 The checkpoint commands save and resume exact accepted worker state. Resumed
 steps are additional, autosave cadence uses absolute accepted-step multiples,
 and input/output may name the same atomically replaced file.

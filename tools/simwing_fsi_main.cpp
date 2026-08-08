@@ -15,6 +15,7 @@
 #include "porous_sheet_control.h"
 #include "pressure_jump_case.h"
 #include "projected_flag_case.h"
+#include "ram_air_cell_case.h"
 #include "strong_piston_checkpoint_persistence.h"
 #include "strong_piston_control.h"
 #include "viewer_protocol.h"
@@ -23,6 +24,7 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
@@ -65,6 +67,7 @@ enum class WorkerCase {
     Structural,
     Hemisphere,
     ProjectedFlag,
+    RamAirCell,
     Piston,
     StrongPiston,
     OpenPiston,
@@ -90,7 +93,7 @@ struct Options {
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: simwing-fsi [--case structural|hemisphere|flag|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
+        "Usage: simwing-fsi [--case structural|hemisphere|flag|ram-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
         "                   [--checkpoint-in PATH]\n"
@@ -104,6 +107,8 @@ void printUsage(FILE* stream) {
         "runs a soft three-point fabric dome under an alternating pressure mode;\n"
         "'flag' maps the complete reaction from a fixed-reference projected gust\n"
         "onto a one-edge-clamped XPBD fabric panel;\n"
+        "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"
+        "shared-node open XPBD fabric cell;\n"
         "'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
         "'strong-piston' strongly iterates that chain for a light added-mass plate;\n"
@@ -147,6 +152,10 @@ bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
     }
     if (text == "flag") {
         workerCase = WorkerCase::ProjectedFlag;
+        return true;
+    }
+    if (text == "ram-cell") {
+        workerCase = WorkerCase::RamAirCell;
         return true;
     }
     if (text == "piston") {
@@ -216,7 +225,7 @@ bool parseOptions(int argc,
         } else if (argument == "--case") {
             if (++index >= argc
                 || !parseWorkerCase(argv[index], options.workerCase)) {
-                error = "--case requires 'structural', 'hemisphere', 'flag', 'piston', "
+                error = "--case requires 'structural', 'hemisphere', 'flag', 'ram-cell', 'piston', "
                     "'strong-piston', 'open-piston', 'periodic-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
@@ -225,7 +234,7 @@ bool parseOptions(int argc,
             }
         } else if (argument.starts_with("--case=")) {
             if (!parseWorkerCase(argument.substr(7), options.workerCase)) {
-                error = "--case requires 'structural', 'hemisphere', 'flag', 'piston', "
+                error = "--case requires 'structural', 'hemisphere', 'flag', 'ram-cell', 'piston', "
                     "'strong-piston', 'open-piston', 'periodic-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
@@ -1474,6 +1483,38 @@ int main(int argc, char* argv[]) {
                         options.tracePath.string().c_str());
                 } else if constexpr (std::is_same_v<
                                          Simulation,
+                                         simwing::fsi::RamAirCellCase>) {
+                    const auto& coupled = simulation.diagnostics();
+                    std::printf(
+                        "simwing-fsi completed %llu ram-cell step(s), "
+                        "t=%.9g s, gust=%.6g m/s, mouth-mean=%.3g m/s, "
+                        "mouth-rms=%.6g m/s, max-motion=%.6g m, "
+                        "outward-inflation=%.6g m, "
+                        "reaction=[%.6g %.6g %.6g] N, "
+                        "transfer-residual=%.3g N, divergence=%.3g 1/s, "
+                        "trace=%s\n",
+                        static_cast<unsigned long long>(
+                            checkpoint.acceptedStepCount),
+                        checkpoint.simulationTimeSeconds,
+                        simulation.gustSpeedMetersPerSecond(),
+                        simulation.openingMeanVelocityMetersPerSecond(),
+                        simulation.openingRmsVelocityMetersPerSecond(),
+                        simulation.maximumDisplacementMeters(),
+                        simulation.maximumOutwardInflationMeters(),
+                        coupled.fluidReactionForceNewtons.x,
+                        coupled.fluidReactionForceNewtons.y,
+                        coupled.fluidReactionForceNewtons.z,
+                        std::sqrt(
+                            coupled.forceResidualNewtons.x
+                                * coupled.forceResidualNewtons.x
+                            + coupled.forceResidualNewtons.y
+                                * coupled.forceResidualNewtons.y
+                            + coupled.forceResidualNewtons.z
+                                * coupled.forceResidualNewtons.z),
+                        coupled.fluidDivergenceL2PerSecond,
+                        options.tracePath.string().c_str());
+                } else if constexpr (std::is_same_v<
+                                         Simulation,
                                          simwing::fsi::AnchoredHemisphereCase>) {
                     std::printf(
                         "simwing-fsi completed %llu hemisphere step(s), "
@@ -1632,6 +1673,10 @@ int main(int argc, char* argv[]) {
         }
         if (options.workerCase == WorkerCase::ProjectedFlag) {
             simwing::fsi::ProjectedGustFlagCase simulation;
+            return run(simulation);
+        }
+        if (options.workerCase == WorkerCase::RamAirCell) {
+            simwing::fsi::RamAirCellCase simulation;
             return run(simulation);
         }
         simwing::fsi::CanonicalStructuralCase simulation;

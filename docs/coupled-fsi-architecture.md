@@ -417,6 +417,7 @@ src/fsi/
     coupled_state.*         composite rollback and bounded macro-step retries
     piston_case.*           sealed fixed-topology worker canonical
     projected_flag_case.*   fixed-reference projected-gust fabric canonical
+    ram_air_cell_case.*     fixed-reference open five-panel cell canonical
     porous_sheet_case.*     coupled midpoint porous-sheet oracle
     porous_sheet_checkpoint_persistence.* bounded composite restart codec
     open_piston_case.*      driven open-control-volume worker canonical
@@ -491,6 +492,7 @@ Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_coupled_state`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
 `simwing_projected_flag_case`,
+`simwing_ram_air_cell_case`,
 `simwing_porous_sheet_case`, `simwing_open_piston_case`, `simwing_fluid_frame`,
 `simwing_periodic_flow_case`, `simwing_pressure_jump_case`,
 `simwing_porous_flow_case`,
@@ -1366,7 +1368,9 @@ Required canonical cases:
 - moving piston/membrane with analytic volume and work balance;
 - flexible flag and a thin shell with one interface per cell (the one-way,
   fixed-reference normal-gust flag subset is complete; displaced geometry and
-  tangential-flow interaction remain open);
+  tangential-flow interaction remain open; the five-panel open-cell subset now
+  exercises shared-node multi-surface transfer, but its CFD geometry is also
+  fixed);
 - two closely spaced and folded sheets with multiple crossings per cell;
 - resolved opening that closes below grid scale and reopens;
 - force, moment, and power transfer under rigid translation and rotation.
@@ -1417,6 +1421,19 @@ moment transfer closure. This is deliberately one-way: the displaced membrane
 does not alter the CFD surface, the stationary reference has zero interface
 power, and the case does not claim moving cut cells, classical tangential flag
 aerodynamics, two-way energy closure, or wing flow.
+
+The next fixed-reference canonical is available as `--case ram-cell`. It uses
+five 4-by-4 MAC-face surfaces for the back, left, right, bottom, and top of a
+one-metre open rectangular cavity. Each stable-ID surface independently clips
+to a matching panel and transfers its complete pressure-plus-direct constraint
+reaction into one 89-node shared-edge XPBD shell with 160 membranes and 200
+sheet-local dihedrals. Two perimeter rows clamp mouth position and slope while
+the other nodes deform. The regression requires deterministic accepted frames,
+converged projection, exact fixed nodes, local mouth exchange with near-zero
+net incompressible flux, visible outward bulging, and per-panel plus aggregate
+force/moment closure. This verifies multi-panel load assembly and structural
+continuity; it does not model changing cavity volume in the fluid, feed fabric
+motion back to the fixed grid, or claim physical ram-air inflation.
 
 The standalone worker also includes a deliberately non-CFD curved structural
 canonical: a one-metre soft fabric hemisphere held by three equatorial anchors
