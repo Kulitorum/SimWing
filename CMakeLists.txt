@@ -320,6 +320,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/moving_control_volume.h
     src/fsi/fluid/moving_interface.cpp
     src/fsi/fluid/moving_interface.h
+    src/fsi/fluid/planar_porous_sheet.cpp
+    src/fsi/fluid/planar_porous_sheet.h
     src/fsi/fluid/planar_cut_surface.cpp
     src/fsi/fluid/planar_cut_surface.h
     src/fsi/fluid/porous_interface.cpp

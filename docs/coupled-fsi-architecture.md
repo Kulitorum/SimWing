@@ -989,6 +989,12 @@ That decision uses a pure topology
 selector whose epoch owns axis, wrapped face coordinate, and signed periodic
 image. It supports X/Y/Z, one adjacent segment in either direction, and both
 periodic wraps while rejecting exact MAC-plane ambiguity and skipped segments.
+The adjacent complete-plane assembler consumes that epoch plus unwrapped
+physical position, rigid normal velocity, two-sided stable IDs, and calibrated
+resistance. It emits exactly one canonically ordered porous crossing per
+transverse MAC tile for X, Y, or Z only after validating the complete
+definition. Both the static porous-flow oracle and this moving-sheet oracle use
+that common assembly boundary; neither keeps a private X-only tiling loop.
 Each accepted pre-pump epoch survives persistent checkpoint round trips and
 continues bit-identically. A later collision with the next periodic image of
 the prescribed pump surface is rejected by the case after selection; this

@@ -213,6 +213,11 @@ A separate pure topology selector now tracks a planar porous sheet by axis,
 wrapped MAC face, and signed periodic image. It deterministically retains or
 rebases one segment in either direction on X/Y/Z and rejects exact face
 placement or skipped segments before any fluid state changes.
+Its complete-plane assembler expands that unwrapped physical epoch into one
+deterministically ordered porous crossing per transverse MAC tile on X, Y, or
+Z, validating stable IDs, two-sided regions, material resistance, kinematics,
+and strict segment placement first. The static porous-flow and moving
+porous-sheet workers now share this boundary instead of owning X-only loops.
 The accepted wrapper can cross the planar open-piston GCL and physical
 cut-surface boundaries without discarding its nonlinear status. In the porous
 opening canonical, the summed tile flux exactly fills the swept chamber volume,

@@ -1,5 +1,6 @@
 #include "porous_sheet_case.h"
 #include "porous_sheet_checkpoint_detail.h"
+#include "fluid/planar_porous_sheet.h"
 #include "fluid/porous_topology.h"
 
 #include <algorithm>
@@ -189,35 +190,6 @@ fluid::PorousProjectionSettings makeProjectionSettings() {
     return settings;
 }
 
-std::vector<fluid::PorousGridFaceCrossing> makePorousSheet(
-    const fluid::PeriodicCartesianGrid& grid,
-    const fluid::MovingPorousFaceTopology& topology,
-    const double sheetPositionMeters,
-    const double sheetVelocityMetersPerSecond) {
-    const double fraction = fluid::movingPorousCrossingFraction(
-        grid, topology, sheetPositionMeters);
-    const auto counts = grid.cellCounts();
-    std::vector<fluid::PorousGridFaceCrossing> result;
-    result.reserve(counts.y * counts.z);
-    for (std::size_t k = 0; k < counts.z; ++k) {
-        for (std::size_t j = 0; j < counts.y; ++j) {
-            result.push_back({
-                porousSheetSurfaceStableId,
-                minusRegionStableId,
-                plusRegionStableId,
-                fluid::GridFaceAxis::X,
-                topology.faceCoordinate,
-                j,
-                k,
-                fraction,
-                sheetVelocityMetersPerSecond,
-                {linearResistancePascalSecondsPerMeter, 0.0},
-            });
-        }
-    }
-    return result;
-}
-
 fluid::SharpPressureJumpField makePump(
     const fluid::PeriodicCartesianGrid& grid,
     const CoupledPorousSheetMotionDirection direction) {
@@ -251,9 +223,17 @@ std::vector<fluid::PorousFaceTractionDiagnostics> referenceFaces(
     const CoupledPorousSheetMotionDirection direction) {
     fluid::MacVelocityField velocity(grid);
     fluid::CellScalarField pressure(grid);
-    const auto porous = makePorousSheet(
-        grid, coupledPorousSheetInitialTopology,
-        initialSheetPositionMeters, 0.0);
+    const auto porous = fluid::makePlanarPorousSheetCrossings(
+        grid,
+        {
+            porousSheetSurfaceStableId,
+            minusRegionStableId,
+            plusRegionStableId,
+            coupledPorousSheetInitialTopology,
+            initialSheetPositionMeters,
+            0.0,
+            {linearResistancePascalSecondsPerMeter, 0.0},
+        });
     const auto pump = makePump(grid, direction);
     const auto projected = fluid::projectVelocityWithPorousInterfaces(
         grid, velocity, pressure, porous, pump, settings);
@@ -484,10 +464,17 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
 
         fluid::MacVelocityField candidateVelocity = velocity_;
         fluid::CellScalarField candidatePressure = pressure_;
-        const auto porous = makePorousSheet(
-            grid_, topology.topology,
-            sheetPositionAtConstitutiveTime,
-            sheetVelocityAtConstitutiveTime);
+        const auto porous = fluid::makePlanarPorousSheetCrossings(
+            grid_,
+            {
+                porousSheetSurfaceStableId,
+                minusRegionStableId,
+                plusRegionStableId,
+                topology.topology,
+                sheetPositionAtConstitutiveTime,
+                sheetVelocityAtConstitutiveTime,
+                {linearResistancePascalSecondsPerMeter, 0.0},
+            });
         const auto pump = makePump(grid_, direction_);
         const fluid::PorousProjectionDiagnostics projection =
             fluid::projectVelocityWithPorousInterfaces(

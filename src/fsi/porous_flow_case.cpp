@@ -1,4 +1,5 @@
 #include "porous_flow_case.h"
+#include "fluid/planar_porous_sheet.h"
 
 #include <algorithm>
 #include <cmath>
@@ -58,17 +59,22 @@ fluid::PorousPlugFlowSettings makePlugSettings() {
 std::vector<fluid::PorousGridFaceCrossing> makePorousPlane(
     const fluid::PeriodicCartesianGrid& grid,
     const fluid::DarcyForchheimerResistance& resistance) {
-    std::vector<fluid::PorousGridFaceCrossing> result;
-    const auto counts = grid.cellCounts();
-    result.reserve(counts.y * counts.z);
-    for (std::size_t k = 0; k < counts.z; ++k) {
-        for (std::size_t j = 0; j < counts.y; ++j) {
-            result.push_back({
-                110, 1, 2, fluid::GridFaceAxis::X,
-                4, j, k, 0.5, 0.0, resistance});
-        }
-    }
-    return result;
+    return fluid::makePlanarPorousSheetCrossings(
+        grid,
+        {
+            110,
+            1,
+            2,
+            {
+                fluid::movingPorousFaceTopologyVersion,
+                fluid::GridFaceAxis::X,
+                4,
+                0,
+            },
+            1.0,
+            0.0,
+            resistance,
+        });
 }
 
 std::vector<fluid::GridFacePressureJump> completePressureCircuit(

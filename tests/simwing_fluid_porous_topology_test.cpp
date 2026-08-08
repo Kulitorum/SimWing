@@ -1,5 +1,6 @@
-#include "fluid/porous_topology.h"
+#include "fluid/planar_porous_sheet.h"
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -170,12 +171,168 @@ void testTransactionalRejection() {
           "porous topology selection is deterministic and owning");
 }
 
+double axisCoordinate(const Vector3& value, const GridFaceAxis axis) {
+    switch (axis) {
+    case GridFaceAxis::X:
+        return value.x;
+    case GridFaceAxis::Y:
+        return value.y;
+    case GridFaceAxis::Z:
+        return value.z;
+    }
+    throw std::invalid_argument("test axis is invalid");
+}
+
+std::size_t normalIndex(const PorousGridFaceCrossing& crossing) {
+    switch (crossing.axis) {
+    case GridFaceAxis::X:
+        return crossing.i;
+    case GridFaceAxis::Y:
+        return crossing.j;
+    case GridFaceAxis::Z:
+        return crossing.k;
+    }
+    throw std::invalid_argument("test crossing axis is invalid");
+}
+
+void testCompletePlanarAssembly() {
+    const auto geometry = grid();
+    const auto counts = geometry.cellCounts();
+    constexpr std::array<std::size_t, 3> faceCoordinates{3, 4, 5};
+    constexpr std::array<std::int64_t, 3> periodicImages{1, -2, 3};
+    constexpr double expectedFraction = 0.25;
+    for (std::size_t ordinal = 0; ordinal < 3; ++ordinal) {
+        const auto axis = static_cast<GridFaceAxis>(ordinal);
+        const std::size_t faceCoordinate = faceCoordinates[ordinal];
+        const std::int64_t periodicImage = periodicImages[ordinal];
+        const double spacing = axisCoordinate(
+            geometry.cellSpacingMeters(), axis);
+        const double period = axisCoordinate(
+            geometry.upperMeters(), axis)
+            - axisCoordinate(geometry.lowerMeters(), axis);
+        const double wrappedFaceCoordinate = axisCoordinate(
+            axis == GridFaceAxis::X
+                ? geometry.xFaceCenterMeters(faceCoordinate, 0, 0)
+                : (axis == GridFaceAxis::Y
+                    ? geometry.yFaceCenterMeters(0, faceCoordinate, 0)
+                    : geometry.zFaceCenterMeters(0, 0, faceCoordinate)),
+            axis);
+        PlanarPorousSheetDefinition definition{
+            100 + ordinal,
+            10 + ordinal,
+            20 + ordinal,
+            {
+                movingPorousFaceTopologyVersion,
+                axis,
+                faceCoordinate,
+                periodicImage,
+            },
+            wrappedFaceCoordinate
+                + static_cast<double>(periodicImage) * period
+                + (expectedFraction - 0.5) * spacing,
+            -0.375,
+            {40.0, 5.0},
+        };
+        const auto crossings = makePlanarPorousSheetCrossings(
+            geometry, definition);
+        const std::size_t expectedCount = axis == GridFaceAxis::X
+            ? counts.y * counts.z
+            : (axis == GridFaceAxis::Y
+                ? counts.x * counts.z
+                : counts.x * counts.y);
+        check(crossings.size() == expectedCount
+                  && crossings
+                      == makePlanarPorousSheetCrossings(
+                          geometry, definition),
+              "planar porous assembly is complete and deterministic on every axis");
+        std::vector<bool> occupied(geometry.cellCount(), false);
+        for (const auto& crossing : crossings) {
+            const std::size_t cell = geometry.cellIndex(
+                crossing.i, crossing.j, crossing.k);
+            check(crossing.surfaceStableId
+                          == definition.surfaceStableId
+                      && crossing.minusRegionStableId
+                          == definition.minusRegionStableId
+                      && crossing.plusRegionStableId
+                          == definition.plusRegionStableId
+                      && crossing.axis == axis
+                      && normalIndex(crossing) == faceCoordinate
+                      && crossing.crossingFraction == expectedFraction
+                      && crossing.surfaceNormalVelocityMetersPerSecond
+                          == definition
+                              .surfaceNormalVelocityMetersPerSecond
+                      && crossing.resistance == definition.resistance
+                      && !occupied[cell],
+                  "planar porous assembly binds every tile to the authored epoch");
+            occupied[cell] = true;
+        }
+        MacVelocityField velocity(geometry);
+        const PorousPressureJumpField field(
+            geometry, velocity, crossings);
+        check(field.samples().size() == expectedCount
+                  && field.pressureJumps().faceCount() == expectedCount,
+              "planar porous assembly is directly consumable by projection");
+    }
+}
+
+void testPlanarAssemblyRejection() {
+    const auto geometry = grid();
+    PlanarPorousSheetDefinition definition{
+        100,
+        10,
+        20,
+        {movingPorousFaceTopologyVersion, GridFaceAxis::X, 1, 0},
+        -0.75,
+        0.25,
+        {40.0, 5.0},
+    };
+    auto invalid = definition;
+    invalid.surfaceStableId = 0;
+    checkRejected(
+        [&] { static_cast<void>(makePlanarPorousSheetCrossings(
+            geometry, invalid)); },
+        "planar porous assembly rejects zero identity");
+    invalid = definition;
+    invalid.plusRegionStableId = invalid.minusRegionStableId;
+    checkRejected(
+        [&] { static_cast<void>(makePlanarPorousSheetCrossings(
+            geometry, invalid)); },
+        "planar porous assembly rejects one-sided region topology");
+    invalid = definition;
+    invalid.surfaceNormalVelocityMetersPerSecond =
+        std::numeric_limits<double>::infinity();
+    checkRejected(
+        [&] { static_cast<void>(makePlanarPorousSheetCrossings(
+            geometry, invalid)); },
+        "planar porous assembly rejects non-finite kinematics");
+    invalid = definition;
+    invalid.resistance = {};
+    checkRejected(
+        [&] { static_cast<void>(makePlanarPorousSheetCrossings(
+            geometry, invalid)); },
+        "planar porous assembly rejects inactive material resistance");
+    invalid = definition;
+    invalid.topology.version = movingPorousFaceTopologyVersion + 1;
+    checkRejected(
+        [&] { static_cast<void>(makePlanarPorousSheetCrossings(
+            geometry, invalid)); },
+        "planar porous assembly rejects foreign topology versions");
+    invalid = definition;
+    invalid.physicalPlaneCoordinateMeters = -0.5;
+    checkRejected(
+        [&] { static_cast<void>(makePlanarPorousSheetCrossings(
+            geometry, invalid)); },
+        "planar porous assembly rejects exact segment boundaries");
+}
+
 } // namespace
 
 int main() {
     testInteriorAndAdjacentSelection();
     testPeriodicWrapAndAxes();
     testTransactionalRejection();
+    testCompletePlanarAssembly();
+    testPlanarAssemblyRejection();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d moving porous topology check(s) failed\n",
