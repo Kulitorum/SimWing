@@ -100,6 +100,13 @@ struct PeriodicFlowDiagnostics {
     CellScalarField& pressurePascals,
     const PeriodicFlowSettings& settings = {});
 
+[[nodiscard]] PeriodicFlowDiagnostics advancePeriodicFlow(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField& pressureJumps,
+    const PeriodicFlowSettings& settings = {});
+
 enum class PeriodicFlowStrangFailureStage : std::uint8_t {
     None = 0,
     FirstHalfDiffusion = 1,
@@ -168,6 +175,18 @@ advancePeriodicFlowStrangSspRk2(
     CellScalarField& pressurePascals,
     const PeriodicFlowStrangSspRk2Settings& settings = {});
 
+// Retains one immutable sharp-jump topology through both projected transport
+// stages inside the symmetric flow step. Diffusion remains a bulk operator;
+// moving crossings and updated porous laws must be supplied between accepted
+// outer steps.
+[[nodiscard]] PeriodicFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField& pressureJumps,
+    const PeriodicFlowStrangSspRk2Settings& settings = {});
+
 enum class PeriodicFlowStrangSubcyclingFailureStage : std::uint8_t {
     None = 0,
     SubstepLimit = 1,
@@ -227,6 +246,16 @@ advancePeriodicFlowStrangSspRk2Subcycled(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
+    const PeriodicFlowStrangSubcyclingSettings& settings = {});
+
+// Uses the same immutable crossings in every private substep and retry. The
+// caller fields still commit only after the complete outer ledger passes.
+[[nodiscard]] PeriodicFlowStrangSubcyclingDiagnostics
+advancePeriodicFlowStrangSspRk2Subcycled(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField& pressureJumps,
     const PeriodicFlowStrangSubcyclingSettings& settings = {});
 
 } // namespace simwing::fsi::fluid

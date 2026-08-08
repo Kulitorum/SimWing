@@ -7,15 +7,19 @@
 #include <numbers>
 #include <span>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
 using simwing::fsi::fluid::CellScalarField;
+using simwing::fsi::fluid::GridFaceAxis;
+using simwing::fsi::fluid::GridFacePressureJump;
 using simwing::fsi::fluid::MacVelocityField;
 using simwing::fsi::fluid::PeriodicCartesianGrid;
 using simwing::fsi::fluid::ProjectedMacAdvectionFailureStage;
 using simwing::fsi::fluid::ProjectedMacAdvectionSspRk2Settings;
 using simwing::fsi::fluid::ProjectionSettings;
+using simwing::fsi::fluid::SharpPressureJumpField;
 using simwing::fsi::fluid::VariableMacAdvectionSettings;
 using simwing::fsi::fluid::VariableMacReconstruction;
 using simwing::fsi::fluid::advectVelocityByMacFlow;
@@ -550,6 +554,88 @@ void testTransactionalRejection() {
           "validation: non-finite rejection does not rewrite either field");
 }
 
+void testStaticPressureJumpsAcrossBothStages() {
+    const PeriodicCartesianGrid grid(
+        {8, 3, 2}, {}, {4.0, 1.5, 1.0});
+    std::vector<GridFacePressureJump> faces;
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            faces.push_back({
+                10, 1, 2, GridFaceAxis::X,
+                2, j, k, 100.0, 0.5});
+            faces.push_back({
+                20, 2, 1, GridFaceAxis::X,
+                6, j, k, -100.0, 0.5});
+        }
+    }
+    const SharpPressureJumpField jumps(grid, std::move(faces));
+    MacVelocityField velocity(grid);
+    std::ranges::fill(velocity.xFaces(), 0.4);
+    CellScalarField pressure(grid);
+    const auto originalVelocity = velocity;
+    const auto diagnostics = advectVelocityProjectedSspRk2(
+        grid, velocity, pressure, jumps, settings());
+    check(diagnostics.accepted
+              && diagnostics.firstProjection.pressureJumpFaceCount == 12
+              && diagnostics.secondProjection.pressureJumpFaceCount == 12,
+          "sharp transport: both SSPRK2 projection stages retain crossings");
+    double maximumVelocityError = 0.0;
+    for (std::size_t index = 0; index < grid.cellCount(); ++index) {
+        maximumVelocityError = std::max({
+            maximumVelocityError,
+            std::abs(velocity.xFaces()[index] - 0.4),
+            std::abs(velocity.yFaces()[index]),
+            std::abs(velocity.zFaces()[index]),
+        });
+    }
+    check(maximumVelocityError < 2.0e-13,
+          "sharp transport: balanced jumps create no spurious velocity");
+    double maximumPressureError = 0.0;
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                const double expected = i >= 2 && i < 6
+                    ? 50.0 : -50.0;
+                maximumPressureError = std::max(
+                    maximumPressureError,
+                    std::abs(pressure.values()[grid.cellIndex(i, j, k)]
+                             - expected));
+            }
+        }
+    }
+    check(maximumPressureError < 2.0e-12,
+          "sharp transport: final pressure preserves the analytic slab jump");
+
+    auto originalPathVelocity = originalVelocity;
+    auto emptyPathVelocity = originalVelocity;
+    CellScalarField originalPathPressure(grid);
+    CellScalarField emptyPathPressure(grid);
+    const SharpPressureJumpField empty(grid);
+    const auto originalDiagnostics = advectVelocityProjectedSspRk2(
+        grid, originalPathVelocity, originalPathPressure, settings());
+    const auto emptyDiagnostics = advectVelocityProjectedSspRk2(
+        grid, emptyPathVelocity, emptyPathPressure, empty, settings());
+    check(originalDiagnostics == emptyDiagnostics
+              && originalPathVelocity == emptyPathVelocity
+              && originalPathPressure == emptyPathPressure,
+          "sharp transport: empty jump overload is bit-exact to legacy path");
+
+    const PeriodicCartesianGrid foreignGrid(
+        {7, 3, 2}, {}, {3.5, 1.5, 1.0});
+    const SharpPressureJumpField foreign(foreignGrid);
+    auto rejectedVelocity = originalVelocity;
+    CellScalarField rejectedPressure(grid);
+    expectRejected(
+        [&] { static_cast<void>(advectVelocityProjectedSspRk2(
+            grid, rejectedVelocity, rejectedPressure,
+            foreign, settings())); },
+        "sharp transport: foreign crossing topology is rejected");
+    check(rejectedVelocity == originalVelocity
+              && rejectedPressure == CellScalarField(grid),
+          "sharp transport: rejected topology mutates neither field");
+}
+
 } // namespace
 
 int main() {
@@ -559,6 +645,7 @@ int main() {
     testObservedSecondOrderTemporalRefinement();
     testObservedNonlinearSpatialRefinement();
     testTransactionalRejection();
+    testStaticPressureJumpsAcrossBothStages();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d projected nonlinear advection check(s) failed\n",

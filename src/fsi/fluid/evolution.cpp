@@ -275,6 +275,29 @@ std::size_t boundedSubstepCount(
         1, static_cast<std::size_t>(std::ceil(requestedCount)));
 }
 
+PeriodicFlowDiagnostics advancePeriodicFlowImpl(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField* pressureJumps,
+    const PeriodicFlowSettings& settings);
+
+PeriodicFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2Impl(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField* pressureJumps,
+    const PeriodicFlowStrangSspRk2Settings& settings);
+
+PeriodicFlowStrangSubcyclingDiagnostics
+advancePeriodicFlowStrangSspRk2SubcycledImpl(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField* pressureJumps,
+    const PeriodicFlowStrangSubcyclingSettings& settings);
+
 } // namespace
 
 PeriodicFlowDiagnostics advancePeriodicFlow(
@@ -282,11 +305,37 @@ PeriodicFlowDiagnostics advancePeriodicFlow(
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
     const PeriodicFlowSettings& settings) {
+    return advancePeriodicFlowImpl(
+        grid, velocityMetersPerSecond, pressurePascals,
+        nullptr, settings);
+}
+
+PeriodicFlowDiagnostics advancePeriodicFlow(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField& pressureJumps,
+    const PeriodicFlowSettings& settings) {
+    return advancePeriodicFlowImpl(
+        grid, velocityMetersPerSecond, pressurePascals,
+        &pressureJumps, settings);
+}
+
+namespace {
+
+PeriodicFlowDiagnostics advancePeriodicFlowImpl(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField* pressureJumps,
+    const PeriodicFlowSettings& settings) {
     validateSettings(settings);
     if (!velocityMetersPerSecond.matches(grid)
-        || !pressurePascals.matches(grid)) {
+        || !pressurePascals.matches(grid)
+        || (pressureJumps != nullptr
+            && !pressureJumps->matches(grid))) {
         throw std::invalid_argument(
-            "periodic flow fields do not match their grid");
+            "periodic flow fields or pressure jumps do not match their grid");
     }
     if (!isFinite(velocityMetersPerSecond) || !isFinite(pressurePascals)) {
         throw std::invalid_argument(
@@ -438,8 +487,13 @@ PeriodicFlowDiagnostics advancePeriodicFlow(
         settings.projectionRelativeResidualTolerance;
     projectionSettings.maximumIterations =
         settings.projectionMaximumIterations;
-    diagnostics.projection = projectVelocity(
-        grid, candidateVelocity, candidatePressure, projectionSettings);
+    diagnostics.projection = pressureJumps == nullptr
+        ? projectVelocity(
+            grid, candidateVelocity, candidatePressure,
+            projectionSettings)
+        : projectVelocityWithPressureJumps(
+            grid, candidateVelocity, candidatePressure,
+            *pressureJumps, projectionSettings);
     if (!diagnostics.projection.converged) {
         diagnostics.failureStage =
             PeriodicFlowFailureStage::Projection;
@@ -515,17 +569,47 @@ PeriodicFlowDiagnostics advancePeriodicFlow(
     return diagnostics;
 }
 
+} // namespace
+
 PeriodicFlowStrangSspRk2Diagnostics
 advancePeriodicFlowStrangSspRk2(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
     const PeriodicFlowStrangSspRk2Settings& settings) {
+    return advancePeriodicFlowStrangSspRk2Impl(
+        grid, velocityMetersPerSecond, pressurePascals,
+        nullptr, settings);
+}
+
+PeriodicFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField& pressureJumps,
+    const PeriodicFlowStrangSspRk2Settings& settings) {
+    return advancePeriodicFlowStrangSspRk2Impl(
+        grid, velocityMetersPerSecond, pressurePascals,
+        &pressureJumps, settings);
+}
+
+namespace {
+
+PeriodicFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2Impl(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField* pressureJumps,
+    const PeriodicFlowStrangSspRk2Settings& settings) {
     validateSettings(settings);
     if (!velocityMetersPerSecond.matches(grid)
-        || !pressurePascals.matches(grid)) {
+        || !pressurePascals.matches(grid)
+        || (pressureJumps != nullptr
+            && !pressureJumps->matches(grid))) {
         throw std::invalid_argument(
-            "periodic Strang-SSPRK2 fields do not match their grid");
+            "periodic Strang-SSPRK2 fields or pressure jumps do not match their grid");
     }
     if (!isFinite(velocityMetersPerSecond) || !isFinite(pressurePascals)) {
         throw std::invalid_argument(
@@ -603,8 +687,13 @@ advancePeriodicFlowStrangSspRk2(
     diagnostics.firstHalfViscousEnergyLossJoules =
         diagnostics.firstHalfDiffusion.dissipatedKineticEnergyJoules;
 
-    diagnostics.projectedAdvection = advectVelocityProjectedSspRk2(
-        grid, candidateVelocity, candidatePressure, advectionSettings);
+    diagnostics.projectedAdvection = pressureJumps == nullptr
+        ? advectVelocityProjectedSspRk2(
+            grid, candidateVelocity, candidatePressure,
+            advectionSettings)
+        : advectVelocityProjectedSspRk2(
+            grid, candidateVelocity, candidatePressure,
+            *pressureJumps, advectionSettings);
     if (!diagnostics.projectedAdvection.accepted) {
         diagnostics.failureStage =
             PeriodicFlowStrangFailureStage::ProjectedAdvection;
@@ -699,17 +788,47 @@ advancePeriodicFlowStrangSspRk2(
     return diagnostics;
 }
 
+} // namespace
+
 PeriodicFlowStrangSubcyclingDiagnostics
 advancePeriodicFlowStrangSspRk2Subcycled(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
     const PeriodicFlowStrangSubcyclingSettings& settings) {
+    return advancePeriodicFlowStrangSspRk2SubcycledImpl(
+        grid, velocityMetersPerSecond, pressurePascals,
+        nullptr, settings);
+}
+
+PeriodicFlowStrangSubcyclingDiagnostics
+advancePeriodicFlowStrangSspRk2Subcycled(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField& pressureJumps,
+    const PeriodicFlowStrangSubcyclingSettings& settings) {
+    return advancePeriodicFlowStrangSspRk2SubcycledImpl(
+        grid, velocityMetersPerSecond, pressurePascals,
+        &pressureJumps, settings);
+}
+
+namespace {
+
+PeriodicFlowStrangSubcyclingDiagnostics
+advancePeriodicFlowStrangSspRk2SubcycledImpl(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField* pressureJumps,
+    const PeriodicFlowStrangSubcyclingSettings& settings) {
     validateSettings(settings);
     if (!velocityMetersPerSecond.matches(grid)
-        || !pressurePascals.matches(grid)) {
+        || !pressurePascals.matches(grid)
+        || (pressureJumps != nullptr
+            && !pressureJumps->matches(grid))) {
         throw std::invalid_argument(
-            "periodic Strang subcycling fields do not match their grid");
+            "periodic Strang subcycling fields or pressure jumps do not match their grid");
     }
     if (!isFinite(velocityMetersPerSecond) || !isFinite(pressurePascals)) {
         throw std::invalid_argument(
@@ -770,9 +889,13 @@ advancePeriodicFlowStrangSspRk2Subcycled(
              substepIndex < substepCount; ++substepIndex) {
             auto substepSettings = settings.flow;
             substepSettings.timeStepSeconds = diagnostics.substepSeconds;
-            const auto substep = advancePeriodicFlowStrangSspRk2(
-                grid, candidateVelocity, candidatePressure,
-                substepSettings);
+            const auto substep = pressureJumps == nullptr
+                ? advancePeriodicFlowStrangSspRk2(
+                    grid, candidateVelocity, candidatePressure,
+                    substepSettings)
+                : advancePeriodicFlowStrangSspRk2(
+                    grid, candidateVelocity, candidatePressure,
+                    *pressureJumps, substepSettings);
             diagnostics.maximumObservedOutgoingCourantNumber = std::max(
                 diagnostics.maximumObservedOutgoingCourantNumber,
                 maximumOutgoingCourantNumber(substep));
@@ -894,5 +1017,7 @@ advancePeriodicFlowStrangSspRk2Subcycled(
         return diagnostics;
     }
 }
+
+} // namespace
 
 } // namespace simwing::fsi::fluid

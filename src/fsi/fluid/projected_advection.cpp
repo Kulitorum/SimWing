@@ -158,6 +158,14 @@ ProjectionSettings projectionSettings(
     return result;
 }
 
+ProjectedMacAdvectionSspRk2Diagnostics
+advectVelocityProjectedSspRk2Impl(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField* pressureJumps,
+    const ProjectedMacAdvectionSspRk2Settings& settings);
+
 } // namespace
 
 ProjectedMacAdvectionSspRk2Diagnostics
@@ -166,11 +174,39 @@ advectVelocityProjectedSspRk2(
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
     const ProjectedMacAdvectionSspRk2Settings& settings) {
+    return advectVelocityProjectedSspRk2Impl(
+        grid, velocityMetersPerSecond, pressurePascals,
+        nullptr, settings);
+}
+
+ProjectedMacAdvectionSspRk2Diagnostics
+advectVelocityProjectedSspRk2(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField& pressureJumps,
+    const ProjectedMacAdvectionSspRk2Settings& settings) {
+    return advectVelocityProjectedSspRk2Impl(
+        grid, velocityMetersPerSecond, pressurePascals,
+        &pressureJumps, settings);
+}
+
+namespace {
+
+ProjectedMacAdvectionSspRk2Diagnostics
+advectVelocityProjectedSspRk2Impl(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField* pressureJumps,
+    const ProjectedMacAdvectionSspRk2Settings& settings) {
     validateSettings(settings);
     if (!velocityMetersPerSecond.matches(grid)
-        || !pressurePascals.matches(grid)) {
+        || !pressurePascals.matches(grid)
+        || (pressureJumps != nullptr
+            && !pressureJumps->matches(grid))) {
         throw std::invalid_argument(
-            "projected MAC SSPRK2 fields do not match their grid");
+            "projected MAC SSPRK2 fields or pressure jumps do not match their grid");
     }
     if (!isFinite(velocityMetersPerSecond) || !isFinite(pressurePascals)) {
         throw std::invalid_argument(
@@ -204,8 +240,12 @@ advectVelocityProjectedSspRk2(
         diagnostics.finite = diagnostics.firstAdvection.finite;
         return diagnostics;
     }
-    diagnostics.firstProjection = projectVelocity(
-        grid, firstVelocity, firstPressure, pressureSettings);
+    diagnostics.firstProjection = pressureJumps == nullptr
+        ? projectVelocity(
+            grid, firstVelocity, firstPressure, pressureSettings)
+        : projectVelocityWithPressureJumps(
+            grid, firstVelocity, firstPressure,
+            *pressureJumps, pressureSettings);
     if (!diagnostics.firstProjection.converged) {
         diagnostics.failureStage =
             ProjectedMacAdvectionFailureStage::FirstProjection;
@@ -239,8 +279,12 @@ advectVelocityProjectedSspRk2(
         velocityMetersPerSecond.zFaces(),
         twiceAdvancedVelocity.zFaces(), candidate.zFaces(),
         diagnostics.maximumVelocityChangeMetersPerSecond);
-    diagnostics.secondProjection = projectVelocity(
-        grid, candidate, finalPressure, pressureSettings);
+    diagnostics.secondProjection = pressureJumps == nullptr
+        ? projectVelocity(
+            grid, candidate, finalPressure, pressureSettings)
+        : projectVelocityWithPressureJumps(
+            grid, candidate, finalPressure,
+            *pressureJumps, pressureSettings);
     if (!diagnostics.secondProjection.converged) {
         diagnostics.failureStage =
             ProjectedMacAdvectionFailureStage::SecondProjection;
@@ -311,5 +355,7 @@ advectVelocityProjectedSspRk2(
     pressurePascals = std::move(finalPressure);
     return diagnostics;
 }
+
+} // namespace
 
 } // namespace simwing::fsi::fluid

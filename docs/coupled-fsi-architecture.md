@@ -636,8 +636,14 @@ crossing position, and signed pressure discontinuity. Multiple crossings on
 one face-normal cell segment must form a continuous region chain; its paired
 sharp gradient and Poisson source use their deterministic signed sum. A split
 static slab is bit-identical to the compact jump, while a balanced folded
-subcell pocket creates no pressure or flow. A separate physically grid-bound
-face-aligned interface now
+subcell pocket creates no pressure or flow. The projected nonlinear SSPRK2
+operator applies one immutable jump field at both pressure stages; the composed
+first-order, Strang, and bounded subcycled paths retain it through every private
+step and retry. Empty-jump overloads delegate bit-exactly to the original APIs,
+and foreign topology is rejected before mutation. This is a static prescribed
+discontinuity under the existing no-added-energy periodic ledger; moving or
+powered jump work still requires the coupled interface energy path. A separate
+physically grid-bound face-aligned interface now
 removes constrained faces from the pressure graph, partitions cells into stable
 fluid regions, and holds prescribed normal MAC velocity exactly while solving
 one zero-mean pressure correction per region. The prior mean pressure in each
@@ -823,7 +829,10 @@ continuous region chain, and contribute through one deterministic aggregate
 stencil jump. An owning frame adapter now retains every individual crossing as
 an oriented quad at its subcell fraction with its two region IDs, signed jump,
 normal, and reconstructed diagnostic pressure. A static headless worker makes
-that layered field replayable without involving Qt. The regression budgets are:
+that layered field replayable without involving Qt. The same immutable field
+now survives both projected SSPRK2 pressure stages and every private Strang
+substep without changing the balanced slab velocity; empty fields preserve the
+legacy arithmetic exactly. The regression budgets are:
 gradient/divergence adjoint error at or below `2e-14` in the canonical
 integral, Taylor-Green maximum divergence below `2e-14 1/s` with a
 bit-identical zero correction, discretely manufactured post-projection L2

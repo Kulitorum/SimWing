@@ -7,10 +7,13 @@
 #include <numbers>
 #include <span>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
 using simwing::fsi::fluid::CellScalarField;
+using simwing::fsi::fluid::GridFaceAxis;
+using simwing::fsi::fluid::GridFacePressureJump;
 using simwing::fsi::fluid::MacVelocityField;
 using simwing::fsi::fluid::PeriodicCartesianGrid;
 using simwing::fsi::fluid::PeriodicFlowAdvectionMode;
@@ -24,6 +27,7 @@ using simwing::fsi::fluid::PeriodicFlowStrangSubcyclingSettings;
 using simwing::fsi::fluid::PeriodicMacDiffusionSettings;
 using simwing::fsi::fluid::ProjectedMacAdvectionSspRk2Settings;
 using simwing::fsi::fluid::ProjectionSettings;
+using simwing::fsi::fluid::SharpPressureJumpField;
 using simwing::fsi::fluid::UniformMacAdvectionSettings;
 using simwing::fsi::fluid::VariableMacAdvectionSettings;
 using simwing::fsi::fluid::VariableMacReconstruction;
@@ -1065,6 +1069,146 @@ void testInvalidInputsAreTransactional() {
           "validation: grid mismatch is transactional");
 }
 
+SharpPressureJumpField staticSlabJumps(
+    const PeriodicCartesianGrid& grid) {
+    std::vector<GridFacePressureJump> faces;
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            faces.push_back({
+                10, 1, 2, GridFaceAxis::X,
+                2, j, k, 100.0, 0.5});
+            faces.push_back({
+                20, 2, 1, GridFaceAxis::X,
+                6, j, k, -100.0, 0.5});
+        }
+    }
+    return SharpPressureJumpField(grid, std::move(faces));
+}
+
+void checkStaticSlabState(const PeriodicCartesianGrid& grid,
+                          const MacVelocityField& velocity,
+                          const CellScalarField& pressure,
+                          const char* velocityMessage,
+                          const char* pressureMessage) {
+    double maximumVelocityError = 0.0;
+    for (std::size_t index = 0; index < grid.cellCount(); ++index) {
+        maximumVelocityError = std::max({
+            maximumVelocityError,
+            std::abs(velocity.xFaces()[index] - 0.4),
+            std::abs(velocity.yFaces()[index]),
+            std::abs(velocity.zFaces()[index]),
+        });
+    }
+    check(maximumVelocityError < 3.0e-13, velocityMessage);
+    const auto counts = grid.cellCounts();
+    double maximumPressureError = 0.0;
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                const double expected = i >= 2 && i < 6
+                    ? 50.0 : -50.0;
+                maximumPressureError = std::max(
+                    maximumPressureError,
+                    std::abs(pressure.values()[grid.cellIndex(i, j, k)]
+                             - expected));
+            }
+        }
+    }
+    check(maximumPressureError < 3.0e-12, pressureMessage);
+}
+
+void testStaticJumpsAcrossCompleteFlowPaths() {
+    const PeriodicCartesianGrid grid(
+        {8, 3, 2}, {}, {4.0, 1.5, 1.0});
+    const auto jumps = staticSlabJumps(grid);
+    MacVelocityField initialVelocity(grid);
+    std::ranges::fill(initialVelocity.xFaces(), 0.4);
+
+    auto firstOrderVelocity = initialVelocity;
+    CellScalarField firstOrderPressure(grid);
+    const auto firstOrder = advancePeriodicFlow(
+        grid, firstOrderVelocity, firstOrderPressure,
+        jumps, settings());
+    check(firstOrder.accepted
+              && firstOrder.projection.pressureJumpFaceCount == 12,
+          "sharp full flow: first-order projection retains every crossing");
+    checkStaticSlabState(
+        grid, firstOrderVelocity, firstOrderPressure,
+        "sharp full flow: first-order step creates no spurious velocity",
+        "sharp full flow: first-order step retains analytic pressure");
+
+    auto strangVelocity = initialVelocity;
+    CellScalarField strangPressure(grid);
+    const auto strang = advancePeriodicFlowStrangSspRk2(
+        grid, strangVelocity, strangPressure,
+        jumps, strangSettings());
+    check(strang.accepted
+              && strang.projectedAdvection.firstProjection
+                     .pressureJumpFaceCount == 12
+              && strang.projectedAdvection.secondProjection
+                     .pressureJumpFaceCount == 12,
+          "sharp full flow: Strang transport retains crossings at both stages");
+    checkStaticSlabState(
+        grid, strangVelocity, strangPressure,
+        "sharp full flow: Strang step creates no spurious velocity",
+        "sharp full flow: Strang step retains analytic pressure");
+
+    PeriodicFlowStrangSubcyclingSettings subcyclingSettings;
+    subcyclingSettings.flow = strangSettings();
+    subcyclingSettings.flow.timeStepSeconds = 0.02;
+    subcyclingSettings.maximumSubsteps = 64;
+    auto subcycledVelocity = initialVelocity;
+    CellScalarField subcycledPressure(grid);
+    const auto subcycled = advancePeriodicFlowStrangSspRk2Subcycled(
+        grid, subcycledVelocity, subcycledPressure,
+        jumps, subcyclingSettings);
+    check(subcycled.accepted
+              && subcycled.completedSubstepCount
+                  == subcycled.plannedSubstepCount
+              && std::ranges::all_of(
+                  subcycled.substeps,
+                  [](const auto& substep) {
+                      return substep.projectedAdvection.firstProjection
+                                     .pressureJumpFaceCount == 12
+                          && substep.projectedAdvection.secondProjection
+                                     .pressureJumpFaceCount == 12;
+                  }),
+          "sharp full flow: every private substep retains the immutable topology");
+    checkStaticSlabState(
+        grid, subcycledVelocity, subcycledPressure,
+        "sharp full flow: subcycling creates no spurious velocity",
+        "sharp full flow: subcycling retains analytic pressure");
+
+    const SharpPressureJumpField empty(grid);
+    auto legacyVelocity = initialVelocity;
+    auto emptyVelocity = initialVelocity;
+    CellScalarField legacyPressure(grid);
+    CellScalarField emptyPressure(grid);
+    const auto legacy = advancePeriodicFlowStrangSspRk2Subcycled(
+        grid, legacyVelocity, legacyPressure, subcyclingSettings);
+    const auto withEmpty = advancePeriodicFlowStrangSspRk2Subcycled(
+        grid, emptyVelocity, emptyPressure, empty, subcyclingSettings);
+    check(legacy == withEmpty
+              && legacyVelocity == emptyVelocity
+              && legacyPressure == emptyPressure,
+          "sharp full flow: empty subcycled overload is bit-exact to legacy path");
+
+    const PeriodicCartesianGrid foreignGrid(
+        {7, 3, 2}, {}, {3.5, 1.5, 1.0});
+    const SharpPressureJumpField foreign(foreignGrid);
+    auto rejectedVelocity = initialVelocity;
+    CellScalarField rejectedPressure(grid);
+    expectRejected(
+        [&] { static_cast<void>(advancePeriodicFlowStrangSspRk2Subcycled(
+            grid, rejectedVelocity, rejectedPressure,
+            foreign, subcyclingSettings)); },
+        "sharp full flow: foreign static topology is rejected");
+    check(rejectedVelocity == initialVelocity
+              && rejectedPressure == CellScalarField(grid),
+          "sharp full flow: rejected topology mutates neither field");
+}
+
 } // namespace
 
 int main() {
@@ -1080,6 +1224,7 @@ int main() {
     testStrangRollback();
     testStageFailureRollback();
     testInvalidInputsAreTransactional();
+    testStaticJumpsAcrossCompleteFlowPaths();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing fluid evolution check(s) failed\n",

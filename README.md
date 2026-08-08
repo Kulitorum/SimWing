@@ -143,6 +143,12 @@ retain their stable surfaces and region sequence while the paired gradient and
 Poisson stencils use their deterministic signed sum. A split-region slab is
 bit-identical to its compact jump and a balanced folded subcell pocket creates
 no spurious pressure or flow.
+The projected nonlinear SSPRK2 operator now applies one immutable jump field at
+both internal pressure stages, and the first-order, Strang, and retrying
+subcycled full-flow paths carry that same topology through every private step.
+The balanced slab stays sharp without spurious velocity throughout; empty-jump
+overloads remain bit-exact to the original evolution APIs. Powered or moving
+jump work still belongs in an explicit coupled energy ledger.
 The immutable diagnostic adapter keeps the owning cell pressure and velocity
 samples and adds a separate oriented quad for every authored crossing, so
 same-face layers remain visible with their region pairing, signed jump, normal,

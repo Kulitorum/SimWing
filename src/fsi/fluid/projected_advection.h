@@ -79,4 +79,16 @@ advectVelocityProjectedSspRk2(
     CellScalarField& pressurePascals,
     const ProjectedMacAdvectionSspRk2Settings& settings = {});
 
+// Static sharp crossings are applied at both SSPRK2 projection stages. The
+// authored field is immutable over this interval; moving topology and
+// pressure-dependent porous updates belong outside this operator. An empty
+// field delegates bit-exactly to the original no-jump path.
+[[nodiscard]] ProjectedMacAdvectionSspRk2Diagnostics
+advectVelocityProjectedSspRk2(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const SharpPressureJumpField& pressureJumps,
+    const ProjectedMacAdvectionSspRk2Settings& settings = {});
+
 } // namespace simwing::fsi::fluid
