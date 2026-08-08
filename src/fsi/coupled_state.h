@@ -201,10 +201,21 @@ using StrongCouplingSolverCallback = std::function<StrongCouplingSolverResult(
     std::span<const double>,
     double)>;
 
+struct StrongCouplingMacroStepAttempt {
+    CouplingMacroStepRetryDecision decision;
+    StrongCouplingIterationResult terminalIteration;
+    std::uint64_t solverRunCount = 0;
+
+    bool operator==(const StrongCouplingMacroStepAttempt&) const = default;
+};
+
 struct StrongCouplingMacroStepRunResult {
     CouplingMacroStepRetryDecision decision;
     StrongCouplingIterationResult lastIteration;
     std::uint64_t solverRunCount = 0;
+    // One terminal record per attempted time step, bounded by the retry policy
+    // to maximumCouplingMacroStepRetries + 1 entries.
+    std::vector<StrongCouplingMacroStepAttempt> attempts;
 
     bool operator==(const StrongCouplingMacroStepRunResult&) const = default;
 };
@@ -214,8 +225,9 @@ struct StrongCouplingMacroStepRunResult {
 // reduced residuals. Nonterminal fixed-point iterations rewind Structure and
 // fluid while retaining Aitken history. Exhausted attempts rewind all state
 // before a smaller retry; terminal failure also leaves the accepted baseline
-// intact. Callback and validation failures restore the active baseline before
-// propagating the exception.
+// intact. The returned attempt history retains each exhausted/accepted/failed
+// terminal decision. Callback and validation failures restore the active
+// baseline before propagating the exception.
 [[nodiscard]] StrongCouplingMacroStepRunResult runStrongCouplingMacroStep(
     StrongCouplingMacroStepState& macroStep,
     const StrongCouplingSolverCallback& solve);

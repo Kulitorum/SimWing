@@ -188,9 +188,11 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   between fixed-point iterations without discarding the advanced Aitken state.
   Its generic loop driver validates each callback-produced physical epoch,
   advances convergence, performs both rollback modes, retains only converged
-  output, and restores the baseline on callback or terminal retry failure. No
-  general wing worker supplies that callback yet; the strong-piston canonical
-  is the first real solver-chain callback and regression owner.
+  output, and restores the baseline on callback or terminal retry failure. Its
+  bounded result retains one terminal decision and solver-run count per
+  attempted time step. No general wing worker supplies that callback yet; the
+  strong-piston canonical is the first real solver-chain callback and
+  regression owner.
 - `simwing_fluid_structure_bridge`: Qt-free stable-ID bridges from one
   face-aligned fluid-pressure surface to one structural coupling surface. The
   first is the exact uniform subset; the planar face-resolved path clips fixed

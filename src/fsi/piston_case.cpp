@@ -307,6 +307,9 @@ void appendStrongPistonFields(
         "coupling.retry_count", "1", viewer::FieldAssociation::Global,
         {static_cast<double>(diagnostics.coupling.decision.retryCount)}});
     frame.scalarFields.push_back({
+        "coupling.attempt_count", "1", viewer::FieldAssociation::Global,
+        {static_cast<double>(diagnostics.coupling.attempts.size())}});
+    frame.scalarFields.push_back({
         "interface.speed", "m/s", viewer::FieldAssociation::Global,
         {diagnostics.acceptedInterfaceSpeedMetersPerSecond}});
     frame.scalarFields.push_back({

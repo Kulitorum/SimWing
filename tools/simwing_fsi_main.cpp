@@ -1362,7 +1362,8 @@ int main(int argc, char* argv[]) {
                     std::printf(
                         "simwing-fsi completed %llu strong-piston step(s), "
                         "t=%.9g s, speed=%.9g m/s, coupling-iterations=%llu, "
-                        "solver-runs=%llu, retries=%u, velocity-closure=%.3g m/s, "
+                        "solver-runs=%llu, attempts=%zu, retries=%u, "
+                        "velocity-closure=%.3g m/s, "
                         "added-mass=%.9g kg, analytic-residual=%.3g m/s, "
                         "checkpoint-writes=%llu, "
                         "trace=%s\n",
@@ -1375,6 +1376,7 @@ int main(int argc, char* argv[]) {
                                 .convergence.iteration),
                         static_cast<unsigned long long>(
                             coupled.coupling.solverRunCount),
+                        coupled.coupling.attempts.size(),
                         coupled.coupling.decision.retryCount,
                         coupled.velocityClosureMetersPerSecond,
                         coupled.measuredDiscreteAddedMassKilograms,

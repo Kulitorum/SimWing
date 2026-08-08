@@ -690,6 +690,19 @@ void testStrongCouplingRunnerConvergesAfterRetry() {
               && result.lastIteration.status
                   == StrongCouplingIterationStatus::Converged
               && result.solverRunCount == 4
+              && result.attempts.size() == 2
+              && result.attempts[0].decision.status
+                  == CouplingMacroStepRetryStatus::RetryPending
+              && result.attempts[0].decision.timeStepSeconds == 0.08
+              && result.attempts[0].terminalIteration.status
+                  == StrongCouplingIterationStatus::Exhausted
+              && result.attempts[0].solverRunCount == 2
+              && result.attempts[1].decision.status
+                  == CouplingMacroStepRetryStatus::Accepted
+              && result.attempts[1].decision.timeStepSeconds == 0.04
+              && result.attempts[1].terminalIteration.status
+                  == StrongCouplingIterationStatus::Converged
+              && result.attempts[1].solverRunCount == 2
               && largeStepRuns == 2
               && reducedStepRuns == 2,
           "runner: exhausted large step retries and converges at the reduced step");
@@ -736,6 +749,13 @@ void testStrongCouplingRunnerFailureAndExceptionRollback() {
     check(failed.decision.status
               == CouplingMacroStepRetryStatus::Failed
               && failed.solverRunCount == 2
+              && failed.attempts.size() == 2
+              && failed.attempts[0].decision.status
+                  == CouplingMacroStepRetryStatus::RetryPending
+              && failed.attempts[1].decision.status
+                  == CouplingMacroStepRetryStatus::Failed
+              && failed.attempts[0].solverRunCount == 1
+              && failed.attempts[1].solverRunCount == 1
               && sameStructureState(
                   failedState.structure, failedBaseline.structure)
               && sameFluidCheckpoint(

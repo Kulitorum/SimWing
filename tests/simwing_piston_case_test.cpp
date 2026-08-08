@@ -230,6 +230,11 @@ void testStrongCoupledLightPiston() {
                       == fsi::CouplingMacroStepRetryStatus::Accepted
                   && observedResult.coupling.solverRunCount >= 3
                   && observedResult.coupling.solverRunCount <= 30
+                  && observedResult.coupling.attempts.size() == 1
+                  && observedResult.coupling.attempts.front().decision.status
+                      == fsi::CouplingMacroStepRetryStatus::Accepted
+                  && observedResult.coupling.attempts.front().solverRunCount
+                      == observedResult.coupling.solverRunCount
                   && observedResult.coupling.lastIteration.status
                       == fsi::StrongCouplingIterationStatus::Converged,
               "strong piston: the real callback converges inside bounded strong coupling");
@@ -302,6 +307,7 @@ void testStrongCoupledPistonFrames() {
               && finalFrame.triangles.size() == 2
               && scalarField(finalFrame, "coupling.solver_runs") != nullptr
               && scalarField(finalFrame, "coupling.retry_count") != nullptr
+              && scalarField(finalFrame, "coupling.attempt_count") != nullptr
               && scalarField(finalFrame, "interface.speed") != nullptr
               && scalarField(
                   finalFrame, "interface.velocity_closure") != nullptr

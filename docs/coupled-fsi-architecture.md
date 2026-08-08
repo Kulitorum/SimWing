@@ -765,8 +765,11 @@ those states. It validates each returned Structure/fluid epoch, advances the
 relaxation/convergence owner, rewinds only the solvers between iterations, and
 performs full rollback before a reduced retry. Converged output remains live;
 terminal retry failure, invalid callback output, or an exception restores the
-accepted baseline. The first real fluid/Structure callback remains future
-worker work.
+accepted baseline. Its bounded result records each attempt's terminal retry
+decision, terminal iteration result, time step, and solver-run count, retaining
+the exhausted large-step evidence after a reduced attempt succeeds. The
+strong-piston canonical is the first real fluid/Structure callback; a general
+wing callback remains future work.
 The topology-bound
 macro-step surface computes the decision's
 inputs from saved-baseline, previous, and current stable-ID kinematics plus two

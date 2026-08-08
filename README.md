@@ -316,8 +316,11 @@ fixed-point solve while the advanced Aitken iterate remains intact. A generic
 Qt-free loop driver now invokes a typed physical-solver callback, validates its
 accepted epoch, advances Aitken/convergence, performs those iteration rewinds,
 and carries exhaustion through bounded full-state retries. Terminal numerical
-failure or a callback exception restores the accepted macro-step baseline. A
-real fluid/Structure worker callback still remains to be wired. The
+failure or a callback exception restores the accepted macro-step baseline. Its
+bounded result retains one terminal decision, iteration result, time step, and
+solver-run count per attempt, so an exhausted large step remains observable
+after a smaller step succeeds. The strong-piston canonical supplies the first
+real fluid/Structure callback. The
 macro-step surface supplies the residual norms from
 stable-ID-bound baseline/previous/current kinematics and consecutive nodal
 traction results. It uses maximum physical nodal updates, references motion to

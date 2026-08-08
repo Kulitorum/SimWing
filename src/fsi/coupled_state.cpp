@@ -409,6 +409,8 @@ StrongCouplingMacroStepRunResult runStrongCouplingMacroStep(
     }
 
     StrongCouplingMacroStepRunResult result;
+    result.attempts.reserve(maximumCouplingMacroStepRetries + 1);
+    std::uint64_t attemptSolverRunCount = 0;
     try {
         while (true) {
             const StrongCouplingSolverResult solved = solve(
@@ -418,6 +420,7 @@ StrongCouplingMacroStepRunResult runStrongCouplingMacroStep(
                 state.iteration().currentInterface(),
                 macroStep.decision().timeStepSeconds);
             ++result.solverRunCount;
+            ++attemptSolverRunCount;
             static_cast<void>(state.solverCheckpoint());
             result.lastIteration = state.iteration().advance(
                 solved.unrelaxedInterface, solved.residuals);
@@ -429,9 +432,15 @@ StrongCouplingMacroStepRunResult runStrongCouplingMacroStep(
             }
 
             result.decision = macroStep.reportTerminalIteration();
+            result.attempts.push_back({
+                result.decision,
+                result.lastIteration,
+                attemptSolverRunCount,
+            });
             if (result.decision.status
                     == CouplingMacroStepRetryStatus::RetryPending) {
                 static_cast<void>(macroStep.restoreAndBeginRetry());
+                attemptSolverRunCount = 0;
                 continue;
             }
             if (result.decision.status
