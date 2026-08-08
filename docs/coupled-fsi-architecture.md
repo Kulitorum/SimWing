@@ -527,6 +527,9 @@ envelope payload length without a host-native prefix and flushes every response.
 all three adapters, suppresses viewer launch and textual stdout, and completes the
 trace before acknowledging stop. A restored worker reports its checkpoint's
 absolute step/time in Ready and writes only newly accepted frames to its trace.
+The porous-sheet stdio regression advances through its first topology rebase,
+persists accepted step 330, reproduces step 331 in the original run, and emits
+that same single next frame after a restored Ready response.
 The exact-model capture now exports validated scene-v2.1 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical

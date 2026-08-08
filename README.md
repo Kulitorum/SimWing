@@ -124,7 +124,9 @@ puts no human-readable text on protocol stdout, completes the trace before the
 stopped response, and uses `--checkpoint-out` as the checkpoint-command target.
 Supplying `--checkpoint-in` makes the initial Ready response expose the restored
 absolute step/time; the new trace starts with the next accepted frame rather
-than replaying earlier frames.
+than replaying earlier frames. The porous-sheet end-to-end control regression
+checkpoints its rebased step 330 and verifies exact step-331 continuation in
+both the original and resumed traces.
 Ordinary step-driven CLI behavior is unchanged.
 Both the projected transport and Strang flow paths select donor-cell or limited
 monotonized-central reconstruction explicitly; donor-cell remains the default.

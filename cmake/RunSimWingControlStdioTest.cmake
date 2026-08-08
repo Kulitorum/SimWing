@@ -18,6 +18,13 @@ foreach(required
     endif()
 endforeach()
 
+if(NOT DEFINED ADVANCE_STEP_COUNT OR "${ADVANCE_STEP_COUNT}" STREQUAL "")
+    set(ADVANCE_STEP_COUNT 2)
+endif()
+if(NOT "${ADVANCE_STEP_COUNT}" MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR "ADVANCE_STEP_COUNT must be a positive integer")
+endif()
+
 file(REMOVE
     "${COMMAND_FILE}"
     "${RESPONSE_FILE}"
@@ -31,6 +38,7 @@ file(REMOVE
 
 execute_process(
     COMMAND "${CONTROL_FIXTURE}" write "${COMMAND_FILE}"
+        "${ADVANCE_STEP_COUNT}"
     RESULT_VARIABLE write_result
     OUTPUT_VARIABLE write_output
     ERROR_VARIABLE write_error

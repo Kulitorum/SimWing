@@ -6,6 +6,7 @@
 #include "viewer_protocol.h"
 #include "worker_control_stream.h"
 
+#include <charconv>
 #include <cstdio>
 #include <fstream>
 #include <limits>
@@ -150,7 +151,8 @@ std::vector<std::uint8_t> serializedFrame(
     return bytes;
 }
 
-int writeCommands(const std::string& path) {
+int writeCommands(const std::string& path,
+                  const std::uint64_t advanceStepCount) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     if (!output) {
         std::fprintf(stderr, "cannot create command fixture: %s\n",
@@ -158,7 +160,7 @@ int writeCommands(const std::string& path) {
         return 1;
     }
     const std::vector<fsi::WorkerControlCommand> commands{
-        {fsi::WorkerControlCommandKind::Advance, 101, 2},
+        {fsi::WorkerControlCommandKind::Advance, 101, advanceStepCount},
         {fsi::WorkerControlCommandKind::Checkpoint, 102, 0},
         {fsi::WorkerControlCommandKind::Advance, 103, 1},
         {fsi::WorkerControlCommandKind::Stop, 104, 0},
@@ -472,18 +474,27 @@ int verifyPorousSheetResponses(
     const std::string& tracePath) {
     fsi::CoupledPorousSheetCase definition;
     const double stepSeconds = definition.stepSettings().timeStepSeconds;
-    const double timeAtStep2 = stepSeconds + stepSeconds;
-    const double timeAtStep3 = timeAtStep2 + stepSeconds;
+    constexpr std::uint64_t checkpointStep = 330;
+    constexpr std::uint64_t finalStep = checkpointStep + 1;
+    double timeAtCheckpoint = 0.0;
+    for (std::uint64_t step = 0; step < checkpointStep; ++step) {
+        timeAtCheckpoint += stepSeconds;
+    }
+    const double timeAtFinal = timeAtCheckpoint + stepSeconds;
     const std::vector<fsi::WorkerControlResponse> expected{
         {fsi::WorkerControlResponseKind::Ready, 0, 0, 0.0, 0,
          fsi::WorkerControlFailureCode::None, {}},
-        {fsi::WorkerControlResponseKind::Advanced, 101, 2, timeAtStep2, 2,
+        {fsi::WorkerControlResponseKind::Advanced, 101, checkpointStep,
+         timeAtCheckpoint, checkpointStep,
          fsi::WorkerControlFailureCode::None, {}},
-        {fsi::WorkerControlResponseKind::Checkpointed, 102, 2, timeAtStep2, 0,
+        {fsi::WorkerControlResponseKind::Checkpointed, 102, checkpointStep,
+         timeAtCheckpoint, 0,
          fsi::WorkerControlFailureCode::None, {}},
-        {fsi::WorkerControlResponseKind::Advanced, 103, 3, timeAtStep3, 1,
+        {fsi::WorkerControlResponseKind::Advanced, 103, finalStep,
+         timeAtFinal, 1,
          fsi::WorkerControlFailureCode::None, {}},
-        {fsi::WorkerControlResponseKind::Stopped, 104, 3, timeAtStep3, 0,
+        {fsi::WorkerControlResponseKind::Stopped, 104, finalStep,
+         timeAtFinal, 0,
          fsi::WorkerControlFailureCode::None, {}},
     };
     if (!verifyResponseFile(responsePath, expected)) {
@@ -494,10 +505,12 @@ int verifyPorousSheetResponses(
     if (!readPorousSheetCheckpoint(checkpointPath, checkpoint)) {
         return 1;
     }
-    if (checkpoint.acceptedStepCount != 2
-        || checkpoint.simulationTimeSeconds != timeAtStep2) {
+    if (checkpoint.acceptedStepCount != checkpointStep
+        || checkpoint.simulationTimeSeconds != timeAtCheckpoint
+        || checkpoint.topologyRebaseCount != 1
+        || checkpoint.porousFaceCoordinate != 4) {
         std::fprintf(stderr,
-                     "porous-sheet control checkpoint is not step two\n");
+                     "porous-sheet control checkpoint is not the rebased safe point\n");
         return 1;
     }
 
@@ -531,23 +544,24 @@ int verifyPorousSheetResponses(
             return 1;
         }
     }
-    if (frames.size() != 3
+    if (frames.size() != finalStep
         || frames[0].step != 1
-        || frames[1].step != 2
-        || frames[2].step != 3
-        || frames[1].simulationTimeSeconds != timeAtStep2
-        || frames[2].simulationTimeSeconds != timeAtStep3) {
+        || frames[checkpointStep - 1].step != checkpointStep
+        || frames.back().step != finalStep
+        || frames[checkpointStep - 1].simulationTimeSeconds
+            != timeAtCheckpoint
+        || frames.back().simulationTimeSeconds != timeAtFinal) {
         std::fprintf(stderr,
-                     "porous-sheet control trace lacks three accepted steps\n");
+                     "porous-sheet control trace lacks the accepted rebased sequence\n");
         return 1;
     }
 
     fsi::CoupledPorousSheetCase resumed;
     resumed.restore(checkpoint);
     if (serializedFrame(resumed.advance())
-        != serializedFrame(frames[2])) {
+        != serializedFrame(frames.back())) {
         std::fprintf(stderr,
-                     "porous-sheet checkpoint does not replay trace step three\n");
+                     "porous-sheet checkpoint does not replay the next trace step\n");
         return 1;
     }
     return 0;
@@ -606,8 +620,23 @@ int verifyPorousSheetResume(
 } // namespace
 
 int main(int argc, char* argv[]) {
-    if (argc == 3 && std::string_view(argv[1]) == "write") {
-        return writeCommands(argv[2]);
+    if ((argc == 3 || argc == 4)
+        && std::string_view(argv[1]) == "write") {
+        std::uint64_t advanceStepCount = 2;
+        if (argc == 4) {
+            const std::string_view text(argv[3]);
+            const auto parsed = std::from_chars(
+                text.data(), text.data() + text.size(),
+                advanceStepCount);
+            if (parsed.ec != std::errc{}
+                || parsed.ptr != text.data() + text.size()
+                || advanceStepCount == 0) {
+                std::fprintf(stderr,
+                             "write advance count must be a positive integer\n");
+                return 2;
+            }
+        }
+        return writeCommands(argv[2], advanceStepCount);
     }
     if (argc == 3 && std::string_view(argv[1]) == "write-resume") {
         return writeResumeCommands(argv[2]);
@@ -634,7 +663,7 @@ int main(int argc, char* argv[]) {
     }
     std::fprintf(stderr,
                  "usage: simwing-control-stdio-fixture "
-                 "write COMMANDS | write-resume COMMANDS | "
+                 "write COMMANDS [ADVANCE_STEPS] | write-resume COMMANDS | "
                  "verify RESPONSES CHECKPOINT TRACE | "
                  "verify-resume RESPONSES CHECKPOINT TRACE | "
                  "verify-open RESPONSES CHECKPOINT TRACE | "

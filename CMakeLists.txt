@@ -1491,6 +1491,7 @@ add_test(NAME simwing_fsi_porous_sheet_control_stdio
         "-DSIMWING_FSI=$<TARGET_FILE:simwing-fsi>"
         "-DCONTROL_FIXTURE=$<TARGET_FILE:simwing-control-stdio-fixture>"
         "-DWORKER_CASE=porous-sheet"
+        "-DADVANCE_STEP_COUNT=330"
         "-DVERIFY_MODE=verify-porous"
         "-DRESUME_VERIFY_MODE=verify-porous-resume"
         "-DCOMMAND_FILE=${CMAKE_BINARY_DIR}/simwing-porous-control-commands.swcc"
