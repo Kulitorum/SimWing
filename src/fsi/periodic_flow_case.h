@@ -7,6 +7,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
+#include <string>
+#include <vector>
 
 namespace simwing::fsi {
 
@@ -15,8 +18,54 @@ inline constexpr char periodicFlowCaseChecksum[] =
 inline constexpr char periodicFlowCaseSolverId[] =
     "simwing-fsi-periodic-flow-worker-v1";
 inline constexpr std::uint32_t periodicFlowCaseCheckpointVersion = 1;
+inline constexpr std::uint16_t periodicFlowCaseCheckpointProtocolVersion = 1;
 inline constexpr std::uint64_t periodicFlowCaseDefinitionFingerprint =
     0x706572666c6f7731ull;
+
+struct PeriodicFlowCaseCheckpoint;
+
+struct PeriodicFlowCaseCheckpointLimits {
+    std::uint64_t maximumBytes = 64ULL * 1024ULL * 1024ULL;
+    std::uint64_t maximumScalarSamples = 5'000'000;
+    std::uint64_t maximumSubsteps = fluid::periodicFlowStrangMaximumSubsteps;
+};
+
+enum class PeriodicFlowCaseCheckpointErrorCode {
+    None,
+    InvalidData,
+    InvalidMagic,
+    UnsupportedVersion,
+    LimitExceeded,
+    Truncated,
+    TrailingData,
+    ChecksumMismatch,
+};
+
+struct PeriodicFlowCaseCheckpointError {
+    PeriodicFlowCaseCheckpointErrorCode code =
+        PeriodicFlowCaseCheckpointErrorCode::None;
+    std::string message;
+
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return code != PeriodicFlowCaseCheckpointErrorCode::None;
+    }
+};
+
+// Deterministic bounded little-endian persistence for the complete private
+// checkpoint payload. The envelope version, length, and checksum are validated
+// before allocating fields; decoding commits the output only after a fresh
+// PeriodicFlowCase accepts the reconstructed checkpoint.
+[[nodiscard]] bool serializePeriodicFlowCaseCheckpoint(
+    const PeriodicFlowCaseCheckpoint& checkpoint,
+    std::vector<std::uint8_t>& bytes,
+    PeriodicFlowCaseCheckpointError* error = nullptr,
+    const PeriodicFlowCaseCheckpointLimits& limits = {});
+
+[[nodiscard]] bool deserializePeriodicFlowCaseCheckpoint(
+    std::span<const std::uint8_t> bytes,
+    PeriodicFlowCaseCheckpoint& checkpoint,
+    PeriodicFlowCaseCheckpointError* error = nullptr,
+    const PeriodicFlowCaseCheckpointLimits& limits = {});
 
 // Immutable in-memory state for one committed periodic-flow worker step. The
 // public metadata is suitable for orchestration; the private payload prevents
@@ -34,7 +83,26 @@ struct PeriodicFlowCaseCheckpoint {
 
 private:
     friend class PeriodicFlowCase;
-    struct Detail;
+    friend bool serializePeriodicFlowCaseCheckpoint(
+        const PeriodicFlowCaseCheckpoint&,
+        std::vector<std::uint8_t>&,
+        PeriodicFlowCaseCheckpointError*,
+        const PeriodicFlowCaseCheckpointLimits&);
+    friend bool deserializePeriodicFlowCaseCheckpoint(
+        std::span<const std::uint8_t>,
+        PeriodicFlowCaseCheckpoint&,
+        PeriodicFlowCaseCheckpointError*,
+        const PeriodicFlowCaseCheckpointLimits&);
+    struct Detail {
+        fluid::GridCellCounts cellCounts;
+        fluid::Vector3 lowerMeters;
+        fluid::Vector3 upperMeters;
+        fluid::MacVelocityField velocityMetersPerSecond;
+        fluid::CellScalarField pressurePascals;
+        fluid::PeriodicFlowStrangSubcyclingDiagnostics diagnostics;
+        std::uint64_t acceptedStepCount = 0;
+        double simulationTimeSeconds = 0.0;
+    };
     std::shared_ptr<const Detail> detail;
 };
 

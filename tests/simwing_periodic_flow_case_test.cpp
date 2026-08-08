@@ -43,6 +43,34 @@ std::vector<std::uint8_t> serialized(
     return bytes;
 }
 
+std::vector<std::uint8_t> serializedCheckpoint(
+    const fsi::PeriodicFlowCaseCheckpoint& checkpoint) {
+    std::vector<std::uint8_t> bytes;
+    fsi::PeriodicFlowCaseCheckpointError error;
+    check(fsi::serializePeriodicFlowCaseCheckpoint(
+              checkpoint, bytes, &error),
+          "periodic worker checkpoint serializes");
+    check(!error,
+          "successful periodic checkpoint serialization clears its error");
+    return bytes;
+}
+
+void refreshCheckpointChecksum(std::vector<std::uint8_t>& bytes) {
+    constexpr std::size_t envelopeBytes = 28;
+    constexpr std::size_t checksumOffset = 20;
+    constexpr std::uint64_t offsetBasis = 14695981039346656037ULL;
+    constexpr std::uint64_t prime = 1099511628211ULL;
+    std::uint64_t checksum = offsetBasis;
+    for (std::size_t index = envelopeBytes; index < bytes.size(); ++index) {
+        checksum ^= bytes[index];
+        checksum *= prime;
+    }
+    for (std::size_t byte = 0; byte < sizeof(checksum); ++byte) {
+        bytes[checksumOffset + byte] = static_cast<std::uint8_t>(
+            checksum >> (8U * byte));
+    }
+}
+
 const viewer::ScalarField* scalarField(
     const viewer::DiagnosticFrame& frame,
     const char* name) {
@@ -379,6 +407,180 @@ void testCheckpointValidationAndReplay() {
           "rejected periodic checkpoint restores leave the worker untouched");
 }
 
+void testCheckpointBinaryProtocol() {
+    fsi::PeriodicFlowCase simulation;
+    constexpr std::uint64_t savedSteps = 9;
+    for (std::uint64_t step = 0; step < savedSteps; ++step) {
+        static_cast<void>(simulation.advance());
+    }
+    const auto saved = simulation.checkpoint();
+    const auto firstEncoding = serializedCheckpoint(saved);
+    const auto secondEncoding = serializedCheckpoint(saved);
+    check(firstEncoding == secondEncoding && !firstEncoding.empty(),
+          "periodic checkpoint encoding is byte deterministic");
+
+    fsi::PeriodicFlowCaseCheckpointError error;
+    fsi::PeriodicFlowCaseCheckpoint decoded;
+    check(fsi::deserializePeriodicFlowCaseCheckpoint(
+              firstEncoding, decoded, &error)
+              && !error
+              && serializedCheckpoint(decoded) == firstEncoding,
+          "periodic checkpoint decode and re-encode preserves every byte");
+    fsi::PeriodicFlowCase resumed;
+    resumed.restore(decoded);
+    check(resumed.acceptedStepCount() == savedSteps
+              && resumed.simulationTimeSeconds()
+                  == simulation.simulationTimeSeconds()
+              && resumed.velocity() == simulation.velocity()
+              && resumed.pressure() == simulation.pressure()
+              && resumed.diagnostics() == simulation.diagnostics(),
+          "decoded periodic checkpoint restores every committed field");
+    const auto expectedNext = simulation.advance();
+    const auto resumedNext = resumed.advance();
+    check(serialized(expectedNext) == serialized(resumedNext),
+          "decoded periodic checkpoint continues bit-for-bit");
+
+    fsi::PeriodicFlowCase initialWorker;
+    const auto initialBytes = serializedCheckpoint(initialWorker.checkpoint());
+    fsi::PeriodicFlowCaseCheckpoint decodedInitial;
+    check(fsi::deserializePeriodicFlowCaseCheckpoint(
+              initialBytes, decodedInitial, &error),
+          "initial periodic checkpoint decodes");
+    const auto expectedInitialFirst = initialWorker.advance();
+    fsi::PeriodicFlowCase resumedInitial;
+    resumedInitial.restore(decodedInitial);
+    check(serialized(expectedInitialFirst)
+              == serialized(resumedInitial.advance()),
+          "decoded initial periodic checkpoint replays its first step");
+
+    fsi::PeriodicFlowCase preservedWorker;
+    static_cast<void>(preservedWorker.advance());
+    fsi::PeriodicFlowCaseCheckpoint output = preservedWorker.checkpoint();
+    const auto preservedEncoding = serializedCheckpoint(output);
+    const auto expectDecodeRejected = [&](
+        const std::vector<std::uint8_t>& candidate,
+        const fsi::PeriodicFlowCaseCheckpointErrorCode expectedCode,
+        const fsi::PeriodicFlowCaseCheckpointLimits& limits,
+        const char* message) {
+        error = {};
+        check(!fsi::deserializePeriodicFlowCaseCheckpoint(
+                  candidate, output, &error, limits)
+                  && error.code == expectedCode
+                  && serializedCheckpoint(output) == preservedEncoding,
+              message);
+    };
+
+    auto corrupt = firstEncoding;
+    corrupt[0] ^= 0xffU;
+    expectDecodeRejected(
+        corrupt,
+        fsi::PeriodicFlowCaseCheckpointErrorCode::InvalidMagic,
+        {},
+        "periodic checkpoint rejects bad magic without changing output");
+    corrupt = firstEncoding;
+    ++corrupt[8];
+    expectDecodeRejected(
+        corrupt,
+        fsi::PeriodicFlowCaseCheckpointErrorCode::UnsupportedVersion,
+        {},
+        "periodic checkpoint rejects unsupported wire versions");
+    corrupt = firstEncoding;
+    ++corrupt[28];
+    refreshCheckpointChecksum(corrupt);
+    expectDecodeRejected(
+        corrupt,
+        fsi::PeriodicFlowCaseCheckpointErrorCode::UnsupportedVersion,
+        {},
+        "periodic checkpoint rejects unsupported state versions");
+    corrupt = firstEncoding;
+    corrupt[32] ^= 0x01U;
+    refreshCheckpointChecksum(corrupt);
+    expectDecodeRejected(
+        corrupt,
+        fsi::PeriodicFlowCaseCheckpointErrorCode::InvalidData,
+        {},
+        "periodic checkpoint rejects foreign case fingerprints");
+    corrupt = firstEncoding;
+    corrupt[10] = 1;
+    expectDecodeRejected(
+        corrupt,
+        fsi::PeriodicFlowCaseCheckpointErrorCode::InvalidData,
+        {},
+        "periodic checkpoint rejects nonzero reserved bits");
+    corrupt = firstEncoding;
+    corrupt.pop_back();
+    expectDecodeRejected(
+        corrupt,
+        fsi::PeriodicFlowCaseCheckpointErrorCode::Truncated,
+        {},
+        "periodic checkpoint rejects truncation transactionally");
+    corrupt = firstEncoding;
+    corrupt.push_back(0);
+    expectDecodeRejected(
+        corrupt,
+        fsi::PeriodicFlowCaseCheckpointErrorCode::TrailingData,
+        {},
+        "periodic checkpoint rejects trailing data transactionally");
+    corrupt = firstEncoding;
+    corrupt.back() ^= 0x80U;
+    expectDecodeRejected(
+        corrupt,
+        fsi::PeriodicFlowCaseCheckpointErrorCode::ChecksumMismatch,
+        {},
+        "periodic checkpoint detects payload corruption");
+
+    fsi::PeriodicFlowCaseCheckpointLimits byteLimit;
+    byteLimit.maximumBytes = firstEncoding.size() - 1;
+    expectDecodeRejected(
+        firstEncoding,
+        fsi::PeriodicFlowCaseCheckpointErrorCode::LimitExceeded,
+        byteLimit,
+        "periodic checkpoint enforces its configured byte limit");
+    fsi::PeriodicFlowCaseCheckpointLimits sampleLimit;
+    sampleLimit.maximumScalarSamples = simulation.grid().cellCount() - 1;
+    expectDecodeRejected(
+        firstEncoding,
+        fsi::PeriodicFlowCaseCheckpointErrorCode::LimitExceeded,
+        sampleLimit,
+        "periodic checkpoint enforces its configured sample limit");
+    fsi::PeriodicFlowCaseCheckpointLimits substepLimit;
+    substepLimit.maximumSubsteps = 0;
+    expectDecodeRejected(
+        firstEncoding,
+        fsi::PeriodicFlowCaseCheckpointErrorCode::LimitExceeded,
+        substepLimit,
+        "periodic checkpoint enforces its configured substep limit");
+
+    std::vector<std::uint8_t> rejectedBytes{1, 2, 3};
+    check(!fsi::serializePeriodicFlowCaseCheckpoint(
+              fsi::PeriodicFlowCaseCheckpoint{}, rejectedBytes, &error)
+              && error.code
+                  == fsi::PeriodicFlowCaseCheckpointErrorCode::InvalidData
+              && rejectedBytes.empty(),
+          "periodic checkpoint rejects missing payloads transactionally");
+    rejectedBytes = {1, 2, 3};
+    check(!fsi::serializePeriodicFlowCaseCheckpoint(
+              saved, rejectedBytes, &error, byteLimit)
+              && error.code
+                  == fsi::PeriodicFlowCaseCheckpointErrorCode::LimitExceeded
+              && rejectedBytes.empty(),
+          "periodic checkpoint encoding honors its byte limit");
+    rejectedBytes = {1, 2, 3};
+    check(!fsi::serializePeriodicFlowCaseCheckpoint(
+              saved, rejectedBytes, &error, sampleLimit)
+              && error.code
+                  == fsi::PeriodicFlowCaseCheckpointErrorCode::LimitExceeded
+              && rejectedBytes.empty(),
+          "periodic checkpoint encoding honors its sample limit");
+    rejectedBytes = {1, 2, 3};
+    check(!fsi::serializePeriodicFlowCaseCheckpoint(
+              saved, rejectedBytes, &error, substepLimit)
+              && error.code
+                  == fsi::PeriodicFlowCaseCheckpointErrorCode::LimitExceeded
+              && rejectedBytes.empty(),
+          "periodic checkpoint encoding honors its substep limit");
+}
+
 void testCompletedTrace() {
     fsi::PeriodicFlowCase simulation;
     std::stringstream trace(std::ios::in | std::ios::out | std::ios::binary);
@@ -426,6 +628,7 @@ int main() {
     testDeterministicAcceptedFrames();
     testFrameRejectsUnacceptedState();
     testCheckpointValidationAndReplay();
+    testCheckpointBinaryProtocol();
     testCompletedTrace();
     if (failures != 0) {
         std::fprintf(stderr,

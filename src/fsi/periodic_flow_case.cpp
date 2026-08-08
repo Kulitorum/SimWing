@@ -107,17 +107,6 @@ bool validCommittedState(
 
 } // namespace
 
-struct PeriodicFlowCaseCheckpoint::Detail {
-    fluid::GridCellCounts cellCounts;
-    fluid::Vector3 lowerMeters;
-    fluid::Vector3 upperMeters;
-    fluid::MacVelocityField velocityMetersPerSecond;
-    fluid::CellScalarField pressurePascals;
-    fluid::PeriodicFlowStrangSubcyclingDiagnostics diagnostics;
-    std::uint64_t acceptedStepCount = 0;
-    double simulationTimeSeconds = 0.0;
-};
-
 PeriodicFlowCase::PeriodicFlowCase()
     : grid_(makeGrid()),
       velocity_(makeInitialVelocity(grid_)),

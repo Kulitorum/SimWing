@@ -384,6 +384,7 @@ src/fsi/
     piston_case.*           sealed fixed-topology worker canonical
     open_piston_case.*      driven open-control-volume worker canonical
     periodic_flow_case.*    visible periodic CFD verification worker
+    periodic_flow_checkpoint.cpp bounded persistent worker restart codec
     diagnostics.*           conservation, residuals, events, profiling
     checkpoint.*            versioned restart state
     scenarios.*             tunnel, glide, inflation, collapse definitions
@@ -452,8 +453,13 @@ Periodic worker advance now keeps the solver candidates private through frame
 validation and commits fields, diagnostics, step, and time together. Its
 versioned in-memory checkpoint binds those committed values to exact grid
 metadata and a case-definition fingerprint; initial-state, same-worker, and
-equivalent rebuilt-worker continuations replay bit-for-bit. Persistent files
-and checkpoint control messages remain separate future boundaries.
+equivalent rebuilt-worker continuations replay bit-for-bit. A deterministic
+little-endian file codec now preserves every MAC component, pressure sample,
+nested diagnostic, step, and time behind a versioned, byte-bounded, checksummed
+envelope. Decode is transactional and reuses the worker restore validator.
+`simwing-fsi --checkpoint-in/--checkpoint-out` exposes additional-step resume
+for this case only, with atomic output replacement. Live checkpoint control
+messages remain a separate future boundary.
 The exact-model capture now exports validated scene-v2.1 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical
@@ -760,7 +766,16 @@ without linking or launching Qt.
 The case checkpoint must restore the initial state and a later accepted state,
 then reproduce the next frame bit-for-bit in both the original and an equivalent
 rebuilt worker. Version, case fingerprint, grid, sample count, step, time, and
-payload presence are independently rejected before mutation.
+payload presence are independently rejected before mutation. Its persistent
+encoding must be byte-deterministic across repeats and decode/re-encode, retain
+all nested diagnostics exactly, and continue bit-for-bit after either initial
+or accepted-state decode. The default untrusted-input limits are `64 MiB`,
+5,000,000 scalar samples, and 4096 substeps. Bad magic/version/reserved bits,
+truncation, trailing data, checksum corruption, and every configured limit must
+leave the destination checkpoint unchanged. The CLI integration writes four
+steps, restores them, advances three additional steps, atomically replaces the
+same restart file, decodes it again, and reports seven total accepted steps
+without launching Qt.
 The Qt-free viewer-geometry regression separately requires exact arrow shaft
 direction and relative magnitude, one shaft plus two arrowhead segments per
 retained nonzero vector, dimensional automatic scaling, owning deterministic

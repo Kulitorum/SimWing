@@ -97,7 +97,7 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
-.\build\bin\Release\simwing-fsi.exe [--case structural|piston|open-piston|periodic-flow] [--steps N] [--trace <file>] [--no-viewer]
+.\build\bin\Release\simwing-fsi.exe [--case structural|piston|open-piston|periodic-flow] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--no-viewer]
 .\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
@@ -250,8 +250,10 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
 - `simwing_periodic_flow_case`: Qt-free Taylor-Green verification worker that
   advances the bounded Strang/SSPRK2 subcycler and publishes accepted fluid
   frames. Its immutable in-memory checkpoint binds the exact grid, case
-  definition, fields, last accepted diagnostics, step, and time. It is not a
-  canopy, cut-cell, or aerodynamic-truth case.
+  definition, fields, last accepted diagnostics, step, and time. Its bounded,
+  checksummed little-endian file codec round-trips that complete payload for
+  `--checkpoint-in`/`--checkpoint-out`; resumed `--steps` are additional
+  intervals. It is not a canopy, cut-cell, or aerodynamic-truth case.
 - `simwing_viewer_geometry`: Qt-free deterministic diagnostic-vector glyph
   builder. It owns bounded arrow-segment output and links only the viewer
   protocol; the Qt/OpenGL viewer only uploads the resulting geometry.
@@ -607,14 +609,18 @@ makes this a certified aerodynamic solver.
   checkpoint restores the full Structure state, accepted fluid fields and
   topology epoch, partial-cell offset, and committed ledgers; continuation must
   replay bit-for-bit in the same or an equivalent rebuilt worker.
-- `src/fsi/periodic_flow_case.{h,cpp}` is selected with
+- `src/fsi/periodic_flow_case.{h,cpp}` and
+  `src/fsi/periodic_flow_checkpoint.cpp` are selected with
   `--case periodic-flow`. It advances a Galilean-shifted Taylor-Green field on
   the periodic grid, writes only accepted subcycled states, and exposes cell
   pressure/velocity snapshots through the standalone viewer. It is a smooth
   CFD verification harness, not whole-wing aerodynamics. Advance remains
   transactional through frame validation, and its private-payload checkpoint
   restores the initial or any committed state into the same or an equivalent
-  rebuilt worker with bit-identical continuation.
+  rebuilt worker with bit-identical continuation. The persistent codec is
+  versioned, byte-bounded, checksummed, deterministic, transactional on decode,
+  and validates complete nested diagnostics before restore. The CLI writes it
+  by atomic replacement; checkpoint flags are rejected for other cases.
 - `src/fsi/fluid/grid.{h,cpp}` owns the uniform periodic Cartesian grid,
   cell-centred scalar fields, unique periodic MAC face velocities, and the
   paired finite-volume divergence/gradient operators.
@@ -774,7 +780,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 60 configured tests on Windows. The Fortran-reference test is
+There are 64 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 
@@ -791,7 +797,7 @@ paths that release CI deliberately excludes from its offscreen test command.
 | Playground contact | `playground_contact`, `playground_contact_integration`, plus a relevant bench/GUI scenario |
 | SimWing scene/structure/viewer foundations | `simwing_scene`, `simwing_model_scene_export`, `simwing_model_scene_real_export`, `simwing_structure`, `simwing_scene_structure`, `simwing_viewer_protocol`, `simwing_vector_glyphs`, `simwing_structure_frame`, plus `softwing_material`/`softwing_cell_volume` when core primitives change and `softwing_suspension_checkpoint` for payload/suspension state; preserve owning deterministic vector geometry, relative magnitude/direction, dimensional auto-scaling, and bounded deterministic sampling |
 | SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`, `simwing_fluid_moving_interface`, `simwing_fluid_control_volume`, `simwing_fluid_cut_surface`, `simwing_fluid_checkpoint`, `simwing_fluid_diffusion`, `simwing_fluid_advection`, `simwing_fluid_variable_advection`, `simwing_fluid_projected_advection`, `simwing_fluid_evolution`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing projection/diffusion/committed-transport energy, transactional failure and composed all-stage rollback, deterministic replay, Taylor-Green invariance, manufactured second-order pressure and viscous spatial-eigenvalue convergence, exact zero/uniform/Nyquist viscous modes and the `0.5` per-stage stability boundary, exact Euler-stage SSPRK2 composition and observed second-order viscous temporal convergence, bounded donor-cell uniform transport with exact CFL-one shift and divergence commutation, exact uniform delegation from the variable path, divergence-free staggered control-volume flux closure, safe nonlinear self-advection aliasing, observed first-order uniform and variable-shear refinement, exact limited-MC SSPRK2 stage composition, discontinuous-pulse bounds, confined intermediate Euler energy exception, and near-second-order smooth-wave L1 refinement, exact four-stage projected nonlinear SSPRK2 composition with donor/MC selection, repeated stage eligibility, observed fixed-grid second-order nonlinear temporal refinement, translating Taylor-Green donor/MC spatial refinement with time error suppressed by `dt` proportional to `h^2`, exact symmetric half-viscosity/projected-transport/half-viscosity Strang composition with donor/MC selection, closed sub-integrator energy ledger, full-flow rollback, observed second-order temporal refinement, analytic viscous translating-Taylor-Green limited-MC L1 ratios in `[3.0, 5.0]` across 12/24/48 grids with `dt <= 0.12 h^2`, exact viscous pre-sizing and CFL/limited-bound equal-step subcycling retries, manual final-schedule equivalence, bounded substep-limit rollback, and fatal projection failure without retry, exact standalone-versus-composed uniform/nonlinear and Euler/SSPRK2 stage equivalence, stable region/interface orientation, static sharp-jump balance, exact X/Y/Z face constraints, separate adjacent-pressure and complete direct-enforcement reaction ledgers, canonical face-tile geometry/traction ledgers, per-region compatibility/gauges, analytic translating-slab pressure impulse/work, open-piston partial-cell/surface-sweep/opening-flux GCL closure, exact X/Y/Z one-plane rebase volume continuity, accepted physical cut-plane area/force/moment/power, macro-step-average endpoint resampling, periodic-image closure, and immutable grid/topology-bound accepted-state checkpoint replay |
-| SimWing periodic fluid worker/snapshots | `simwing_periodic_flow_case`, `simwing_fsi_periodic_flow_headless`, `simwing_viewer_protocol`; preserve transactional advance through frame validation, accepted-only publishing, owning cell-centre pressure/speed/velocity fields, exact MAC divergence, diagnostic centred-curl vorticity, the discrete Taylor-Green vorticity oracle, stable IDs, immutable grid/definition-bound checkpoint metadata and payload, initial/same/rebuilt-worker bit-identical replay, rejected-restore non-mutation, completed traces, and Qt-free headless execution |
+| SimWing periodic fluid worker/snapshots | `simwing_periodic_flow_case`, `simwing_fsi_periodic_flow_headless`, `simwing_fsi_periodic_flow_checkpoint_write`, `simwing_fsi_periodic_flow_checkpoint_resume`, `simwing_fsi_periodic_flow_checkpoint_verify`, `simwing_fsi_checkpoint_rejects_foreign_case`, `simwing_viewer_protocol`; preserve transactional advance through frame validation, accepted-only publishing, owning cell-centre pressure/speed/velocity fields, exact MAC divergence, diagnostic centred-curl vorticity, the discrete Taylor-Green vorticity oracle, stable IDs, immutable grid/definition-bound checkpoint metadata and payload, initial/same/rebuilt-worker bit-identical replay, deterministic bounded little-endian persistent round trips, payload checksum, corruption/truncation/trailing-data/limit rejection without output mutation, additional-step CLI resume, same-path atomic checkpoint replacement followed by successful decode, foreign-case flag rejection, rejected-restore non-mutation, completed traces, and Qt-free headless execution |
 | SimWing conservative transfer | `simwing_transfer`; preserve stable topology/Structure binding, analytic uniform and barycentric-quadrature area/force/moment, rigid translation/rotation power, independent ledger closure, additive nodal load application, and rejection before mutation for foreign results/structures |
 | SimWing macro-step coupling | `simwing_coupling`; preserve strictly ordered local sample time, topology/duration binding, analytic moving-piston impulse and pressure-volume work, independent temporal ledger closure, momentum delivery through XPBD, deterministic replay, and pre-load checkpoint rollback on failure |
 | SimWing fluid/structure bridge and piston workers | `simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing_open_piston_case`, `simwing_fsi_piston_headless`, `simwing_fsi_open_piston_headless`, `simwing_fsi_open_piston_rebase_headless`; preserve the strict uniform subset, planar face-resolved nonuniform transfer, stable surface/geometry binding, complete nonoverlapping coverage, per-face and aggregate area/force/moment/power closure, rigid-normal X/Y/Z grid/physical-plane correspondence and velocity binding, analytic impulse delivery, explicit actuator-versus-complete-CFD reaction, bit-identical replay through periodic topology crossings and composite checkpoint restore, open-piston structure/fluid/actuator/system momentum residual below `1e-8 N*s` and energy residual below `2e-9 J`, accepted-only frames, and Qt-free headless execution |

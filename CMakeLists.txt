@@ -341,6 +341,7 @@ target_link_libraries(simwing_fluid_frame PUBLIC
 add_library(simwing_periodic_flow_case STATIC
     src/fsi/periodic_flow_case.cpp
     src/fsi/periodic_flow_case.h
+    src/fsi/periodic_flow_checkpoint.cpp
 )
 target_include_directories(simwing_periodic_flow_case PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
@@ -1177,6 +1178,44 @@ add_test(NAME simwing_fsi_periodic_flow_headless
         --steps 4
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-periodic-flow-headless.swtrace")
+add_test(NAME simwing_fsi_periodic_flow_checkpoint_write
+    COMMAND simwing-fsi
+        --case periodic-flow
+        --steps 4
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-periodic-flow-checkpoint-write.swtrace"
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-periodic-flow.swpc")
+set_tests_properties(simwing_fsi_periodic_flow_checkpoint_write PROPERTIES
+    PASS_REGULAR_EXPRESSION "completed 4 periodic-flow step\\(s\\)")
+add_test(NAME simwing_fsi_periodic_flow_checkpoint_resume
+    COMMAND simwing-fsi
+        --case periodic-flow
+        --steps 3
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-periodic-flow-checkpoint-resume.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-periodic-flow.swpc"
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-periodic-flow.swpc")
+set_tests_properties(simwing_fsi_periodic_flow_checkpoint_resume PROPERTIES
+    DEPENDS simwing_fsi_periodic_flow_checkpoint_write
+    PASS_REGULAR_EXPRESSION "completed 7 periodic-flow step\\(s\\)")
+add_test(NAME simwing_fsi_periodic_flow_checkpoint_verify
+    COMMAND simwing-fsi
+        --case periodic-flow
+        --steps 0
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-periodic-flow-checkpoint-verify.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-periodic-flow.swpc")
+set_tests_properties(simwing_fsi_periodic_flow_checkpoint_verify PROPERTIES
+    DEPENDS simwing_fsi_periodic_flow_checkpoint_resume
+    PASS_REGULAR_EXPRESSION "completed 7 periodic-flow step\\(s\\)")
+add_test(NAME simwing_fsi_checkpoint_rejects_foreign_case
+    COMMAND simwing-fsi
+        --case structural
+        --steps 0
+        --no-viewer
+        --checkpoint-out "${CMAKE_BINARY_DIR}/invalid-structural.swpc")
+set_tests_properties(simwing_fsi_checkpoint_rejects_foreign_case PROPERTIES
+    WILL_FAIL TRUE)
 add_test(NAME simwing_fsi_open_piston_headless
     COMMAND simwing-fsi
         --case open-piston

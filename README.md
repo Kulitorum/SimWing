@@ -93,8 +93,8 @@ exact cell pressure, averaged MAC velocity, speed, the projection operator's
 finite-volume divergence, diagnostic centred-curl vorticity, and conservation
 ledgers.
 The standalone viewer renders those otherwise-unconnected points with selectable
-scalar colouring. Its independent vector selector adds normalized velocity
-velocity or vorticity arrows while retaining the chosen scalar colour field.
+scalar colouring. Its independent vector selector adds normalized velocity or
+vorticity arrows while retaining the chosen scalar colour field.
 Arrow construction is
 Qt-free, owning, deterministically bounded for large fields, and has no path
 back into solver data. This makes the verification flow inspectable without
@@ -103,8 +103,11 @@ The periodic worker advances candidates through frame validation before
 committing them. Its immutable in-memory checkpoint binds the exact grid and
 case definition to pressure, velocity, last accepted diagnostics, step, and
 time; the initial state and later accepted states resume bit-for-bit in the
-same or an equivalent rebuilt worker. Persistent checkpoint files and worker
-control messages remain future protocol work.
+same or an equivalent rebuilt worker. A bounded, versioned, checksummed
+little-endian file codec preserves that complete payload. The worker accepts it
+through `--checkpoint-in` and atomically replaces `--checkpoint-out`; requested
+steps are additional after restore. Live checkpoint control messages remain
+future protocol work.
 Both the projected transport and Strang flow paths select donor-cell or limited
 monotonized-central reconstruction explicitly; donor-cell remains the default.
 The original single-stage transport and Euler/SSPRK2 viscosity modes compose
@@ -278,10 +281,14 @@ Run:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600 --no-viewer
+.\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600 --no-viewer --checkpoint-out periodic-flow.swpc
+.\build\bin\Release\simwing-fsi.exe --case periodic-flow --checkpoint-in periodic-flow.swpc --steps 600 --checkpoint-out periodic-flow.swpc
 ```
 
 The first SimWing command launches the standalone trace viewer by default. The
 second is the unthrottled headless form for tests and scripted verification.
+The final two commands save and resume the exact accepted periodic-flow state;
+the resumed command advances 600 additional intervals.
 
 `windeployqt` and the OCCT runtime deployment run after the build, so the build
 output is directly runnable. The install target includes the required OCCT
