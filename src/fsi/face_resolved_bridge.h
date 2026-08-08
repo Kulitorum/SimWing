@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fluid/planar_cut_surface.h"
 #include "fluid/moving_interface.h"
 #include "transfer.h"
 
@@ -12,7 +13,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t planarFaceResolvedBridgeVersion = 2;
+inline constexpr std::uint32_t planarFaceResolvedBridgeVersion = 3;
 
 enum class PlanarFaceCorrespondenceMode : std::uint8_t {
     FixedMaterial = 0,
@@ -125,6 +126,10 @@ public:
         const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
         std::span<const CouplingNodeKinematics> nodeKinematics,
         double physicalPlaneCoordinateMeters) const;
+
+    [[nodiscard]] PlanarFaceResolvedTransferResult evaluateCutSurface(
+        const fluid::PlanarCutSurfacePressureDiagnostics& cutSurface,
+        std::span<const CouplingNodeKinematics> nodeKinematics) const;
 
 private:
     struct FaceDefinition {

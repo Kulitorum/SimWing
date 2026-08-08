@@ -69,12 +69,16 @@ face-resolved bridge, temporal coupling, XPBD acceptance, and replayable viewer
 frames with visible deterministic motion. The third
 `simwing-fsi --case open-piston` harness drives a `6000 kg` plate at
 `0.05 m/s`, exposes the resisting CFD pressure separately from its actuator,
-and publishes accepted partial-cell and geometric-conservation ledgers. At
+and publishes accepted partial-cell and geometric-conservation ledgers. Before
+that pressure reaches XPBD, a fluid-side planar cut-surface operator places each
+face-resolved constraint reaction on the congruent physical plane and closes
+area, force, moment, power, and periodic-image ledgers. This is a bounded
+reaction-geometry operator, not cell-pressure interpolation. At
 step 1200 it crosses its first `0.5 m` cell, rebases without a chamber-volume
 jump, and continues in the new topology. At step 2400 it crosses the periodic
-boundary while retaining an unwrapped `4 m` physical position. Its pressure
-loads now use the moving face-resolved bridge rather than the uniform-only
-subset. A real 3.28 fixture
+boundary while retaining an unwrapped `4 m` physical position. Its accepted
+cut-surface pressure loads use the moving face-resolved bridge rather than the
+uniform-only subset. A real 3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,
 checkpoint replay, and completed trace using synthetic physical settings.
 Export still requires explicit physical material/pilot settings;

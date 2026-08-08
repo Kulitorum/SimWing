@@ -32,6 +32,8 @@ using simwing::fsi::fluid::MacVelocityField;
 using simwing::fsi::fluid::MovingInterfaceProjectionDiagnostics;
 using simwing::fsi::fluid::MovingInterfaceProjectionSettings;
 using simwing::fsi::fluid::PeriodicCartesianGrid;
+using simwing::fsi::fluid::PlanarMovingControlVolume;
+using simwing::fsi::fluid::evaluatePlanarCutSurfacePressure;
 using simwing::fsi::fluid::projectVelocityWithMovingInterfaces;
 
 int failures = 0;
@@ -195,7 +197,7 @@ MovingInterfaceProjectionDiagnostics fluidPistonDiagnostics(
         grid, velocity, pressure, interfaces, settings);
 }
 
-MovingInterfaceProjectionDiagnostics openPlaneDiagnostics(
+FaceAlignedMovingInterface openPlaneInterfaces(
     const GridFaceAxis axis,
     const std::size_t movingPlaneCoordinate,
     const double speedMetersPerSecond = 0.25) {
@@ -216,8 +218,16 @@ MovingInterfaceProjectionDiagnostics openPlaneDiagnostics(
             }
         }
     }
-    const FaceAlignedMovingInterface interfaces(
-        grid, std::move(faces));
+    return FaceAlignedMovingInterface(grid, std::move(faces));
+}
+
+MovingInterfaceProjectionDiagnostics openPlaneDiagnostics(
+    const GridFaceAxis axis,
+    const std::size_t movingPlaneCoordinate,
+    const double speedMetersPerSecond = 0.25) {
+    const auto grid = pistonGrid();
+    const auto interfaces = openPlaneInterfaces(
+        axis, movingPlaneCoordinate, speedMetersPerSecond);
     MacVelocityField velocity(grid);
     CellScalarField pressure(grid);
     MovingInterfaceProjectionSettings settings;
@@ -637,6 +647,37 @@ void testMovingPlanarFaceCorrespondence() {
               && std::abs(diagnostics.powerResidualWatts) < 2.0e-10
               && diagnostics.maximumFacePowerResidualWatts < 2.0e-10,
           "moving bridge: translated force, moment, and power ledgers close");
+
+    const auto grid = pistonGrid();
+    const auto referenceInterfaces = openPlaneInterfaces(
+        GridFaceAxis::X, 6);
+    const PlanarMovingControlVolume referenceControlVolume(
+        grid, referenceInterfaces, 300, 2);
+    const auto cutSurface = evaluatePlanarCutSurfacePressure(
+        grid, referenceControlVolume, reference, 0.2, 3.2);
+    const auto cutTransfer = bridge.evaluateCutSurface(
+        cutSurface, translatedKinematics);
+    check(cutSurface.accepted && cutTransfer == first,
+          "moving bridge: accepted fluid-side cut geometry drives the same transfer");
+    auto corruptedCutGeometry = cutSurface;
+    corruptedCutGeometry.faces.front().physicalLowerCornerMeters.y += 0.01;
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluateCutSurface(
+            corruptedCutGeometry, translatedKinematics)); },
+        "moving bridge validation: cut geometry is rebound before transfer");
+    auto unacceptedCutSurface = cutSurface;
+    unacceptedCutSurface.accepted = false;
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluateCutSurface(
+            unacceptedCutSurface, translatedKinematics)); },
+        "moving bridge validation: unaccepted cut geometry is rejected");
+    auto nonfiniteCutLedger = cutSurface;
+    nonfiniteCutLedger.pressureMomentNewtonMeters.x =
+        std::numeric_limits<double>::quiet_NaN();
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluateCutSurface(
+            nonfiniteCutLedger, translatedKinematics)); },
+        "moving bridge validation: cut ledgers are rebound for finiteness");
 
     const auto rebasedFluid = openPistonDiagnostics(7);
     const auto rebasedKinematics = movingPlaneKinematics(

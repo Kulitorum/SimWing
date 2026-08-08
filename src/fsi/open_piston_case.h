@@ -12,9 +12,9 @@
 namespace simwing::fsi {
 
 inline constexpr char openPistonCaseChecksum[] =
-    "sha256:simwing-open-control-volume-piston-case-v3";
+    "sha256:simwing-open-control-volume-piston-case-v4";
 inline constexpr char openPistonCaseSolverId[] =
-    "simwing-fsi-open-control-volume-piston-worker-v3";
+    "simwing-fsi-open-control-volume-piston-worker-v4";
 
 // Visible verification harness for an accelerating planar piston in one
 // connected periodic fluid region. A complete moving sheet is nonseparating:
@@ -47,6 +47,8 @@ public:
     lastRebaseDiagnostics() const noexcept;
     [[nodiscard]] const PlanarFaceResolvedBridgeDiagnostics&
     bridgeDiagnostics() const noexcept;
+    [[nodiscard]] const fluid::PlanarCutSurfacePressureDiagnostics&
+    cutSurfaceDiagnostics() const noexcept;
     [[nodiscard]] double surfaceOffsetMeters() const noexcept;
     [[nodiscard]] std::size_t movingPlaneCoordinate() const noexcept;
     [[nodiscard]] std::uint64_t topologyRebaseCount() const noexcept;
@@ -66,6 +68,7 @@ private:
     fluid::PlanarMovingControlVolume controlVolume_;
     fluid::PlanarControlVolumeDiagnostics controlVolumeDiagnostics_;
     fluid::PlanarControlVolumeRebaseDiagnostics lastRebaseDiagnostics_;
+    fluid::PlanarCutSurfacePressureDiagnostics cutSurfaceDiagnostics_;
     PlanarFaceResolvedBridgeDiagnostics bridgeDiagnostics_;
     double surfaceOffsetMeters_ = 0.0;
     double lastRebaseVelocityResidualMetersPerSecond_ = 0.0;

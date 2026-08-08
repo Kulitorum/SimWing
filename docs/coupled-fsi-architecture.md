@@ -481,6 +481,15 @@ presented as arbitrary surface reconstruction, general cut-cell pressure
 geometry, folded/multiple-crossing motion, advection, turbulence, or a
 wing-flow solver.
 
+The companion planar cut-surface operator now gives the accepted constraint
+reaction an explicit physical application geometry within that partial cell.
+It retains each MAC rectangle as the Eulerian source and translates a second
+rectangle to an unwrapped physical plane only when grid-plane plus offset is a
+matching periodic image. Independent face and surface area, force, physical
+moment, and power ledgers must close. This remains the projection's Lagrange
+reaction at a bounded planar cut, not an interpolation of new one-sided cell
+pressures and not general cut-cell reconstruction.
+
 The first structure-side conservative-transfer primitive is also present. A
 canonical stable-ID surface is fingerprint-bound to one immutable structural
 definition and rejects reversed or foreign topology. Uniform current-triangle
@@ -521,8 +530,10 @@ surface and CFD ledger fields to the standalone viewer. The
 partial-cell geometry, resolved-opening GCL ledger, an explicit plate actuator,
 and a separately reported resisting CFD load. Its pressure reaction now crosses
 the moving face-resolved bridge at the structural plate's physical plane rather
-than through a surface-uniform bridge. Both the numerical state and published
-frame cross accepted boundaries only. On an exact cell crossing it also
+than through a surface-uniform bridge, but only after the fluid-side cut-surface
+area, force, moment, power, and periodic-image ledgers are accepted. Both the
+numerical state and published frame cross accepted boundaries only. On an exact
+cell crossing it also
 verifies old/new chamber-volume continuity, remaps the constraint within a
 written velocity budget, and commits the new fluid/control-volume epoch with
 the completed viewer frame. This does not yet implement transverse or
@@ -574,8 +585,9 @@ cases meet their declared tolerances.
 Status: in progress. `simwing_fluid` currently owns the uniform periodic
 verification grid, pressure projection, and fixed-topology face-aligned moving
 constraints, plus the first open planar one-partial-cell control-volume
-operator and its exact next-plane topology rebase. On solve failure it preserves the
-input pressure and velocity bit-for-bit so future macro-step retry can be
+operator, its exact next-plane topology rebase, and the bounded physical
+cut-surface reaction geometry described above. On solve failure it preserves
+the input pressure and velocity bit-for-bit so future macro-step retry can be
 transactional. It also owns a canonical single-crossing sharp pressure-jump
 field with explicit surface and two-sided region identity; duplicate crossings
 on one grid face are rejected rather than merged. The regression budgets are:
@@ -632,7 +644,11 @@ additionally verifies rigid-normal translation on every grid axis. The
 Eulerian grid plane may rebase, including a periodic index wrap, while the
 physical plane remains unwrapped; stable material patches, transverse geometry,
 matching node positions, and matching face/node normal velocities must remain
-exact. The visible
+exact. Before this bridge transfer, the fluid-side cut-surface canonical checks
+the same three axes and the terminal/rebased periodic images. Its complete
+physical plane retains `16 m^2` area and closes source-versus-cut force and power;
+invalid offsets, noncongruent physical planes, failed projections, corrupted
+aggregates, and altered cut geometry are rejected. The visible
 piston worker repeats the face-resolved full chain at `120 Hz` with a synthetic
 `6000 kg` tributary-mass plate so 600 default frames show about `1.38 m` of
 deterministic translation without leaving the initial viewer scale. The open
@@ -678,12 +694,13 @@ also crosses those accepted fluid samples into XPBD and the viewer with explicit
 interface residuals. It supports both exact fixed material correspondence and
 rigid normal motion across grid rebases while preserving the transverse material
 patches. The first open volume-changing piston now has one partial-cell geometry
-update and an independently closed surface-sweep/opening-transport GCL ledger
-plus exact planar one-face topology rebases, including periodic wrap. General
-cut-cell pressure metrics, curved or transversely deforming correspondence,
-nonplanar or opening topology events, sealed deforming chambers, and the complete
-coupled fluid/structure energy ledger remain open, so the full Phase 2 piston
-gate is not yet closed.
+update, an independently closed surface-sweep/opening-transport GCL ledger,
+accepted physical cut-surface reaction geometry, and exact planar one-face
+topology rebases including periodic wrap. General interpolated cut-cell pressure
+metrics, curved or transversely deforming correspondence, nonplanar or opening
+topology events, sealed deforming chambers, and the complete coupled
+fluid/structure energy ledger remain open, so the full Phase 2 piston gate is
+not yet closed.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

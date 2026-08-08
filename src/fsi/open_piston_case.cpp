@@ -221,6 +221,7 @@ void appendFields(
     viewer::DiagnosticFrame& frame,
     const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
     const fluid::PlanarControlVolumeDiagnostics& controlDiagnostics,
+    const fluid::PlanarCutSurfacePressureDiagnostics& cutDiagnostics,
     const PlanarFaceResolvedBridgeDiagnostics& bridgeDiagnostics,
     const TimeIntegratedTransferDiagnostics& integratedDiagnostics,
     const double actuatorImpulseNewtonSeconds,
@@ -230,10 +231,10 @@ void appendFields(
     frame.scalarFields.push_back({
         "interface.pressure_traction", "Pa",
         viewer::FieldAssociation::Triangle,
-        {bridgeDiagnostics.fluidPressureForceNewtons.x
-             / bridgeDiagnostics.fluidAreaSquareMeters,
-         bridgeDiagnostics.fluidPressureForceNewtons.x
-             / bridgeDiagnostics.fluidAreaSquareMeters}});
+        {cutDiagnostics.pressureForceNewtons.x
+             / cutDiagnostics.areaSquareMeters,
+         cutDiagnostics.pressureForceNewtons.x
+             / cutDiagnostics.areaSquareMeters}});
     frame.scalarFields.push_back({
         "fluid.chamber_volume", "m^3", viewer::FieldAssociation::Global,
         {controlDiagnostics.endVolumeCubicMeters}});
@@ -277,11 +278,11 @@ void appendFields(
     frame.scalarFields.push_back({
         "interface.grid_plane", "m",
         viewer::FieldAssociation::Global,
-        {bridgeDiagnostics.gridPlaneCoordinateMeters}});
+        {cutDiagnostics.gridPlaneCoordinateMeters}});
     frame.scalarFields.push_back({
         "interface.physical_plane", "m",
         viewer::FieldAssociation::Global,
-        {bridgeDiagnostics.physicalPlaneCoordinateMeters}});
+        {cutDiagnostics.physicalPlaneCoordinateMeters}});
     frame.scalarFields.push_back({
         "interface.normal_translation", "m",
         viewer::FieldAssociation::Global,
@@ -295,6 +296,18 @@ void appendFields(
         viewer::FieldAssociation::Global,
         {bridgeDiagnostics
              .maximumRigidVelocityResidualMetersPerSecond}});
+    frame.scalarFields.push_back({
+        "fluid.cut_surface_periodic_residual", "m",
+        viewer::FieldAssociation::Global,
+        {cutDiagnostics.periodicPositionResidualMeters}});
+    frame.scalarFields.push_back({
+        "fluid.cut_surface_force_residual", "N",
+        viewer::FieldAssociation::Global,
+        {cutDiagnostics.forceResidualNormNewtons}});
+    frame.scalarFields.push_back({
+        "fluid.cut_surface_power_residual", "W",
+        viewer::FieldAssociation::Global,
+        {cutDiagnostics.powerResidualWatts}});
 }
 
 } // namespace
@@ -416,11 +429,22 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
         structure_);
     const auto endKinematics = predictedKinematics(
         bridge_.transfer(), structure_, endSpeed, timeStep);
-    const auto startTransfer = bridge_.evaluateMovingPlane(
-        fluidDiagnostics_, startKinematics,
-        startPhysicalPlaneMeters);
-    const auto endTransfer = bridge_.evaluateMovingPlane(
-        endFluid, endKinematics, endPhysicalPlaneMeters);
+    const auto startCutSurface =
+        fluid::evaluatePlanarCutSurfacePressure(
+            grid_, controlVolume_, fluidDiagnostics_,
+            surfaceOffsetMeters_, startPhysicalPlaneMeters);
+    const auto endCutSurface =
+        fluid::evaluatePlanarCutSurfacePressure(
+            grid_, controlVolume_, endFluid,
+            endOffset, endPhysicalPlaneMeters);
+    if (!startCutSurface.accepted || !endCutSurface.accepted) {
+        throw std::runtime_error(
+            "open piston physical cut-surface pressure was not accepted");
+    }
+    const auto startTransfer = bridge_.evaluateCutSurface(
+        startCutSurface, startKinematics);
+    const auto endTransfer = bridge_.evaluateCutSurface(
+        endCutSurface, endKinematics);
     const std::array<double, 2> offsets{0.0, timeStep};
     const std::array samples{
         startTransfer.transferResult(), endTransfer.transferResult()};
@@ -504,8 +528,8 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
         frame = viewer::buildStructureFrame(
             structure_, frameMapping_, context);
         appendFields(
-            frame, acceptedFluid, controlDiagnostics, bridgeDiagnostics,
-            integratedDiagnostics, actuatorImpulse,
+            frame, acceptedFluid, controlDiagnostics, endCutSurface,
+            bridgeDiagnostics, integratedDiagnostics, actuatorImpulse,
             topologyRebaseCount_ + (endsAtCellBoundary ? 1 : 0),
             rebaseVolumeResidual, rebaseVelocityResidual);
         viewer::ProtocolError error;
@@ -523,6 +547,7 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
     fluidPressure_ = std::move(candidatePressure);
     fluidDiagnostics_ = acceptedFluid;
     controlVolumeDiagnostics_ = controlDiagnostics;
+    cutSurfaceDiagnostics_ = endCutSurface;
     bridgeDiagnostics_ = bridgeDiagnostics;
     if (rebase.has_value()) {
         controlVolume_ = std::move(rebase->controlVolume);
@@ -558,6 +583,11 @@ OpenPistonCase::lastRebaseDiagnostics() const noexcept {
 const PlanarFaceResolvedBridgeDiagnostics&
 OpenPistonCase::bridgeDiagnostics() const noexcept {
     return bridgeDiagnostics_;
+}
+
+const fluid::PlanarCutSurfacePressureDiagnostics&
+OpenPistonCase::cutSurfaceDiagnostics() const noexcept {
+    return cutSurfaceDiagnostics_;
 }
 
 double OpenPistonCase::surfaceOffsetMeters() const noexcept {

@@ -296,6 +296,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/moving_control_volume.h
     src/fsi/fluid/moving_interface.cpp
     src/fsi/fluid/moving_interface.h
+    src/fsi/fluid/planar_cut_surface.cpp
+    src/fsi/fluid/planar_cut_surface.h
     src/fsi/fluid/projection.cpp
     src/fsi/fluid/projection.h
 )
@@ -648,6 +650,11 @@ add_executable(simwing-fluid-control-volume-test
 )
 target_link_libraries(simwing-fluid-control-volume-test PRIVATE simwing_fluid)
 
+add_executable(simwing-fluid-cut-surface-test
+    tests/simwing_fluid_cut_surface_test.cpp
+)
+target_link_libraries(simwing-fluid-cut-surface-test PRIVATE simwing_fluid)
+
 add_executable(simwing-transfer-test
     tests/simwing_transfer_test.cpp
 )
@@ -846,6 +853,7 @@ set_target_properties(
     simwing-fluid-interface-jump-test
     simwing-fluid-moving-interface-test
     simwing-fluid-control-volume-test
+    simwing-fluid-cut-surface-test
     simwing-transfer-test
     simwing-coupling-test
     simwing-fluid-structure-bridge-test
@@ -892,6 +900,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-fluid-interface-jump-test
         simwing-fluid-moving-interface-test
         simwing-fluid-control-volume-test
+        simwing-fluid-cut-surface-test
         simwing-transfer-test
         simwing-coupling-test
         simwing-fluid-structure-bridge-test
@@ -1029,6 +1038,8 @@ add_test(NAME simwing_fluid_moving_interface
     COMMAND simwing-fluid-moving-interface-test)
 add_test(NAME simwing_fluid_control_volume
     COMMAND simwing-fluid-control-volume-test)
+add_test(NAME simwing_fluid_cut_surface
+    COMMAND simwing-fluid-cut-surface-test)
 add_test(NAME simwing_transfer COMMAND simwing-transfer-test)
 add_test(NAME simwing_coupling COMMAND simwing-coupling-test)
 add_test(NAME simwing_fluid_structure_bridge

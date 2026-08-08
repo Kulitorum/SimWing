@@ -663,6 +663,137 @@ PlanarFaceResolvedFluidStructureBridge::evaluateMovingPlane(
 }
 
 PlanarFaceResolvedTransferResult
+PlanarFaceResolvedFluidStructureBridge::evaluateCutSurface(
+    const fluid::PlanarCutSurfacePressureDiagnostics& cutSurface,
+    const std::span<const CouplingNodeKinematics> nodeKinematics) const {
+    if (settings_.correspondenceMode
+            != PlanarFaceCorrespondenceMode::RigidNormalTranslation
+        || cutSurface.version
+            != fluid::planarCutSurfacePressureVersion
+        || cutSurface.sourceInterfaceVersion
+            != fluid::faceAlignedMovingInterfaceVersion
+        || !cutSurface.finite || !cutSurface.accepted
+        || cutSurface.surfaceStableId != fluidSurfaceStableId_
+        || cutSurface.axis != axis_
+        || cutSurface.faceCount != cutSurface.faces.size()
+        || cutSurface.faceCount != faces_.size()
+        || !finite(cutSurface.momentReferenceMeters)
+        || !std::isfinite(cutSurface.gridPlaneCoordinateMeters)
+        || !std::isfinite(cutSurface.physicalPlaneCoordinateMeters)
+        || !std::isfinite(cutSurface.periodicPositionResidualMeters)
+        || cutSurface.periodicPositionResidualMeters
+            > settings_.geometryToleranceMeters
+        || !std::isfinite(cutSurface.areaSquareMeters)
+        || !std::isfinite(cutSurface.sourceAreaSquareMeters)
+        || !finite(cutSurface.pressureForceNewtons)
+        || !finite(cutSurface.sourcePressureForceNewtons)
+        || !finite(cutSurface.pressureMomentNewtonMeters)
+        || !std::isfinite(cutSurface.pressurePowerWatts)
+        || !std::isfinite(cutSurface.sourcePressurePowerWatts)
+        || length(subtract(
+               toStructure(cutSurface.momentReferenceMeters),
+               settings_.transfer.momentReferenceMeters))
+            > settings_.geometryToleranceMeters) {
+        throw std::invalid_argument(
+            "face-resolved bridge requires a matching accepted cut surface");
+    }
+
+    fluid::MovingInterfaceProjectionDiagnostics source;
+    source.projection.converged = true;
+    source.interfaceVersion = cutSurface.sourceInterfaceVersion;
+    source.interfaceFaceCount = cutSurface.faceCount;
+    source.fluidRegionCount = 1;
+    source.finite = true;
+    source.faces.reserve(cutSurface.faces.size());
+    for (const auto& face : cutSurface.faces) {
+        StructureVector3 expectedLower = toStructure(
+            face.gridLowerCornerMeters);
+        StructureVector3 expectedUpper = toStructure(
+            face.gridUpperCornerMeters);
+        setNormalCoordinate(
+            expectedLower, axis_, cutSurface.physicalPlaneCoordinateMeters);
+        setNormalCoordinate(
+            expectedUpper, axis_, cutSurface.physicalPlaneCoordinateMeters);
+        if (face.surfaceStableId != fluidSurfaceStableId_
+            || face.axis != axis_
+            || !finite(face.gridLowerCornerMeters)
+            || !finite(face.gridUpperCornerMeters)
+            || !finite(face.physicalLowerCornerMeters)
+            || !finite(face.physicalUpperCornerMeters)
+            || length(subtract(
+                   toStructure(face.physicalLowerCornerMeters),
+                   expectedLower)) > settings_.geometryToleranceMeters
+            || length(subtract(
+                   toStructure(face.physicalUpperCornerMeters),
+                   expectedUpper)) > settings_.geometryToleranceMeters) {
+            throw std::invalid_argument(
+                "cut-surface pressure geometry changed before transfer");
+        }
+        source.faces.push_back({
+            face.surfaceStableId,
+            face.minusRegionStableId,
+            face.plusRegionStableId,
+            face.axis,
+            face.i,
+            face.j,
+            face.k,
+            face.gridLowerCornerMeters,
+            face.gridUpperCornerMeters,
+            face.areaSquareMeters,
+            face.normalVelocityMetersPerSecond,
+            face.pressureTractionPascals,
+            face.pressureForceNewtons,
+            face.pressurePowerWatts,
+        });
+    }
+    fluid::MovingInterfaceSurfaceDiagnostics surface;
+    surface.stableId = cutSurface.surfaceStableId;
+    surface.faceCount = cutSurface.faceCount;
+    surface.areaSquareMeters = cutSurface.sourceAreaSquareMeters;
+    surface.pressureForceNewtons = cutSurface.sourcePressureForceNewtons;
+    surface.pressurePowerWatts = cutSurface.sourcePressurePowerWatts;
+    source.surfaces.push_back(surface);
+
+    auto result = evaluateImpl(
+        source, nodeKinematics,
+        cutSurface.physicalPlaneCoordinateMeters);
+    const auto& diagnostics = result.diagnostics();
+    const double forceTolerance = combinedTolerance(
+        settings_.absoluteForceToleranceNewtons,
+        settings_.relativeForceTolerance,
+        length(diagnostics.fluidPressureForceNewtons),
+        length(toStructure(cutSurface.pressureForceNewtons)));
+    const double momentTolerance = combinedTolerance(
+        settings_.absoluteMomentToleranceNewtonMeters,
+        settings_.relativeMomentTolerance,
+        length(diagnostics.fluidPressureMomentNewtonMeters),
+        length(toStructure(cutSurface.pressureMomentNewtonMeters)));
+    const double powerTolerance = combinedTolerance(
+        settings_.absolutePowerToleranceWatts,
+        settings_.relativePowerTolerance,
+        std::abs(diagnostics.fluidPressurePowerWatts),
+        std::abs(cutSurface.pressurePowerWatts));
+    if (std::abs(diagnostics.gridPlaneCoordinateMeters
+                 - cutSurface.gridPlaneCoordinateMeters)
+            > settings_.geometryToleranceMeters
+        || length(subtract(
+               diagnostics.fluidPressureForceNewtons,
+               toStructure(cutSurface.pressureForceNewtons)))
+            > forceTolerance
+        || length(subtract(
+               diagnostics.fluidPressureMomentNewtonMeters,
+               toStructure(cutSurface.pressureMomentNewtonMeters)))
+            > momentTolerance
+        || std::abs(diagnostics.fluidPressurePowerWatts
+                    - cutSurface.pressurePowerWatts)
+            > powerTolerance) {
+        throw std::invalid_argument(
+            "cut-surface and structural transfer ledgers do not close");
+    }
+    return result;
+}
+
+PlanarFaceResolvedTransferResult
 PlanarFaceResolvedFluidStructureBridge::evaluateImpl(
     const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
     const std::span<const CouplingNodeKinematics> nodeKinematics,

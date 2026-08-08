@@ -76,6 +76,7 @@ void testVisibleOpenPistonAndDeterminism() {
               && std::abs(initialGcl->values.front()) < 1.0e-13,
           "open piston: first visible frame closes geometric conservation");
     const auto& initialBridge = first.bridgeDiagnostics();
+    const auto& initialCutSurface = first.cutSurfaceDiagnostics();
     const double firstEndPlane = 3.0 + 0.05
         * first.stepSettings().timeStepSeconds;
     check(initialBridge.correspondenceMode
@@ -93,6 +94,15 @@ void testVisibleOpenPistonAndDeterminism() {
               && initialBridge.momentResidualNormNewtonMeters < 1.0e-10
               && std::abs(initialBridge.powerResidualWatts) < 1.0e-10,
           "open piston: moving correspondence ledgers meet their budgets");
+    check(initialCutSurface.accepted
+              && initialCutSurface.faceCount == 6
+              && initialCutSurface.gridPlaneCoordinateMeters == 3.0
+              && initialCutSurface.physicalPlaneCoordinateMeters
+                  == firstEndPlane
+              && initialCutSurface.periodicPositionResidualMeters < 1.0e-14
+              && initialCutSurface.forceResidualNormNewtons < 1.0e-10
+              && std::abs(initialCutSurface.powerResidualWatts) < 1.0e-10,
+          "open piston: fluid accepts pressure geometry at the physical cut plane");
     const auto* initialGridPlane = scalarField(
         firstInitialFrame, "interface.grid_plane");
     const auto* initialPhysicalPlane = scalarField(
@@ -101,6 +111,12 @@ void testVisibleOpenPistonAndDeterminism() {
         firstInitialFrame, "interface.correspondence_residual");
     const auto* initialCorrespondenceVelocityResidual = scalarField(
         firstInitialFrame, "interface.correspondence_velocity_residual");
+    const auto* initialCutPositionResidual = scalarField(
+        firstInitialFrame, "fluid.cut_surface_periodic_residual");
+    const auto* initialCutForceResidual = scalarField(
+        firstInitialFrame, "fluid.cut_surface_force_residual");
+    const auto* initialCutPowerResidual = scalarField(
+        firstInitialFrame, "fluid.cut_surface_power_residual");
     check(initialGridPlane != nullptr
               && initialGridPlane->values.front() == 3.0
               && initialPhysicalPlane != nullptr
@@ -109,7 +125,13 @@ void testVisibleOpenPistonAndDeterminism() {
               && initialCorrespondenceResidual->values.front() < 1.0e-14
               && initialCorrespondenceVelocityResidual != nullptr
               && initialCorrespondenceVelocityResidual->values.front()
-                  < 1.0e-14,
+                  < 1.0e-14
+              && initialCutPositionResidual != nullptr
+              && initialCutPositionResidual->values.front() < 1.0e-14
+              && initialCutForceResidual != nullptr
+              && initialCutForceResidual->values.front() < 1.0e-10
+              && initialCutPowerResidual != nullptr
+              && std::abs(initialCutPowerResidual->values.front()) < 1.0e-10,
           "open piston: trace exposes grid/physical correspondence geometry");
 
     viewer::DiagnosticFrame finalFrame = firstInitialFrame;
@@ -259,6 +281,15 @@ void testAcceptedTopologyRebase() {
               && continuedBridge.momentResidualNormNewtonMeters < 1.0e-10
               && std::abs(continuedBridge.powerResidualWatts) < 1.0e-10,
           "rebase: continued face-resolved ledgers remain closed");
+    check(first.cutSurfaceDiagnostics().accepted
+              && first.cutSurfaceDiagnostics().gridPlaneCoordinateMeters
+                  == 3.5
+              && first.cutSurfaceDiagnostics()
+                     .periodicPositionResidualMeters < 1.0e-13,
+          "rebase: fluid-side cut pressure follows the new physical epoch");
+    checkNear(first.cutSurfaceDiagnostics().physicalPlaneCoordinateMeters,
+              3.5 + nextOffset, 2.0e-13,
+              "rebase: fluid-side cut pressure uses the physical plate position");
 
     viewer::DiagnosticFrame wrappedCrossingFrame = continuedFrame;
     while (first.structure().checkpoint().acceptedStepCount < 2400) {
@@ -288,6 +319,15 @@ void testAcceptedTopologyRebase() {
     checkNear(first.bridgeDiagnostics().physicalPlaneCoordinateMeters,
               4.0, 3.0e-13,
               "rebase: terminal physical plane remains unwrapped");
+    check(first.cutSurfaceDiagnostics().accepted
+              && first.cutSurfaceDiagnostics().gridPlaneCoordinateMeters
+                  == 3.5
+              && first.cutSurfaceDiagnostics()
+                     .periodicPositionResidualMeters < 3.0e-13,
+          "rebase: terminal fluid reaction is placed on the unwrapped cut plane");
+    checkNear(first.cutSurfaceDiagnostics().physicalPlaneCoordinateMeters,
+              4.0, 3.0e-13,
+              "rebase: terminal cut pressure position remains unwrapped");
 
     const auto wrappedContinued = first.advance();
     const auto wrappedReplay = second.advance();
@@ -304,6 +344,15 @@ void testAcceptedTopologyRebase() {
               && first.bridgeDiagnostics()
                      .maximumRigidVelocityResidualMetersPerSecond < 1.0e-13,
           "rebase: wrapped moving correspondence remains kinematically bound");
+    check(first.cutSurfaceDiagnostics().accepted
+              && first.cutSurfaceDiagnostics().gridPlaneCoordinateMeters
+                  == 0.0
+              && first.cutSurfaceDiagnostics()
+                     .periodicPositionResidualMeters < 3.0e-13,
+          "rebase: cut pressure accepts the periodic physical image");
+    checkNear(first.cutSurfaceDiagnostics().physicalPlaneCoordinateMeters,
+              4.0 + nextOffset, 3.0e-13,
+              "rebase: wrapped cut pressure retains the unwrapped position");
 }
 
 } // namespace
