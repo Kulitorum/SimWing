@@ -265,9 +265,10 @@ three consecutive MAC-face rebases as the sheet enters each ordinary dual-cell
 segment, then stops before colliding with
 the prescribed pump surface. Its in-memory composite checkpoint restores the
 complete accepted state with exact next-frame replay;
-the checksummed persistent form reuses Structure's codec, stores the topology
-epoch and MAC fields, and validates them against bounded deterministic replay
-before decode. Every pre-pump rebased epoch is persistable and continues
+the checksummed persistent form reuses Structure's codec, stores the complete
+topology epoch (version, axis, wrapped face, and signed periodic image) plus all
+MAC fields, and validates them against bounded deterministic replay before
+decode. Every pre-pump rebased epoch is persistable and continues
 bit-identically. Checkpoint topology is validated at the accepted constitutive
 midpoint, so the last accepted endpoint before pump collision can also be
 persisted and deterministically repeats the same transactional rejection after

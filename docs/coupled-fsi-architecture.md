@@ -998,9 +998,11 @@ state, field energy, and cumulative pump momentum before one transactional
 commit; initial and accepted checkpoints reproduce the exact next frame in an
 equivalent rebuilt worker.
 The distinct `SWPS` persistent envelope reuses the validated Structure codec
-and stores the topology epoch, all three MAC velocity components, and pressure
-explicitly. Because this canonical has no runtime-varying controls, decode
-regenerates its coupled diagnostic across topology epochs by bounded replay and
+and stores the topology version, axis, wrapped face, signed periodic image, all
+three MAC velocity components, and pressure explicitly. The in-memory owner and
+diagnostic frame carry that same complete topology epoch rather than rebuilding
+it from a face index. Because this canonical has no runtime-varying controls,
+decode regenerates its coupled diagnostic across topology epochs by bounded replay and
 requires the decoded Structure and every field sample to match that replay
 bit-for-bit. Magic,
 protocol, reserved bits, payload size, checksum, nested Structure state, total

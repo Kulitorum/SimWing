@@ -12,7 +12,7 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint16_t
-    coupledPorousSheetCheckpointProtocolVersion = 2;
+    coupledPorousSheetCheckpointProtocolVersion = 3;
 
 struct CoupledPorousSheetCheckpointPersistenceLimits {
     std::size_t maximumEncodedBytes = 256u * 1024u * 1024u;

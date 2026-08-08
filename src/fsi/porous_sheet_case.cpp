@@ -321,7 +321,15 @@ void appendFrameFields(
     frame.scalarFields.push_back({
         "porous.face_coordinate", "1",
         viewer::FieldAssociation::Global,
-        {static_cast<double>(diagnostics.porousFaceCoordinate)}});
+        {static_cast<double>(diagnostics.porousTopology.faceCoordinate)}});
+    frame.scalarFields.push_back({
+        "porous.axis", "1",
+        viewer::FieldAssociation::Global,
+        {static_cast<double>(diagnostics.porousTopology.axis)}});
+    frame.scalarFields.push_back({
+        "porous.periodic_image", "1",
+        viewer::FieldAssociation::Global,
+        {static_cast<double>(diagnostics.porousTopology.periodicImage)}});
     frame.vectorFields.push_back({
         "porous.sheet_impulse", "N*s",
         viewer::FieldAssociation::Global,
@@ -413,9 +421,7 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
             + 0.5 * timeStep * predictedSheetVelocityAfter;
         const fluid::MovingPorousTopologySelection topology =
             fluid::selectMovingPorousTopology(
-                grid_,
-                {fluid::movingPorousFaceTopologyVersion,
-                 fluid::GridFaceAxis::X, porousFaceCoordinate_, 0},
+                grid_, porousTopology_,
                 sheetPositionAtConstitutiveTime);
         if (topology.topology.faceCoordinate
             == coupledPorousSheetPumpFaceCoordinate) {
@@ -546,8 +552,7 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
             + (topology.rebaseDirection
                     != fluid::PorousTopologyRebaseDirection::None
                 ? 1 : 0);
-        candidate.porousFaceCoordinate =
-            topology.topology.faceCoordinate;
+        candidate.porousTopology = topology.topology;
         candidate.topologyRebasedThisStep =
             topology.rebaseDirection
             != fluid::PorousTopologyRebaseDirection::None;
@@ -658,7 +663,7 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
 
         velocity_ = std::move(candidateVelocity);
         pressure_ = std::move(candidatePressure);
-        porousFaceCoordinate_ = topology.topology.faceCoordinate;
+        porousTopology_ = topology.topology;
         topologyRebaseCount_ = candidate.topologyRebaseCount;
         diagnostics_ = std::move(candidate);
         return frame;
@@ -674,7 +679,7 @@ CoupledPorousSheetCase::checkpoint() const {
     result.acceptedStepCount = structure_.acceptedStepCount();
     result.simulationTimeSeconds = structure_.simulationTimeSeconds();
     result.topologyRebaseCount = topologyRebaseCount_;
-    result.porousFaceCoordinate = porousFaceCoordinate_;
+    result.porousTopology = porousTopology_;
     result.detail = std::make_shared<
         CoupledPorousSheetCheckpoint::Detail>(
             structure_.checkpoint(), velocity_, pressure_, diagnostics_);
@@ -688,13 +693,18 @@ void CoupledPorousSheetCase::restore(
             != coupledPorousSheetCaseFingerprint
         || !std::isfinite(checkpointValue.simulationTimeSeconds)
         || checkpointValue.simulationTimeSeconds < 0.0
-        || checkpointValue.porousFaceCoordinate
+        || checkpointValue.porousTopology.version
+            != fluid::movingPorousFaceTopologyVersion
+        || checkpointValue.porousTopology.axis
+            != fluid::GridFaceAxis::X
+        || checkpointValue.porousTopology.periodicImage != 0
+        || checkpointValue.porousTopology.faceCoordinate
             >= grid_.cellCounts().x
-        || checkpointValue.porousFaceCoordinate
+        || checkpointValue.porousTopology.faceCoordinate
             == coupledPorousSheetPumpFaceCoordinate
         || checkpointValue.topologyRebaseCount
             > coupledPorousSheetMaximumOrdinaryRebaseCount
-        || checkpointValue.porousFaceCoordinate
+        || checkpointValue.porousTopology.faceCoordinate
             != coupledPorousSheetInitialFaceCoordinate
                 + checkpointValue.topologyRebaseCount
         || !checkpointValue.detail) {
@@ -737,10 +747,7 @@ void CoupledPorousSheetCase::restore(
     bool canonicalTopologyPosition = true;
     try {
         static_cast<void>(fluid::movingPorousCrossingFraction(
-            grid_,
-            {fluid::movingPorousFaceTopologyVersion,
-             fluid::GridFaceAxis::X,
-             checkpointValue.porousFaceCoordinate, 0},
+            grid_, checkpointValue.porousTopology,
             topologyPosition));
     } catch (const std::exception&) {
         canonicalTopologyPosition = false;
@@ -770,8 +777,8 @@ void CoupledPorousSheetCase::restore(
             || sheetPosition != initialSheetPositionMeters
             || sheetVelocity != 0.0 || fluidVelocity != 0.0
             || checkpointValue.topologyRebaseCount != 0
-            || checkpointValue.porousFaceCoordinate
-                != coupledPorousSheetInitialFaceCoordinate) {
+            || checkpointValue.porousTopology
+                != coupledPorousSheetInitialTopology) {
             throw std::invalid_argument(
                 "coupled porous sheet initial checkpoint is inconsistent");
         }
@@ -802,8 +809,8 @@ void CoupledPorousSheetCase::restore(
                 != fluidVelocity
             || diagnostics.topologyRebaseCount
                 != checkpointValue.topologyRebaseCount
-            || diagnostics.porousFaceCoordinate
-                != checkpointValue.porousFaceCoordinate
+            || diagnostics.porousTopology
+                != checkpointValue.porousTopology
             || !diagnostics.fluidProjection.accepted
             || !diagnostics.porousTraction.accepted
             || !diagnostics.bridge.accepted
@@ -816,7 +823,7 @@ void CoupledPorousSheetCase::restore(
                     return face.surfaceStableId
                             == porousSheetSurfaceStableId
                         && face.i
-                            != checkpointValue.porousFaceCoordinate;
+                            != checkpointValue.porousTopology.faceCoordinate;
                 })
             || std::abs(
                 diagnostics.fluidProjection.projection
@@ -834,7 +841,7 @@ void CoupledPorousSheetCase::restore(
     pressure_ = detail.pressure;
     diagnostics_ = detail.diagnostics;
     topologyRebaseCount_ = checkpointValue.topologyRebaseCount;
-    porousFaceCoordinate_ = checkpointValue.porousFaceCoordinate;
+    porousTopology_ = checkpointValue.porousTopology;
 }
 
 const Structure& CoupledPorousSheetCase::structure() const noexcept {
@@ -880,8 +887,13 @@ CoupledPorousSheetCase::topologyRebaseCount() const noexcept {
     return topologyRebaseCount_;
 }
 
+const fluid::MovingPorousFaceTopology&
+CoupledPorousSheetCase::porousTopology() const noexcept {
+    return porousTopology_;
+}
+
 std::size_t CoupledPorousSheetCase::porousFaceCoordinate() const noexcept {
-    return porousFaceCoordinate_;
+    return porousTopology_.faceCoordinate;
 }
 
 } // namespace simwing::fsi

@@ -103,13 +103,21 @@ void testCoupledPorousSheet() {
     const auto* loss = scalarField(
         firstFrame, "porous.dissipated_energy");
     const auto* pumpWork = scalarField(firstFrame, "pump.step_work");
+    const auto* topologyAxis = scalarField(firstFrame, "porous.axis");
+    const auto* topologyImage = scalarField(
+        firstFrame, "porous.periodic_image");
     check(jump != nullptr
               && jump->association == viewer::FieldAssociation::Triangle
               && jump->values.size() == 2
               && jump->values.front() < 0.0
               && loss != nullptr && loss->values.front() > 0.0
-              && pumpWork != nullptr && pumpWork->values.front() > 0.0,
-          "porous-sheet: visible fields separate pressure jump, loss, and pump work");
+              && pumpWork != nullptr && pumpWork->values.front() > 0.0
+              && topologyAxis != nullptr
+              && topologyAxis->values.front()
+                  == static_cast<double>(fsi::fluid::GridFaceAxis::X)
+              && topologyImage != nullptr
+              && topologyImage->values.front() == 0.0,
+          "porous-sheet: visible fields separate loads and expose the complete topology epoch");
 
     viewer::DiagnosticFrame finalFrame = firstFrame;
     constexpr std::uint64_t steps = 120;
@@ -196,7 +204,10 @@ void testTopologyRebaseAndCollisionRollback() {
               && simulation.porousFaceCoordinate() == 4
               && simulation.diagnostics().topologyRebasedThisStep
               && simulation.diagnostics().topologyRebaseCount == 1
-              && simulation.diagnostics().porousFaceCoordinate == 4
+              && simulation.diagnostics().porousTopology
+                  == simulation.porousTopology()
+              && simulation.diagnostics()
+                     .porousTopology.faceCoordinate == 4
               && simulation.diagnostics()
                      .bridge.mapping.gridPlaneCoordinateMeters
                   == simulation.diagnostics()
@@ -211,7 +222,10 @@ void testTopologyRebaseAndCollisionRollback() {
     fsi::CoupledPorousSheetCase restored;
     restored.restore(rebasedCheckpoint);
     check(rebasedCheckpoint.topologyRebaseCount == 1
-              && rebasedCheckpoint.porousFaceCoordinate == 4
+              && rebasedCheckpoint.porousTopology.faceCoordinate == 4
+              && rebasedCheckpoint.porousTopology.axis
+                  == fsi::fluid::GridFaceAxis::X
+              && rebasedCheckpoint.porousTopology.periodicImage == 0
               && serialized(simulation.advance())
                   == serialized(restored.advance()),
           "porous-sheet topology: rebased checkpoint resumes the exact next frame");
@@ -239,8 +253,8 @@ void testTopologyRebaseAndCollisionRollback() {
                       && simulation.diagnostics() == diagnosticsBefore
                       && simulation.topologyRebaseCount()
                           == checkpointBefore.topologyRebaseCount
-                      && simulation.porousFaceCoordinate()
-                          == checkpointBefore.porousFaceCoordinate,
+                      && simulation.porousTopology()
+                          == checkpointBefore.porousTopology,
                   "porous-sheet topology: pump collision rolls back every owner and epoch");
             rejected = true;
             break;
@@ -275,7 +289,7 @@ void expectRestoreRejected(
               && after.acceptedStepCount == before.acceptedStepCount
               && after.simulationTimeSeconds == before.simulationTimeSeconds
               && after.topologyRebaseCount == before.topologyRebaseCount
-              && after.porousFaceCoordinate == before.porousFaceCoordinate
+              && after.porousTopology == before.porousTopology
               && structureAfter.acceptedStepCount
                   == structureBefore.acceptedStepCount
               && structureAfter.nodes == structureBefore.nodes
@@ -308,9 +322,12 @@ void testCheckpointReplayAndValidation() {
                   == fsi::coupledPorousSheetCaseFingerprint
               && checkpoint.acceptedStepCount == checkpointStep
               && checkpoint.topologyRebaseCount == 1
-              && checkpoint.porousFaceCoordinate == 4
+              && checkpoint.porousTopology.faceCoordinate == 4
+              && checkpoint.porousTopology.axis
+                  == fsi::fluid::GridFaceAxis::X
+              && checkpoint.porousTopology.periodicImage == 0
               && restored.topologyRebaseCount() == 1
-              && restored.porousFaceCoordinate() == 4
+              && restored.porousTopology() == checkpoint.porousTopology
               && restored.diagnostics() == owner.diagnostics()
               && restored.velocity() == owner.velocity()
               && restored.pressure() == owner.pressure(),
@@ -356,10 +373,25 @@ void testCheckpointReplayAndValidation() {
         restored, invalid,
         "porous-sheet checkpoint validation: topology epoch must match state");
     invalid = checkpoint;
-    invalid.porousFaceCoordinate = 3;
+    invalid.porousTopology.faceCoordinate = 3;
     expectRestoreRejected(
         restored, invalid,
         "porous-sheet checkpoint validation: topology face must match state");
+    invalid = checkpoint;
+    invalid.porousTopology.version += 1;
+    expectRestoreRejected(
+        restored, invalid,
+        "porous-sheet checkpoint validation: topology version must match state");
+    invalid = checkpoint;
+    invalid.porousTopology.axis = fsi::fluid::GridFaceAxis::Y;
+    expectRestoreRejected(
+        restored, invalid,
+        "porous-sheet checkpoint validation: topology axis must match state");
+    invalid = checkpoint;
+    invalid.porousTopology.periodicImage = 1;
+    expectRestoreRejected(
+        restored, invalid,
+        "porous-sheet checkpoint validation: topology image must match state");
     expectRestoreRejected(
         restored, {},
         "porous-sheet checkpoint validation: empty payload is transactional");
@@ -448,8 +480,7 @@ void expectDecodeRejected(
                   == before.simulationTimeSeconds
               && destination.topologyRebaseCount
                   == before.topologyRebaseCount
-              && destination.porousFaceCoordinate
-                  == before.porousFaceCoordinate
+              && destination.porousTopology == before.porousTopology
               && serialized(expected.advance())
                   == serialized(actual.advance()),
           message);
@@ -490,7 +521,10 @@ void testPersistentCheckpoint() {
               first, destinationOwner, destination, &error)
               && destination.acceptedStepCount == stepCount
               && destination.topologyRebaseCount == 1
-              && destination.porousFaceCoordinate == 4,
+              && destination.porousTopology.faceCoordinate == 4
+              && destination.porousTopology.axis
+                  == fsi::fluid::GridFaceAxis::X
+              && destination.porousTopology.periodicImage == 0,
           "porous-sheet persistence: accepted checkpoint decodes transactionally");
     const auto reencoded = encodeCheckpoint(destinationOwner, destination);
     check(reencoded == first,
@@ -539,7 +573,10 @@ void testPersistentCheckpoint() {
 
     constexpr std::size_t payloadOffset = 16;
     constexpr std::size_t topologyRebaseOffsetInPayload = 28;
-    constexpr std::size_t porousFaceOffsetInPayload = 36;
+    constexpr std::size_t topologyVersionOffsetInPayload = 36;
+    constexpr std::size_t topologyAxisOffsetInPayload = 40;
+    constexpr std::size_t porousFaceOffsetInPayload = 44;
+    constexpr std::size_t topologyImageOffsetInPayload = 52;
     invalid = first;
     invalid[payloadOffset + topologyRebaseOffsetInPayload] ^= 1;
     recomputeEnvelopeChecksum(invalid);
@@ -548,12 +585,33 @@ void testPersistentCheckpoint() {
         fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::InvalidData,
         "porous-sheet persistence validation: topology epoch corruption cannot evade replay");
     invalid = first;
+    invalid[payloadOffset + topologyVersionOffsetInPayload] ^= 1;
+    recomputeEnvelopeChecksum(invalid);
+    expectDecodeRejected(
+        invalid, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::InvalidData,
+        "porous-sheet persistence validation: topology version corruption cannot evade replay");
+    invalid = first;
+    invalid[payloadOffset + topologyAxisOffsetInPayload] ^= 1;
+    recomputeEnvelopeChecksum(invalid);
+    expectDecodeRejected(
+        invalid, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::InvalidData,
+        "porous-sheet persistence validation: topology axis corruption cannot evade replay");
+    invalid = first;
     invalid[payloadOffset + porousFaceOffsetInPayload] ^= 1;
     recomputeEnvelopeChecksum(invalid);
     expectDecodeRejected(
         invalid, destinationOwner, destination,
         fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::InvalidData,
         "porous-sheet persistence validation: topology face corruption cannot evade replay");
+    invalid = first;
+    invalid[payloadOffset + topologyImageOffsetInPayload] ^= 1;
+    recomputeEnvelopeChecksum(invalid);
+    expectDecodeRejected(
+        invalid, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::InvalidData,
+        "porous-sheet persistence validation: topology image corruption cannot evade replay");
 
     fsi::CoupledPorousSheetCheckpointPersistenceLimits limits;
     limits.maximumEncodedBytes = first.size() - 1;
@@ -587,8 +645,8 @@ void testPersistentCheckpoint() {
           "porous-sheet persistence validation: failed encoding preserves caller output");
 
     invalid = first;
-    constexpr std::size_t structureSizeOffsetInPayload = 124;
-    constexpr std::size_t structureOffsetInPayload = 132;
+    constexpr std::size_t structureSizeOffsetInPayload = 140;
+    constexpr std::size_t structureOffsetInPayload = 148;
     const std::size_t structureSize = static_cast<std::size_t>(readU64(
         invalid, payloadOffset + structureSizeOffsetInPayload));
     check(structureSize > 32,
@@ -625,7 +683,7 @@ void testTerminalSafePointPersistence() {
               && terminal.acceptedStepCount > 350
               && terminal.topologyRebaseCount
                   == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
-              && terminal.porousFaceCoordinate
+              && terminal.porousTopology.faceCoordinate
                   == fsi::coupledPorousSheetPumpFaceCoordinate - 1,
           "porous-sheet terminal checkpoint: collision leaves an accepted safe point");
 
@@ -638,8 +696,7 @@ void testTerminalSafePointPersistence() {
               && decoded.simulationTimeSeconds
                   == terminal.simulationTimeSeconds
               && decoded.topologyRebaseCount == terminal.topologyRebaseCount
-              && decoded.porousFaceCoordinate
-                  == terminal.porousFaceCoordinate,
+              && decoded.porousTopology == terminal.porousTopology,
           "porous-sheet terminal checkpoint: accepted endpoint persists exactly");
 
     const auto verifyRepeatedCollision = [](const auto& checkpoint,
@@ -694,9 +751,12 @@ void testEveryRebasedEpochPersists() {
         ++observedRebases;
         const auto checkpoint = owner.checkpoint();
         check(checkpoint.topologyRebaseCount == observedRebases
-                  && checkpoint.porousFaceCoordinate
+                  && checkpoint.porousTopology.faceCoordinate
                       == fsi::coupledPorousSheetInitialFaceCoordinate
-                          + observedRebases,
+                          + observedRebases
+                  && checkpoint.porousTopology.axis
+                      == fsi::fluid::GridFaceAxis::X
+                  && checkpoint.porousTopology.periodicImage == 0,
               "porous-sheet rebase checkpoint: every ordinary epoch is explicit");
 
         const auto bytes = encodeCheckpoint(owner, checkpoint);
@@ -707,8 +767,7 @@ void testEveryRebasedEpochPersists() {
                 bytes, owner, decoded, &error);
         check(decodedOk
                   && decoded.topologyRebaseCount == observedRebases
-                  && decoded.porousFaceCoordinate
-                      == checkpoint.porousFaceCoordinate,
+                  && decoded.porousTopology == checkpoint.porousTopology,
               "porous-sheet rebase checkpoint: every ordinary epoch persists");
         if (!decodedOk) {
             return;

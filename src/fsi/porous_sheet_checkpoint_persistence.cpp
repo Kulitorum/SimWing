@@ -222,7 +222,12 @@ bool serializeCoupledPorousSheetCheckpoint(
         payload.u64(checkpointValue.acceptedStepCount);
         payload.real(checkpointValue.simulationTimeSeconds);
         payload.u64(checkpointValue.topologyRebaseCount);
-        payload.u64(checkpointValue.porousFaceCoordinate);
+        payload.u32(checkpointValue.porousTopology.version);
+        payload.u32(static_cast<std::uint32_t>(
+            checkpointValue.porousTopology.axis));
+        payload.u64(checkpointValue.porousTopology.faceCoordinate);
+        payload.u64(std::bit_cast<std::uint64_t>(
+            checkpointValue.porousTopology.periodicImage));
         const auto counts = owner.grid().cellCounts();
         payload.u64(counts.x);
         payload.u64(counts.y);
@@ -356,9 +361,16 @@ bool deserializeCoupledPorousSheetCheckpoint(
         const std::uint64_t acceptedStepCount = payload.u64();
         const double simulationTimeSeconds = payload.real();
         const std::uint64_t topologyRebaseCount = payload.u64();
+        const std::uint32_t topologyVersion = payload.u32();
+        const std::uint32_t topologyAxis = payload.u32();
         const std::uint64_t porousFaceCoordinate64 = payload.u64();
+        const std::int64_t topologyPeriodicImage =
+            std::bit_cast<std::int64_t>(payload.u64());
         if (stateVersion != coupledPorousSheetCheckpointVersion
             || caseFingerprint != coupledPorousSheetCaseFingerprint
+            || topologyVersion != fluid::movingPorousFaceTopologyVersion
+            || topologyAxis
+                > static_cast<std::uint32_t>(fluid::GridFaceAxis::Z)
             || !std::isfinite(simulationTimeSeconds)
             || simulationTimeSeconds < 0.0) {
             return fail(error,
@@ -376,6 +388,12 @@ bool deserializeCoupledPorousSheetCheckpoint(
                         CoupledPorousSheetCheckpointPersistenceErrorCode::LimitExceeded,
                         "coupled porous sheet topology exceeds platform limits");
         }
+        const fluid::MovingPorousFaceTopology porousTopology{
+            topologyVersion,
+            static_cast<fluid::GridFaceAxis>(topologyAxis),
+            static_cast<std::size_t>(porousFaceCoordinate64),
+            topologyPeriodicImage,
+        };
         const std::uint64_t countX = payload.u64();
         const std::uint64_t countY = payload.u64();
         const std::uint64_t countZ = payload.u64();
@@ -457,8 +475,7 @@ bool deserializeCoupledPorousSheetCheckpoint(
                 != simulationTimeSeconds
             || replayCheckpoint.topologyRebaseCount
                 != topologyRebaseCount
-            || replayCheckpoint.porousFaceCoordinate
-                != static_cast<std::size_t>(porousFaceCoordinate64)
+            || replayCheckpoint.porousTopology != porousTopology
             || !samePublicStructure(
                 replayDetail.structure, decodedStructure)
             || replayDetail.velocity != decodedVelocity

@@ -3,6 +3,7 @@
 #include "coupling.h"
 #include "face_resolved_bridge.h"
 #include "fluid/porous_interface.h"
+#include "fluid/porous_topology.h"
 #include "structure_frame.h"
 #include "viewer_protocol.h"
 
@@ -15,19 +16,26 @@ namespace simwing::fsi {
 struct CoupledPorousSheetCheckpointCodecAccess;
 
 inline constexpr char coupledPorousSheetCaseChecksum[] =
-    "sha256:simwing-coupled-porous-sheet-case-v3";
+    "sha256:simwing-coupled-porous-sheet-case-v4";
 inline constexpr char coupledPorousSheetCaseSolverId[] =
-    "simwing-fsi-coupled-porous-sheet-worker-v3";
-inline constexpr std::uint32_t coupledPorousSheetDiagnosticsVersion = 3;
-inline constexpr std::uint32_t coupledPorousSheetCheckpointVersion = 3;
+    "simwing-fsi-coupled-porous-sheet-worker-v4";
+inline constexpr std::uint32_t coupledPorousSheetDiagnosticsVersion = 4;
+inline constexpr std::uint32_t coupledPorousSheetCheckpointVersion = 4;
 inline constexpr std::uint64_t coupledPorousSheetCaseFingerprint =
-    0x5e8d7a31c4b2960fULL;
+    0x3a7e902cd5b14f68ULL;
 inline constexpr std::size_t coupledPorousSheetInitialFaceCoordinate = 3;
 inline constexpr std::size_t coupledPorousSheetPumpFaceCoordinate = 7;
 inline constexpr std::uint64_t
     coupledPorousSheetMaximumOrdinaryRebaseCount =
         coupledPorousSheetPumpFaceCoordinate
         - coupledPorousSheetInitialFaceCoordinate - 1;
+inline constexpr fluid::MovingPorousFaceTopology
+    coupledPorousSheetInitialTopology{
+        fluid::movingPorousFaceTopologyVersion,
+        fluid::GridFaceAxis::X,
+        coupledPorousSheetInitialFaceCoordinate,
+        0,
+    };
 
 struct CoupledPorousSheetStepDiagnostics {
     std::uint32_t version = coupledPorousSheetDiagnosticsVersion;
@@ -57,8 +65,8 @@ struct CoupledPorousSheetStepDiagnostics {
     double maximumFluidUniformityResidualMetersPerSecond = 0.0;
     double maximumSheetRigidMotionResidualMeters = 0.0;
     std::uint64_t topologyRebaseCount = 0;
-    std::size_t porousFaceCoordinate =
-        coupledPorousSheetInitialFaceCoordinate;
+    fluid::MovingPorousFaceTopology porousTopology =
+        coupledPorousSheetInitialTopology;
     bool topologyRebasedThisStep = false;
     fluid::PorousProjectionDiagnostics fluidProjection;
     fluid::PorousSurfaceTractionDiagnostics porousTraction;
@@ -77,8 +85,8 @@ struct CoupledPorousSheetCheckpoint {
     std::uint64_t acceptedStepCount = 0;
     double simulationTimeSeconds = 0.0;
     std::uint64_t topologyRebaseCount = 0;
-    std::size_t porousFaceCoordinate =
-        coupledPorousSheetInitialFaceCoordinate;
+    fluid::MovingPorousFaceTopology porousTopology =
+        coupledPorousSheetInitialTopology;
 
 private:
     friend class CoupledPorousSheetCase;
@@ -121,6 +129,8 @@ public:
     [[nodiscard]] std::uint64_t acceptedStepCount() const noexcept;
     [[nodiscard]] double simulationTimeSeconds() const noexcept;
     [[nodiscard]] std::uint64_t topologyRebaseCount() const noexcept;
+    [[nodiscard]] const fluid::MovingPorousFaceTopology&
+    porousTopology() const noexcept;
     [[nodiscard]] std::size_t porousFaceCoordinate() const noexcept;
 
 private:
@@ -135,8 +145,8 @@ private:
     StructureStepSettings stepSettings_;
     CoupledPorousSheetStepDiagnostics diagnostics_;
     std::uint64_t topologyRebaseCount_ = 0;
-    std::size_t porousFaceCoordinate_ =
-        coupledPorousSheetInitialFaceCoordinate;
+    fluid::MovingPorousFaceTopology porousTopology_ =
+        coupledPorousSheetInitialTopology;
 };
 
 } // namespace simwing::fsi

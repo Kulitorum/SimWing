@@ -531,7 +531,10 @@ int verifyPorousSheetResponses(
     if (checkpoint.acceptedStepCount != checkpointStep
         || checkpoint.simulationTimeSeconds != timeAtCheckpoint
         || checkpoint.topologyRebaseCount != 1
-        || checkpoint.porousFaceCoordinate != 4) {
+        || checkpoint.porousTopology.faceCoordinate != 4
+        || checkpoint.porousTopology.axis
+            != fsi::fluid::GridFaceAxis::X
+        || checkpoint.porousTopology.periodicImage != 0) {
         std::fprintf(stderr,
                      "porous-sheet control checkpoint is not the rebased safe point\n");
         return 1;
@@ -743,7 +746,7 @@ int verifyPorousCollisionResponses(
         || checkpoint.simulationTimeSeconds != safeTime
         || checkpoint.topologyRebaseCount
             != fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
-        || checkpoint.porousFaceCoordinate
+        || checkpoint.porousTopology.faceCoordinate
             != fsi::coupledPorousSheetPumpFaceCoordinate - 1) {
         std::fprintf(stderr,
                      "porous collision checkpoint is not the terminal safe point\n");

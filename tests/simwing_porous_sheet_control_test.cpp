@@ -86,7 +86,8 @@ void testCheckpointAndContinuation() {
               && savedCheckpoint.has_value()
               && savedCheckpoint->acceptedStepCount == 330
               && savedCheckpoint->topologyRebaseCount == 1
-              && savedCheckpoint->porousFaceCoordinate == 4
+              && savedCheckpoint->porousTopology
+                  == simulation.porousTopology()
               && savedCheckpoint->simulationTimeSeconds
                   == simulation.simulationTimeSeconds(),
           "porous-sheet control delegates the complete coupled checkpoint");
@@ -186,7 +187,7 @@ void testNumericalFailureRemainsAtSafePoint() {
               && savedCheckpoint->simulationTimeSeconds == safeTime
               && savedCheckpoint->topologyRebaseCount
                   == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
-              && savedCheckpoint->porousFaceCoordinate
+              && savedCheckpoint->porousTopology.faceCoordinate
                   == fsi::coupledPorousSheetPumpFaceCoordinate - 1
               && publishedFrameCount == safeStep,
           "porous-sheet control checkpoints only the collision safe point");
