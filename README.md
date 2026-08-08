@@ -200,8 +200,12 @@ ledger, identity, and diagnostic state behind its complete-state fingerprint.
 The enclosing Structure codec now combines those payloads with accepted
 step/time and pending/applied nodal-load state, validating both directions
 through an equivalent rebuilt Structure and rejecting public/opaque node-state
-disagreement. Persistence and control execution for the full composite
-open-piston state remain future work. A
+disagreement. The full composite open-piston checkpoint now also has a
+deterministic bounded/checksummed codec. It nests those Structure and fluid
+payloads with the partial-cell/rebase epoch and every committed transfer and
+conservation ledger, validates through an equivalent rebuilt worker, and
+resumes ordinary or freshly rebased arithmetic bit-for-bit. CLI persistence
+and control execution for this worker remain future work. A
 real 3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,
 checkpoint replay, and completed trace using synthetic physical settings.

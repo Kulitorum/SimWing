@@ -55,6 +55,10 @@ struct OpenPistonConservationDiagnostics {
 // with a topology-bound moving-interface fluid checkpoint and every committed
 // open-piston diagnostic/accounting value.
 struct OpenPistonCaseCheckpoint {
+    // Publicly nameable only for the separate persistence translation unit.
+    // The definition remains private to src/fsi.
+    struct Detail;
+
     std::uint32_t version = openPistonCaseCheckpointVersion;
     std::uint64_t caseDefinitionFingerprint =
         openPistonCaseDefinitionFingerprint;
@@ -65,7 +69,7 @@ struct OpenPistonCaseCheckpoint {
 
 private:
     friend class OpenPistonCase;
-    struct Detail;
+    friend struct OpenPistonCheckpointPersistenceAccess;
     std::shared_ptr<const Detail> detail;
 };
 

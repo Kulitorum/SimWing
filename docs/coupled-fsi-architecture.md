@@ -255,8 +255,13 @@ semantic validator. The enclosing `StructureCheckpoint` codec composes both
 solver-owned envelopes with public accepted-step, time, pending-load, and
 last-applied-load state. It validates serialization and decoding through an
 equivalent rebuilt Structure and explicitly compares the restored body nodes
-with their public duplicate before publishing output. The open-piston file is
-not yet implemented.
+with their public duplicate before publishing output. The enclosing
+`OpenPistonCaseCheckpoint` codec then nests this Structure envelope with the
+accepted moving-interface fluid envelope, partial-cell/rebase epoch, and all
+control-volume, cut-surface, transfer, and conservation ledgers. It is likewise
+deterministic, bounded, checksummed, and transactional, and validates the
+decoded composition through an equivalent rebuilt open-piston worker before
+publishing it.
 
 Material calibration is not optional. Replace prototype fallback constants with
 identified parameter sets, while keeping an explicitly named synthetic material
@@ -404,6 +409,7 @@ src/fsi/
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     piston_case.*           sealed fixed-topology worker canonical
     open_piston_case.*      driven open-control-volume worker canonical
+    open_piston_checkpoint_persistence.* bounded composite restart codec
     periodic_flow_case.*    visible periodic CFD verification worker
     periodic_flow_checkpoint.cpp bounded persistent worker restart codec
     worker_control_protocol.* transport-neutral safe-point messages
@@ -721,12 +727,15 @@ rejects bad magic/version/reserved bits, truncation, trailing bytes, checksum
 damage, a recomputed-topology mismatch, and byte/sample/face/region/surface
 limits without changing the caller's prior checkpoint.
 The open-piston worker composes that payload with the complete Structure
-checkpoint, partial-cell
-offset/topology epoch, and committed coupling/conservation diagnostics. An
+checkpoint, partial-cell offset/topology epoch, and committed
+coupling/conservation diagnostics. Its bounded, checksummed, deterministic
+little-endian codec nests both solver-owned payloads and every committed
+diagnostic ledger, then validates the decoded composition through an equivalent
+rebuilt worker before publishing it. An
 ordinary continuation and the first steps after both a normal and periodic
 plane rebase replay bit-for-bit in the same or an equivalent rebuilt worker.
-This composite open-piston state is a transactional numerical boundary, not
-yet persistently serialized or attached to the worker control protocol.
+This composite open-piston state is a persistent transactional numerical
+boundary, but is not yet attached to the worker CLI or control protocol.
 
 ### Phase 0 — Establish the remake boundary
 
@@ -941,8 +950,8 @@ Work:
 - in parallel conceptually, use IBAMR or OpenFOAM/preCICE as an external
   reference for selected canonical cases, not as a required GUI dependency;
 - implement arbitrary moving-interface/jump conditions, curved/changing
-  paired grid-side correspondence, refinement, full open-piston checkpoint-file
-  persistence, and broader control messages;
+  paired grid-side correspondence, refinement, open-piston checkpoint CLI and
+  control integration, and broader control messages;
 - extend the current cell-point pressure, velocity, divergence, and vorticity
   diagnostics with rate-limited AMR blocks, slices, traction, and pressure-jump
   layers as each field becomes available;
@@ -972,11 +981,11 @@ accepted physical cut-surface reaction geometry, and exact planar one-face
 topology rebases including periodic wrap. Its analytic structure/fluid/actuator
 momentum and kinetic-energy ledger is now complete for this driven planar case.
 Its accepted fluid and structural state can also resume bit-identically from a
-composite in-memory checkpoint before or after a topology rebase.
+composite persistent checkpoint before or after a topology rebase.
 General interpolated cut-cell pressure metrics, curved or transversely deforming
 correspondence, nonplanar or opening topology events, sealed deforming chambers,
-checkpoint-file persistence, and a complete coupled energy ledger for those
-general cases remain open, so the
+checkpoint CLI/control integration, and a complete coupled energy ledger for
+those general cases remain open, so the
 full Phase 2 piston gate is not yet closed.
 
 Gate: observed convergence is consistent with the intended order away from

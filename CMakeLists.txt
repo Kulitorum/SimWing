@@ -416,6 +416,8 @@ target_link_libraries(simwing_piston_case PUBLIC
 add_library(simwing_open_piston_case STATIC
     src/fsi/open_piston_case.cpp
     src/fsi/open_piston_case.h
+    src/fsi/open_piston_checkpoint_persistence.cpp
+    src/fsi/open_piston_checkpoint_persistence.h
 )
 target_include_directories(simwing_open_piston_case PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"

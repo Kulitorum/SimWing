@@ -1,9 +1,12 @@
 #include "open_piston_case.h"
+#include "open_piston_checkpoint_persistence.h"
 #include "viewer_protocol.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
@@ -51,6 +54,53 @@ std::vector<std::uint8_t> serialized(
     check(viewer::serializeFrame(frame, bytes, &error),
           "open piston: deterministic frame serializes");
     return bytes;
+}
+
+std::vector<std::uint8_t> serializedCheckpoint(
+    const fsi::OpenPistonCaseCheckpoint& checkpoint) {
+    std::vector<std::uint8_t> bytes;
+    fsi::OpenPistonCheckpointPersistenceError error;
+    check(fsi::serializeOpenPistonCheckpoint(
+              checkpoint, bytes, &error),
+          "persistent open-piston checkpoint serializes");
+    return bytes;
+}
+
+std::uint64_t readU64(const std::vector<std::uint8_t>& bytes,
+                      const std::size_t offset) {
+    std::uint64_t result = 0;
+    for (std::size_t index = 0; index < 8; ++index) {
+        result |= static_cast<std::uint64_t>(bytes[offset + index])
+            << (8U * index);
+    }
+    return result;
+}
+
+void writeU64(std::vector<std::uint8_t>& bytes,
+              const std::size_t offset,
+              std::uint64_t value) {
+    for (std::size_t index = 0; index < 8; ++index) {
+        bytes[offset + index] = static_cast<std::uint8_t>(value & 0xffU);
+        value >>= 8U;
+    }
+}
+
+std::uint64_t checkpointChecksum(
+    const std::span<const std::uint8_t> bytes) noexcept {
+    std::uint64_t result = 14695981039346656037ULL;
+    for (const std::uint8_t value : bytes) {
+        result ^= value;
+        result *= 1099511628211ULL;
+    }
+    return result;
+}
+
+void refreshCheckpointChecksum(std::vector<std::uint8_t>& bytes) {
+    const std::size_t payloadSize =
+        static_cast<std::size_t>(readU64(bytes, 8));
+    writeU64(bytes, 16,
+             checkpointChecksum(std::span<const std::uint8_t>{bytes}
+                                    .subspan(24, payloadSize)));
 }
 
 const viewer::ScalarField* scalarField(
@@ -306,13 +356,30 @@ void testAcceptedTopologyRebase() {
           "rebase: crossing frame exposes volume and velocity residuals");
 
     const auto firstRebaseCheckpoint = first.checkpoint();
+    const auto firstRebaseBytes =
+        serializedCheckpoint(firstRebaseCheckpoint);
+    fsi::OpenPistonCaseCheckpoint decodedFirstRebase;
+    fsi::OpenPistonCheckpointPersistenceError persistenceError;
+    check(fsi::deserializeOpenPistonCheckpoint(
+              firstRebaseBytes, decodedFirstRebase, &persistenceError)
+              && serializedCheckpoint(decodedFirstRebase)
+                  == firstRebaseBytes
+              && decodedFirstRebase.topologyRebaseCount == 1
+              && decodedFirstRebase.movingPlaneCoordinate == 7
+              && decodedFirstRebase.surfaceOffsetMeters == 0.0,
+          "persistent rebase checkpoint round-trips its complete epoch");
+    fsi::OpenPistonCase persistedFirstRebase;
+    persistedFirstRebase.restore(decodedFirstRebase);
     const auto expectedContinuedFrame = first.advance();
     first.restore(firstRebaseCheckpoint);
     const auto continuedFrame = first.advance();
     const auto replayContinuedFrame = second.advance();
+    const auto persistedContinuedFrame = persistedFirstRebase.advance();
     check(serialized(expectedContinuedFrame) == serialized(continuedFrame)
               && serialized(continuedFrame)
-                  == serialized(replayContinuedFrame),
+                  == serialized(replayContinuedFrame)
+              && serialized(replayContinuedFrame)
+                  == serialized(persistedContinuedFrame),
           "rebase: a restored first partial-cell step replays bit-for-bit");
     const double nextOffset = 0.05
         * first.stepSettings().timeStepSeconds;
@@ -440,6 +507,15 @@ void testCompositeCheckpointValidationAndReplay() {
         static_cast<void>(piston.advance());
     }
     const auto saved = piston.checkpoint();
+    const auto savedBytes = serializedCheckpoint(saved);
+    check(serializedCheckpoint(saved) == savedBytes,
+          "persistent open-piston encoding is byte deterministic");
+    fsi::OpenPistonCaseCheckpoint decoded;
+    fsi::OpenPistonCheckpointPersistenceError persistenceError;
+    check(fsi::deserializeOpenPistonCheckpoint(
+              savedBytes, decoded, &persistenceError)
+              && serializedCheckpoint(decoded) == savedBytes,
+          "persistent open-piston checkpoint round-trips byte identically");
     const auto savedStructure = piston.structure().checkpoint();
     const auto savedControl = piston.controlVolumeDiagnostics();
     const auto savedCut = piston.cutSurfaceDiagnostics();
@@ -477,6 +553,10 @@ void testCompositeCheckpointValidationAndReplay() {
     const auto resumedNext = resumedWorker.advance();
     check(serialized(expectedNext) == serialized(resumedNext),
           "checkpoint: an equivalent rebuilt worker resumes bit-for-bit");
+    fsi::OpenPistonCase persistedWorker;
+    persistedWorker.restore(decoded);
+    check(serialized(expectedNext) == serialized(persistedWorker.advance()),
+          "persistent checkpoint resumes coupled arithmetic bit-for-bit");
 
     const auto beforeInvalid = piston.structure().checkpoint();
     const auto beforeInvalidOffset = piston.surfaceOffsetMeters();
@@ -519,6 +599,93 @@ void testCompositeCheckpointValidationAndReplay() {
               && piston.movingPlaneCoordinate() == beforeInvalidPlane
               && piston.topologyRebaseCount() == beforeInvalidRebases,
           "checkpoint validation: rejected restore leaves the worker untouched");
+
+    fsi::OpenPistonCaseCheckpoint output = decoded;
+    const auto preservedBytes = serializedCheckpoint(output);
+    const auto reject = [&output, &preservedBytes](
+                            std::vector<std::uint8_t> corrupt,
+                            const fsi::
+                                OpenPistonCheckpointPersistenceErrorCode expected,
+                            const char* message,
+                            const fsi::OpenPistonCheckpointPersistenceLimits&
+                                limits = {}) {
+        fsi::OpenPistonCheckpointPersistenceError error;
+        check(!fsi::deserializeOpenPistonCheckpoint(
+                  corrupt, output, &error, limits)
+                  && error.code == expected
+                  && serializedCheckpoint(output) == preservedBytes,
+              message);
+    };
+
+    auto corrupt = savedBytes;
+    corrupt[0] ^= 0xffU;
+    reject(corrupt,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::InvalidMagic,
+           "persistent checkpoint rejects bad magic transactionally");
+    corrupt = savedBytes;
+    corrupt[4] = 2;
+    reject(corrupt,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::UnsupportedVersion,
+           "persistent checkpoint rejects unsupported protocol versions");
+    corrupt = savedBytes;
+    corrupt[6] = 1;
+    reject(corrupt,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::InvalidData,
+           "persistent checkpoint rejects reserved envelope bits");
+    corrupt = savedBytes;
+    corrupt.pop_back();
+    reject(corrupt,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::Truncated,
+           "persistent checkpoint rejects truncation transactionally");
+    corrupt = savedBytes;
+    corrupt.push_back(0);
+    reject(corrupt,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::TrailingData,
+           "persistent checkpoint rejects trailing bytes transactionally");
+    corrupt = savedBytes;
+    corrupt.back() ^= 1U;
+    reject(corrupt,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::ChecksumMismatch,
+           "persistent checkpoint detects payload corruption");
+
+    // Envelope (24 bytes), fixed state header (56 bytes), then the nested
+    // Structure byte count. These mutations retain a valid outer checksum.
+    corrupt = savedBytes;
+    writeU64(corrupt, 56, saved.topologyRebaseCount + 1);
+    refreshCheckpointChecksum(corrupt);
+    reject(corrupt,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::InvalidData,
+           "persistent checkpoint rejects inconsistent epoch metadata");
+    corrupt = savedBytes;
+    writeU64(corrupt, 80,
+             fsi::OpenPistonCheckpointPersistenceLimits{}
+                     .structure.maximumEncodedBytes
+                 + 1);
+    refreshCheckpointChecksum(corrupt);
+    reject(corrupt,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::LimitExceeded,
+           "persistent checkpoint bounds nested lengths before allocation");
+    corrupt = savedBytes;
+    writeU64(corrupt, 40,
+             fsi::openPistonCaseDefinitionFingerprint + 1);
+    refreshCheckpointChecksum(corrupt);
+    reject(corrupt,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::TopologyMismatch,
+           "persistent checkpoint rejects a foreign case fingerprint");
+
+    fsi::OpenPistonCheckpointPersistenceLimits limits;
+    limits.maximumEncodedBytes = savedBytes.size() - 1;
+    reject(savedBytes,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::LimitExceeded,
+           "persistent checkpoint enforces its aggregate byte limit", limits);
+
+    std::vector<std::uint8_t> callerBytes{1, 2, 3};
+    limits = {};
+    limits.maximumCutSurfaceFaces = 5;
+    check(!fsi::serializeOpenPistonCheckpoint(
+              saved, callerBytes, &persistenceError, limits)
+              && callerBytes == std::vector<std::uint8_t>({1, 2, 3}),
+          "failed persistent checkpoint serialization preserves caller output");
 }
 
 } // namespace
