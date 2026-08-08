@@ -385,6 +385,7 @@ src/fsi/
     open_piston_case.*      driven open-control-volume worker canonical
     periodic_flow_case.*    visible periodic CFD verification worker
     periodic_flow_checkpoint.cpp bounded persistent worker restart codec
+    worker_control_protocol.* transport-neutral safe-point messages
     diagnostics.*           conservation, residuals, events, profiling
     checkpoint.*            versioned restart state
     scenarios.*             tunnel, glide, inflation, collapse definitions
@@ -461,8 +462,12 @@ envelope. Decode is transactional and reuses the worker restore validator.
 for this case only, with atomic output replacement. `--checkpoint-every N`
 runs at accepted-step safe points using absolute step multiples, preserving its
 cadence across restarts; the final accepted state is always saved without a
-duplicate write. Live checkpoint control messages remain a separate future
-boundary.
+duplicate write. The first transport-neutral control envelope is also present:
+bounded versioned/checksummed `advance`, `checkpoint`, and `stop` commands use
+nonzero request IDs, while ready/advanced/checkpointed/stopped/error responses
+always expose absolute accepted step and time. It deliberately chooses no
+stdin, pipe, socket, or scheduler transport yet and cannot mutate the worker
+until the next execution-adapter slice.
 The exact-model capture now exports validated scene-v2.1 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical
@@ -674,8 +679,8 @@ composes that payload with the complete Structure checkpoint, partial-cell
 offset/topology epoch, and committed coupling/conservation diagnostics. An
 ordinary continuation and the first steps after both a normal and periodic
 plane rebase replay bit-for-bit in the same or an equivalent rebuilt worker.
-This is a transactional numerical boundary, not yet persistent checkpoint-file
-serialization or a worker control protocol.
+This composite open-piston state is a transactional numerical boundary, not
+yet persistently serialized or attached to the worker control protocol.
 
 ### Phase 0 — Establish the remake boundary
 
@@ -782,6 +787,12 @@ without launching Qt. With interval two, the four-step run writes at steps two
 and four, while the resumed run writes at absolute step six and final step
 seven; each reports exactly two writes. Interval mode without an output path is
 rejected before a worker or trace is created.
+The separate control-protocol regression requires byte-identical repeat and
+decode/re-encode results for all three command and five response kinds. It
+rejects cross-decoding, zero request IDs, zero/oversized advances, misplaced
+kind-specific fields, non-finite worker time, oversized error text/messages,
+bad magic/version/reserved bits, corruption, truncation, and trailing bytes;
+every failed decode leaves the caller's prior message unchanged.
 The Qt-free viewer-geometry regression separately requires exact arrow shaft
 direction and relative magnitude, one shaft plus two arrowhead segments per
 retained nonzero vector, dimensional automatic scaling, owning deterministic

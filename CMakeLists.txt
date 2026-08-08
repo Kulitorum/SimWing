@@ -350,6 +350,14 @@ target_link_libraries(simwing_periodic_flow_case PUBLIC
     simwing_fluid_frame
 )
 
+add_library(simwing_worker_control_protocol STATIC
+    src/fsi/worker_control_protocol.cpp
+    src/fsi/worker_control_protocol.h
+)
+target_include_directories(simwing_worker_control_protocol PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+
 add_library(simwing_fluid_structure_bridge STATIC
     src/fsi/face_resolved_bridge.cpp
     src/fsi/face_resolved_bridge.h
@@ -687,6 +695,12 @@ add_executable(simwing-periodic-flow-case-test
 target_link_libraries(simwing-periodic-flow-case-test
     PRIVATE simwing_periodic_flow_case)
 
+add_executable(simwing-worker-control-protocol-test
+    tests/simwing_worker_control_protocol_test.cpp
+)
+target_link_libraries(simwing-worker-control-protocol-test
+    PRIVATE simwing_worker_control_protocol)
+
 add_executable(simwing-fluid-projection-test
     tests/simwing_fluid_projection_test.cpp
 )
@@ -939,6 +953,7 @@ set_target_properties(
     simwing-structure-frame-test
     simwing-fsi-worker-test
     simwing-periodic-flow-case-test
+    simwing-worker-control-protocol-test
     simwing-fluid-projection-test
     simwing-fluid-interface-jump-test
     simwing-fluid-moving-interface-test
@@ -994,6 +1009,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-structure-frame-test
         simwing-fsi-worker-test
         simwing-periodic-flow-case-test
+        simwing-worker-control-protocol-test
         simwing-fluid-projection-test
         simwing-fluid-interface-jump-test
         simwing-fluid-moving-interface-test
@@ -1138,6 +1154,8 @@ add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
 add_test(NAME simwing_fsi_worker COMMAND simwing-fsi-worker-test)
 add_test(NAME simwing_periodic_flow_case
     COMMAND simwing-periodic-flow-case-test)
+add_test(NAME simwing_worker_control_protocol
+    COMMAND simwing-worker-control-protocol-test)
 add_test(NAME simwing_fluid_projection COMMAND simwing-fluid-projection-test)
 add_test(NAME simwing_fluid_interface_jump
     COMMAND simwing-fluid-interface-jump-test)

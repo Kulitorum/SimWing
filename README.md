@@ -106,10 +106,15 @@ time; the initial state and later accepted states resume bit-for-bit in the
 same or an equivalent rebuilt worker. A bounded, versioned, checksummed
 little-endian file codec preserves that complete payload. The worker accepts it
 through `--checkpoint-in` and atomically replaces `--checkpoint-out`; requested
-steps are additional after restore. Live checkpoint control messages remain
-future protocol work. For long runs, `--checkpoint-every N` also saves after
-accepted absolute step multiples and at the final state, so a resumed run keeps
-the original cadence and never writes a rejected candidate.
+steps are additional after restore. For long runs, `--checkpoint-every N` also
+saves after accepted absolute step multiples and at the final state, so a
+resumed run keeps the original cadence and never writes a rejected candidate.
+A first transport-neutral worker-control protocol now defines versioned,
+checksummed, byte-bounded `advance`, `checkpoint`, and `stop` commands with
+correlated `ready`, `advanced`, `checkpointed`, `stopped`, and coded-error
+responses. Every response carries the absolute accepted step and simulated
+time. This slice is the deterministic message boundary; process I/O and command
+execution are the next layer, so ordinary CLI behavior is unchanged.
 Both the projected transport and Strang flow paths select donor-cell or limited
 monotonized-central reconstruction explicitly; donor-cell remains the default.
 The original single-stage transport and Euler/SSPRK2 viscosity modes compose
@@ -176,7 +181,8 @@ topology behind an immutable payload. The open-piston worker composes it with
 the full XPBD checkpoint, partial-cell epoch, and conservation ledgers; an
 equivalent rebuilt worker resumes bit-for-bit, including immediately after
 both ordinary and periodic topology rebases. Persistent checkpoint files and
-worker control messages remain future protocol work. A real 3.28 fixture
+control execution for this composite open-piston state remain future work. A
+real 3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,
 checkpoint replay, and completed trace using synthetic physical settings.
 Export still requires explicit physical material/pilot settings;
