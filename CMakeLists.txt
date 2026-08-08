@@ -1507,6 +1507,23 @@ add_test(NAME simwing_fsi_porous_sheet_control_stdio
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunSimWingControlStdioTest.cmake")
 set_tests_properties(simwing_fsi_porous_sheet_control_stdio PROPERTIES
     TIMEOUT 45)
+add_test(NAME simwing_fsi_porous_sheet_collision_control_stdio
+    COMMAND ${CMAKE_COMMAND}
+        "-DSIMWING_FSI=$<TARGET_FILE:simwing-fsi>"
+        "-DCONTROL_FIXTURE=$<TARGET_FILE:simwing-control-stdio-fixture>"
+        "-DCOMMAND_FILE=${CMAKE_BINARY_DIR}/simwing-porous-collision-control-commands.swcc"
+        "-DRESPONSE_FILE=${CMAKE_BINARY_DIR}/simwing-porous-collision-control-responses.swcr"
+        "-DCHECKPOINT_FILE=${CMAKE_BINARY_DIR}/simwing-porous-collision-control-checkpoint.swps"
+        "-DTRACE_FILE=${CMAKE_BINARY_DIR}/simwing-porous-collision-control.swtrace"
+        "-DERROR_FILE=${CMAKE_BINARY_DIR}/simwing-porous-collision-control-stderr.txt"
+        "-DRESUME_COMMAND_FILE=${CMAKE_BINARY_DIR}/simwing-porous-collision-control-resume-commands.swcc"
+        "-DRESUME_RESPONSE_FILE=${CMAKE_BINARY_DIR}/simwing-porous-collision-control-resume-responses.swcr"
+        "-DRESUME_TRACE_FILE=${CMAKE_BINARY_DIR}/simwing-porous-collision-control-resume.swtrace"
+        "-DRESUME_ERROR_FILE=${CMAKE_BINARY_DIR}/simwing-porous-collision-control-resume-stderr.txt"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunSimWingPorousCollisionControlTest.cmake")
+set_tests_properties(
+    simwing_fsi_porous_sheet_collision_control_stdio PROPERTIES
+    TIMEOUT 60)
 add_test(NAME simwing_fsi_control_rejects_unsupported_case
     COMMAND simwing-fsi --case structural --control-stdio --no-viewer)
 set_tests_properties(simwing_fsi_control_rejects_unsupported_case PROPERTIES

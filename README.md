@@ -130,6 +130,9 @@ both the original and resumed traces, then drives the original worker to its
 pump-collision rejection and proves that only preceding accepted frames were
 published. The terminal accepted endpoint is itself persistable even when it
 has moved beyond the face segment used by that step's constitutive midpoint.
+A separate process-level regression checkpoints that terminal state, restores
+it into a fresh controlled worker, and verifies the same rejection with an
+empty completed continuation trace.
 Ordinary step-driven CLI behavior is unchanged.
 Both the projected transport and Strang flow paths select donor-cell or limited
 monotonized-central reconstruction explicitly; donor-cell remains the default.

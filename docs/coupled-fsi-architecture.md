@@ -532,7 +532,9 @@ persists accepted step 330, reproduces step 331 in the original run, and emits
 that same single next frame after a restored Ready response. The original run
 then reaches the prescribed-pump collision, reports a numerical failure at the
 last accepted absolute state, publishes no rejected frame, and still stops
-cleanly.
+cleanly. A second process persists that terminal state; its restored Ready
+response exposes the same absolute step/time, the repeated advance returns the
+same numerical failure, and the completed continuation trace remains empty.
 The exact-model capture now exports validated scene-v2.1 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical
