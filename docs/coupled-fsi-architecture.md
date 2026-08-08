@@ -881,12 +881,12 @@ explicit balancing pressure source preserves a `195 Pa` porous loss without
 changing its uniform velocity. A pressure-driven uniform-plug companion uses
 the exact nonlinear implicit midpoint to close pressure impulse and the
 driving-work/porous-dissipation/kinetic-energy identity on every step. Its
-endpoint MAC projection retains the accepted plug while exposing the porous
-and zero-net-jump periodic gauge-closure planes in owning frames; the physical
-driving rise stays separate in the impulse/work ledger. The case converges to
-the analytic `1.74165739 m/s`, `250 Pa` steady state. This closes a
-one-degree-of-freedom porous-flow oracle; general nonuniform or moving porous
-coupling remains open.
+endpoint Strang/SSPRK2 evolution retains the accepted plug and all crossings at
+both internal pressure stages while exposing the porous and zero-net-jump
+periodic gauge-closure planes in owning frames; the physical driving rise stays
+separate in the impulse/work ledger. The case converges to the analytic
+`1.74165739 m/s`, `250 Pa` steady state. This closes a one-degree-of-freedom
+porous-flow oracle; general nonuniform or moving porous coupling remains open.
 The case checkpoint must restore the initial state and a later accepted state,
 then reproduce the next frame bit-for-bit in both the original and an equivalent
 rebuilt worker. Version, case fingerprint, grid, sample count, step, time, and

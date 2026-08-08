@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fluid/evolution.h"
 #include "fluid/porous_flow.h"
 #include "fluid/projection.h"
 #include "pressure_jump_frame.h"
@@ -44,6 +45,8 @@ public:
     plugSettings() const noexcept;
     [[nodiscard]] const fluid::ProjectionDiagnostics&
     diagnostics() const noexcept;
+    [[nodiscard]] const fluid::PeriodicFlowStrangSspRk2Diagnostics&
+    flowDiagnostics() const noexcept;
     [[nodiscard]] const fluid::PorousPlugFlowDiagnostics&
     plugDiagnostics() const noexcept;
     [[nodiscard]] std::uint64_t acceptedStepCount() const noexcept;
@@ -55,8 +58,10 @@ private:
     fluid::CellScalarField pressure_;
     fluid::SharpPressureJumpField pressureJumps_;
     fluid::ProjectionSettings stepSettings_;
+    fluid::PeriodicFlowStrangSspRk2Settings flowSettings_;
     fluid::PorousPlugFlowSettings plugSettings_;
     fluid::ProjectionDiagnostics diagnostics_;
+    fluid::PeriodicFlowStrangSspRk2Diagnostics flowDiagnostics_;
     fluid::PorousPlugFlowDiagnostics plugDiagnostics_;
     double flowVelocityMetersPerSecond_ = 0.0;
     std::uint64_t acceptedStepCount_ = 0;

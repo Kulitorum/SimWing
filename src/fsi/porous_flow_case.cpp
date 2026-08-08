@@ -23,6 +23,27 @@ fluid::ProjectionSettings makeProjectionSettings() {
     return settings;
 }
 
+fluid::PeriodicFlowStrangSspRk2Settings makeFlowSettings() {
+    fluid::PeriodicFlowStrangSspRk2Settings settings;
+    settings.densityKgPerCubicMeter = 1.2;
+    settings.kinematicViscositySquareMetersPerSecond = 1.5e-5;
+    settings.timeStepSeconds = 1.0 / 60.0;
+    settings.advectionReconstruction =
+        fluid::VariableMacReconstruction::DonorCell;
+    settings.maximumLocalOutgoingCourantNumber = 1.0;
+    settings.advectionAbsoluteDivergenceTolerancePerSecond = 1.0e-11;
+    settings.advectionRelativeDivergenceTolerance = 1.0e-12;
+    settings.maximumDiffusionNumber = 0.5;
+    settings.projectionAbsoluteResidualTolerance = 1.0e-10;
+    settings.projectionRelativeResidualTolerance = 1.0e-13;
+    settings.projectionMaximumIterations = 2000;
+    settings.absoluteMomentumToleranceNewtonSeconds = 2.0e-11;
+    settings.relativeMomentumTolerance = 1.0e-12;
+    settings.absoluteEnergyToleranceJoules = 2.0e-11;
+    settings.relativeEnergyTolerance = 1.0e-12;
+    return settings;
+}
+
 fluid::PorousPlugFlowSettings makePlugSettings() {
     fluid::PorousPlugFlowSettings settings;
     settings.resistance = {100.0, 25.0};
@@ -97,10 +118,15 @@ PorousFlowCase::PorousFlowCase()
       pressure_(grid_),
       pressureJumps_(grid_),
       stepSettings_(makeProjectionSettings()),
+      flowSettings_(makeFlowSettings()),
       plugSettings_(makePlugSettings()) {
     if (stepSettings_.densityKgPerCubicMeter
             != plugSettings_.densityKgPerCubicMeter
         || stepSettings_.timeStepSeconds
+            != plugSettings_.timeStepSeconds
+        || flowSettings_.densityKgPerCubicMeter
+            != plugSettings_.densityKgPerCubicMeter
+        || flowSettings_.timeStepSeconds
             != plugSettings_.timeStepSeconds) {
         throw std::logic_error(
             "porous worker projection and plug settings disagree");
@@ -126,14 +152,17 @@ viewer::DiagnosticFrame PorousFlowCase::advance() {
     fluid::SharpPressureJumpField candidatePressureJumps(
         grid_, completePressureCircuit(grid_, porous));
     fluid::CellScalarField candidatePressure(grid_);
-    const fluid::ProjectionDiagnostics candidateDiagnostics =
-        fluid::projectVelocityWithPressureJumps(
-            grid_, candidateVelocity, candidatePressure,
-            candidatePressureJumps, stepSettings_);
-    if (!candidateDiagnostics.converged) {
+    const fluid::PeriodicFlowStrangSspRk2Diagnostics
+        candidateFlowDiagnostics =
+            fluid::advancePeriodicFlowStrangSspRk2(
+                grid_, candidateVelocity, candidatePressure,
+                candidatePressureJumps, flowSettings_);
+    if (!candidateFlowDiagnostics.accepted) {
         throw std::runtime_error(
-            "porous-flow case endpoint projection did not converge");
+            "porous-flow case endpoint fluid step was not accepted");
     }
+    const fluid::ProjectionDiagnostics candidateDiagnostics =
+        candidateFlowDiagnostics.projectedAdvection.secondProjection;
     double maximumVelocityError = 0.0;
     for (const double sample : candidateVelocity.xFaces()) {
         maximumVelocityError = std::max(
@@ -198,6 +227,7 @@ viewer::DiagnosticFrame PorousFlowCase::advance() {
     pressure_ = std::move(candidatePressure);
     pressureJumps_ = std::move(candidatePressureJumps);
     diagnostics_ = candidateDiagnostics;
+    flowDiagnostics_ = candidateFlowDiagnostics;
     plugDiagnostics_ = candidatePlugDiagnostics;
     flowVelocityMetersPerSecond_ = candidateFlowVelocity;
     acceptedStepCount_ = candidateStep;
@@ -238,6 +268,11 @@ PorousFlowCase::plugSettings() const noexcept {
 const fluid::ProjectionDiagnostics&
 PorousFlowCase::diagnostics() const noexcept {
     return diagnostics_;
+}
+
+const fluid::PeriodicFlowStrangSspRk2Diagnostics&
+PorousFlowCase::flowDiagnostics() const noexcept {
+    return flowDiagnostics_;
 }
 
 const fluid::PorousPlugFlowDiagnostics&

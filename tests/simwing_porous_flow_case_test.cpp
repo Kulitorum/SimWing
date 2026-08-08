@@ -66,8 +66,13 @@ void testPressureDrivenWorker() {
               && first.simulationTimeSeconds()
                   == first.stepSettings().timeStepSeconds
               && first.diagnostics().converged
+              && first.flowDiagnostics().accepted
+              && first.flowDiagnostics().projectedAdvection.firstProjection
+                     .pressureJumpFaceCount == 24
+              && first.flowDiagnostics().projectedAdvection.secondProjection
+                     .pressureJumpFaceCount == 24
               && first.pressureJumps().faceCount() == 24,
-          "porous-flow worker commits its plug and grid projection together");
+          "porous-flow worker commits its plug and complete fluid step together");
     check(firstFrame.vertices.size() == 288
               && firstFrame.triangles.size() == 48,
           "porous-flow worker publishes cell samples and two interface planes");

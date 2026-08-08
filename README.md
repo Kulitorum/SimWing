@@ -165,8 +165,9 @@ without spurious velocity. A pressure-driven companion advances a uniform
 fluid plug with an implicit-midpoint nonlinear solve; every step independently
 closes pressure impulse, driving work, porous dissipation, and kinetic energy.
 Its viewable worker converges to the analytic `1.74165739 m/s` speed and `250 Pa`
-loss. This is still a one-degree-of-freedom oracle; general nonuniform or moving
-porous coupling remains future work.
+loss while carrying its endpoint interfaces through both pressure stages of a
+complete Strang/SSPRK2 step. This is still a one-degree-of-freedom oracle;
+general nonuniform or moving porous coupling remains future work.
 Face-aligned moving membranes can now partition stable fluid regions, impose
 an exact normal MAC velocity, and project each region transactionally while
 retaining its prior pressure gauge. A translating sealed-slab canonical closes
