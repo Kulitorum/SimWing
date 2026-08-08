@@ -209,6 +209,10 @@ separate. Empty topology is exact to the moving-only path, and a face claimed
 by both an impermeable constraint and a porous jump is rejected transactionally.
 This is fixed-grid coexistence with moving boundaries, not yet moving porous
 cut-cell topology.
+A separate pure topology selector now tracks a planar porous sheet by axis,
+wrapped MAC face, and signed periodic image. It deterministically retains or
+rebases one segment in either direction on X/Y/Z and rejects exact face
+placement or skipped segments before any fluid state changes.
 The accepted wrapper can cross the planar open-piston GCL and physical
 cut-surface boundaries without discarding its nonlinear status. In the porous
 opening canonical, the summed tile flux exactly fills the swept chamber volume,
@@ -256,8 +260,9 @@ frames with visible deterministic motion. The
 `simwing-fsi --case porous-sheet` harness drives fluid through a translating
 linear-resistance sheet, transfers only the sheet reaction to XPBD, and closes
 the pump impulse/work, porous dissipation, and fluid/structure kinetic-energy
-ledgers before publishing a frame. It commits one explicit MAC-face rebase when
-the sheet enters the next dual-cell segment, then stops before colliding with
+ledgers before publishing a frame. It uses that reusable selector to commit one
+explicit MAC-face rebase when the sheet enters the next dual-cell segment, then
+stops before colliding with
 the prescribed pump surface. Its in-memory composite checkpoint restores the
 complete accepted state with exact next-frame replay;
 the checksummed persistent form reuses Structure's codec, stores the topology

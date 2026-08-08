@@ -438,6 +438,7 @@ src/fsi/
         interface_jump.*
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
+        porous_topology.*   bidirectional periodic porous-face epochs
         moving_interface.*  grid-face constraints and region topology
         moving_control_volume.* open planar GCL and topology epochs
         checkpoint.*        accepted fluid/topology checkpoint + persistence
@@ -982,7 +983,11 @@ accepted step. The immutable trace shows the translated two-sided sheet and
 keeps pressure jump, sheet impulse, pump work, and porous loss separate. At the
 first accepted midpoint sample in the next dual-cell segment it explicitly
 rebinds the crossing to the next MAC face while preserving physical sheet and
-fluid state. A later collision with the prescribed pump surface is rejected;
+fluid state. That decision now uses a pure topology selector whose epoch owns
+axis, wrapped face coordinate, and signed periodic image. It supports X/Y/Z,
+one adjacent segment in either direction, and both periodic wraps while
+rejecting exact MAC-plane ambiguity and skipped segments. A later collision
+with the prescribed pump surface is rejected by the case after selection;
 this remains a planar oracle, not a general moving cut-cell remap or a general
 strong-coupling solve.
 Its immutable in-memory checkpoint owns the nested Structure state, MAC

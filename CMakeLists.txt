@@ -326,6 +326,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/porous_interface.h
     src/fsi/fluid/porous_flow.cpp
     src/fsi/fluid/porous_flow.h
+    src/fsi/fluid/porous_topology.cpp
+    src/fsi/fluid/porous_topology.h
     src/fsi/fluid/projection.cpp
     src/fsi/fluid/projection.h
     src/fsi/fluid/projected_advection.cpp
@@ -830,6 +832,12 @@ add_executable(simwing-fluid-porous-interface-test
 target_link_libraries(simwing-fluid-porous-interface-test
     PRIVATE simwing_fluid)
 
+add_executable(simwing-fluid-porous-topology-test
+    tests/simwing_fluid_porous_topology_test.cpp
+)
+target_link_libraries(simwing-fluid-porous-topology-test
+    PRIVATE simwing_fluid)
+
 add_executable(simwing-porous-flow-case-test
     tests/simwing_porous_flow_case_test.cpp
 )
@@ -1146,6 +1154,7 @@ set_target_properties(
     simwing-pressure-jump-frame-test
     simwing-pressure-jump-case-test
     simwing-fluid-porous-interface-test
+    simwing-fluid-porous-topology-test
     simwing-porous-flow-case-test
     simwing-worker-control-protocol-test
     simwing-worker-control-stream-test
@@ -1212,6 +1221,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-pressure-jump-frame-test
         simwing-pressure-jump-case-test
         simwing-fluid-porous-interface-test
+        simwing-fluid-porous-topology-test
         simwing-porous-flow-case-test
         simwing-worker-control-protocol-test
         simwing-worker-control-stream-test
@@ -1371,6 +1381,8 @@ add_test(NAME simwing_pressure_jump_case
     COMMAND simwing-pressure-jump-case-test)
 add_test(NAME simwing_fluid_porous_interface
     COMMAND simwing-fluid-porous-interface-test)
+add_test(NAME simwing_fluid_porous_topology
+    COMMAND simwing-fluid-porous-topology-test)
 add_test(NAME simwing_porous_flow_case
     COMMAND simwing-porous-flow-case-test)
 add_test(NAME simwing_worker_control_protocol
