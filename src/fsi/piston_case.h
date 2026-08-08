@@ -14,6 +14,8 @@ inline constexpr char coupledPistonCaseChecksum[] =
     "sha256:simwing-uniform-coupled-piston-case-v1";
 inline constexpr char coupledPistonCaseSolverId[] =
     "simwing-fsi-uniform-piston-worker-v1";
+inline constexpr char strongCoupledPistonCaseChecksum[] =
+    "sha256:simwing-strong-light-piston-case-v1";
 inline constexpr char strongCoupledPistonCaseSolverId[] =
     "simwing-fsi-strong-light-piston-v1";
 
@@ -47,6 +49,8 @@ private:
 
 struct StrongCoupledPistonStepDiagnostics {
     StrongCouplingMacroStepRunResult coupling;
+    PlanarFaceResolvedBridgeDiagnostics bridge;
+    TimeIntegratedTransferDiagnostics integratedTransfer;
     double startSpeedMetersPerSecond = 0.0;
     double acceptedSpeedMetersPerSecond = 0.0;
     double acceptedInterfaceSpeedMetersPerSecond = 0.0;
@@ -89,6 +93,35 @@ private:
     AitkenRelaxationSettings relaxationSettings_;
     CouplingConvergenceSettings convergenceSettings_;
     CouplingMacroStepRetrySettings retrySettings_;
+};
+
+// Immutable-frame adapter for selecting the strong canonical as a standalone
+// worker without mixing rendering or trace I/O into its numerical owner.
+class StrongCoupledPistonWorkerCase final {
+public:
+    StrongCoupledPistonWorkerCase();
+
+    StrongCoupledPistonWorkerCase(
+        const StrongCoupledPistonWorkerCase&) = delete;
+    StrongCoupledPistonWorkerCase& operator=(
+        const StrongCoupledPistonWorkerCase&) = delete;
+    StrongCoupledPistonWorkerCase(
+        StrongCoupledPistonWorkerCase&&) = delete;
+    StrongCoupledPistonWorkerCase& operator=(
+        StrongCoupledPistonWorkerCase&&) = delete;
+
+    [[nodiscard]] viewer::TraceHeader traceHeader() const;
+    [[nodiscard]] viewer::DiagnosticFrame advance();
+
+    [[nodiscard]] const Structure& structure() const noexcept;
+    [[nodiscard]] const StructureStepSettings& stepSettings() const noexcept;
+    [[nodiscard]] const StrongCoupledPistonStepDiagnostics&
+    diagnostics() const noexcept;
+
+private:
+    StrongCoupledPistonCase simulation_;
+    viewer::StructureFrameMapping frameMapping_;
+    StrongCoupledPistonStepDiagnostics diagnostics_;
 };
 
 } // namespace simwing::fsi

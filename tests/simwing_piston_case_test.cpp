@@ -222,12 +222,55 @@ void testStrongCoupledLightPiston() {
           "strong piston: accepted interface and structure velocity close after repeated steps");
 }
 
+void testStrongCoupledPistonFrames() {
+    fsi::StrongCoupledPistonWorkerCase first;
+    fsi::StrongCoupledPistonWorkerCase observed;
+    viewer::DiagnosticFrame finalFrame;
+    constexpr std::uint64_t steps = 6;
+    for (std::uint64_t step = 0; step < steps; ++step) {
+        const auto firstFrame = first.advance();
+        finalFrame = observed.advance();
+        check(serialized(firstFrame) == serialized(finalFrame),
+              "strong piston frame: observation cannot alter coupled arithmetic");
+    }
+    const auto& diagnostics = observed.diagnostics();
+    check(finalFrame.sceneChecksum
+              == fsi::strongCoupledPistonCaseChecksum
+              && finalFrame.solverCommit
+                  == fsi::strongCoupledPistonCaseSolverId
+              && finalFrame.step == steps
+              && finalFrame.couplingIteration
+                  == diagnostics.coupling.lastIteration
+                         .convergence.iteration
+              && finalFrame.couplingIteration >= 3,
+          "strong piston frame: provenance and true coupling iteration are published");
+    check(finalFrame.vertices.size() == 4
+              && finalFrame.triangles.size() == 2
+              && scalarField(finalFrame, "coupling.solver_runs") != nullptr
+              && scalarField(finalFrame, "coupling.retry_count") != nullptr
+              && scalarField(finalFrame, "interface.speed") != nullptr
+              && scalarField(
+                  finalFrame, "interface.velocity_closure") != nullptr
+              && scalarField(
+                  finalFrame, "interface.mean_pressure_traction") != nullptr,
+          "strong piston frame: accepted geometry and strong-coupling fields are complete");
+    check(finalFrame.couplingResiduals.displacementMetres <= 1.0e-10,
+          "strong piston frame: displacement residual meets its acceptance budget");
+    check(finalFrame.couplingResiduals.tractionNewtons <= 1.0e-7,
+          "strong piston frame: traction residual meets its acceptance budget");
+    check(finalFrame.couplingResiduals.fluid <= 1.0e-12,
+          "strong piston frame: accepted fluid projection is divergence free");
+    check(finalFrame.conservation.fluidMassKilograms == 28.8,
+          "strong piston frame: projected fluid mass is explicit");
+}
+
 } // namespace
 
 int main() {
     testDeterministicEndToEndPistonFrames();
     testCompletedPistonTrace();
     testStrongCoupledLightPiston();
+    testStrongCoupledPistonFrames();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing coupled piston check(s) failed\n",

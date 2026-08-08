@@ -337,7 +337,9 @@ against `28.8 kg` of projected fluid. Its scalar interface speed is solved by
 the generic Aitken loop, while every iteration reruns the actual moving-interface
 projection, face-resolved pressure transfer, temporal integration, and XPBD
 step from the accepted baseline. Only the converged Structure/fluid epoch
-persists; this diagnostic canonical is not yet a CLI worker. The
+persists. It is selectable as `simwing-fsi --case strong-piston`; accepted
+immutable frames expose the real coupling count, residuals, retry count,
+interface closure, pressure traction, and transferred impulse/work. The
 `simwing-fsi --case porous-sheet` harness drives fluid through a translating
 linear-resistance sheet, transfers only the sheet reaction to XPBD, and closes
 the pump impulse/work, porous dissipation, and fluid/structure kinetic-energy
@@ -511,6 +513,7 @@ Run:
 
 ```powershell
 .\build\bin\Release\LEparagliding.exe
+.\build\bin\Release\simwing-fsi.exe --case strong-piston --steps 120 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600 --no-viewer --checkpoint-out periodic-flow.swpc --checkpoint-every 60

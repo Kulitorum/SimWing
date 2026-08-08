@@ -1501,6 +1501,14 @@ add_test(NAME simwing_fsi_piston_headless
         --steps 4
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-piston-headless.swtrace")
+add_test(NAME simwing_fsi_strong_piston_headless
+    COMMAND simwing-fsi
+        --case strong-piston
+        --steps 8
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-strong-piston-headless.swtrace")
+set_tests_properties(simwing_fsi_strong_piston_headless PROPERTIES
+    PASS_REGULAR_EXPRESSION "completed 8 strong-piston step\\(s\\)")
 add_test(NAME simwing_fsi_porous_sheet_headless
     COMMAND simwing-fsi
         --case porous-sheet

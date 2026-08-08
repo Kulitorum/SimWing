@@ -97,7 +97,7 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
-.\build\bin\Release\simwing-fsi.exe [--case structural|piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--control-stdio] [--no-viewer]
+.\build\bin\Release\simwing-fsi.exe [--case structural|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--control-stdio] [--no-viewer]
 .\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
@@ -205,7 +205,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   projection, the face-resolved bridge, temporal coupling, XPBD acceptance, and
   immutable viewer frames. It also owns the headless light-piston strong-
   coupling canonical that supplies a real moving-interface/transfer/XPBD
-  callback to `simwing_coupled_state`; that path is not a CLI case yet.
+  callback to `simwing_coupled_state`. `--case strong-piston` publishes its
+  accepted immutable diagnostic frames without checkpoint/control mode.
 - `simwing_porous_sheet_case`: Qt-free midpoint oracle coupling a
   pressure-driven porous sheet to XPBD. It closes fluid/sheet/pump momentum,
   pump work, porous dissipation, and kinetic-energy ledgers before publishing
@@ -739,7 +740,8 @@ makes this a certified aerodynamic solver.
   `--case piston`. Its synthetic heavy piston makes the accepted motion visible
   while preserving the analytic tributary-mass translation. It is an
   end-to-end fixed-topology verification harness, not general moving-grid FSI.
-  The same files contain a distinct `6 kg` headless added-mass canonical. Each
+  The same files contain the distinct `6 kg` `--case strong-piston` added-mass
+  canonical. Each
   strong iteration restores the accepted physical epoch, projects the real
   `28.8 kg` fluid at the relaxed interface speed, transfers its pressure through
   the planar bridge and temporal adapter, advances XPBD, and returns the actual
@@ -1112,9 +1114,14 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 106 configured tests on Windows. The Fortran-reference test is
+There are 107 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
+The light added-mass path is covered both inside `simwing_piston_case` and by
+`simwing_fsi_strong_piston_headless`; preserve multiple real coupling solves,
+weak-response separation, accepted interface/Structure velocity closure,
+deterministic persistent Structure/fluid state, immutable-frame provenance and
+residual fields, and accepted-only CLI trace publication.
 For second-order fixed-grid porous evolution, `simwing_fluid_evolution` must
 also preserve exact porous-half/bulk-Strang/porous-half composition, summed
 interface ledgers, later-stage rollback, bit-exact empty-topology bulk

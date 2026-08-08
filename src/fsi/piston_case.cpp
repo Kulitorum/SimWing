@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <ranges>
 #include <stdexcept>
 #include <vector>
@@ -275,6 +276,63 @@ void appendPistonFields(
             integratedDiagnostics.integratedSurfaceImpulseNewtonSeconds)}});
 }
 
+double maximumUniformFluidVelocityDifference(
+    const fluid::MovingInterfaceFluidState& state,
+    const double expectedSpeedMetersPerSecond) {
+    double maximum = 0.0;
+    for (const double velocity :
+         state.velocityMetersPerSecond.xFaces()) {
+        maximum = std::max(
+            maximum,
+            std::abs(velocity - expectedSpeedMetersPerSecond));
+    }
+    for (const double velocity :
+         state.velocityMetersPerSecond.yFaces()) {
+        maximum = std::max(maximum, std::abs(velocity));
+    }
+    for (const double velocity :
+         state.velocityMetersPerSecond.zFaces()) {
+        maximum = std::max(maximum, std::abs(velocity));
+    }
+    return maximum;
+}
+
+void appendStrongPistonFields(
+    viewer::DiagnosticFrame& frame,
+    const StrongCoupledPistonStepDiagnostics& diagnostics,
+    const fluid::MovingInterfaceFluidState& fluidState) {
+    frame.scalarFields.push_back({
+        "coupling.solver_runs", "1", viewer::FieldAssociation::Global,
+        {static_cast<double>(diagnostics.coupling.solverRunCount)}});
+    frame.scalarFields.push_back({
+        "coupling.retry_count", "1", viewer::FieldAssociation::Global,
+        {static_cast<double>(diagnostics.coupling.decision.retryCount)}});
+    frame.scalarFields.push_back({
+        "interface.speed", "m/s", viewer::FieldAssociation::Global,
+        {diagnostics.acceptedInterfaceSpeedMetersPerSecond}});
+    frame.scalarFields.push_back({
+        "interface.velocity_closure", "m/s",
+        viewer::FieldAssociation::Global,
+        {diagnostics.velocityClosureMetersPerSecond}});
+    frame.scalarFields.push_back({
+        "interface.mean_pressure_traction", "Pa",
+        viewer::FieldAssociation::Global,
+        {diagnostics.bridge.fluidPressureForceNewtons.x
+            / diagnostics.bridge.fluidAreaSquareMeters}});
+    frame.scalarFields.push_back({
+        "interface.step_work", "J", viewer::FieldAssociation::Global,
+        {diagnostics.integratedTransfer.integratedSurfaceWorkJoules}});
+    frame.scalarFields.push_back({
+        "fluid.divergence_l2", "1/s", viewer::FieldAssociation::Global,
+        {fluidState.diagnostics.projection
+             .divergenceL2AfterPerSecond}});
+    frame.vectorFields.push_back({
+        "interface.step_impulse", "N*s",
+        viewer::FieldAssociation::Global,
+        {toViewer(diagnostics.integratedTransfer
+                      .integratedSurfaceImpulseNewtonSeconds)}});
+}
+
 } // namespace
 
 CoupledPistonCase::CoupledPistonCase()
@@ -460,6 +518,8 @@ StrongCoupledPistonStepDiagnostics StrongCoupledPistonCase::advance() {
     ConservativeTransferResult previousTraction =
         baselineTransfer.transferResult();
     double activeTimeStepSeconds = 0.0;
+    PlanarFaceResolvedBridgeDiagnostics lastBridgeDiagnostics;
+    TimeIntegratedTransferDiagnostics lastIntegratedDiagnostics;
     const StrongCouplingSolverCallback solve =
         [&](Structure& structure,
             const fluid::PeriodicCartesianGrid& grid,
@@ -505,6 +565,8 @@ StrongCoupledPistonStepDiagnostics StrongCoupledPistonCase::advance() {
                 endTransfer.transferResult()};
             const auto integrated = coupling_.integrate(
                 offsets, transferSamples);
+            lastBridgeDiagnostics = endTransfer.diagnostics();
+            lastIntegratedDiagnostics = integrated.diagnostics();
             StructureStepSettings structuralSettings = stepSettings_;
             structuralSettings.timeStepSeconds = timeStepSeconds;
             const auto structureDiagnostics = coupling_.advanceStructure(
@@ -556,6 +618,8 @@ StrongCoupledPistonStepDiagnostics StrongCoupledPistonCase::advance() {
         .normalVelocityMetersPerSecond;
     StrongCoupledPistonStepDiagnostics result;
     result.coupling = std::move(run);
+    result.bridge = lastBridgeDiagnostics;
+    result.integratedTransfer = lastIntegratedDiagnostics;
     result.startSpeedMetersPerSecond = startSpeed;
     result.acceptedSpeedMetersPerSecond = acceptedSpeed;
     result.acceptedInterfaceSpeedMetersPerSecond = interfaceSpeed;
@@ -579,6 +643,103 @@ StrongCoupledPistonCase::fluidState() const noexcept {
 const StructureStepSettings&
 StrongCoupledPistonCase::stepSettings() const noexcept {
     return stepSettings_;
+}
+
+StrongCoupledPistonWorkerCase::StrongCoupledPistonWorkerCase()
+    : frameMapping_(simulation_.structure(), makeFrameMapping()) {}
+
+viewer::TraceHeader StrongCoupledPistonWorkerCase::traceHeader() const {
+    return {
+        strongCoupledPistonCaseChecksum,
+        strongCoupledPistonCaseSolverId,
+    };
+}
+
+viewer::DiagnosticFrame StrongCoupledPistonWorkerCase::advance() {
+    diagnostics_ = simulation_.advance();
+    if (!diagnostics_.finite
+        || diagnostics_.coupling.decision.status
+            != CouplingMacroStepRetryStatus::Accepted
+        || diagnostics_.coupling.lastIteration.status
+            != StrongCouplingIterationStatus::Converged
+        || diagnostics_.coupling.lastIteration.convergence.iteration
+            > std::numeric_limits<std::uint32_t>::max()
+        || !(diagnostics_.bridge.fluidAreaSquareMeters > 0.0)
+        || !diagnostics_.bridge.finite
+        || !diagnostics_.integratedTransfer.finite
+        || maximumUniformFluidVelocityDifference(
+               simulation_.fluidState(),
+               diagnostics_.acceptedInterfaceSpeedMetersPerSecond)
+            > 1.0e-9) {
+        throw std::runtime_error(
+            "strong piston did not produce a publishable accepted state");
+    }
+
+    const auto& structureDiagnostics = simulation_.structure().diagnostics();
+    const auto& convergence =
+        diagnostics_.coupling.lastIteration.convergence;
+    viewer::StructureFrameContext context;
+    context.sceneChecksum = strongCoupledPistonCaseChecksum;
+    context.solverCommit = strongCoupledPistonCaseSolverId;
+    context.timeStepSeconds =
+        diagnostics_.coupling.decision.timeStepSeconds;
+    context.couplingIteration = static_cast<std::uint32_t>(
+        convergence.iteration);
+    context.couplingResiduals.displacementMetres =
+        convergence.residuals.displacementMetres;
+    context.couplingResiduals.tractionNewtons =
+        convergence.residuals.tractionNewtons;
+    context.couplingResiduals.fluid = simulation_.fluidState()
+        .diagnostics.projection.divergenceL2AfterPerSecond;
+    context.couplingResiduals.structure =
+        structureDiagnostics.maximumMembraneResidual;
+    context.couplingResiduals.interfacePowerWatts =
+        std::abs(diagnostics_.bridge.powerResidualWatts);
+    context.conservation.fluidMassKilograms = fluidMassKilograms;
+    context.conservation.totalMomentumNewtonSeconds = {
+        structureDiagnostics.linearMomentumKgMetersPerSecond.x
+            + fluidMassKilograms
+                * diagnostics_.acceptedInterfaceSpeedMetersPerSecond,
+        structureDiagnostics.linearMomentumKgMetersPerSecond.y,
+        structureDiagnostics.linearMomentumKgMetersPerSecond.z,
+    };
+    context.conservation.totalEnergyJoules =
+        structureDiagnostics.kineticEnergyJoules
+        + simulation_.fluidState().diagnostics.projection
+            .kineticEnergyAfterJoules;
+    context.conservation.interfaceForceResidualNewtons =
+        toViewer(diagnostics_.bridge.forceResidualNewtons);
+    context.conservation.interfaceMomentResidualNewtonMetres =
+        toViewer(diagnostics_.bridge.momentResidualNewtonMeters);
+    context.conservation.interfacePowerResidualWatts =
+        diagnostics_.bridge.powerResidualWatts;
+
+    viewer::DiagnosticFrame frame = viewer::buildStructureFrame(
+        simulation_.structure(), frameMapping_, context);
+    appendStrongPistonFields(
+        frame, diagnostics_, simulation_.fluidState());
+    viewer::ProtocolError error;
+    if (!viewer::validateFrame(frame, &error)) {
+        throw std::runtime_error(
+            "strong piston produced an invalid diagnostic frame: "
+            + error.message);
+    }
+    return frame;
+}
+
+const Structure&
+StrongCoupledPistonWorkerCase::structure() const noexcept {
+    return simulation_.structure();
+}
+
+const StructureStepSettings&
+StrongCoupledPistonWorkerCase::stepSettings() const noexcept {
+    return simulation_.stepSettings();
+}
+
+const StrongCoupledPistonStepDiagnostics&
+StrongCoupledPistonWorkerCase::diagnostics() const noexcept {
+    return diagnostics_;
 }
 
 } // namespace simwing::fsi

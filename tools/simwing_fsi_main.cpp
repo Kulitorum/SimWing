@@ -60,6 +60,7 @@ constexpr std::uint64_t maximumSteps = 10'000'000;
 enum class WorkerCase {
     Structural,
     Piston,
+    StrongPiston,
     OpenPiston,
     PeriodicFlow,
     PorousFlow,
@@ -83,7 +84,7 @@ struct Options {
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: simwing-fsi [--case structural|piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
+        "Usage: simwing-fsi [--case structural|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
         "                   [--checkpoint-in PATH]\n"
@@ -95,6 +96,7 @@ void printUsage(FILE* stream) {
         "Runs a canonical Qt-free numerical case and writes a completed diagnostic\n"
         "trace. 'structural' is the original analytic XPBD harness; 'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
+        "'strong-piston' strongly iterates that chain for a light added-mass plate;\n"
         "'open-piston' adds connected-fluid pressure reaction, partial-cell motion,\n"
         "an independently closed opening-flux GCL ledger, and exact one-face\n"
         "topology rebasing; consuming its resolved opening is rejected.\n"
@@ -129,6 +131,10 @@ bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
     }
     if (text == "piston") {
         workerCase = WorkerCase::Piston;
+        return true;
+    }
+    if (text == "strong-piston") {
+        workerCase = WorkerCase::StrongPiston;
         return true;
     }
     if (text == "open-piston") {
@@ -191,7 +197,7 @@ bool parseOptions(int argc,
             if (++index >= argc
                 || !parseWorkerCase(argv[index], options.workerCase)) {
                 error = "--case requires 'structural', 'piston', "
-                    "'open-piston', 'periodic-flow', 'porous-flow', "
+                    "'strong-piston', 'open-piston', 'periodic-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
                     "'pressure-jump'";
@@ -200,7 +206,7 @@ bool parseOptions(int argc,
         } else if (argument.starts_with("--case=")) {
             if (!parseWorkerCase(argument.substr(7), options.workerCase)) {
                 error = "--case requires 'structural', 'piston', "
-                    "'open-piston', 'periodic-flow', 'porous-flow', "
+                    "'strong-piston', 'open-piston', 'periodic-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
                     "'pressure-jump'";
@@ -1265,6 +1271,27 @@ int main(int argc, char* argv[]) {
                     simulation.structure().diagnostics();
                 if constexpr (std::is_same_v<
                                   Simulation,
+                                  simwing::fsi::StrongCoupledPistonWorkerCase>) {
+                    const auto& coupled = simulation.diagnostics();
+                    std::printf(
+                        "simwing-fsi completed %llu strong-piston step(s), "
+                        "t=%.9g s, speed=%.9g m/s, coupling-iterations=%llu, "
+                        "solver-runs=%llu, retries=%u, velocity-closure=%.3g m/s, "
+                        "trace=%s\n",
+                        static_cast<unsigned long long>(
+                            checkpoint.acceptedStepCount),
+                        checkpoint.simulationTimeSeconds,
+                        coupled.acceptedSpeedMetersPerSecond,
+                        static_cast<unsigned long long>(
+                            coupled.coupling.lastIteration
+                                .convergence.iteration),
+                        static_cast<unsigned long long>(
+                            coupled.coupling.solverRunCount),
+                        coupled.coupling.decision.retryCount,
+                        coupled.velocityClosureMetersPerSecond,
+                        options.tracePath.string().c_str());
+                } else if constexpr (std::is_same_v<
+                                  Simulation,
                                   simwing::fsi::OpenPistonCase>) {
                     std::printf(
                         "simwing-fsi completed %llu open-piston step(s), "
@@ -1402,6 +1429,10 @@ int main(int argc, char* argv[]) {
 
         if (options.workerCase == WorkerCase::Piston) {
             simwing::fsi::CoupledPistonCase simulation;
+            return run(simulation);
+        }
+        if (options.workerCase == WorkerCase::StrongPiston) {
+            simwing::fsi::StrongCoupledPistonWorkerCase simulation;
             return run(simulation);
         }
         if (options.workerCase == WorkerCase::OpenPiston) {

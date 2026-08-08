@@ -806,8 +806,10 @@ light-piston canonical now exercises the actual strong-coupling driver. Its
 repeats moving-interface projection, face-resolved pressure mapping, temporal
 integration, and XPBD acceptance from one physical baseline. Aitken relaxes the
 scalar terminal speed, topology-bound motion/traction residuals decide
-convergence, and only the converged Structure/fluid state persists. This is not
-yet exposed as a CLI worker. The
+convergence, and only the converged Structure/fluid state persists. The
+`--case strong-piston` worker publishes only those accepted epochs, including
+the true iteration/retry counts, interface closure, residuals, traction, and
+transferred impulse/work. The
 `--case open-piston` worker adds the nonseparating connected-fluid projection,
 partial-cell geometry, resolved-opening GCL ledger, an explicit plate actuator,
 and a separately reported resisting CFD load. Its pressure reaction now crosses
