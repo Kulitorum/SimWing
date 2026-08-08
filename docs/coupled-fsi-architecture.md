@@ -753,7 +753,11 @@ checkpointable. An exhausted iteration first enters an explicit pending state,
 so the caller restores that composite baseline before acknowledging and
 activating the reduced step. Reduction is bounded by a hard minimum step and
 retry count, and convergence, retry, and terminal failure remain distinct.
-The repeated solver loop remains future worker work.
+A one-macro-step owner now enforces that ordering: it accepts only a fresh
+iteration state, privately retains the composite baseline, and combines the
+three-owner restore with retry activation. Replaying an attempt therefore
+starts from identical Structure, fluid, and relaxation state. The repeated
+solver loop remains future worker work.
 The topology-bound
 macro-step surface computes the decision's
 inputs from saved-baseline, previous, and current stable-ID kinematics plus two
@@ -1316,8 +1320,8 @@ coupling. A matching global lift coefficient alone is insufficient.
 Work:
 
 - compose the checkpointable iteration owner with fluid and Structure rollback
-  and the bounded retry handshake into a complete repeated solver loop, then
-  add IQN-ILS;
+  through the existing macro-step state owner into a complete repeated solver
+  loop, then add IQN-ILS;
 - drive adaptive macro-step control from the existing retry policy and coupled
   residual budgets;
 - validate static inflation and steady deformed trim before maneuvers;

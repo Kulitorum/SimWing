@@ -297,4 +297,52 @@ void StrongCouplingRollbackState::restore(
     iteration_ = std::move(restoredIteration);
 }
 
+StrongCouplingMacroStepState::StrongCouplingMacroStepState(
+    StrongCouplingRollbackState state,
+    const double initialTimeStepSeconds,
+    const CouplingMacroStepRetrySettings& retrySettings)
+    : state_(std::move(state)),
+      baseline_(state_.checkpoint()),
+      retry_(
+          state_.interfaceDefinitionFingerprint(),
+          initialTimeStepSeconds,
+          retrySettings) {
+    if (state_.iteration().status()
+            != StrongCouplingIterationStatus::Iterating
+        || state_.iteration().completedIterationCount() != 0) {
+        throw std::invalid_argument(
+            "strong-coupling macro-step requires a fresh iteration baseline");
+    }
+}
+
+StrongCouplingRollbackState&
+StrongCouplingMacroStepState::rollbackState() noexcept {
+    return state_;
+}
+
+const StrongCouplingRollbackState&
+StrongCouplingMacroStepState::rollbackState() const noexcept {
+    return state_;
+}
+
+CouplingMacroStepRetryDecision
+StrongCouplingMacroStepState::decision() const noexcept {
+    return retry_.decision();
+}
+
+CouplingMacroStepRetryDecision
+StrongCouplingMacroStepState::reportTerminalIteration() {
+    return retry_.reportIteration(state_.iteration().status());
+}
+
+CouplingMacroStepRetryDecision
+StrongCouplingMacroStepState::restoreAndBeginRetry() {
+    if (retry_.status() != CouplingMacroStepRetryStatus::RetryPending) {
+        throw std::logic_error(
+            "strong-coupling macro-step has no pending retry to restore");
+    }
+    state_.restore(baseline_);
+    return retry_.beginRetry();
+}
+
 } // namespace simwing::fsi

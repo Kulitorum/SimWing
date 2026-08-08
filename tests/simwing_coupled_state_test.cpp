@@ -99,6 +99,15 @@ StrongCouplingIteration strongIteration(
     return StrongCouplingIteration(fingerprint, initial, {}, settings);
 }
 
+StrongCouplingIteration exhaustingIteration(
+    const std::uint64_t fingerprint) {
+    const std::array<double, 2> initial{0.0, 0.0};
+    CouplingConvergenceSettings settings;
+    settings.minimumIterations = 1;
+    settings.maximumIterations = 1;
+    return StrongCouplingIteration(fingerprint, initial, {}, settings);
+}
+
 bool sameStructureState(
     const StructureCheckpoint& first,
     const StructureCheckpoint& second) {
@@ -111,6 +120,18 @@ bool sameStructureState(
             == second.pendingExternalForcesNewtons
         && first.lastAppliedExternalForceNewtons
             == second.lastAppliedExternalForceNewtons;
+}
+
+bool sameFluidCheckpoint(
+    const fluid::MovingInterfaceFluidCheckpoint& first,
+    const fluid::MovingInterfaceFluidCheckpoint& second) {
+    std::vector<std::uint8_t> firstBytes;
+    std::vector<std::uint8_t> secondBytes;
+    return fluid::serializeMovingInterfaceFluidCheckpoint(
+               first, firstBytes)
+        && fluid::serializeMovingInterfaceFluidCheckpoint(
+               second, secondBytes)
+        && firstBytes == secondBytes;
 }
 
 void mutate(StrongCouplingRollbackState& state) {
@@ -373,6 +394,128 @@ void testMacroStepRetryValidationIsTransactional() {
         "retry: excessive retry bounds are rejected");
 }
 
+void testMacroStepStateRestoresBeforeRetry() {
+    constexpr std::uint64_t fingerprint = 0x5c04'0001ULL;
+    const auto grid = fluidGrid();
+    StrongCouplingRollbackState state(
+        fingerprint,
+        Structure(structureDefinition()),
+        grid,
+        acceptedFluidState(grid),
+        exhaustingIteration(fingerprint));
+    CouplingMacroStepRetrySettings retrySettings;
+    retrySettings.maximumRetries = 2;
+    retrySettings.reductionFactor = 0.5;
+    retrySettings.minimumTimeStepSeconds = 0.01;
+    StrongCouplingMacroStepState macroStep(
+        std::move(state), 0.08, retrySettings);
+    const auto baseline = macroStep.rollbackState().checkpoint();
+
+    const auto beforeEarlyReport = macroStep.decision();
+    expectRejected(
+        [&] {
+            static_cast<void>(macroStep.reportTerminalIteration());
+        },
+        "macro-step: an active iteration cannot finish an attempt");
+    check(macroStep.decision() == beforeEarlyReport,
+          "macro-step: early reporting preserves retry state");
+
+    mutate(macroStep.rollbackState());
+    check(macroStep.rollbackState().iteration().status()
+              == StrongCouplingIterationStatus::Exhausted,
+          "macro-step: the synthetic first attempt exhausts its budget");
+    const auto firstMutation = macroStep.rollbackState().checkpoint();
+    const auto pending = macroStep.reportTerminalIteration();
+    check(pending.status == CouplingMacroStepRetryStatus::RetryPending
+              && pending.timeStepSeconds == 0.08
+              && pending.pendingTimeStepSeconds == 0.04,
+          "macro-step: exhaustion enters the restore-required pending state");
+
+    const auto restarted = macroStep.restoreAndBeginRetry();
+    const auto restored = macroStep.rollbackState().checkpoint();
+    check(restarted.status == CouplingMacroStepRetryStatus::Attempting
+              && restarted.attemptNumber == 2
+              && restarted.timeStepSeconds == 0.04
+              && sameStructureState(restored.structure, baseline.structure)
+              && sameFluidCheckpoint(restored.fluid, baseline.fluid)
+              && restored.iteration == baseline.iteration,
+          "macro-step: retry activation first restores all three owners");
+
+    mutate(macroStep.rollbackState());
+    const auto replay = macroStep.rollbackState().checkpoint();
+    check(sameStructureState(replay.structure, firstMutation.structure)
+              && sameFluidCheckpoint(replay.fluid, firstMutation.fluid)
+              && replay.iteration == firstMutation.iteration,
+          "macro-step: restored retry replays the same attempted mutation");
+
+    static_cast<void>(macroStep.reportTerminalIteration());
+    const auto pendingState = macroStep.rollbackState().checkpoint();
+    const auto pendingDecision = macroStep.decision();
+    bool duplicateReportRejected = false;
+    try {
+        static_cast<void>(macroStep.reportTerminalIteration());
+    } catch (const std::logic_error&) {
+        duplicateReportRejected = true;
+    }
+    check(duplicateReportRejected
+              && macroStep.decision() == pendingDecision
+              && sameStructureState(
+                  macroStep.rollbackState().checkpoint().structure,
+                  pendingState.structure),
+          "macro-step: duplicate terminal reports preserve pending state");
+}
+
+void testMacroStepStateAcceptanceAndFreshBaseline() {
+    constexpr std::uint64_t fingerprint = 0x5c04'0002ULL;
+    const auto grid = fluidGrid();
+    StrongCouplingRollbackState state(
+        fingerprint,
+        Structure(structureDefinition()),
+        grid,
+        acceptedFluidState(grid),
+        strongIteration(fingerprint));
+    StrongCouplingMacroStepState macroStep(std::move(state), 0.08);
+    const std::array<double, 2> candidate{0.0, 0.0};
+    static_cast<void>(macroStep.rollbackState().iteration().advance(
+        candidate, {}));
+    const auto converged = macroStep.rollbackState().iteration().advance(
+        candidate, {});
+    check(converged.status == StrongCouplingIterationStatus::Converged,
+          "macro-step: synthetic zero residual reaches terminal convergence");
+    const auto accepted = macroStep.reportTerminalIteration();
+    check(accepted.status == CouplingMacroStepRetryStatus::Accepted
+              && accepted.attemptNumber == 1
+              && accepted.timeStepSeconds == 0.08,
+          "macro-step: converged state accepts the active step directly");
+    const auto acceptedState = macroStep.rollbackState().checkpoint();
+    bool retryRejected = false;
+    try {
+        static_cast<void>(macroStep.restoreAndBeginRetry());
+    } catch (const std::logic_error&) {
+        retryRejected = true;
+    }
+    check(retryRejected
+              && macroStep.decision() == accepted
+              && macroStep.rollbackState().iteration().checkpoint()
+                  == acceptedState.iteration,
+          "macro-step: accepted state cannot roll back into a retry");
+
+    expectRejected(
+        [&] {
+            StrongCouplingRollbackState advancedState(
+                fingerprint + 1,
+                Structure(structureDefinition()),
+                grid,
+                acceptedFluidState(grid),
+                strongIteration(fingerprint + 1));
+            static_cast<void>(advancedState.iteration().advance(
+                candidate, {}));
+            StrongCouplingMacroStepState invalid(
+                std::move(advancedState), 0.08);
+        },
+        "macro-step: a partially advanced iteration is not a baseline");
+}
+
 } // namespace
 
 int main() {
@@ -380,6 +523,8 @@ int main() {
     testCompositeRestoreIsTransactional();
     testMacroStepRetryPolicyAndReplay();
     testMacroStepRetryValidationIsTransactional();
+    testMacroStepStateRestoresBeforeRetry();
+    testMacroStepStateAcceptanceAndFreshBaseline();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d strong-coupling rollback check(s) failed\n",

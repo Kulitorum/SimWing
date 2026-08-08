@@ -307,7 +307,11 @@ policy now distinguishes the active attempt, an explicit restore-before-retry
 handshake, acceptance, and terminal failure. Exhaustion reduces the step by a
 configured factor down to a hard minimum and retry-count budget; its
 definition-bound checkpoint reproduces the exact pending or terminal decision.
-The repeated fluid/Structure solve still remains to be wired. The
+A one-macro-step state owner composes that policy with the real three-owner
+rollback boundary. It accepts only a fresh iteration baseline and exposes one
+restore-and-begin operation, ensuring a reduced attempt cannot start from the
+discarded Structure, fluid, or Aitken state. The repeated fluid/Structure solve
+still remains to be wired. The
 macro-step surface supplies the residual norms from
 stable-ID-bound baseline/previous/current kinematics and consecutive nodal
 traction results. It uses maximum physical nodal updates, references motion to

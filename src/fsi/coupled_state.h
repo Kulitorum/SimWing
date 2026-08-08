@@ -137,4 +137,38 @@ private:
     StrongCouplingIteration iteration_;
 };
 
+// Owns the complete mutable state and immutable rollback baseline for one
+// strong-coupling macro-step. A terminal iteration is reported to the bounded
+// retry policy. Pending retries can only be activated through an operation
+// that first restores Structure, fluid, and iteration to that baseline.
+class StrongCouplingMacroStepState final {
+public:
+    StrongCouplingMacroStepState(
+        StrongCouplingRollbackState state,
+        double initialTimeStepSeconds,
+        const CouplingMacroStepRetrySettings& retrySettings = {});
+
+    StrongCouplingMacroStepState(
+        const StrongCouplingMacroStepState&) = delete;
+    StrongCouplingMacroStepState& operator=(
+        const StrongCouplingMacroStepState&) = delete;
+    StrongCouplingMacroStepState(
+        StrongCouplingMacroStepState&&) noexcept = default;
+    StrongCouplingMacroStepState& operator=(
+        StrongCouplingMacroStepState&&) noexcept = default;
+
+    [[nodiscard]] StrongCouplingRollbackState& rollbackState() noexcept;
+    [[nodiscard]] const StrongCouplingRollbackState&
+    rollbackState() const noexcept;
+    [[nodiscard]] CouplingMacroStepRetryDecision decision() const noexcept;
+
+    [[nodiscard]] CouplingMacroStepRetryDecision reportTerminalIteration();
+    [[nodiscard]] CouplingMacroStepRetryDecision restoreAndBeginRetry();
+
+private:
+    StrongCouplingRollbackState state_;
+    StrongCouplingRollbackCheckpoint baseline_;
+    CouplingMacroStepRetry retry_;
+};
+
 } // namespace simwing::fsi
