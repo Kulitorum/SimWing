@@ -437,6 +437,7 @@ src/fsi/
         scene_surface_geometry.* accepted triangle/cell broad phase
         scene_surface_intersection.* exact triangle/cell narrow phase
         scene_surface_clipping.* barycentric per-cell surface polygons
+        scene_surface_ownership.* unique internal cell/face area owners
         geometry.*          exact surface and region reconstruction
         advection.*         bounded donor/limited-MC MAC transport
         projected_advection.* projected nonlinear SSPRK2 transport
@@ -512,7 +513,9 @@ then removes false positives, retains contact conservatively, and revalidates
 the complete expected pair set. Exact pairs are clipped into flattened
 barycentric point/segment/area patches with analytic area and centroids.
 Coincident shared-plane area remains duplicated and visibly flagged until a
-unique face owner is selected. Volume fractions, face crossings, and region
+separate ownership stage pairs it into one canonical internal MAC face with
+authored side regions and winding sign. It rejects unresolved periodic-domain
+boundary area. Volume fractions, general face crossings, and region
 reconstruction remain open. A canonical Qt-free
 structural worker now
 launches the viewer by default and publishes accepted steps through a bounded

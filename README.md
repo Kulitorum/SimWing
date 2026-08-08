@@ -450,8 +450,11 @@ contact, and revalidates every expected pair. Exact zero-tolerance pairs are
 now clipped against all six cell planes with original-triangle barycentric
 coordinates, analytic area/centroid data, and explicit point/segment contact.
 Coincident grid-plane area remains duplicated and flagged on both adjacent
-cells until a unique face owner is selected. Cut-cell volume fractions, face
-crossings, and region reconstruction remain open.
+cells in the raw clipping output. A separate ownership stage pairs those exact
+duplicates into one canonical MAC-face area with authored side-region IDs and
+explicit winding sign; ordinary areas remain cell-owned and zero-area contacts
+remain diagnostic. Unpaired periodic-domain boundary area is rejected. Cut-cell
+volume fractions, general face crossings, and region reconstruction remain open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,
