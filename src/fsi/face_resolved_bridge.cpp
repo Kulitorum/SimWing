@@ -535,9 +535,6 @@ PlanarFaceResolvedFluidStructureBridge(
             || face.axis != axis
             || face.minusRegionStableId == 0
             || face.plusRegionStableId == 0
-            || (settings_.correspondenceMode
-                    == PlanarFaceCorrespondenceMode::FixedMaterial
-                && face.minusRegionStableId == face.plusRegionStableId)
             || face.minusRegionStableId != minusRegion
             || face.plusRegionStableId != plusRegion
             || !finite(face.lowerCornerMeters)
@@ -752,7 +749,18 @@ PlanarFaceResolvedTransferResult
 PlanarFaceResolvedFluidStructureBridge::evaluate(
     const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
     const std::span<const CouplingNodeKinematics> nodeKinematics) const {
-    return evaluateImpl(fluidDiagnostics, nodeKinematics, std::nullopt);
+    return evaluateImpl(
+        fluidDiagnostics, nodeKinematics, std::nullopt,
+        PlanarFaceResolvedLoadKind::AdjacentPressureTraction);
+}
+
+PlanarFaceResolvedTransferResult
+PlanarFaceResolvedFluidStructureBridge::evaluateConstraintReaction(
+    const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
+    const std::span<const CouplingNodeKinematics> nodeKinematics) const {
+    return evaluateImpl(
+        fluidDiagnostics, nodeKinematics, std::nullopt,
+        PlanarFaceResolvedLoadKind::CompleteConstraintReaction);
 }
 
 PlanarFaceResolvedTransferResult
@@ -761,7 +769,8 @@ PlanarFaceResolvedFluidStructureBridge::evaluateMovingPlane(
     const std::span<const CouplingNodeKinematics> nodeKinematics,
     const double physicalPlaneCoordinateMeters) const {
     return evaluateImpl(
-        fluidDiagnostics, nodeKinematics, physicalPlaneCoordinateMeters);
+        fluidDiagnostics, nodeKinematics, physicalPlaneCoordinateMeters,
+        PlanarFaceResolvedLoadKind::AdjacentPressureTraction);
 }
 
 PorousFaceResolvedTransferResult
@@ -883,7 +892,8 @@ PlanarFaceResolvedFluidStructureBridge::evaluateCutSurface(
 
     auto result = evaluateImpl(
         source, nodeKinematics,
-        cutSurface.physicalPlaneCoordinateMeters);
+        cutSurface.physicalPlaneCoordinateMeters,
+        PlanarFaceResolvedLoadKind::AdjacentPressureTraction);
     const auto& diagnostics = result.diagnostics();
     const double forceTolerance = combinedTolerance(
         settings_.absoluteForceToleranceNewtons,
@@ -961,7 +971,8 @@ PlanarFaceResolvedFluidStructureBridge::evaluatePorousImpl(
 
     const auto synthetic = asMovingDiagnostics(porousTraction);
     const auto mapped = evaluateImpl(
-        synthetic, nodeKinematics, physicalPlaneCoordinateMeters);
+        synthetic, nodeKinematics, physicalPlaneCoordinateMeters,
+        PlanarFaceResolvedLoadKind::AdjacentPressureTraction);
     PorousFaceResolvedBridgeDiagnostics diagnostics;
     diagnostics.fluidSurfaceStableId = fluidSurfaceStableId_;
     diagnostics.timeStepSeconds = porousTraction.timeStepSeconds;
@@ -1055,7 +1066,8 @@ PlanarFaceResolvedTransferResult
 PlanarFaceResolvedFluidStructureBridge::evaluateImpl(
     const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
     const std::span<const CouplingNodeKinematics> nodeKinematics,
-    const std::optional<double> physicalPlaneCoordinateMeters) const {
+    const std::optional<double> physicalPlaneCoordinateMeters,
+    const PlanarFaceResolvedLoadKind loadKind) const {
     const bool movingCorrespondence =
         physicalPlaneCoordinateMeters.has_value();
     if (movingCorrespondence
@@ -1126,6 +1138,7 @@ PlanarFaceResolvedFluidStructureBridge::evaluateImpl(
     diagnostics.overlapPatchCount = overlaps_.size();
     diagnostics.referenceStructureAreaSquareMeters =
         referenceAreaSquareMeters_;
+    diagnostics.loadKind = loadKind;
     diagnostics.correspondenceMode = settings_.correspondenceMode;
     diagnostics.gridPlaneCoordinateMeters = gridPlaneCoordinateMeters;
     diagnostics.physicalPlaneCoordinateMeters =
@@ -1135,6 +1148,9 @@ PlanarFaceResolvedFluidStructureBridge::evaluateImpl(
         - referencePlaneCoordinateMeters_;
     diagnostics.maximumRigidPositionResidualMeters =
         maximumRigidPositionResidualMeters;
+    std::vector<StructureVector3> selectedFaceTractions(
+        faces_.size());
+    std::vector<double> selectedFacePowers(faces_.size(), 0.0);
     std::vector<double> mappedFacePower(faces_.size(), 0.0);
     std::vector<CouplingTriangleTractionQuadrature> quadrature;
     quadrature.reserve(overlaps_.size());
@@ -1212,43 +1228,101 @@ PlanarFaceResolvedFluidStructureBridge::evaluateImpl(
             throw std::invalid_argument(
                 "current fluid face geometry or pressure ledger changed incompatibly");
         }
-        const StructureVector3 traction =
+        const StructureVector3 pressureTraction =
             toStructure(actual.pressureTractionPascals);
-        const StructureVector3 reconstructedForce = scale(
-            traction, actual.areaSquareMeters);
-        const StructureVector3 sourceForce =
+        const StructureVector3 reconstructedPressureForce = scale(
+            pressureTraction, actual.areaSquareMeters);
+        const StructureVector3 pressureForce =
             toStructure(actual.pressureForceNewtons);
-        const double forceTolerance = combinedTolerance(
+        const double pressureForceTolerance = combinedTolerance(
             settings_.absoluteForceToleranceNewtons,
             settings_.relativeForceTolerance,
-            length(reconstructedForce), length(sourceForce));
-        const double reconstructedPower =
-            dot(sourceForce, axisUnit(actual.axis))
+            length(reconstructedPressureForce), length(pressureForce));
+        const double reconstructedPressurePower =
+            dot(pressureForce, axisUnit(actual.axis))
             * actual.normalVelocityMetersPerSecond;
-        const double powerTolerance = combinedTolerance(
+        const double pressurePowerTolerance = combinedTolerance(
             settings_.absolutePowerToleranceWatts,
             settings_.relativePowerTolerance,
-            std::abs(reconstructedPower),
+            std::abs(reconstructedPressurePower),
             std::abs(actual.pressurePowerWatts));
-        if (length(subtract(reconstructedForce, sourceForce))
-                > forceTolerance
-            || std::abs(reconstructedPower - actual.pressurePowerWatts)
-                > powerTolerance) {
+        if (length(subtract(
+                reconstructedPressureForce, pressureForce))
+                > pressureForceTolerance
+            || std::abs(reconstructedPressurePower
+                        - actual.pressurePowerWatts)
+                > pressurePowerTolerance) {
             throw std::invalid_argument(
                 "current fluid face traction, force, and power are inconsistent");
         }
+
+        StructureVector3 loadTraction = pressureTraction;
+        StructureVector3 loadForce = pressureForce;
+        double loadPowerWatts = actual.pressurePowerWatts;
+        if (loadKind
+            == PlanarFaceResolvedLoadKind::CompleteConstraintReaction) {
+            if (!finite(actual.directConstraintForceNewtons)
+                || !finite(actual.constraintReactionTractionPascals)
+                || !finite(actual.constraintReactionForceNewtons)
+                || !std::isfinite(actual.constraintReactionPowerWatts)) {
+                throw std::invalid_argument(
+                    "current fluid face constraint-reaction ledger is non-finite");
+            }
+            loadTraction = toStructure(
+                actual.constraintReactionTractionPascals);
+            loadForce = toStructure(
+                actual.constraintReactionForceNewtons);
+            loadPowerWatts = actual.constraintReactionPowerWatts;
+            const StructureVector3 reconstructedReactionForce = scale(
+                loadTraction, actual.areaSquareMeters);
+            const StructureVector3 summedReactionForce = add(
+                pressureForce,
+                toStructure(actual.directConstraintForceNewtons));
+            const double reactionForceTolerance = combinedTolerance(
+                settings_.absoluteForceToleranceNewtons,
+                settings_.relativeForceTolerance,
+                std::max(length(reconstructedReactionForce),
+                         length(summedReactionForce)),
+                length(loadForce));
+            const double reconstructedReactionPower =
+                dot(loadForce, axisUnit(actual.axis))
+                * actual.normalVelocityMetersPerSecond;
+            const double reactionPowerTolerance = combinedTolerance(
+                settings_.absolutePowerToleranceWatts,
+                settings_.relativePowerTolerance,
+                std::abs(reconstructedReactionPower),
+                std::abs(loadPowerWatts));
+            if (length(subtract(
+                    reconstructedReactionForce, loadForce))
+                    > reactionForceTolerance
+                || length(subtract(
+                    summedReactionForce, loadForce))
+                    > reactionForceTolerance
+                || std::abs(reconstructedReactionPower - loadPowerWatts)
+                    > reactionPowerTolerance) {
+                throw std::invalid_argument(
+                    "current fluid face constraint-reaction ledger is inconsistent");
+            }
+        }
+        selectedFaceTractions[faceIndex] = loadTraction;
+        selectedFacePowers[faceIndex] = loadPowerWatts;
+        const StructureVector3 momentArm = subtract(
+            physicalFaceCenter(
+                actual, axis_, physicalPlaneCoordinateMeters),
+            settings_.transfer.momentReferenceMeters);
         diagnostics.fluidAreaSquareMeters += actual.areaSquareMeters;
         diagnostics.fluidPressureForceNewtons = add(
-            diagnostics.fluidPressureForceNewtons, sourceForce);
+            diagnostics.fluidPressureForceNewtons, pressureForce);
         diagnostics.fluidPressureMomentNewtonMeters = add(
             diagnostics.fluidPressureMomentNewtonMeters,
-            cross(subtract(
-                      physicalFaceCenter(
-                          actual, axis_,
-                          physicalPlaneCoordinateMeters),
-                           settings_.transfer.momentReferenceMeters),
-                  sourceForce));
+            cross(momentArm, pressureForce));
         diagnostics.fluidPressurePowerWatts += actual.pressurePowerWatts;
+        diagnostics.fluidLoadForceNewtons = add(
+            diagnostics.fluidLoadForceNewtons, loadForce);
+        diagnostics.fluidLoadMomentNewtonMeters = add(
+            diagnostics.fluidLoadMomentNewtonMeters,
+            cross(momentArm, loadForce));
+        diagnostics.fluidLoadPowerWatts += loadPowerWatts;
     }
 
     if (movingCorrespondence) {
@@ -1297,7 +1371,14 @@ PlanarFaceResolvedFluidStructureBridge::evaluateImpl(
         || !std::isfinite(aggregateSurface->areaSquareMeters)
         || !(aggregateSurface->areaSquareMeters > 0.0)
         || !finite(aggregateSurface->pressureForceNewtons)
-        || !std::isfinite(aggregateSurface->pressurePowerWatts)) {
+        || !std::isfinite(aggregateSurface->pressurePowerWatts)
+        || (loadKind
+                == PlanarFaceResolvedLoadKind::CompleteConstraintReaction
+            && (!finite(aggregateSurface->directConstraintForceNewtons)
+                || !finite(
+                    aggregateSurface->constraintReactionForceNewtons)
+                || !std::isfinite(
+                    aggregateSurface->constraintReactionPowerWatts)))) {
         throw std::invalid_argument(
             "fluid surface aggregate is absent or disagrees with its faces");
     }
@@ -1330,14 +1411,55 @@ PlanarFaceResolvedFluidStructureBridge::evaluateImpl(
             "fluid surface aggregate area, force, or power disagrees with its faces");
     }
 
+    const StructureVector3 aggregateLoadForce =
+        loadKind
+            == PlanarFaceResolvedLoadKind::CompleteConstraintReaction
+        ? toStructure(aggregateSurface->constraintReactionForceNewtons)
+        : toStructure(aggregateSurface->pressureForceNewtons);
+    const double aggregateLoadPowerWatts =
+        loadKind
+            == PlanarFaceResolvedLoadKind::CompleteConstraintReaction
+        ? aggregateSurface->constraintReactionPowerWatts
+        : aggregateSurface->pressurePowerWatts;
+    const double aggregateLoadForceTolerance = combinedTolerance(
+        settings_.absoluteForceToleranceNewtons,
+        settings_.relativeForceTolerance,
+        length(diagnostics.fluidLoadForceNewtons),
+        length(aggregateLoadForce));
+    const double aggregateLoadPowerTolerance = combinedTolerance(
+        settings_.absolutePowerToleranceWatts,
+        settings_.relativePowerTolerance,
+        std::abs(diagnostics.fluidLoadPowerWatts),
+        std::abs(aggregateLoadPowerWatts));
+    if (length(subtract(
+            diagnostics.fluidLoadForceNewtons, aggregateLoadForce))
+            > aggregateLoadForceTolerance
+        || std::abs(
+            diagnostics.fluidLoadPowerWatts - aggregateLoadPowerWatts)
+            > aggregateLoadPowerTolerance) {
+        throw std::invalid_argument(
+            "selected fluid surface load disagrees with its faces");
+    }
+    if (loadKind
+        == PlanarFaceResolvedLoadKind::CompleteConstraintReaction) {
+        const StructureVector3 reconstructedReaction = add(
+            toStructure(aggregateSurface->pressureForceNewtons),
+            toStructure(aggregateSurface->directConstraintForceNewtons));
+        if (length(subtract(
+                reconstructedReaction, aggregateLoadForce))
+                > aggregateLoadForceTolerance) {
+            throw std::invalid_argument(
+                "fluid surface complete reaction disagrees with its components");
+        }
+    }
+
     for (const auto& overlap : overlaps_) {
-        const auto& face = *selectedFaces[overlap.faceIndex];
         quadrature.push_back({
             overlap.stableId,
             overlap.triangleStableId,
             overlap.barycentricCoordinates,
             overlap.areaSquareMeters,
-            toStructure(face.pressureTractionPascals),
+            selectedFaceTractions[overlap.faceIndex],
         });
         const auto triangle = std::lower_bound(
             transfer_.triangles().begin(), transfer_.triangles().end(),
@@ -1365,21 +1487,21 @@ PlanarFaceResolvedFluidStructureBridge::evaluateImpl(
                 overlap.barycentricCoordinates[corner]));
         }
         mappedFacePower[overlap.faceIndex] += dot(
-            scale(toStructure(face.pressureTractionPascals),
+            scale(selectedFaceTractions[overlap.faceIndex],
                   overlap.areaSquareMeters),
             velocity);
     }
     for (std::size_t faceIndex = 0;
          faceIndex < faces_.size(); ++faceIndex) {
         const double residual = mappedFacePower[faceIndex]
-            - selectedFaces[faceIndex]->pressurePowerWatts;
+            - selectedFacePowers[faceIndex];
         diagnostics.maximumFacePowerResidualWatts = std::max(
             diagnostics.maximumFacePowerResidualWatts, std::abs(residual));
         const double tolerance = combinedTolerance(
             settings_.absolutePowerToleranceWatts,
             settings_.relativePowerTolerance,
             std::abs(mappedFacePower[faceIndex]),
-            std::abs(selectedFaces[faceIndex]->pressurePowerWatts));
+            std::abs(selectedFacePowers[faceIndex]));
         if (std::abs(residual) > tolerance) {
             throw std::invalid_argument(
                 "mapped structural velocity does not match one fluid face power ledger");
@@ -1393,35 +1515,38 @@ PlanarFaceResolvedFluidStructureBridge::evaluateImpl(
         target.integratedSurfaceForceNewtons;
     diagnostics.forceResidualNewtons = subtract(
         target.integratedSurfaceForceNewtons,
-        diagnostics.fluidPressureForceNewtons);
+        diagnostics.fluidLoadForceNewtons);
     diagnostics.forceResidualNormNewtons = length(
         diagnostics.forceResidualNewtons);
     diagnostics.structureSurfaceMomentNewtonMeters =
         target.integratedSurfaceMomentNewtonMeters;
     diagnostics.momentResidualNewtonMeters = subtract(
         target.integratedSurfaceMomentNewtonMeters,
-        diagnostics.fluidPressureMomentNewtonMeters);
+        diagnostics.fluidLoadMomentNewtonMeters);
     diagnostics.momentResidualNormNewtonMeters = length(
         diagnostics.momentResidualNewtonMeters);
     diagnostics.structureSurfacePowerWatts =
         target.integratedSurfacePowerWatts;
     diagnostics.powerResidualWatts =
         target.integratedSurfacePowerWatts
-        - diagnostics.fluidPressurePowerWatts;
+        - diagnostics.fluidLoadPowerWatts;
     diagnostics.areaResidualSquareMeters =
         target.surfaceAreaSquareMeters - diagnostics.fluidAreaSquareMeters;
     diagnostics.finite =
         std::isfinite(diagnostics.fluidAreaSquareMeters)
         && std::isfinite(diagnostics.areaResidualSquareMeters)
         && finite(diagnostics.fluidPressureForceNewtons)
+        && finite(diagnostics.fluidLoadForceNewtons)
         && finite(diagnostics.structureSurfaceForceNewtons)
         && finite(diagnostics.forceResidualNewtons)
         && std::isfinite(diagnostics.forceResidualNormNewtons)
         && finite(diagnostics.fluidPressureMomentNewtonMeters)
+        && finite(diagnostics.fluidLoadMomentNewtonMeters)
         && finite(diagnostics.structureSurfaceMomentNewtonMeters)
         && finite(diagnostics.momentResidualNewtonMeters)
         && std::isfinite(diagnostics.momentResidualNormNewtonMeters)
         && std::isfinite(diagnostics.fluidPressurePowerWatts)
+        && std::isfinite(diagnostics.fluidLoadPowerWatts)
         && std::isfinite(diagnostics.structureSurfacePowerWatts)
         && std::isfinite(diagnostics.powerResidualWatts)
         && std::isfinite(diagnostics.maximumFacePowerResidualWatts)
@@ -1447,17 +1572,17 @@ PlanarFaceResolvedFluidStructureBridge::evaluateImpl(
     const double forceTolerance = combinedTolerance(
         settings_.absoluteForceToleranceNewtons,
         settings_.relativeForceTolerance,
-        length(diagnostics.fluidPressureForceNewtons),
+        length(diagnostics.fluidLoadForceNewtons),
         length(target.integratedSurfaceForceNewtons));
     const double momentTolerance = combinedTolerance(
         settings_.absoluteMomentToleranceNewtonMeters,
         settings_.relativeMomentTolerance,
-        length(diagnostics.fluidPressureMomentNewtonMeters),
+        length(diagnostics.fluidLoadMomentNewtonMeters),
         length(target.integratedSurfaceMomentNewtonMeters));
     const double powerTolerance = combinedTolerance(
         settings_.absolutePowerToleranceWatts,
         settings_.relativePowerTolerance,
-        std::abs(diagnostics.fluidPressurePowerWatts),
+        std::abs(diagnostics.fluidLoadPowerWatts),
         std::abs(target.integratedSurfacePowerWatts));
     if (std::abs(diagnostics.areaResidualSquareMeters) > areaTolerance
         || diagnostics.forceResidualNormNewtons > forceTolerance

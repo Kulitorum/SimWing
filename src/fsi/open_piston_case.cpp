@@ -832,6 +832,8 @@ const char* invalidStoredOpenPistonDiagnostics(
         || bridge.fluidFaceCount != faceCount
         || bridge.structureTriangleCount != 2
         || bridge.overlapPatchCount != 10
+        || bridge.loadKind
+            != PlanarFaceResolvedLoadKind::AdjacentPressureTraction
         || bridge.correspondenceMode
             != PlanarFaceCorrespondenceMode::RigidNormalTranslation
         || !bridge.finite
@@ -848,6 +850,12 @@ const char* invalidStoredOpenPistonDiagnostics(
                        {cut.pressureForceNewtons.x,
                         cut.pressureForceNewtons.y,
                         cut.pressureForceNewtons.z})
+        || !closeVector(bridge.fluidLoadForceNewtons,
+                       bridge.fluidPressureForceNewtons)
+        || !closeVector(bridge.fluidLoadMomentNewtonMeters,
+                       bridge.fluidPressureMomentNewtonMeters)
+        || !closeValue(bridge.fluidLoadPowerWatts,
+                       bridge.fluidPressurePowerWatts)
         || !closeVector(bridge.forceResidualNewtons,
                        subtract(bridge.structureSurfaceForceNewtons,
                                 bridge.fluidPressureForceNewtons))

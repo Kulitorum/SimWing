@@ -14,6 +14,7 @@
 #include "porous_sheet_checkpoint_persistence.h"
 #include "porous_sheet_control.h"
 #include "pressure_jump_case.h"
+#include "projected_flag_case.h"
 #include "strong_piston_checkpoint_persistence.h"
 #include "strong_piston_control.h"
 #include "viewer_protocol.h"
@@ -63,6 +64,7 @@ constexpr std::uint64_t maximumSteps = 10'000'000;
 enum class WorkerCase {
     Structural,
     Hemisphere,
+    ProjectedFlag,
     Piston,
     StrongPiston,
     OpenPiston,
@@ -88,7 +90,7 @@ struct Options {
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: simwing-fsi [--case structural|hemisphere|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
+        "Usage: simwing-fsi [--case structural|hemisphere|flag|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
         "                   [--checkpoint-in PATH]\n"
@@ -100,6 +102,8 @@ void printUsage(FILE* stream) {
         "Runs a canonical Qt-free numerical case and writes a completed diagnostic\n"
         "trace. 'structural' is the original analytic XPBD harness; 'hemisphere'\n"
         "runs a soft three-point fabric dome under an alternating pressure mode;\n"
+        "'flag' maps the complete reaction from a fixed-reference projected gust\n"
+        "onto a one-edge-clamped XPBD fabric panel;\n"
         "'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
         "'strong-piston' strongly iterates that chain for a light added-mass plate;\n"
@@ -139,6 +143,10 @@ bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
     }
     if (text == "hemisphere") {
         workerCase = WorkerCase::Hemisphere;
+        return true;
+    }
+    if (text == "flag") {
+        workerCase = WorkerCase::ProjectedFlag;
         return true;
     }
     if (text == "piston") {
@@ -208,7 +216,7 @@ bool parseOptions(int argc,
         } else if (argument == "--case") {
             if (++index >= argc
                 || !parseWorkerCase(argv[index], options.workerCase)) {
-                error = "--case requires 'structural', 'hemisphere', 'piston', "
+                error = "--case requires 'structural', 'hemisphere', 'flag', 'piston', "
                     "'strong-piston', 'open-piston', 'periodic-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
@@ -217,7 +225,7 @@ bool parseOptions(int argc,
             }
         } else if (argument.starts_with("--case=")) {
             if (!parseWorkerCase(argument.substr(7), options.workerCase)) {
-                error = "--case requires 'structural', 'hemisphere', 'piston', "
+                error = "--case requires 'structural', 'hemisphere', 'flag', 'piston', "
                     "'strong-piston', 'open-piston', 'periodic-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
@@ -1443,6 +1451,29 @@ int main(int argc, char* argv[]) {
                         options.tracePath.string().c_str());
                 } else if constexpr (std::is_same_v<
                                          Simulation,
+                                         simwing::fsi::ProjectedGustFlagCase>) {
+                    const auto& transfer =
+                        simulation.transferDiagnostics();
+                    std::printf(
+                        "simwing-fsi completed %llu flag step(s), "
+                        "t=%.9g s, gust=%.6g m/s, normal-motion=%.6g m, "
+                        "free-edge-motion=%.6g m, pressure-force-x=%.6g N, "
+                        "direct-force-x=%.6g N, reaction-force-x=%.6g N, "
+                        "transfer-residual=%.3g N, trace=%s\n",
+                        static_cast<unsigned long long>(
+                            checkpoint.acceptedStepCount),
+                        checkpoint.simulationTimeSeconds,
+                        simulation.gustSpeedMetersPerSecond(),
+                        simulation.maximumNormalDisplacementMeters(),
+                        simulation.maximumFreeEdgeDisplacementMeters(),
+                        transfer.fluidPressureForceNewtons.x,
+                        transfer.fluidLoadForceNewtons.x
+                            - transfer.fluidPressureForceNewtons.x,
+                        transfer.fluidLoadForceNewtons.x,
+                        transfer.forceResidualNormNewtons,
+                        options.tracePath.string().c_str());
+                } else if constexpr (std::is_same_v<
+                                         Simulation,
                                          simwing::fsi::AnchoredHemisphereCase>) {
                     std::printf(
                         "simwing-fsi completed %llu hemisphere step(s), "
@@ -1597,6 +1628,10 @@ int main(int argc, char* argv[]) {
         }
         if (options.workerCase == WorkerCase::Hemisphere) {
             simwing::fsi::AnchoredHemisphereCase simulation;
+            return run(simulation);
+        }
+        if (options.workerCase == WorkerCase::ProjectedFlag) {
+            simwing::fsi::ProjectedGustFlagCase simulation;
             return run(simulation);
         }
         simwing::fsi::CanonicalStructuralCase simulation;

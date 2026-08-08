@@ -23,6 +23,7 @@ using simwing::fsi::StructureVector3;
 using simwing::fsi::PlanarFaceResolvedFluidStructureBridge;
 using simwing::fsi::PlanarFaceCorrespondenceMode;
 using simwing::fsi::PlanarFaceResolvedBridgeSettings;
+using simwing::fsi::PlanarFaceResolvedLoadKind;
 using simwing::fsi::UniformFluidStructureBridge;
 using simwing::fsi::fluid::CellScalarField;
 using simwing::fsi::fluid::FaceAlignedMovingInterface;
@@ -656,6 +657,83 @@ void testFaceResolvedNonuniformPressureTransfer() {
         "face bridge validation: overlapping structural triangles are rejected");
 }
 
+void testFaceResolvedCompleteConstraintReactionTransfer() {
+    Structure structure(pistonDefinition());
+    const auto reference = fluidPistonDiagnostics();
+    PlanarFaceResolvedFluidStructureBridge bridge(
+        structure, 200, pistonNodes(), pistonTriangles(), reference.faces);
+    const auto fluid = fluidPistonDiagnostics(true);
+    const auto kinematics = translatingKinematics(
+        bridge.transfer(), structure);
+    const auto pressureOnly = bridge.evaluate(fluid, kinematics);
+    const auto first = bridge.evaluateConstraintReaction(
+        fluid, kinematics);
+    const auto second = bridge.evaluateConstraintReaction(
+        fluid, kinematics);
+    const auto& diagnostics = first.diagnostics();
+    const auto surface = std::ranges::find_if(
+        fluid.surfaces,
+        [](const auto& candidate) { return candidate.stableId == 200; });
+
+    check(first == second,
+          "reaction bridge: complete reaction transfer replays bit-for-bit");
+    check(surface != fluid.surfaces.end()
+              && diagnostics.loadKind
+                  == PlanarFaceResolvedLoadKind::CompleteConstraintReaction,
+          "reaction bridge: selected load kind is explicit");
+    if (surface != fluid.surfaces.end()) {
+        checkVectorNear(
+            diagnostics.fluidPressureForceNewtons,
+            {surface->pressureForceNewtons.x,
+             surface->pressureForceNewtons.y,
+             surface->pressureForceNewtons.z},
+            2.0e-10,
+            "reaction bridge: adjacent pressure remains separately diagnosed");
+        checkVectorNear(
+            diagnostics.fluidLoadForceNewtons,
+            {surface->constraintReactionForceNewtons.x,
+             surface->constraintReactionForceNewtons.y,
+             surface->constraintReactionForceNewtons.z},
+            2.0e-10,
+            "reaction bridge: complete reaction is the selected structural load");
+        check(std::abs(
+                  diagnostics.fluidLoadForceNewtons.x
+                  - diagnostics.fluidPressureForceNewtons.x) > 1.0e-6,
+              "reaction bridge: disturbed constrained velocity contributes real direct impulse");
+        checkNear(diagnostics.fluidLoadPowerWatts,
+                  surface->constraintReactionPowerWatts, 2.0e-10,
+                  "reaction bridge: complete reaction power remains explicit");
+    }
+    checkVectorNear(
+        diagnostics.structureSurfaceForceNewtons,
+        diagnostics.fluidLoadForceNewtons, 2.0e-10,
+        "reaction bridge: conservative quadrature preserves complete force");
+    checkVectorNear(
+        diagnostics.structureSurfaceMomentNewtonMeters,
+        diagnostics.fluidLoadMomentNewtonMeters, 2.0e-10,
+        "reaction bridge: conservative quadrature preserves complete moment");
+    checkNear(diagnostics.structureSurfacePowerWatts,
+              diagnostics.fluidLoadPowerWatts, 2.0e-10,
+              "reaction bridge: conservative quadrature preserves complete power");
+    check(pressureOnly.diagnostics().loadKind
+              == PlanarFaceResolvedLoadKind::AdjacentPressureTraction
+              && pressureOnly.diagnostics().fluidLoadForceNewtons
+                  == pressureOnly.diagnostics().fluidPressureForceNewtons,
+          "reaction bridge: historical evaluate path remains pressure-only");
+
+    auto corrupted = fluid;
+    auto corruptFace = std::ranges::find_if(
+        corrupted.faces,
+        [](const auto& candidate) { return candidate.surfaceStableId == 200; });
+    if (corruptFace != corrupted.faces.end()) {
+        corruptFace->constraintReactionForceNewtons.x += 1.0;
+    }
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluateConstraintReaction(
+            corrupted, kinematics)); },
+        "reaction bridge validation: complete reaction must equal pressure plus direct impulse");
+}
+
 void testMovingPlanarFaceCorrespondence() {
     Structure structure(pistonDefinition());
     const auto reference = openPistonDiagnostics();
@@ -786,11 +864,18 @@ void testMovingPlanarFaceCorrespondence() {
         "moving bridge validation: transverse fluid tiling is immutable");
 
     PlanarFaceResolvedBridgeSettings fixedSettings;
-    expectRejected(
-        [&] { PlanarFaceResolvedFluidStructureBridge fixedNonseparating(
-            structure, 300, pistonNodes(), pistonTriangles(),
-            reference.faces, fixedSettings); },
-        "moving bridge validation: nonseparating surfaces require moving mode");
+    PlanarFaceResolvedFluidStructureBridge fixedNonseparating(
+        structure, 300, pistonNodes(), pistonTriangles(),
+        reference.faces, fixedSettings);
+    const auto fixedKinematics = movingPlaneKinematics(
+        fixedNonseparating.transfer(), structure, 3.0);
+    const auto fixedMapped = fixedNonseparating.evaluate(
+        reference, fixedKinematics);
+    check(fixedMapped.diagnostics().correspondenceMode
+              == PlanarFaceCorrespondenceMode::FixedMaterial
+              && fixedMapped.diagnostics().forceResidualNormNewtons
+                  < 2.0e-10,
+          "moving bridge: a fixed nonseparating panel supports resolved flow around it");
 }
 
 void testMovingPlanarCorrespondenceAllAxes() {
@@ -997,6 +1082,7 @@ int main() {
     testAnalyticStableIdBridgeAndStructuralAcceptance();
     testStrictRejectionContracts();
     testFaceResolvedNonuniformPressureTransfer();
+    testFaceResolvedCompleteConstraintReactionTransfer();
     testMovingPlanarFaceCorrespondence();
     testMovingPlanarCorrespondenceAllAxes();
     testPorousFaceResolvedTransfer();

@@ -474,15 +474,19 @@ bool writeBridge(Writer& writer,
         && writer.finiteDouble(value.fluidAreaSquareMeters)
         && writer.finiteDouble(value.referenceStructureAreaSquareMeters)
         && writer.finiteDouble(value.areaResidualSquareMeters)
+        && writer.u8(static_cast<std::uint8_t>(value.loadKind))
         && writer.vector3(value.fluidPressureForceNewtons)
+        && writer.vector3(value.fluidLoadForceNewtons)
         && writer.vector3(value.structureSurfaceForceNewtons)
         && writer.vector3(value.forceResidualNewtons)
         && writer.finiteDouble(value.forceResidualNormNewtons)
         && writer.vector3(value.fluidPressureMomentNewtonMeters)
+        && writer.vector3(value.fluidLoadMomentNewtonMeters)
         && writer.vector3(value.structureSurfaceMomentNewtonMeters)
         && writer.vector3(value.momentResidualNewtonMeters)
         && writer.finiteDouble(value.momentResidualNormNewtonMeters)
         && writer.finiteDouble(value.fluidPressurePowerWatts)
+        && writer.finiteDouble(value.fluidLoadPowerWatts)
         && writer.finiteDouble(value.structureSurfacePowerWatts)
         && writer.finiteDouble(value.powerResidualWatts)
         && writer.finiteDouble(value.maximumFacePowerResidualWatts)
@@ -499,6 +503,7 @@ bool writeBridge(Writer& writer,
 bool readBridge(Reader& reader,
                 PlanarFaceResolvedBridgeDiagnostics& value,
                 const std::size_t maximum) {
+    std::uint8_t loadKind = 0;
     std::uint8_t mode = 0;
     if (!reader.u32(value.version)
         || value.version != planarFaceResolvedBridgeVersion
@@ -509,15 +514,21 @@ bool readBridge(Reader& reader,
         || !reader.finiteDouble(value.fluidAreaSquareMeters)
         || !reader.finiteDouble(value.referenceStructureAreaSquareMeters)
         || !reader.finiteDouble(value.areaResidualSquareMeters)
+        || !reader.u8(loadKind)
+        || loadKind > static_cast<std::uint8_t>(
+            PlanarFaceResolvedLoadKind::CompleteConstraintReaction)
         || !reader.vector3(value.fluidPressureForceNewtons)
+        || !reader.vector3(value.fluidLoadForceNewtons)
         || !reader.vector3(value.structureSurfaceForceNewtons)
         || !reader.vector3(value.forceResidualNewtons)
         || !reader.finiteDouble(value.forceResidualNormNewtons)
         || !reader.vector3(value.fluidPressureMomentNewtonMeters)
+        || !reader.vector3(value.fluidLoadMomentNewtonMeters)
         || !reader.vector3(value.structureSurfaceMomentNewtonMeters)
         || !reader.vector3(value.momentResidualNewtonMeters)
         || !reader.finiteDouble(value.momentResidualNormNewtonMeters)
         || !reader.finiteDouble(value.fluidPressurePowerWatts)
+        || !reader.finiteDouble(value.fluidLoadPowerWatts)
         || !reader.finiteDouble(value.structureSurfacePowerWatts)
         || !reader.finiteDouble(value.powerResidualWatts)
         || !reader.finiteDouble(value.maximumFacePowerResidualWatts)
@@ -535,6 +546,7 @@ bool readBridge(Reader& reader,
     }
     value.correspondenceMode =
         static_cast<PlanarFaceCorrespondenceMode>(mode);
+    value.loadKind = static_cast<PlanarFaceResolvedLoadKind>(loadKind);
     return true;
 }
 

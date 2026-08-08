@@ -416,6 +416,7 @@ src/fsi/
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
     piston_case.*           sealed fixed-topology worker canonical
+    projected_flag_case.*   fixed-reference projected-gust fabric canonical
     porous_sheet_case.*     coupled midpoint porous-sheet oracle
     porous_sheet_checkpoint_persistence.* bounded composite restart codec
     open_piston_case.*      driven open-control-volume worker canonical
@@ -489,6 +490,7 @@ Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
 `simwing_coupled_state`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
+`simwing_projected_flag_case`,
 `simwing_porous_sheet_case`, `simwing_open_piston_case`, `simwing_fluid_frame`,
 `simwing_periodic_flow_case`, `simwing_pressure_jump_case`,
 `simwing_porous_flow_case`,
@@ -848,7 +850,12 @@ oriented reference triangles once. Every material overlap above the explicit
 `1e-14 m^2` sliver threshold becomes a stable barycentric patch; current
 nonuniform tile traction is mapped through those patches only after per-face
 and aggregate area, force, moment, and power ledgers close. Its fixed-material
-mode requires the original Eulerian face geometry exactly. Its
+mode requires the original Eulerian face geometry exactly and accepts either a
+separating region pair or a same-region finite panel with a resolved path around
+it. Moving-interface samples retain pressure-only transfer for existing callers
+and add an explicit complete-reaction selector. The latter validates pressure,
+direct constrained-face impulse, their sum, and the selected aggregate before
+mapping; diagnostics keep pressure and selected load ledgers separate. Its
 rigid-normal-translation mode instead keeps transverse tiling and material
 patches immutable while explicitly separating the current Eulerian grid plane
 from the unwrapped physical plane. It accepts only a matching rigid structural
@@ -1357,7 +1364,9 @@ Required canonical cases:
   uniform-plug subsets are complete; full-flow second-order moving-grid coupling
   remains);
 - moving piston/membrane with analytic volume and work balance;
-- flexible flag and a thin shell with one interface per cell;
+- flexible flag and a thin shell with one interface per cell (the one-way,
+  fixed-reference normal-gust flag subset is complete; displaced geometry and
+  tangential-flow interaction remain open);
 - two closely spaced and folded sheets with multiple crossings per cell;
 - resolved opening that closes below grid scale and reopens;
 - force, moment, and power transfer under rigid translation and rotation.
@@ -1392,6 +1401,22 @@ correspondence, nonplanar or opening topology events, sealed deforming chambers,
 a complete coupled energy ledger for those general cases, and richer
 case-specific control messages remain open, so the
 full Phase 2 piston gate is not yet closed.
+
+The first flexible CFD-to-XPBD canonical is now available as `--case flag`.
+A finite 4-by-4 same-region MAC-face panel sits inside a periodic 12-by-8-by-8
+domain. Sinusoidal mean-flow increments create a persistent accelerating
+cross-flow; every step projects that field around the stationary panel, then
+maps the complete face-resolved constraint reaction into a matching 5-by-5
+orthotropic membrane grid. Two fixed node rows encode both position and slope
+at the edge clamp, eliminating the otherwise admissible rigid hinge rotation.
+Accepted frames expose pressure traction, direct constraint traction, complete
+reaction traction, conservative nodal loads, divergence, and normal
+displacement. Deterministic regressions require signed load reversal, visible
+non-rigid free-edge motion, exact anchors, converged projection, and force and
+moment transfer closure. This is deliberately one-way: the displaced membrane
+does not alter the CFD surface, the stationary reference has zero interface
+power, and the case does not claim moving cut cells, classical tangential flag
+aerodynamics, two-way energy closure, or wing flow.
 
 The standalone worker also includes a deliberately non-CFD curved structural
 canonical: a one-metre soft fabric hemisphere held by three equatorial anchors

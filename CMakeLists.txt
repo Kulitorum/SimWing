@@ -568,6 +568,18 @@ target_link_libraries(simwing_piston_case PUBLIC
     simwing_structure_frame
 )
 
+add_library(simwing_projected_flag_case STATIC
+    src/fsi/projected_flag_case.cpp
+    src/fsi/projected_flag_case.h
+)
+target_include_directories(simwing_projected_flag_case PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_projected_flag_case PUBLIC
+    simwing_fluid_structure_bridge
+    simwing_structure_frame
+)
+
 add_library(simwing_porous_sheet_case STATIC
     src/fsi/porous_sheet_case.cpp
     src/fsi/porous_sheet_case.h
@@ -1029,6 +1041,12 @@ add_executable(simwing-hemisphere-case-test
 target_link_libraries(simwing-hemisphere-case-test
     PRIVATE simwing_canonical_case)
 
+add_executable(simwing-projected-flag-case-test
+    tests/simwing_projected_flag_case_test.cpp
+)
+target_link_libraries(simwing-projected-flag-case-test
+    PRIVATE simwing_projected_flag_case)
+
 add_executable(simwing-periodic-flow-case-test
     tests/simwing_periodic_flow_case_test.cpp
 )
@@ -1274,6 +1292,7 @@ add_executable(simwing-fsi
 )
 target_link_libraries(simwing-fsi PRIVATE
     simwing_canonical_case
+    simwing_projected_flag_case
     simwing_open_piston_control
     simwing_open_piston_case
     simwing_moving_porous_flow_control
@@ -1687,6 +1706,8 @@ add_test(NAME simwing_viewer_camera COMMAND simwing-viewer-camera-test)
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
 add_test(NAME simwing_fsi_worker COMMAND simwing-fsi-worker-test)
 add_test(NAME simwing_hemisphere_case COMMAND simwing-hemisphere-case-test)
+add_test(NAME simwing_projected_flag_case
+    COMMAND simwing-projected-flag-case-test)
 add_test(NAME simwing_periodic_flow_case
     COMMAND simwing-periodic-flow-case-test)
 add_test(NAME simwing_pressure_jump_frame
@@ -1754,6 +1775,14 @@ add_test(NAME simwing_fsi_hemisphere_headless
         --trace "${CMAKE_BINARY_DIR}/simwing-hemisphere-headless.swtrace")
 set_tests_properties(simwing_fsi_hemisphere_headless PROPERTIES
     PASS_REGULAR_EXPRESSION "completed 8 hemisphere step\\(s\\)")
+add_test(NAME simwing_fsi_flag_headless
+    COMMAND simwing-fsi
+        --case flag
+        --steps 8
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-flag-headless.swtrace")
+set_tests_properties(simwing_fsi_flag_headless PROPERTIES
+    PASS_REGULAR_EXPRESSION "completed 8 flag step\\(s\\)")
 add_test(NAME simwing_fsi_piston_headless
     COMMAND simwing-fsi
         --case piston

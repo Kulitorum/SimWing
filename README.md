@@ -329,9 +329,21 @@ and rejects foreign topology before reduction. Alongside the strict
 uniform fluid-to-structure subset, a planar face-resolved bridge clips canonical
 MAC tiles against structural triangles and conservatively maps nonuniform face
 traction while closing per-face and aggregate area, force, moment, and power
-ledgers. Its rigid-normal mode keeps those material patches while the physical
+ledgers. The moving-interface overload can explicitly select the complete
+fluid constraint reaction—adjacent pressure plus direct constrained-face
+impulse—without relabelling it as pressure. Fixed same-region panels are
+supported for resolved flow-around paths. Its rigid-normal mode keeps those
+material patches while the physical
 plane moves and the Eulerian grid plane rebases, provided transverse geometry
-remains fixed and fluid/structural normal velocities agree. The
+remains fixed and fluid/structural normal velocities agree.
+`simwing-fsi --case flag` uses the fixed mode for the first flexible
+CFD-to-XPBD slice: a sinusoidally accelerating periodic gust is projected around
+a finite one-metre reference panel, and its complete face reaction is mapped
+conservatively into a 5-by-5 membrane with an edge clamp. The accepted trace
+shows pressure, direct constraint traction, complete reaction, mapped nodal
+force, divergence, and normal deformation. The displaced fabric is not fed
+back to the fixed CFD reference, so this is one-way coupling—not a moving
+cut-cell, classical tangential-flow flag, or two-way energy result. The
 `simwing-fsi --case piston` harness crosses that
 face-resolved bridge, temporal coupling, XPBD acceptance, and replayable viewer
 frames with visible deterministic motion. The same production target now also
@@ -586,6 +598,7 @@ Run:
 ```powershell
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\simwing-fsi.exe --case hemisphere --steps 600
+.\build\bin\Release\simwing-fsi.exe --case flag --steps 600
 .\build\bin\Release\simwing-fsi.exe --case strong-piston --steps 120 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case strong-piston --steps 120 --no-viewer --checkpoint-out strong-piston.swsp --checkpoint-every 60
 .\build\bin\Release\simwing-fsi.exe --case strong-piston --checkpoint-in strong-piston.swsp --steps 60 --no-viewer --checkpoint-out strong-piston.swsp --checkpoint-every 60
@@ -610,7 +623,9 @@ shows a soft fabric dome held at three equatorial points with a compliant rim.
 A spatially alternating analytic pressure mode deforms four lobes without
 exciting a free rigid-body rotation. It is a structural canonical, not a CFD
 result. The following commands show
-the other canonical cases; commands with `--no-viewer` run unthrottled for
+the other canonical cases. The flag command is the first real CFD-load-driven
+fabric animation while retaining a stationary reference surface on the fluid
+side. Commands with `--no-viewer` run unthrottled for
 tests and scripted verification.
 The checkpoint commands save and resume exact accepted worker state. Resumed
 steps are additional, autosave cadence uses absolute accepted-step multiples,

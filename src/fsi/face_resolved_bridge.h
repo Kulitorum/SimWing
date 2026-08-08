@@ -14,11 +14,16 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t planarFaceResolvedBridgeVersion = 4;
+inline constexpr std::uint32_t planarFaceResolvedBridgeVersion = 5;
 
 enum class PlanarFaceCorrespondenceMode : std::uint8_t {
     FixedMaterial = 0,
     RigidNormalTranslation = 1,
+};
+
+enum class PlanarFaceResolvedLoadKind : std::uint8_t {
+    AdjacentPressureTraction = 0,
+    CompleteConstraintReaction = 1,
 };
 
 struct PlanarFaceResolvedBridgeSettings {
@@ -49,15 +54,20 @@ struct PlanarFaceResolvedBridgeDiagnostics {
     double fluidAreaSquareMeters = 0.0;
     double referenceStructureAreaSquareMeters = 0.0;
     double areaResidualSquareMeters = 0.0;
+    PlanarFaceResolvedLoadKind loadKind =
+        PlanarFaceResolvedLoadKind::AdjacentPressureTraction;
     StructureVector3 fluidPressureForceNewtons;
+    StructureVector3 fluidLoadForceNewtons;
     StructureVector3 structureSurfaceForceNewtons;
     StructureVector3 forceResidualNewtons;
     double forceResidualNormNewtons = 0.0;
     StructureVector3 fluidPressureMomentNewtonMeters;
+    StructureVector3 fluidLoadMomentNewtonMeters;
     StructureVector3 structureSurfaceMomentNewtonMeters;
     StructureVector3 momentResidualNewtonMeters;
     double momentResidualNormNewtonMeters = 0.0;
     double fluidPressurePowerWatts = 0.0;
+    double fluidLoadPowerWatts = 0.0;
     double structureSurfacePowerWatts = 0.0;
     double powerResidualWatts = 0.0;
     double maximumFacePowerResidualWatts = 0.0;
@@ -181,6 +191,14 @@ public:
         const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
         std::span<const CouplingNodeKinematics> nodeKinematics) const;
 
+    // Transfers the complete fluid-on-interface reaction, including the
+    // direct impulse required to replace a predicted constrained MAC-face
+    // velocity. This is the load required at a coupled impermeable boundary;
+    // evaluate() intentionally retains its historical pressure-only meaning.
+    [[nodiscard]] PlanarFaceResolvedTransferResult evaluateConstraintReaction(
+        const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
+        std::span<const CouplingNodeKinematics> nodeKinematics) const;
+
     [[nodiscard]] PlanarFaceResolvedTransferResult evaluateMovingPlane(
         const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
         std::span<const CouplingNodeKinematics> nodeKinematics,
@@ -224,7 +242,8 @@ private:
     [[nodiscard]] PlanarFaceResolvedTransferResult evaluateImpl(
         const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
         std::span<const CouplingNodeKinematics> nodeKinematics,
-        std::optional<double> physicalPlaneCoordinateMeters) const;
+        std::optional<double> physicalPlaneCoordinateMeters,
+        PlanarFaceResolvedLoadKind loadKind) const;
 
     [[nodiscard]] PorousFaceResolvedTransferResult evaluatePorousImpl(
         const fluid::PorousSurfaceTractionDiagnostics& porousTraction,
