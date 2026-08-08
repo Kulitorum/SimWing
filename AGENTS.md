@@ -97,7 +97,7 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
-.\build\bin\Release\simwing-fsi.exe [--case structural|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--control-stdio] [--no-viewer]
+.\build\bin\Release\simwing-fsi.exe [--case structural|hemisphere|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--control-stdio] [--no-viewer]
 .\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
@@ -836,6 +836,10 @@ makes this a certified aerodynamic solver.
   first end-to-end worker slice. The case is an analytic structural harness,
   not aerodynamic truth; it writes only accepted steps and launches the
   sibling viewer by default. `--no-viewer` must remain Qt-free and unthrottled.
+- `src/fsi/hemisphere_case.{h,cpp}` is the larger structural/viewer canonical:
+  a triangulated fabric hemisphere with a fixed equatorial ring, intrinsic
+  membrane charts, signed rest-shape hinges, and time-varying analytic follower
+  pressure. It deliberately tests curved loaded structure, not CFD truth.
   `--checkpoint-in`, `--checkpoint-out`, and `--checkpoint-every` are supported
   by periodic-flow, moving-porous-flow, open-piston, and porous-sheet workers;
   all restore before
@@ -1244,7 +1248,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 127 configured tests on Windows. The Fortran-reference test is
+There are 129 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 The light added-mass path is covered both inside `simwing_piston_case` and by

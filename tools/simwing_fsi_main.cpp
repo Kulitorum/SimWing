@@ -1,4 +1,5 @@
 #include "canonical_case.h"
+#include "hemisphere_case.h"
 #include "moving_porous_flow_case.h"
 #include "moving_porous_flow_checkpoint_persistence.h"
 #include "moving_porous_flow_control.h"
@@ -61,6 +62,7 @@ constexpr std::uint64_t maximumSteps = 10'000'000;
 
 enum class WorkerCase {
     Structural,
+    Hemisphere,
     Piston,
     StrongPiston,
     OpenPiston,
@@ -86,7 +88,7 @@ struct Options {
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: simwing-fsi [--case structural|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
+        "Usage: simwing-fsi [--case structural|hemisphere|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
         "                   [--checkpoint-in PATH]\n"
@@ -96,7 +98,9 @@ void printUsage(FILE* stream) {
         "                   [--viewer|--no-viewer]\n"
         "\n"
         "Runs a canonical Qt-free numerical case and writes a completed diagnostic\n"
-        "trace. 'structural' is the original analytic XPBD harness; 'piston' runs\n"
+        "trace. 'structural' is the original analytic XPBD harness; 'hemisphere'\n"
+        "runs a pressure-loaded fabric dome with its equatorial ring clamped;\n"
+        "'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
         "'strong-piston' strongly iterates that chain for a light added-mass plate;\n"
         "'open-piston' adds connected-fluid pressure reaction, partial-cell motion,\n"
@@ -131,6 +135,10 @@ void printUsage(FILE* stream) {
 bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
     if (text == "structural") {
         workerCase = WorkerCase::Structural;
+        return true;
+    }
+    if (text == "hemisphere") {
+        workerCase = WorkerCase::Hemisphere;
         return true;
     }
     if (text == "piston") {
@@ -200,7 +208,7 @@ bool parseOptions(int argc,
         } else if (argument == "--case") {
             if (++index >= argc
                 || !parseWorkerCase(argv[index], options.workerCase)) {
-                error = "--case requires 'structural', 'piston', "
+                error = "--case requires 'structural', 'hemisphere', 'piston', "
                     "'strong-piston', 'open-piston', 'periodic-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
@@ -209,7 +217,7 @@ bool parseOptions(int argc,
             }
         } else if (argument.starts_with("--case=")) {
             if (!parseWorkerCase(argument.substr(7), options.workerCase)) {
-                error = "--case requires 'structural', 'piston', "
+                error = "--case requires 'structural', 'hemisphere', 'piston', "
                     "'strong-piston', 'open-piston', 'periodic-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
@@ -1566,6 +1574,10 @@ int main(int argc, char* argv[]) {
             if (restoredPorousSheetCheckpoint) {
                 simulation.restore(*restoredPorousSheetCheckpoint);
             }
+            return run(simulation);
+        }
+        if (options.workerCase == WorkerCase::Hemisphere) {
+            simwing::fsi::ClampedHemisphereCase simulation;
             return run(simulation);
         }
         simwing::fsi::CanonicalStructuralCase simulation;

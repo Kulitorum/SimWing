@@ -1393,6 +1393,14 @@ a complete coupled energy ledger for those general cases, and richer
 case-specific control messages remain open, so the
 full Phase 2 piston gate is not yet closed.
 
+The standalone worker also includes a deliberately non-CFD curved structural
+canonical: a one-metre fabric hemisphere with its complete equatorial ring
+fixed. Intrinsic per-triangle charts, signed rest-shape bending hinges, and a
+time-varying analytic follower-pressure load exercise hundreds of membrane
+elements and immutable viewer topology. This `--case hemisphere` path is a
+visual and structural regression only; it must not be cited as curved-interface
+fluid coupling or aerodynamic validation.
+
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written
 budgets; folded-interface and unresolved-gap cases do not leak or change fluid

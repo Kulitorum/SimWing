@@ -361,6 +361,8 @@ target_link_libraries(simwing_viewer_geometry PUBLIC
 add_library(simwing_canonical_case STATIC
     src/fsi/canonical_case.cpp
     src/fsi/canonical_case.h
+    src/fsi/hemisphere_case.cpp
+    src/fsi/hemisphere_case.h
 )
 target_include_directories(simwing_canonical_case PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
@@ -1011,6 +1013,12 @@ add_executable(simwing-fsi-worker-test
     tests/simwing_fsi_worker_test.cpp
 )
 target_link_libraries(simwing-fsi-worker-test
+    PRIVATE simwing_canonical_case)
+
+add_executable(simwing-hemisphere-case-test
+    tests/simwing_hemisphere_case_test.cpp
+)
+target_link_libraries(simwing-hemisphere-case-test
     PRIVATE simwing_canonical_case)
 
 add_executable(simwing-periodic-flow-case-test
@@ -1669,6 +1677,7 @@ add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
 add_test(NAME simwing_vector_glyphs COMMAND simwing-vector-glyphs-test)
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
 add_test(NAME simwing_fsi_worker COMMAND simwing-fsi-worker-test)
+add_test(NAME simwing_hemisphere_case COMMAND simwing-hemisphere-case-test)
 add_test(NAME simwing_periodic_flow_case
     COMMAND simwing-periodic-flow-case-test)
 add_test(NAME simwing_pressure_jump_frame
@@ -1728,6 +1737,14 @@ add_test(NAME simwing_porous_sheet_case
     COMMAND simwing-porous-sheet-case-test)
 add_test(NAME simwing_open_piston_case COMMAND simwing-open-piston-case-test)
 add_test(NAME simwing_fsi_help COMMAND simwing-fsi --help)
+add_test(NAME simwing_fsi_hemisphere_headless
+    COMMAND simwing-fsi
+        --case hemisphere
+        --steps 8
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-hemisphere-headless.swtrace")
+set_tests_properties(simwing_fsi_hemisphere_headless PROPERTIES
+    PASS_REGULAR_EXPRESSION "completed 8 step\\(s\\)")
 add_test(NAME simwing_fsi_piston_headless
     COMMAND simwing-fsi
         --case piston

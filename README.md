@@ -585,6 +585,7 @@ Run:
 
 ```powershell
 .\build\bin\Release\LEparagliding.exe
+.\build\bin\Release\simwing-fsi.exe --case hemisphere --steps 600
 .\build\bin\Release\simwing-fsi.exe --case strong-piston --steps 120 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case strong-piston --steps 120 --no-viewer --checkpoint-out strong-piston.swsp --checkpoint-every 60
 .\build\bin\Release\simwing-fsi.exe --case strong-piston --checkpoint-in strong-piston.swsp --steps 60 --no-viewer --checkpoint-out strong-piston.swsp --checkpoint-every 60
@@ -604,8 +605,11 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case porous-sheet --checkpoint-in porous-sheet.swps --steps 30 --checkpoint-out porous-sheet.swps --checkpoint-every 30
 ```
 
-The first SimWing command launches the standalone trace viewer by default. The
-second is the unthrottled headless form for tests and scripted verification.
+The hemisphere command launches the standalone trace viewer by default and
+shows a pressure-driven fabric dome with its equatorial ring clamped. It is an
+analytic structural canonical, not a CFD result. The following commands show
+the other canonical cases; commands with `--no-viewer` run unthrottled for
+tests and scripted verification.
 The checkpoint commands save and resume exact accepted worker state. Resumed
 steps are additional, autosave cadence uses absolute accepted-step multiples,
 and input/output may name the same atomically replaced file.
