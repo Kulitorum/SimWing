@@ -270,6 +270,18 @@ target_link_libraries(simwing_scene_fluid_surface PUBLIC
     simwing_scene_structure
 )
 
+add_library(simwing_scene_fluid_surface_transfer STATIC
+    src/fsi/scene_fluid_surface_transfer.cpp
+    src/fsi/scene_fluid_surface_transfer.h
+)
+target_include_directories(simwing_scene_fluid_surface_transfer PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_scene_fluid_surface_transfer PUBLIC
+    simwing_scene_fluid_surface
+    simwing_transfer
+)
+
 add_library(simwing_viewer_protocol STATIC
     src/viewer/viewer_protocol.cpp
     src/viewer/viewer_protocol.h
@@ -855,6 +867,12 @@ add_executable(simwing-scene-fluid-surface-test
 target_link_libraries(simwing-scene-fluid-surface-test
     PRIVATE simwing_scene_fluid_surface)
 
+add_executable(simwing-scene-fluid-surface-transfer-test
+    tests/simwing_scene_fluid_surface_transfer_test.cpp
+)
+target_link_libraries(simwing-scene-fluid-surface-transfer-test
+    PRIVATE simwing_scene_fluid_surface_transfer)
+
 add_executable(simwing-viewer-protocol-test
     tests/simwing_viewer_protocol_test.cpp
 )
@@ -1247,6 +1265,7 @@ set_target_properties(
     simwing-structure-test
     simwing-scene-structure-test
     simwing-scene-fluid-surface-test
+    simwing-scene-fluid-surface-transfer-test
     simwing-viewer-protocol-test
     simwing-vector-glyphs-test
     simwing-structure-frame-test
@@ -1318,6 +1337,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-structure-test
         simwing-scene-structure-test
         simwing-scene-fluid-surface-test
+        simwing-scene-fluid-surface-transfer-test
         simwing-viewer-protocol-test
         simwing-vector-glyphs-test
         simwing-structure-frame-test
@@ -1479,6 +1499,8 @@ add_test(NAME simwing_structure COMMAND simwing-structure-test)
 add_test(NAME simwing_scene_structure COMMAND simwing-scene-structure-test)
 add_test(NAME simwing_scene_fluid_surface
     COMMAND simwing-scene-fluid-surface-test)
+add_test(NAME simwing_scene_fluid_surface_transfer
+    COMMAND simwing-scene-fluid-surface-transfer-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
 add_test(NAME simwing_vector_glyphs COMMAND simwing-vector-glyphs-test)
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)

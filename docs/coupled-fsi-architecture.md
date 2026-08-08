@@ -409,6 +409,7 @@ src/fsi/
     structure.*             adapter around softwing_core
     scene_structure.*       authoritative scene-to-XPBD assembly
     scene_fluid_surface.*   compact two-sided surface + accepted motion
+    scene_fluid_surface_transfer.* authoritative conservative-load binding
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -470,6 +471,7 @@ tools/
 
 Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_scene_structure`, `simwing_scene_fluid_surface`,
+`simwing_scene_fluid_surface_transfer`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
 `simwing_coupled_state`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
@@ -495,7 +497,9 @@ diagnostic frames, replayable trace protocol, and standalone Qt/OpenGL trace
 viewer are implemented with focused tests. The surface adapter preserves
 authored winding, side regions, porous material, and opening order, but does
 not yet classify grid crossings or cut cells; it rejects opening-only vertices
-until their structural motion is defined. A canonical Qt-free structural worker now
+until their structural motion is defined. Its conservative-transfer binding
+validates the scene and Structure identities again before uniform or
+face-resolved barycentric traction can reach XPBD loads. A canonical Qt-free structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.
 The same worker can now select a smooth periodic Taylor-Green CFD case. Its

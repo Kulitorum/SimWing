@@ -437,7 +437,10 @@ regions and porous materials with stable-ID-sorted vertices, oriented
 two-sided triangles, and ordered openings, then captures the corresponding
 motion from one accepted Structure checkpoint. It deliberately does not infer
 grid crossings or cut cells, and it rejects opening-only vertices until they
-have a trusted structural motion rule.
+have a trusted structural motion rule. A companion binding carries that exact
+oriented surface and accepted kinematics into the existing conservative
+uniform or barycentric-quadrature traction transfer, retaining both scene and
+Structure identities through validated XPBD load application.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,
