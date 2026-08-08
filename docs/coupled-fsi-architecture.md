@@ -492,10 +492,16 @@ private until all four stages and the aggregate momentum/energy/continuity
 ledger pass. Exact manual-stage composition, repeated-step eligibility, and a
 fixed-grid vortical refinement show deterministic second-order temporal
 behavior. This does not upgrade the first-order donor-cell spatial
-reconstruction. The operator remains standalone until its internal pressure
-stages are reconciled with viscous splitting. The existing composed periodic
-macro-step selects a single-stage transport mode and either Euler or SSPRK2
-viscosity, then runs the zero-mean projection on
+reconstruction. A symmetric second-order temporal flow path now reconciles its
+internal pressure stages with viscosity: half-step SSPRK2 diffusion, full
+projected nonlinear SSPRK2 transport, and the matching viscous half step.
+Every sub-integrator works on the same private candidate, their individual
+energy losses sum to the full-step loss, and pressure/velocity commit only
+after the aggregate momentum, energy, and continuity ledger passes. Exact
+manual composition, rollback at the viscous/transport/projection boundaries,
+and fixed-grid refinement verify the Strang path. The original composed
+periodic macro-step still selects a single-stage transport mode and either
+Euler or SSPRK2 viscosity, then runs the zero-mean projection on
 private candidates. Velocity and pressure commit together only after every
 stage and an independent aggregate momentum/kinetic-energy ledger pass.
 Regressions are bit-identical to their standalone uniform/nonlinear transport
@@ -660,7 +666,8 @@ Status: in progress. `simwing_fluid` currently owns the uniform periodic
 verification grid, bounded uniform and divergence-free variable-flow velocity
 transport, nonlinear self-advection, pressure-projected second-order temporal
 transport, Euler and second-order SSPRK2 laminar velocity diffusion, their
-transactional selectable composed macro-step, pressure
+transactional selectable composed macro-step, the symmetric second-order
+temporal Strang flow path, pressure
 projection, and fixed-topology face-aligned moving
 constraints, plus the first open planar one-partial-cell control-volume
 operator, its exact next-plane topology rebase, and the bounded physical

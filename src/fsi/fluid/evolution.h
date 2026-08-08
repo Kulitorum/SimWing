@@ -3,6 +3,7 @@
 #include "fluid/advection.h"
 #include "fluid/diffusion.h"
 #include "fluid/projection.h"
+#include "fluid/projected_advection.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +11,7 @@
 namespace simwing::fsi::fluid {
 
 inline constexpr std::uint32_t periodicFlowStepVersion = 3;
+inline constexpr std::uint32_t periodicFlowStrangSspRk2Version = 1;
 
 enum class PeriodicFlowAdvectionMode : std::uint8_t {
     PrescribedUniform = 0,
@@ -94,5 +96,70 @@ struct PeriodicFlowDiagnostics {
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
     const PeriodicFlowSettings& settings = {});
+
+enum class PeriodicFlowStrangFailureStage : std::uint8_t {
+    None = 0,
+    FirstHalfDiffusion = 1,
+    ProjectedAdvection = 2,
+    SecondHalfDiffusion = 3,
+    Conservation = 4,
+};
+
+struct PeriodicFlowStrangSspRk2Settings {
+    double densityKgPerCubicMeter = 1.225;
+    double kinematicViscositySquareMetersPerSecond = 1.5e-5;
+    double timeStepSeconds = 1.0 / 60.0;
+    double maximumLocalOutgoingCourantNumber = 1.0;
+    double advectionAbsoluteDivergenceTolerancePerSecond = 1.0e-11;
+    double advectionRelativeDivergenceTolerance = 1.0e-12;
+    double maximumDiffusionNumber = 0.5;
+    double projectionAbsoluteResidualTolerance = 1.0e-12;
+    double projectionRelativeResidualTolerance = 1.0e-10;
+    std::size_t projectionMaximumIterations = 1000;
+    double absoluteMomentumToleranceNewtonSeconds = 2.0e-12;
+    double relativeMomentumTolerance = 1.0e-12;
+    double absoluteEnergyToleranceJoules = 2.0e-12;
+    double relativeEnergyTolerance = 1.0e-12;
+};
+
+struct PeriodicFlowStrangSspRk2Diagnostics {
+    std::uint32_t version = periodicFlowStrangSspRk2Version;
+    PeriodicMacDiffusionSspRk2Diagnostics firstHalfDiffusion;
+    ProjectedMacAdvectionSspRk2Diagnostics projectedAdvection;
+    PeriodicMacDiffusionSspRk2Diagnostics secondHalfDiffusion;
+    Vector3 momentumBeforeNewtonSeconds;
+    Vector3 momentumAfterNewtonSeconds;
+    Vector3 momentumResidualNewtonSeconds;
+    double momentumResidualNormNewtonSeconds = 0.0;
+    double kineticEnergyBeforeJoules = 0.0;
+    double kineticEnergyAfterJoules = 0.0;
+    double firstHalfViscousEnergyLossJoules = 0.0;
+    double transportProjectionEnergyLossJoules = 0.0;
+    double secondHalfViscousEnergyLossJoules = 0.0;
+    double totalEnergyLossJoules = 0.0;
+    double maximumVelocityChangeMetersPerSecond = 0.0;
+    double initialDivergenceL2PerSecond = 0.0;
+    double finalDivergenceL2PerSecond = 0.0;
+    PeriodicFlowStrangFailureStage failureStage =
+        PeriodicFlowStrangFailureStage::None;
+    bool finite = true;
+    bool accepted = false;
+
+    bool operator==(
+        const PeriodicFlowStrangSspRk2Diagnostics&) const = default;
+};
+
+// Second-order temporal verification path for periodic incompressible flow:
+// SSPRK2 viscosity over half a step, pressure-projected nonlinear SSPRK2
+// transport over the full step, and the symmetric viscous half step. All
+// candidates remain private and pressure/velocity commit together only after
+// every sub-integrator and the independent aggregate ledger pass. Donor-cell
+// convection remains first order in space.
+[[nodiscard]] PeriodicFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const PeriodicFlowStrangSspRk2Settings& settings = {});
 
 } // namespace simwing::fsi::fluid

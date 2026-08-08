@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <span>
 #include <stdexcept>
 #include <utility>
 
@@ -84,6 +85,47 @@ void validateSettings(const PeriodicFlowSettings& settings) {
     }
 }
 
+void validateSettings(
+    const PeriodicFlowStrangSspRk2Settings& settings) {
+    const std::array finiteValues{
+        settings.densityKgPerCubicMeter,
+        settings.kinematicViscositySquareMetersPerSecond,
+        settings.timeStepSeconds,
+        settings.maximumLocalOutgoingCourantNumber,
+        settings.advectionAbsoluteDivergenceTolerancePerSecond,
+        settings.advectionRelativeDivergenceTolerance,
+        settings.maximumDiffusionNumber,
+        settings.projectionAbsoluteResidualTolerance,
+        settings.projectionRelativeResidualTolerance,
+        settings.absoluteMomentumToleranceNewtonSeconds,
+        settings.relativeMomentumTolerance,
+        settings.absoluteEnergyToleranceJoules,
+        settings.relativeEnergyTolerance,
+    };
+    if (!std::ranges::all_of(finiteValues, [](const double value) {
+            return std::isfinite(value);
+        })
+        || settings.densityKgPerCubicMeter <= 0.0
+        || settings.kinematicViscositySquareMetersPerSecond < 0.0
+        || settings.timeStepSeconds <= 0.0
+        || settings.maximumLocalOutgoingCourantNumber <= 0.0
+        || settings.maximumLocalOutgoingCourantNumber > 1.0
+        || settings.advectionAbsoluteDivergenceTolerancePerSecond < 0.0
+        || settings.advectionRelativeDivergenceTolerance < 0.0
+        || settings.maximumDiffusionNumber <= 0.0
+        || settings.maximumDiffusionNumber > 0.5
+        || settings.projectionAbsoluteResidualTolerance < 0.0
+        || settings.projectionRelativeResidualTolerance < 0.0
+        || settings.projectionMaximumIterations == 0
+        || settings.absoluteMomentumToleranceNewtonSeconds < 0.0
+        || settings.relativeMomentumTolerance < 0.0
+        || settings.absoluteEnergyToleranceJoules < 0.0
+        || settings.relativeEnergyTolerance < 0.0) {
+        throw std::invalid_argument(
+            "periodic Strang-SSPRK2 flow settings are invalid");
+    }
+}
+
 Vector3 momentumNewtonSeconds(
     const PeriodicCartesianGrid& grid,
     const MacVelocityField& velocity,
@@ -103,6 +145,16 @@ Vector3 momentumNewtonSeconds(
     result.x *= sampleMass;
     result.y *= sampleMass;
     result.z *= sampleMass;
+    return result;
+}
+
+double maximumDifference(const std::span<const double> first,
+                         const std::span<const double> second) noexcept {
+    double result = 0.0;
+    for (std::size_t index = 0; index < first.size(); ++index) {
+        result = std::max(
+            result, std::abs(first[index] - second[index]));
+    }
     return result;
 }
 
@@ -338,6 +390,189 @@ PeriodicFlowDiagnostics advancePeriodicFlow(
     if (!diagnostics.accepted) {
         diagnostics.failureStage =
             PeriodicFlowFailureStage::Conservation;
+        return diagnostics;
+    }
+
+    velocityMetersPerSecond = std::move(candidateVelocity);
+    pressurePascals = std::move(candidatePressure);
+    return diagnostics;
+}
+
+PeriodicFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const PeriodicFlowStrangSspRk2Settings& settings) {
+    validateSettings(settings);
+    if (!velocityMetersPerSecond.matches(grid)
+        || !pressurePascals.matches(grid)) {
+        throw std::invalid_argument(
+            "periodic Strang-SSPRK2 fields do not match their grid");
+    }
+    if (!isFinite(velocityMetersPerSecond) || !isFinite(pressurePascals)) {
+        throw std::invalid_argument(
+            "periodic Strang-SSPRK2 fields must be finite");
+    }
+
+    PeriodicFlowStrangSspRk2Diagnostics diagnostics;
+    diagnostics.momentumBeforeNewtonSeconds = momentumNewtonSeconds(
+        grid, velocityMetersPerSecond, settings.densityKgPerCubicMeter);
+    diagnostics.momentumAfterNewtonSeconds =
+        diagnostics.momentumBeforeNewtonSeconds;
+    diagnostics.kineticEnergyBeforeJoules = kineticEnergyJoules(
+        grid, velocityMetersPerSecond, settings.densityKgPerCubicMeter);
+    diagnostics.kineticEnergyAfterJoules =
+        diagnostics.kineticEnergyBeforeJoules;
+    CellScalarField initialDivergence(grid);
+    computeDivergence(
+        grid, velocityMetersPerSecond, initialDivergence);
+    diagnostics.initialDivergenceL2PerSecond = l2Norm(initialDivergence);
+
+    PeriodicMacDiffusionSettings halfDiffusionSettings;
+    halfDiffusionSettings.densityKgPerCubicMeter =
+        settings.densityKgPerCubicMeter;
+    halfDiffusionSettings.kinematicViscositySquareMetersPerSecond =
+        settings.kinematicViscositySquareMetersPerSecond;
+    halfDiffusionSettings.timeStepSeconds =
+        0.5 * settings.timeStepSeconds;
+    halfDiffusionSettings.maximumDiffusionNumber =
+        settings.maximumDiffusionNumber;
+    halfDiffusionSettings.absoluteMomentumToleranceNewtonSeconds =
+        settings.absoluteMomentumToleranceNewtonSeconds;
+    halfDiffusionSettings.relativeMomentumTolerance =
+        settings.relativeMomentumTolerance;
+    halfDiffusionSettings.absoluteEnergyToleranceJoules =
+        settings.absoluteEnergyToleranceJoules;
+    halfDiffusionSettings.relativeEnergyTolerance =
+        settings.relativeEnergyTolerance;
+
+    ProjectedMacAdvectionSspRk2Settings advectionSettings;
+    advectionSettings.densityKgPerCubicMeter =
+        settings.densityKgPerCubicMeter;
+    advectionSettings.timeStepSeconds = settings.timeStepSeconds;
+    advectionSettings.maximumLocalOutgoingCourantNumber =
+        settings.maximumLocalOutgoingCourantNumber;
+    advectionSettings.absoluteDivergenceTolerancePerSecond =
+        settings.advectionAbsoluteDivergenceTolerancePerSecond;
+    advectionSettings.relativeDivergenceTolerance =
+        settings.advectionRelativeDivergenceTolerance;
+    advectionSettings.projectionAbsoluteResidualTolerance =
+        settings.projectionAbsoluteResidualTolerance;
+    advectionSettings.projectionRelativeResidualTolerance =
+        settings.projectionRelativeResidualTolerance;
+    advectionSettings.projectionMaximumIterations =
+        settings.projectionMaximumIterations;
+    advectionSettings.absoluteMomentumToleranceNewtonSeconds =
+        settings.absoluteMomentumToleranceNewtonSeconds;
+    advectionSettings.relativeMomentumTolerance =
+        settings.relativeMomentumTolerance;
+    advectionSettings.absoluteEnergyToleranceJoules =
+        settings.absoluteEnergyToleranceJoules;
+    advectionSettings.relativeEnergyTolerance =
+        settings.relativeEnergyTolerance;
+
+    auto candidateVelocity = velocityMetersPerSecond;
+    auto candidatePressure = pressurePascals;
+    diagnostics.firstHalfDiffusion = diffuseVelocitySspRk2(
+        grid, candidateVelocity, halfDiffusionSettings);
+    if (!diagnostics.firstHalfDiffusion.accepted) {
+        diagnostics.failureStage =
+            PeriodicFlowStrangFailureStage::FirstHalfDiffusion;
+        diagnostics.finite = diagnostics.firstHalfDiffusion.finite;
+        return diagnostics;
+    }
+    diagnostics.firstHalfViscousEnergyLossJoules =
+        diagnostics.firstHalfDiffusion.dissipatedKineticEnergyJoules;
+
+    diagnostics.projectedAdvection = advectVelocityProjectedSspRk2(
+        grid, candidateVelocity, candidatePressure, advectionSettings);
+    if (!diagnostics.projectedAdvection.accepted) {
+        diagnostics.failureStage =
+            PeriodicFlowStrangFailureStage::ProjectedAdvection;
+        diagnostics.finite = diagnostics.firstHalfDiffusion.finite
+            && diagnostics.projectedAdvection.finite;
+        return diagnostics;
+    }
+    diagnostics.transportProjectionEnergyLossJoules =
+        diagnostics.projectedAdvection.totalKineticEnergyLossJoules;
+
+    diagnostics.secondHalfDiffusion = diffuseVelocitySspRk2(
+        grid, candidateVelocity, halfDiffusionSettings);
+    if (!diagnostics.secondHalfDiffusion.accepted) {
+        diagnostics.failureStage =
+            PeriodicFlowStrangFailureStage::SecondHalfDiffusion;
+        diagnostics.finite = diagnostics.firstHalfDiffusion.finite
+            && diagnostics.projectedAdvection.finite
+            && diagnostics.secondHalfDiffusion.finite;
+        return diagnostics;
+    }
+    diagnostics.secondHalfViscousEnergyLossJoules =
+        diagnostics.secondHalfDiffusion.dissipatedKineticEnergyJoules;
+
+    diagnostics.momentumAfterNewtonSeconds = momentumNewtonSeconds(
+        grid, candidateVelocity, settings.densityKgPerCubicMeter);
+    diagnostics.momentumResidualNewtonSeconds = subtract(
+        diagnostics.momentumAfterNewtonSeconds,
+        diagnostics.momentumBeforeNewtonSeconds);
+    diagnostics.momentumResidualNormNewtonSeconds = length(
+        diagnostics.momentumResidualNewtonSeconds);
+    diagnostics.kineticEnergyAfterJoules = kineticEnergyJoules(
+        grid, candidateVelocity, settings.densityKgPerCubicMeter);
+    diagnostics.totalEnergyLossJoules =
+        diagnostics.kineticEnergyBeforeJoules
+        - diagnostics.kineticEnergyAfterJoules;
+    diagnostics.maximumVelocityChangeMetersPerSecond = std::max({
+        maximumDifference(
+            velocityMetersPerSecond.xFaces(), candidateVelocity.xFaces()),
+        maximumDifference(
+            velocityMetersPerSecond.yFaces(), candidateVelocity.yFaces()),
+        maximumDifference(
+            velocityMetersPerSecond.zFaces(), candidateVelocity.zFaces()),
+    });
+    CellScalarField finalDivergence(grid);
+    computeDivergence(grid, candidateVelocity, finalDivergence);
+    diagnostics.finalDivergenceL2PerSecond = l2Norm(finalDivergence);
+    diagnostics.finite = diagnostics.firstHalfDiffusion.finite
+        && diagnostics.projectedAdvection.finite
+        && diagnostics.secondHalfDiffusion.finite
+        && isFinite(candidateVelocity) && isFinite(candidatePressure)
+        && finite(diagnostics.momentumBeforeNewtonSeconds)
+        && finite(diagnostics.momentumAfterNewtonSeconds)
+        && finite(diagnostics.momentumResidualNewtonSeconds)
+        && std::isfinite(
+            diagnostics.momentumResidualNormNewtonSeconds)
+        && std::isfinite(diagnostics.kineticEnergyBeforeJoules)
+        && std::isfinite(diagnostics.kineticEnergyAfterJoules)
+        && std::isfinite(
+            diagnostics.firstHalfViscousEnergyLossJoules)
+        && std::isfinite(
+            diagnostics.transportProjectionEnergyLossJoules)
+        && std::isfinite(
+            diagnostics.secondHalfViscousEnergyLossJoules)
+        && std::isfinite(diagnostics.totalEnergyLossJoules)
+        && std::isfinite(
+            diagnostics.maximumVelocityChangeMetersPerSecond)
+        && std::isfinite(diagnostics.initialDivergenceL2PerSecond)
+        && std::isfinite(diagnostics.finalDivergenceL2PerSecond);
+    const double momentumTolerance = combinedTolerance(
+        settings.absoluteMomentumToleranceNewtonSeconds,
+        settings.relativeMomentumTolerance,
+        length(diagnostics.momentumBeforeNewtonSeconds),
+        length(diagnostics.momentumAfterNewtonSeconds));
+    const double energyTolerance = combinedTolerance(
+        settings.absoluteEnergyToleranceJoules,
+        settings.relativeEnergyTolerance,
+        std::abs(diagnostics.kineticEnergyBeforeJoules),
+        std::abs(diagnostics.kineticEnergyAfterJoules));
+    diagnostics.accepted = diagnostics.finite
+        && diagnostics.momentumResidualNormNewtonSeconds
+            <= momentumTolerance
+        && diagnostics.kineticEnergyAfterJoules
+            <= diagnostics.kineticEnergyBeforeJoules + energyTolerance;
+    if (!diagnostics.accepted) {
+        diagnostics.failureStage =
+            PeriodicFlowStrangFailureStage::Conservation;
         return diagnostics;
     }
 
