@@ -84,6 +84,71 @@ double faceArea(const PeriodicCartesianGrid& grid,
     throw std::invalid_argument("porous crossing has an invalid axis");
 }
 
+void validateProjectionSettings(const PorousProjectionSettings& settings) {
+    if (!std::isfinite(
+            settings.absoluteNormalVelocityToleranceMetersPerSecond)
+        || settings.absoluteNormalVelocityToleranceMetersPerSecond < 0.0
+        || !std::isfinite(settings.relativeNormalVelocityTolerance)
+        || settings.relativeNormalVelocityTolerance < 0.0
+        || (settings.absoluteNormalVelocityToleranceMetersPerSecond == 0.0
+            && settings.relativeNormalVelocityTolerance == 0.0)) {
+        throw std::invalid_argument(
+            "porous projection velocity tolerances are invalid");
+    }
+    if (!std::isfinite(settings.absolutePressureJumpTolerancePascals)
+        || settings.absolutePressureJumpTolerancePascals < 0.0
+        || !std::isfinite(settings.relativePressureJumpTolerance)
+        || settings.relativePressureJumpTolerance < 0.0
+        || (settings.absolutePressureJumpTolerancePascals == 0.0
+            && settings.relativePressureJumpTolerance == 0.0)) {
+        throw std::invalid_argument(
+            "porous projection pressure-jump tolerances are invalid");
+    }
+    if (!std::isfinite(settings.relaxation)
+        || !(settings.relaxation > 0.0)
+        || settings.relaxation > 1.0
+        || settings.maximumNonlinearIterations == 0) {
+        throw std::invalid_argument(
+            "porous projection relaxation and iteration bound are invalid");
+    }
+}
+
+SharpPressureJumpField combinedPressureJumps(
+    const PeriodicCartesianGrid& grid,
+    const PorousPressureJumpField& porous,
+    const SharpPressureJumpField* prescribed) {
+    if (prescribed == nullptr || prescribed->empty()) {
+        return porous.pressureJumps();
+    }
+    std::vector<GridFacePressureJump> faces;
+    faces.reserve(
+        porous.pressureJumps().faceCount() + prescribed->faceCount());
+    faces.insert(
+        faces.end(),
+        porous.pressureJumps().faces().begin(),
+        porous.pressureJumps().faces().end());
+    faces.insert(
+        faces.end(), prescribed->faces().begin(), prescribed->faces().end());
+    return SharpPressureJumpField(grid, std::move(faces));
+}
+
+void relaxVelocity(const MacVelocityField& candidate,
+                   const double relaxation,
+                   MacVelocityField& iterate) {
+    const double retained = 1.0 - relaxation;
+    for (std::size_t face = 0; face < iterate.xFaces().size(); ++face) {
+        iterate.xFaces()[face] =
+            retained * iterate.xFaces()[face]
+            + relaxation * candidate.xFaces()[face];
+        iterate.yFaces()[face] =
+            retained * iterate.yFaces()[face]
+            + relaxation * candidate.yFaces()[face];
+        iterate.zFaces()[face] =
+            retained * iterate.zFaces()[face]
+            + relaxation * candidate.zFaces()[face];
+    }
+}
+
 } // namespace
 
 double porousPressureJumpPascals(
@@ -252,6 +317,176 @@ PorousPressureJumpField::samples() const noexcept {
 
 double PorousPressureJumpField::totalDissipationWatts() const noexcept {
     return totalDissipationWatts_;
+}
+
+namespace {
+
+PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& predictedVelocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField* prescribedPressureJumps,
+    const PorousProjectionSettings& settings) {
+    validateProjectionSettings(settings);
+    if (!predictedVelocityMetersPerSecond.matches(grid)
+        || !pressurePascals.matches(grid)
+        || !isFinite(predictedVelocityMetersPerSecond)
+        || !isFinite(pressurePascals)) {
+        throw std::invalid_argument(
+            "porous projection requires matching finite fields");
+    }
+    if (prescribedPressureJumps != nullptr
+        && !prescribedPressureJumps->matches(grid)) {
+        throw std::invalid_argument(
+            "prescribed porous-projection jumps do not match their grid");
+    }
+
+    PorousProjectionDiagnostics diagnostics;
+    diagnostics.porousCrossingCount = porousCrossings.size();
+    if (porousCrossings.empty()) {
+        if (prescribedPressureJumps == nullptr
+            || prescribedPressureJumps->empty()) {
+            diagnostics.projection = projectVelocity(
+                grid, predictedVelocityMetersPerSecond, pressurePascals,
+                settings.projection);
+        } else {
+            diagnostics.projection = projectVelocityWithPressureJumps(
+                grid, predictedVelocityMetersPerSecond, pressurePascals,
+                *prescribedPressureJumps, settings.projection);
+        }
+        diagnostics.accepted = diagnostics.projection.converged;
+        diagnostics.finite = isFinite(predictedVelocityMetersPerSecond)
+            && isFinite(pressurePascals);
+        return diagnostics;
+    }
+
+    const MacVelocityField originalVelocity =
+        predictedVelocityMetersPerSecond;
+    const CellScalarField originalPressure = pressurePascals;
+    MacVelocityField iterateVelocity = originalVelocity;
+    CellScalarField pressureWarmStart = originalPressure;
+
+    for (std::size_t iteration = 0;
+         iteration < settings.maximumNonlinearIterations; ++iteration) {
+        const PorousPressureJumpField sampled(
+            grid, iterateVelocity, porousCrossings);
+        const SharpPressureJumpField pressureJumps = combinedPressureJumps(
+            grid, sampled, prescribedPressureJumps);
+        MacVelocityField candidateVelocity = originalVelocity;
+        CellScalarField candidatePressure = pressureWarmStart;
+        diagnostics.projection = projectVelocityWithPressureJumps(
+            grid, candidateVelocity, candidatePressure,
+            pressureJumps, settings.projection);
+        diagnostics.nonlinearIterationCount = iteration + 1;
+        if (!diagnostics.projection.converged) {
+            diagnostics.samples.assign(
+                sampled.samples().begin(), sampled.samples().end());
+            diagnostics.totalDissipationWatts =
+                sampled.totalDissipationWatts();
+            return diagnostics;
+        }
+
+        const PorousPressureJumpField endpoint(
+            grid, candidateVelocity, porousCrossings);
+        const auto sampledFaces = sampled.samples();
+        const auto endpointFaces = endpoint.samples();
+        double maximumVelocityResidual = 0.0;
+        double maximumJumpResidual = 0.0;
+        double velocityScale = 0.0;
+        double jumpScale = 0.0;
+        for (std::size_t face = 0; face < endpointFaces.size(); ++face) {
+            maximumVelocityResidual = std::max(
+                maximumVelocityResidual,
+                std::abs(
+                    endpointFaces[face]
+                        .relativeNormalVelocityMetersPerSecond
+                    - sampledFaces[face]
+                        .relativeNormalVelocityMetersPerSecond));
+            maximumJumpResidual = std::max(
+                maximumJumpResidual,
+                std::abs(
+                    endpointFaces[face].pressureJump.pressureJumpPascals
+                    - sampledFaces[face].pressureJump.pressureJumpPascals));
+            velocityScale = std::max({
+                velocityScale,
+                std::abs(endpointFaces[face]
+                             .relativeNormalVelocityMetersPerSecond),
+                std::abs(sampledFaces[face]
+                             .relativeNormalVelocityMetersPerSecond),
+            });
+            jumpScale = std::max({
+                jumpScale,
+                std::abs(endpointFaces[face]
+                             .pressureJump.pressureJumpPascals),
+                std::abs(sampledFaces[face]
+                             .pressureJump.pressureJumpPascals),
+            });
+        }
+        if (iteration == 0) {
+            diagnostics
+                .initialMaximumNormalVelocityResidualMetersPerSecond =
+                    maximumVelocityResidual;
+        }
+        diagnostics.finalMaximumNormalVelocityResidualMetersPerSecond =
+            maximumVelocityResidual;
+        diagnostics.finalMaximumPressureJumpResidualPascals =
+            maximumJumpResidual;
+        diagnostics.totalDissipationWatts =
+            endpoint.totalDissipationWatts();
+        diagnostics.samples.assign(
+            endpointFaces.begin(), endpointFaces.end());
+        diagnostics.finite = std::isfinite(maximumVelocityResidual)
+            && std::isfinite(maximumJumpResidual)
+            && std::isfinite(diagnostics.totalDissipationWatts)
+            && isFinite(candidateVelocity) && isFinite(candidatePressure);
+        const double velocityTolerance =
+            settings.absoluteNormalVelocityToleranceMetersPerSecond
+            + settings.relativeNormalVelocityTolerance * velocityScale;
+        const double jumpTolerance =
+            settings.absolutePressureJumpTolerancePascals
+            + settings.relativePressureJumpTolerance * jumpScale;
+        if (diagnostics.finite
+            && maximumVelocityResidual <= velocityTolerance
+            && maximumJumpResidual <= jumpTolerance) {
+            diagnostics.accepted = true;
+            predictedVelocityMetersPerSecond = std::move(candidateVelocity);
+            pressurePascals = std::move(candidatePressure);
+            return diagnostics;
+        }
+        if (!diagnostics.finite) {
+            return diagnostics;
+        }
+        relaxVelocity(
+            candidateVelocity, settings.relaxation, iterateVelocity);
+        pressureWarmStart = std::move(candidatePressure);
+    }
+    return diagnostics;
+}
+
+} // namespace
+
+PorousProjectionDiagnostics projectVelocityWithPorousInterfaces(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& predictedVelocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const PorousProjectionSettings& settings) {
+    return projectVelocityWithPorousInterfacesImpl(
+        grid, predictedVelocityMetersPerSecond, pressurePascals,
+        porousCrossings, nullptr, settings);
+}
+
+PorousProjectionDiagnostics projectVelocityWithPorousInterfaces(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& predictedVelocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField& prescribedPressureJumps,
+    const PorousProjectionSettings& settings) {
+    return projectVelocityWithPorousInterfacesImpl(
+        grid, predictedVelocityMetersPerSecond, pressurePascals,
+        porousCrossings, &prescribedPressureJumps, settings);
 }
 
 } // namespace simwing::fsi::fluid

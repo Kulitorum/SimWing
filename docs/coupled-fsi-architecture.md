@@ -884,15 +884,26 @@ signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
 dissipation, and its exact monotone inverse is stable across the pure-linear,
 pure-quadratic, and combined fits. A periodic prescribed-flux plane with an
 explicit balancing pressure source preserves a `195 Pa` porous loss without
-changing its uniform velocity. A pressure-driven uniform-plug companion uses
-the exact nonlinear implicit midpoint to close pressure impulse and the
+changing its uniform velocity. A bounded transactional endpoint Picard solve
+now closes nonuniform porous flux and jump against the full periodic projection.
+It reprojects the original predicted field on every iterate, permits separately
+prescribed pressure-source jumps, requires both normal-velocity and constitutive
+jump residuals, retains endpoint tile samples/dissipation, and rolls back both
+fields if its bound is exhausted. The uniform linear canonical reaches the
+analytic `0.4 m/s` endpoint under a `20 Pa` drive, while the nonlinear,
+orientation-reversed, moving-sheet-relative, and heterogeneous-tile cases
+remain deterministic and divergence-free. This is a first-order fixed-grid
+endpoint coupling, not moving cut-cell topology or a second-order coupled step.
+A pressure-driven uniform-plug companion uses the exact nonlinear implicit
+midpoint to close pressure impulse and the
 driving-work/porous-dissipation/kinetic-energy identity on every step. Its
 endpoint Strang/SSPRK2 evolution retains the accepted plug and all crossings at
 both internal pressure stages while exposing the porous and zero-net-jump
 periodic gauge-closure planes in owning frames; the physical driving rise stays
 separate in the impulse/work ledger. The case converges to the analytic
 `1.74165739 m/s`, `250 Pa` steady state. This closes a one-degree-of-freedom
-porous-flow oracle; general nonuniform or moving porous coupling remains open.
+second-order porous-flow oracle; general moving porous/cut-cell topology remains
+open.
 The case checkpoint must restore the initial state and a later accepted state,
 then reproduce the next frame bit-for-bit in both the original and an equivalent
 rebuilt worker. Version, case fingerprint, grid, sample count, step, time, and
@@ -1036,8 +1047,9 @@ Required canonical cases:
 
 - Taylor-Green vortex and manufactured divergence/pressure solutions;
 - channel/flat-plate flow and a static pressure jump across a membrane;
-- flow through a calibrated porous sheet (the prescribed-flux constitutive and
-  pressure-driven uniform-plug subsets are complete; general grid coupling
+- flow through a calibrated porous sheet (the prescribed-flux constitutive,
+  transactional fixed-grid endpoint iteration, and pressure-driven
+  uniform-plug subsets are complete; second-order moving-grid coupling
   remains);
 - moving piston/membrane with analytic volume and work balance;
 - flexible flag and a thin shell with one interface per cell;

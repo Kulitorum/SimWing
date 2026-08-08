@@ -1,6 +1,6 @@
 #pragma once
 
-#include "fluid/interface_jump.h"
+#include "fluid/projection.h"
 
 #include <cstdint>
 #include <span>
@@ -64,8 +64,8 @@ struct PorousGridFaceSample {
 // Samples a finite MAC field at authored porous crossings, applies the
 // calibrated law, and exposes the result through the same canonical sharp-jump
 // field used by projection. Several crossings may share one face when their
-// fractions and region chain are valid. This is an explicit flux-driven
-// constitutive evaluation, not yet an implicit pressure/flux coupling solve.
+// fractions and region chain are valid. This is the explicit constitutive
+// evaluation used by the coupled iteration below.
 class PorousPressureJumpField final {
 public:
     PorousPressureJumpField(
@@ -84,5 +84,56 @@ private:
     std::vector<PorousGridFaceSample> samples_;
     double totalDissipationWatts_ = 0.0;
 };
+
+struct PorousProjectionSettings {
+    ProjectionSettings projection;
+    double absoluteNormalVelocityToleranceMetersPerSecond = 1.0e-10;
+    double relativeNormalVelocityTolerance = 1.0e-8;
+    double absolutePressureJumpTolerancePascals = 1.0e-8;
+    double relativePressureJumpTolerance = 1.0e-8;
+    double relaxation = 0.5;
+    std::size_t maximumNonlinearIterations = 100;
+
+    bool operator==(const PorousProjectionSettings&) const = default;
+};
+
+struct PorousProjectionDiagnostics {
+    bool accepted = false;
+    bool finite = true;
+    std::size_t nonlinearIterationCount = 0;
+    std::size_t porousCrossingCount = 0;
+    double initialMaximumNormalVelocityResidualMetersPerSecond = 0.0;
+    double finalMaximumNormalVelocityResidualMetersPerSecond = 0.0;
+    double finalMaximumPressureJumpResidualPascals = 0.0;
+    double totalDissipationWatts = 0.0;
+    ProjectionDiagnostics projection;
+    std::vector<PorousGridFaceSample> samples;
+
+    bool operator==(const PorousProjectionDiagnostics&) const = default;
+};
+
+// Transactionally closes the endpoint Darcy-Forchheimer law with the periodic
+// sharp projection. Each nonlinear iterate resamples the porous jump from a
+// relaxed finite MAC field, then projects the original predicted velocity; the
+// accepted endpoint must satisfy independent normal-velocity and jump residual
+// tolerances. Optional prescribed jumps represent separately owned pressure
+// sources or other static interfaces and participate in every trial. Failure
+// commits neither velocity nor pressure. This first fixed-grid Picard boundary
+// supports nonuniform porous tiles and prescribed sheet-normal velocity, but it
+// is not yet moving cut-cell topology or a second-order coupled time integrator.
+[[nodiscard]] PorousProjectionDiagnostics projectVelocityWithPorousInterfaces(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& predictedVelocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const PorousProjectionSettings& settings = {});
+
+[[nodiscard]] PorousProjectionDiagnostics projectVelocityWithPorousInterfaces(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& predictedVelocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField& prescribedPressureJumps,
+    const PorousProjectionSettings& settings = {});
 
 } // namespace simwing::fsi::fluid

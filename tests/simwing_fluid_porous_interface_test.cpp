@@ -201,6 +201,272 @@ void testFluxDrivenProjectionCanonical() {
           "flux-driven porous canonical preserves its analytic pressure loss");
 }
 
+PorousProjectionSettings coupledSettings() {
+    PorousProjectionSettings settings;
+    settings.projection.densityKgPerCubicMeter = 1.0;
+    settings.projection.timeStepSeconds = 0.1;
+    settings.projection.absoluteResidualTolerance = 1.0e-12;
+    settings.projection.relativeResidualTolerance = 1.0e-13;
+    settings.projection.maximumIterations = 1000;
+    settings.absoluteNormalVelocityToleranceMetersPerSecond = 1.0e-12;
+    settings.relativeNormalVelocityTolerance = 1.0e-12;
+    settings.absolutePressureJumpTolerancePascals = 1.0e-11;
+    settings.relativePressureJumpTolerance = 1.0e-12;
+    settings.relaxation = 0.5;
+    settings.maximumNonlinearIterations = 100;
+    return settings;
+}
+
+std::vector<PorousGridFaceCrossing> coupledPorousPlane(
+    const PeriodicCartesianGrid& grid,
+    const double surfaceVelocityMetersPerSecond = 0.0) {
+    std::vector<PorousGridFaceCrossing> result;
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            result.push_back({
+                30, 1, 2, GridFaceAxis::X, 1, j, k, 0.35,
+                surfaceVelocityMetersPerSecond, {10.0, 0.0}});
+        }
+    }
+    return result;
+}
+
+SharpPressureJumpField coupledDrivingPlane(
+    const PeriodicCartesianGrid& grid,
+    const double pressureRisePascals = 20.0) {
+    std::vector<GridFacePressureJump> faces;
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            faces.push_back({
+                40, 2, 1, GridFaceAxis::X, 3, j, k,
+                pressureRisePascals, 0.5});
+        }
+    }
+    return SharpPressureJumpField(grid, std::move(faces));
+}
+
+void testImplicitGridPressureFluxCoupling() {
+    const PeriodicCartesianGrid grid(
+        {4, 3, 2}, {}, {4.0, 3.0, 2.0});
+    const auto porous = coupledPorousPlane(grid);
+    const auto driving = coupledDrivingPlane(grid);
+    MacVelocityField velocity(grid);
+    CellScalarField pressure(grid);
+    const auto diagnostics = projectVelocityWithPorousInterfaces(
+        grid, velocity, pressure, porous, driving, coupledSettings());
+    MacVelocityField replayVelocity(grid);
+    CellScalarField replayPressure(grid);
+    const auto replay = projectVelocityWithPorousInterfaces(
+        grid, replayVelocity, replayPressure, porous, driving,
+        coupledSettings());
+
+    constexpr double expectedVelocity = 0.4;
+    double maximumVelocityError = 0.0;
+    for (std::size_t face = 0; face < grid.cellCount(); ++face) {
+        maximumVelocityError = std::max({
+            maximumVelocityError,
+            std::abs(velocity.xFaces()[face] - expectedVelocity),
+            std::abs(velocity.yFaces()[face]),
+            std::abs(velocity.zFaces()[face]),
+        });
+    }
+    check(diagnostics.accepted && diagnostics.finite
+              && diagnostics.nonlinearIterationCount > 1,
+          "coupled porous: endpoint pressure/flux iteration converges transactionally");
+    check(velocity == replayVelocity
+              && pressure == replayPressure
+              && diagnostics == replay,
+          "coupled porous: identical nonlinear solves replay bit-for-bit");
+    check(diagnostics.porousCrossingCount == 6
+              && diagnostics.projection.pressureJumpFaceCount == 12
+              && diagnostics.samples.size() == 6,
+          "coupled porous: porous and prescribed crossings remain separately counted");
+    check(maximumVelocityError < 2.0e-12,
+          "coupled porous: uniform Darcy flow matches the analytic implicit endpoint");
+    check(diagnostics.projection.divergenceMaximumAfterPerSecond < 1.0e-13,
+          "coupled porous: accepted grid flow remains divergence-free");
+    check(diagnostics.finalMaximumNormalVelocityResidualMetersPerSecond
+              < 2.0e-12
+              && diagnostics.finalMaximumPressureJumpResidualPascals
+                  < 2.0e-11,
+          "coupled porous: independent velocity and constitutive jump residuals close");
+    for (const auto& sample : diagnostics.samples) {
+        checkNear(sample.fluidNormalVelocityMetersPerSecond,
+                  expectedVelocity, 2.0e-12,
+                  "coupled porous: endpoint sample owns the committed MAC velocity");
+        checkNear(sample.pressureJump.pressureJumpPascals,
+                  -4.0, 2.0e-11,
+                  "coupled porous: endpoint sample owns the analytic Darcy loss");
+    }
+    checkNear(diagnostics.totalDissipationWatts,
+              9.6, 1.0e-10,
+              "coupled porous: endpoint tile dissipation integrates analytically");
+    const double fluidMomentum = 1.0 * 4.0 * 6.0 * expectedVelocity;
+    const double pressureImpulse = (20.0 - 4.0) * 6.0 * 0.1;
+    checkNear(fluidMomentum, pressureImpulse, 2.0e-15,
+              "coupled porous: pressure impulse matches the uniform fluid momentum");
+
+    MacVelocityField movingSheetVelocity(grid);
+    CellScalarField movingSheetPressure(grid);
+    const auto movingSheet = projectVelocityWithPorousInterfaces(
+        grid, movingSheetVelocity, movingSheetPressure,
+        coupledPorousPlane(grid, 0.1), driving, coupledSettings());
+    check(movingSheet.accepted,
+          "coupled porous: prescribed sheet-normal motion remains solvable");
+    checkNear(movingSheet.samples.front()
+                  .fluidNormalVelocityMetersPerSecond,
+              0.42, 2.0e-12,
+              "coupled porous: moving-sheet endpoint matches the analytic pressure balance");
+    checkNear(movingSheet.samples.front()
+                  .relativeNormalVelocityMetersPerSecond,
+              0.32, 2.0e-12,
+              "coupled porous: constitutive flow remains relative to sheet motion");
+
+    MacVelocityField reverseVelocity(grid);
+    CellScalarField reversePressure(grid);
+    const auto reverse = projectVelocityWithPorousInterfaces(
+        grid, reverseVelocity, reversePressure, porous,
+        coupledDrivingPlane(grid, -20.0), coupledSettings());
+    check(reverse.accepted,
+          "coupled porous: reversed pressure drive converges");
+    checkNear(reverse.samples.front().fluidNormalVelocityMetersPerSecond,
+              -expectedVelocity, 2.0e-12,
+              "coupled porous: endpoint coupling is orientation symmetric");
+
+    auto nonlinearPorous = porous;
+    for (auto& crossing : nonlinearPorous) {
+        crossing.resistance = {10.0, 5.0};
+    }
+    MacVelocityField nonlinearVelocity(grid);
+    CellScalarField nonlinearPressure(grid);
+    const auto nonlinear = projectVelocityWithPorousInterfaces(
+        grid, nonlinearVelocity, nonlinearPressure, nonlinearPorous,
+        driving, coupledSettings());
+    const double expectedNonlinearVelocity =
+        (-1.25 + std::sqrt(1.8125)) / 0.25;
+    check(nonlinear.accepted,
+          "coupled porous: the nonlinear Darcy-Forchheimer iteration converges");
+    checkNear(nonlinear.samples.front()
+                  .fluidNormalVelocityMetersPerSecond,
+              expectedNonlinearVelocity, 2.0e-12,
+              "coupled porous: nonlinear endpoint flow matches the analytic root");
+
+    const PeriodicCartesianGrid heterogeneousGrid(
+        {4, 2, 2}, {}, {4.0, 2.0, 2.0});
+    const std::vector<PorousGridFaceCrossing> heterogeneousPorous = {
+        {50, 1, 2, GridFaceAxis::X, 1, 0, 0, 0.35,
+         0.0, {5.0, 0.0}},
+        {50, 1, 2, GridFaceAxis::X, 1, 1, 0, 0.35,
+         0.0, {20.0, 0.0}},
+        {50, 1, 2, GridFaceAxis::X, 1, 0, 1, 0.35,
+         0.0, {5.0, 0.0}},
+        {50, 1, 2, GridFaceAxis::X, 1, 1, 1, 0.35,
+         0.0, {20.0, 0.0}},
+    };
+    MacVelocityField heterogeneousVelocity(heterogeneousGrid);
+    CellScalarField heterogeneousPressure(heterogeneousGrid);
+    const auto heterogeneous = projectVelocityWithPorousInterfaces(
+        heterogeneousGrid, heterogeneousVelocity, heterogeneousPressure,
+        heterogeneousPorous, coupledDrivingPlane(heterogeneousGrid),
+        coupledSettings());
+    check(heterogeneous.accepted
+              && heterogeneous.samples.size() == 4,
+          "coupled porous: heterogeneous resolved tiles converge in one grid solve");
+    if (heterogeneous.samples.size() == 4) {
+        check(heterogeneous.samples[0].fluidNormalVelocityMetersPerSecond
+                  > heterogeneous.samples[1]
+                        .fluidNormalVelocityMetersPerSecond
+                  && heterogeneous.samples[1]
+                         .fluidNormalVelocityMetersPerSecond > 0.0
+                  && heterogeneous.samples[2]
+                         .fluidNormalVelocityMetersPerSecond
+                      > heterogeneous.samples[3]
+                            .fluidNormalVelocityMetersPerSecond,
+              "coupled porous: the lower-resistance tile carries the larger forward flux");
+    }
+    for (const auto& sample : heterogeneous.samples) {
+        checkNear(
+            sample.pressureJump.pressureJumpPascals,
+            porousPressureJumpPascals(
+                heterogeneousPorous[sample.pressureJump.j].resistance,
+                sample.relativeNormalVelocityMetersPerSecond),
+            0.0,
+            "coupled porous: every heterogeneous endpoint sample obeys its own law");
+    }
+    check(heterogeneous.projection.divergenceMaximumAfterPerSecond
+              < 2.0e-12,
+          "coupled porous: heterogeneous accepted flow remains divergence-free");
+}
+
+void testCoupledPorousDelegationValidationAndRollback() {
+    const PeriodicCartesianGrid grid(
+        {4, 3, 2}, {}, {4.0, 3.0, 2.0});
+    MacVelocityField directVelocity(grid);
+    for (std::size_t face = 0; face < grid.cellCount(); ++face) {
+        directVelocity.xFaces()[face] =
+            0.1 * std::sin(static_cast<double>(face + 1));
+        directVelocity.yFaces()[face] =
+            0.1 * std::cos(static_cast<double>(face + 1));
+    }
+    MacVelocityField delegatedVelocity = directVelocity;
+    CellScalarField directPressure(grid, 3.0);
+    CellScalarField delegatedPressure = directPressure;
+    const auto settings = coupledSettings();
+    const auto direct = projectVelocity(
+        grid, directVelocity, directPressure, settings.projection);
+    const auto delegated = projectVelocityWithPorousInterfaces(
+        grid, delegatedVelocity, delegatedPressure, {}, settings);
+    check(directVelocity == delegatedVelocity
+              && directPressure == delegatedPressure
+              && direct == delegated.projection,
+          "coupled porous: empty topology delegates to the exact base projection");
+
+    MacVelocityField failedVelocity(grid);
+    CellScalarField failedPressure(grid, 7.0);
+    const auto originalVelocity = failedVelocity;
+    const auto originalPressure = failedPressure;
+    auto truncated = settings;
+    truncated.maximumNonlinearIterations = 1;
+    truncated.absoluteNormalVelocityToleranceMetersPerSecond = 1.0e-30;
+    truncated.relativeNormalVelocityTolerance = 0.0;
+    truncated.absolutePressureJumpTolerancePascals = 1.0e-30;
+    truncated.relativePressureJumpTolerance = 0.0;
+    const auto failed = projectVelocityWithPorousInterfaces(
+        grid, failedVelocity, failedPressure, coupledPorousPlane(grid),
+        coupledDrivingPlane(grid), truncated);
+    check(!failed.accepted && failed.nonlinearIterationCount == 1,
+          "coupled porous: an exhausted nonlinear iteration is rejected");
+    check(failedVelocity == originalVelocity
+              && failedPressure == originalPressure,
+          "coupled porous: nonlinear failure commits neither field");
+
+    auto invalid = settings;
+    invalid.relaxation = 0.0;
+    expectInvalid(
+        [&] {
+            static_cast<void>(projectVelocityWithPorousInterfaces(
+                grid, failedVelocity, failedPressure,
+                coupledPorousPlane(grid), invalid));
+        },
+        "coupled porous: invalid relaxation is rejected");
+    check(failedVelocity == originalVelocity
+              && failedPressure == originalPressure,
+          "coupled porous: invalid settings are rejected before mutation");
+
+    const PeriodicCartesianGrid foreignGrid(
+        {5, 3, 2}, {}, {5.0, 3.0, 2.0});
+    const SharpPressureJumpField foreign(foreignGrid);
+    expectInvalid(
+        [&] {
+            static_cast<void>(projectVelocityWithPorousInterfaces(
+                grid, failedVelocity, failedPressure,
+                coupledPorousPlane(grid), foreign, settings));
+        },
+        "coupled porous: a prescribed jump field from another grid is rejected");
+}
+
 void testAxisAreaAndValidation() {
     const PeriodicCartesianGrid grid(
         {2, 2, 2}, {}, {4.0, 6.0, 8.0});
@@ -354,6 +620,8 @@ void testPressureDrivenPlugFlow() {
 int main() {
     testConstitutiveLawAndInverse();
     testFluxDrivenProjectionCanonical();
+    testImplicitGridPressureFluxCoupling();
+    testCoupledPorousDelegationValidationAndRollback();
     testAxisAreaAndValidation();
     testPressureDrivenPlugFlow();
     if (failures != 0) {
