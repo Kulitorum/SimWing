@@ -457,7 +457,9 @@ remain diagnostic. Those unique owners now become stable barycentric
 quadrature points which retain the authored material, sheet, role, and both
 fluid regions and feed ordered traction through the conservative Structure
 transfer without integrating shared-plane area twice. This boundary does not
-invent traction. Ordinary clipped polygons also expose their exact boundary
+invent traction. Explicit one-sided pressure samples can now produce exactly
+one `(p_negative-p_positive)*normal` load through that same path; equal
+pressures cancel and no polar or pressure stamp is added. Ordinary clipped polygons also expose their exact boundary
 segments: matching copies from adjacent cells become one stable transverse
 face crossing with an in-face authored-side direction, while unpaired edges
 remain contact and coplanar area remains separately face-owned. Unpaired

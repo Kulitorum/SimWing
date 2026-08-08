@@ -411,6 +411,7 @@ src/fsi/
     scene_fluid_surface.*   compact two-sided surface + accepted motion
     scene_fluid_surface_transfer.* authoritative conservative-load binding
     scene_fluid_quadrature.* unique owned area to stable transfer quadrature
+    scene_fluid_pressure_traction.* one-sided pressure to normal traction
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -525,7 +526,10 @@ separate ownership stage pairs it into one canonical internal MAC face with
 authored side regions and winding sign. Unique cell and face owners then become
 stable barycentric quadrature points carrying authored physical identity into
 the existing conservative load transfer; shared-plane area is integrated once
-and no traction is invented at this boundary. Ordinary owned polygons also
+and no traction is invented at this boundary. Explicit ordered one-sided CFD
+pressure samples now map to one pressure-difference normal traction through
+that same conservative path, with exact equal-pressure cancellation and no
+polar or pressure stamp. Ordinary owned polygons also
 yield exact boundary segments: adjacent-cell copies pair into stable transverse
 face crossings with an in-face negative-to-positive direction; unpaired edges
 remain contact and coplanar triangle area remains under face ownership. It

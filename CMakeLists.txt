@@ -315,6 +315,8 @@ target_link_libraries(simwing_scene_fluid_geometry PUBLIC
 add_library(simwing_scene_fluid_quadrature STATIC
     src/fsi/scene_fluid_quadrature.cpp
     src/fsi/scene_fluid_quadrature.h
+    src/fsi/scene_fluid_pressure_traction.cpp
+    src/fsi/scene_fluid_pressure_traction.h
 )
 target_include_directories(simwing_scene_fluid_quadrature PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
@@ -981,6 +983,12 @@ add_executable(simwing-scene-fluid-quadrature-test
 target_link_libraries(simwing-scene-fluid-quadrature-test
     PRIVATE simwing_scene_fluid_quadrature)
 
+add_executable(simwing-scene-fluid-pressure-traction-test
+    tests/simwing_scene_fluid_pressure_traction_test.cpp
+)
+target_link_libraries(simwing-scene-fluid-pressure-traction-test
+    PRIVATE simwing_scene_fluid_quadrature)
+
 add_executable(simwing-viewer-protocol-test
     tests/simwing_viewer_protocol_test.cpp
 )
@@ -1385,6 +1393,7 @@ set_target_properties(
     simwing-scene-surface-face-loops-test
     simwing-scene-surface-face-partition-test
     simwing-scene-fluid-quadrature-test
+    simwing-scene-fluid-pressure-traction-test
     simwing-viewer-protocol-test
     simwing-vector-glyphs-test
     simwing-structure-frame-test
@@ -1468,6 +1477,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-scene-surface-face-loops-test
         simwing-scene-surface-face-partition-test
         simwing-scene-fluid-quadrature-test
+        simwing-scene-fluid-pressure-traction-test
         simwing-viewer-protocol-test
         simwing-vector-glyphs-test
         simwing-structure-frame-test
@@ -1653,6 +1663,8 @@ add_test(NAME simwing_scene_surface_face_partition
     COMMAND simwing-scene-surface-face-partition-test)
 add_test(NAME simwing_scene_fluid_quadrature
     COMMAND simwing-scene-fluid-quadrature-test)
+add_test(NAME simwing_scene_fluid_pressure_traction
+    COMMAND simwing-scene-fluid-pressure-traction-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
 add_test(NAME simwing_vector_glyphs COMMAND simwing-vector-glyphs-test)
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
