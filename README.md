@@ -473,8 +473,11 @@ pair stays consistent; branches and conflicts are rejected. Open chains are
 not falsely treated as closed regions. Simple closed loops now carry signed
 area, centroid, and winding-derived enclosed/exterior region identity;
 self-intersections and degenerate loops reject, while nested loops remain
-separate rather than becoming a false union. Cut-cell volume fractions and
-complete fluid-region reconstruction remain open.
+separate until a bounded containment stage proves they do not touch, requires
+authored region continuity through every parent, and closes exact per-region
+area over an eligible MAC face. Faces with open chains, coplanar sheets, or
+boundary-touching loops remain explicitly unresolved. Cut-cell volume
+fractions and complete grid-region reconstruction remain open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

@@ -301,6 +301,8 @@ add_library(simwing_scene_fluid_geometry STATIC
     src/fsi/fluid/scene_surface_face_chains.h
     src/fsi/fluid/scene_surface_face_loops.cpp
     src/fsi/fluid/scene_surface_face_loops.h
+    src/fsi/fluid/scene_surface_face_partition.cpp
+    src/fsi/fluid/scene_surface_face_partition.h
 )
 target_include_directories(simwing_scene_fluid_geometry PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
@@ -967,6 +969,12 @@ add_executable(simwing-scene-surface-face-loops-test
 target_link_libraries(simwing-scene-surface-face-loops-test
     PRIVATE simwing_scene_fluid_geometry)
 
+add_executable(simwing-scene-surface-face-partition-test
+    tests/simwing_scene_surface_face_partition_test.cpp
+)
+target_link_libraries(simwing-scene-surface-face-partition-test
+    PRIVATE simwing_scene_fluid_geometry)
+
 add_executable(simwing-scene-fluid-quadrature-test
     tests/simwing_scene_fluid_quadrature_test.cpp
 )
@@ -1375,6 +1383,7 @@ set_target_properties(
     simwing-scene-surface-face-graph-test
     simwing-scene-surface-face-chains-test
     simwing-scene-surface-face-loops-test
+    simwing-scene-surface-face-partition-test
     simwing-scene-fluid-quadrature-test
     simwing-viewer-protocol-test
     simwing-vector-glyphs-test
@@ -1457,6 +1466,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-scene-surface-face-graph-test
         simwing-scene-surface-face-chains-test
         simwing-scene-surface-face-loops-test
+        simwing-scene-surface-face-partition-test
         simwing-scene-fluid-quadrature-test
         simwing-viewer-protocol-test
         simwing-vector-glyphs-test
@@ -1639,6 +1649,8 @@ add_test(NAME simwing_scene_surface_face_chains
     COMMAND simwing-scene-surface-face-chains-test)
 add_test(NAME simwing_scene_surface_face_loops
     COMMAND simwing-scene-surface-face-loops-test)
+add_test(NAME simwing_scene_surface_face_partition
+    COMMAND simwing-scene-surface-face-partition-test)
 add_test(NAME simwing_scene_fluid_quadrature
     COMMAND simwing-scene-fluid-quadrature-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)

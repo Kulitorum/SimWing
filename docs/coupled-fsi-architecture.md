@@ -444,6 +444,7 @@ src/fsi/
         scene_surface_face_graph.* provenance-keyed face-local connectivity
         scene_surface_face_chains.* winding-directed chains and loops
         scene_surface_face_loops.* oriented simple-loop geometry and sides
+        scene_surface_face_partition.* nested-loop per-region face areas
         geometry.*          exact surface and region reconstruction
         advection.*         bounded donor/limited-MC MAC transport
         projected_advection.* projected nonlinear SSPRK2 transport
@@ -538,8 +539,10 @@ components then become deterministic winding-directed open chains or closed
 loops only while one authored region pair remains consistent; branches and
 conflicts reject. Simple loops gain signed area, centroid, and winding-derived
 enclosed/exterior region identity with self-intersection and degenerate-area
-rejection; open chains and separate nested loops remain unresolved. Volume
-fractions and complete region reconstruction remain open. A canonical Qt-free
+rejection. A bounded containment stage rejects touching loops, requires
+authored parent/child region continuity, and closes exact per-region areas on
+eligible faces; open, coplanar, and boundary-touching cases remain unresolved.
+Volume fractions and complete grid-region reconstruction remain open. A canonical Qt-free
 structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.
