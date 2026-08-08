@@ -148,7 +148,7 @@ void testNumericalFailureRemainsAtSafePoint() {
     fsi::WorkerControlResponse response;
     fsi::WorkerControlProtocolError protocolError;
     check(session.execute(
-              {fsi::WorkerControlCommandKind::Advance, 501, 1000},
+              {fsi::WorkerControlCommandKind::Advance, 501, 5000},
               response, &protocolError)
               && !protocolError
               && response.kind == fsi::WorkerControlResponseKind::Error
@@ -166,8 +166,10 @@ void testNumericalFailureRemainsAtSafePoint() {
               && lastPublishedFrame.has_value()
               && lastPublishedFrame->step == response.acceptedStepCount
               && response.acceptedStepCount > 330
-              && simulation.topologyRebaseCount() == 1
-              && simulation.porousFaceCoordinate() == 4,
+              && simulation.topologyRebaseCount()
+                  == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
+              && simulation.porousFaceCoordinate()
+                  == fsi::coupledPorousSheetPumpFaceCoordinate - 1,
           "porous-sheet control exposes the last accepted state after pump collision");
 
     const std::uint64_t safeStep = simulation.acceptedStepCount();
@@ -182,8 +184,10 @@ void testNumericalFailureRemainsAtSafePoint() {
               && savedCheckpoint.has_value()
               && savedCheckpoint->acceptedStepCount == safeStep
               && savedCheckpoint->simulationTimeSeconds == safeTime
-              && savedCheckpoint->topologyRebaseCount == 1
-              && savedCheckpoint->porousFaceCoordinate == 4
+              && savedCheckpoint->topologyRebaseCount
+                  == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
+              && savedCheckpoint->porousFaceCoordinate
+                  == fsi::coupledPorousSheetPumpFaceCoordinate - 1
               && publishedFrameCount == safeStep,
           "porous-sheet control checkpoints only the collision safe point");
     if (!savedCheckpoint) {
@@ -202,8 +206,10 @@ void testNumericalFailureRemainsAtSafePoint() {
     check(repeatedFailure
               && restored.acceptedStepCount() == safeStep
               && restored.simulationTimeSeconds() == safeTime
-              && restored.topologyRebaseCount() == 1
-              && restored.porousFaceCoordinate() == 4,
+              && restored.topologyRebaseCount()
+                  == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
+              && restored.porousFaceCoordinate()
+                  == fsi::coupledPorousSheetPumpFaceCoordinate - 1,
           "porous-sheet control collision checkpoint repeats without mutation");
 
     check(session.execute(

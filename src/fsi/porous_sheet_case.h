@@ -15,14 +15,19 @@ namespace simwing::fsi {
 struct CoupledPorousSheetCheckpointCodecAccess;
 
 inline constexpr char coupledPorousSheetCaseChecksum[] =
-    "sha256:simwing-coupled-porous-sheet-case-v2";
+    "sha256:simwing-coupled-porous-sheet-case-v3";
 inline constexpr char coupledPorousSheetCaseSolverId[] =
-    "simwing-fsi-coupled-porous-sheet-worker-v2";
-inline constexpr std::uint32_t coupledPorousSheetDiagnosticsVersion = 2;
-inline constexpr std::uint32_t coupledPorousSheetCheckpointVersion = 2;
+    "simwing-fsi-coupled-porous-sheet-worker-v3";
+inline constexpr std::uint32_t coupledPorousSheetDiagnosticsVersion = 3;
+inline constexpr std::uint32_t coupledPorousSheetCheckpointVersion = 3;
 inline constexpr std::uint64_t coupledPorousSheetCaseFingerprint =
-    0x8b43f6c2d9157ea2ULL;
+    0x5e8d7a31c4b2960fULL;
 inline constexpr std::size_t coupledPorousSheetInitialFaceCoordinate = 3;
+inline constexpr std::size_t coupledPorousSheetPumpFaceCoordinate = 7;
+inline constexpr std::uint64_t
+    coupledPorousSheetMaximumOrdinaryRebaseCount =
+        coupledPorousSheetPumpFaceCoordinate
+        - coupledPorousSheetInitialFaceCoordinate - 1;
 
 struct CoupledPorousSheetStepDiagnostics {
     std::uint32_t version = coupledPorousSheetDiagnosticsVersion;
@@ -88,7 +93,7 @@ private:
 // transfers only the equal-and-opposite sheet reaction into XPBD. The scalar
 // midpoint relation is analytic for this linear material, so fluid, sheet,
 // pump, and dissipation ledgers can be checked independently. The sheet may
-// rebinds to the next MAC face after crossing one dual-cell boundary while
+// rebind to the next MAC face across several dual-cell boundaries while
 // preserving physical position and accepted fluid state. It rejects the later
 // collision with the pump surface. General strong coupling remains outside
 // this case.

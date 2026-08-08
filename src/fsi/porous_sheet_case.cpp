@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <ranges>
 #include <stdexcept>
 #include <utility>
@@ -17,7 +18,6 @@ constexpr std::uint64_t porousSheetSurfaceStableId = 300;
 constexpr std::uint64_t pumpSurfaceStableId = 400;
 constexpr std::uint64_t minusRegionStableId = 10;
 constexpr std::uint64_t plusRegionStableId = 11;
-constexpr std::size_t pumpFaceCoordinate = 5;
 constexpr double initialSheetPositionMeters = 1.45;
 constexpr double fluidDensityKgPerCubicMeter = 1.2;
 constexpr double sheetMassKilograms = 60.0;
@@ -187,7 +187,7 @@ fluid::SharpPressureJumpField makePump(
                 plusRegionStableId,
                 minusRegionStableId,
                 fluid::GridFaceAxis::X,
-                pumpFaceCoordinate,
+                coupledPorousSheetPumpFaceCoordinate,
                 j,
                 k,
                 pumpPressureJumpPascals,
@@ -417,7 +417,8 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
                 {fluid::movingPorousFaceTopologyVersion,
                  fluid::GridFaceAxis::X, porousFaceCoordinate_, 0},
                 sheetPositionAtConstitutiveTime);
-        if (topology.topology.faceCoordinate == pumpFaceCoordinate) {
+        if (topology.topology.faceCoordinate
+            == coupledPorousSheetPumpFaceCoordinate) {
             throw std::runtime_error(
                 "coupled porous sheet reached the pump-surface topology");
         }
@@ -689,8 +690,10 @@ void CoupledPorousSheetCase::restore(
         || checkpointValue.simulationTimeSeconds < 0.0
         || checkpointValue.porousFaceCoordinate
             >= grid_.cellCounts().x
-        || checkpointValue.porousFaceCoordinate == pumpFaceCoordinate
-        || checkpointValue.topologyRebaseCount > 1
+        || checkpointValue.porousFaceCoordinate
+            == coupledPorousSheetPumpFaceCoordinate
+        || checkpointValue.topologyRebaseCount
+            > coupledPorousSheetMaximumOrdinaryRebaseCount
         || checkpointValue.porousFaceCoordinate
             != coupledPorousSheetInitialFaceCoordinate
                 + checkpointValue.topologyRebaseCount
@@ -745,12 +748,18 @@ void CoupledPorousSheetCase::restore(
     const double expectedTime = static_cast<double>(
         checkpointValue.acceptedStepCount)
         * stepSettings_.timeStepSeconds;
+    const double timeTolerance = 2.0e-14
+        + 8.0 * std::numeric_limits<double>::epsilon()
+            * std::max(1.0, static_cast<double>(
+                checkpointValue.acceptedStepCount))
+            * std::max({1.0, std::abs(expectedTime),
+                        std::abs(checkpointValue.simulationTimeSeconds)});
     if (positionResidual > 1.0e-12
         || velocityResidual > 1.0e-12
         || fluidUniformity > 2.0e-12
         || !canonicalTopologyPosition
         || std::abs(checkpointValue.simulationTimeSeconds - expectedTime)
-            > 2.0e-14) {
+            > timeTolerance) {
         throw std::invalid_argument(
             "coupled porous sheet checkpoint state is not a canonical epoch");
     }

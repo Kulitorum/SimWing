@@ -981,15 +981,16 @@ fluid and sheet momentum against prescribed pump impulse, and closes their
 kinetic-energy changes plus porous dissipation against pump work on every
 accepted step. The immutable trace shows the translated two-sided sheet and
 keeps pressure jump, sheet impulse, pump work, and porous loss separate. At the
-first accepted midpoint sample in the next dual-cell segment it explicitly
-rebinds the crossing to the next MAC face while preserving physical sheet and
-fluid state. That decision now uses a pure topology selector whose epoch owns
-axis, wrapped face coordinate, and signed periodic image. It supports X/Y/Z,
-one adjacent segment in either direction, and both periodic wraps while
-rejecting exact MAC-plane ambiguity and skipped segments. A later collision
-with the prescribed pump surface is rejected by the case after selection;
-this remains a planar oracle, not a general moving cut-cell remap or a general
-strong-coupling solve.
+first accepted midpoint sample in each of three consecutive ordinary dual-cell
+segments it explicitly rebinds the crossing to the next MAC face while
+preserving physical sheet and fluid state. That decision uses a pure topology
+selector whose epoch owns axis, wrapped face coordinate, and signed periodic
+image. It supports X/Y/Z, one adjacent segment in either direction, and both
+periodic wraps while rejecting exact MAC-plane ambiguity and skipped segments.
+Each accepted pre-pump epoch survives persistent checkpoint round trips and
+continues bit-identically. A later collision with the prescribed pump surface
+is rejected by the case after selection; this remains a planar oracle, not a
+general moving cut-cell remap or a general strong-coupling solve.
 Its immutable in-memory checkpoint owns the nested Structure state, MAC
 velocity, pressure, and last accepted coupled diagnostics. Restore validates
 the case identity, exact step/time epoch, rigid sheet state, uniform fluid
@@ -1179,10 +1180,10 @@ composite persistent checkpoint before or after a topology rebase.
 The coupled porous-sheet oracle now also exercises the accepted
 fluid-to-structure boundary end to end: a periodic pump drives midpoint flow,
 the porous adapter excludes that pump from material traction, the bridge maps
-only the sheet reaction, and XPBD receives the same impulse and work. Its first
-MAC-face topology rebase, rebased checkpoint replay, and later explicit
-pump-collision rejection remain intentionally smaller gates than general
-moving porous topology. Checkpoint topology belongs to the accepted
+only the sheet reaction, and XPBD receives the same impulse and work. Its three
+ordinary MAC-face topology rebases, per-epoch checkpoint replay, and later
+explicit pump-collision rejection remain intentionally smaller gates than
+general moving porous topology. Checkpoint topology belongs to the accepted
 constitutive midpoint rather than the possibly farther endpoint; this permits
 the terminal accepted state to persist and reproduce the same collision
 transactionally after restore.

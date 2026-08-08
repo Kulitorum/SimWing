@@ -217,7 +217,7 @@ void testTopologyRebaseAndCollisionRollback() {
           "porous-sheet topology: rebased checkpoint resumes the exact next frame");
 
     bool rejected = false;
-    for (std::size_t attempt = 0; attempt < 1000; ++attempt) {
+    for (std::size_t attempt = 0; attempt < 5000; ++attempt) {
         const auto structureBefore = simulation.structure().checkpoint();
         const auto velocityBefore = simulation.velocity();
         const auto pressureBefore = simulation.pressure();
@@ -246,7 +246,11 @@ void testTopologyRebaseAndCollisionRollback() {
             break;
         }
     }
-    check(rejected,
+    check(rejected
+              && simulation.topologyRebaseCount()
+                  == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
+              && simulation.porousFaceCoordinate()
+                  == fsi::coupledPorousSheetPumpFaceCoordinate - 1,
           "porous-sheet topology: later pump-surface collision is rejected explicitly");
 }
 
@@ -409,8 +413,14 @@ std::vector<std::uint8_t> encodeCheckpoint(
     const fsi::CoupledPorousSheetCheckpoint& checkpoint) {
     std::vector<std::uint8_t> bytes;
     fsi::CoupledPorousSheetCheckpointPersistenceError error;
-    check(fsi::serializeCoupledPorousSheetCheckpoint(
-              owner, checkpoint, bytes, &error),
+    const bool encoded = fsi::serializeCoupledPorousSheetCheckpoint(
+        owner, checkpoint, bytes, &error);
+    if (!encoded) {
+        std::fprintf(stderr,
+                     "porous-sheet checkpoint encoding failed: %s\n",
+                     error.message.c_str());
+    }
+    check(encoded,
           "porous-sheet persistence: valid checkpoint serializes");
     return bytes;
 }
@@ -602,7 +612,7 @@ void testTerminalSafePointPersistence() {
     fsi::CoupledPorousSheetCase owner;
     std::string collisionError;
     for (std::uint64_t attempt = 0;
-         attempt < 1000 && collisionError.empty(); ++attempt) {
+         attempt < 5000 && collisionError.empty(); ++attempt) {
         try {
             static_cast<void>(owner.advance());
         } catch (const std::exception& exception) {
@@ -613,8 +623,10 @@ void testTerminalSafePointPersistence() {
     check(collisionError
               == "coupled porous sheet reached the pump-surface topology"
               && terminal.acceptedStepCount > 350
-              && terminal.topologyRebaseCount == 1
-              && terminal.porousFaceCoordinate == 4,
+              && terminal.topologyRebaseCount
+                  == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
+              && terminal.porousFaceCoordinate
+                  == fsi::coupledPorousSheetPumpFaceCoordinate - 1,
           "porous-sheet terminal checkpoint: collision leaves an accepted safe point");
 
     const auto bytes = encodeCheckpoint(owner, terminal);
@@ -667,6 +679,54 @@ void testTerminalSafePointPersistence() {
           "porous-sheet terminal checkpoint: decode and re-encode preserve bytes");
 }
 
+void testEveryRebasedEpochPersists() {
+    fsi::CoupledPorousSheetCase owner;
+    std::uint64_t observedRebases = 0;
+    for (std::uint64_t attempt = 0;
+         attempt < 5000
+         && observedRebases
+             < fsi::coupledPorousSheetMaximumOrdinaryRebaseCount;
+         ++attempt) {
+        static_cast<void>(owner.advance());
+        if (!owner.diagnostics().topologyRebasedThisStep) {
+            continue;
+        }
+        ++observedRebases;
+        const auto checkpoint = owner.checkpoint();
+        check(checkpoint.topologyRebaseCount == observedRebases
+                  && checkpoint.porousFaceCoordinate
+                      == fsi::coupledPorousSheetInitialFaceCoordinate
+                          + observedRebases,
+              "porous-sheet rebase checkpoint: every ordinary epoch is explicit");
+
+        const auto bytes = encodeCheckpoint(owner, checkpoint);
+        fsi::CoupledPorousSheetCheckpoint decoded;
+        fsi::CoupledPorousSheetCheckpointPersistenceError error;
+        const bool decodedOk =
+            fsi::deserializeCoupledPorousSheetCheckpoint(
+                bytes, owner, decoded, &error);
+        check(decodedOk
+                  && decoded.topologyRebaseCount == observedRebases
+                  && decoded.porousFaceCoordinate
+                      == checkpoint.porousFaceCoordinate,
+              "porous-sheet rebase checkpoint: every ordinary epoch persists");
+        if (!decodedOk) {
+            return;
+        }
+        fsi::CoupledPorousSheetCase restored;
+        restored.restore(decoded);
+        check(serialized(owner.advance())
+                  == serialized(restored.advance()),
+              "porous-sheet rebase checkpoint: every epoch continues bit-identically");
+    }
+    check(observedRebases
+              == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
+              && owner.topologyRebaseCount() == observedRebases
+              && owner.porousFaceCoordinate()
+                  == fsi::coupledPorousSheetPumpFaceCoordinate - 1,
+          "porous-sheet rebase checkpoint: all pre-pump epochs are covered");
+}
+
 } // namespace
 
 int main() {
@@ -675,6 +735,7 @@ int main() {
     testTopologyRebaseAndCollisionRollback();
     testCheckpointReplayAndValidation();
     testPersistentCheckpoint();
+    testEveryRebasedEpochPersists();
     testTerminalSafePointPersistence();
     if (failures != 0) {
         std::fprintf(stderr,
