@@ -532,8 +532,13 @@ Every sub-integrator works on the same private candidate, their individual
 energy losses sum to the full-step loss, and pressure/velocity commit only
 after the aggregate momentum, energy, and continuity ledger passes. Exact
 manual composition, rollback at the viscous/transport/projection boundaries,
-and fixed-grid refinement verify the Strang path. A bounded outer wrapper now
-pre-sizes equal Strang substeps from the explicit half-viscosity limit. An
+and fixed-grid refinement verify the Strang path. A continuous viscous,
+Galilean-translated Taylor-Green solution independently verifies the complete
+subcycled limited-MC path: with `dt <= 0.12 h^2`, successive 12/24/48-grid L1
+error ratios must remain in `[3.0, 5.0]`. This is a smooth periodic full-flow
+oracle and does not establish cut-cell or moving-interface accuracy. A bounded
+outer wrapper now pre-sizes equal Strang substeps from the explicit
+half-viscosity limit. An
 explicit outgoing-CFL or limited-MC maximum-principle rejection restarts the
 whole private interval with a finer equal schedule; projection and ledger
 failures remain fatal. Diagnostics retain the final schedule and the last retry
@@ -733,7 +738,9 @@ full-period error ratios in `[1.7, 2.2]` then `[1.8, 2.1]`, limited-MC L1
 full-period error ratios in `[3.1, 4.8]` over two successive resolution
 doublings, projected translating-Taylor-Green donor L1 ratios in `[1.7, 2.2]`
 and limited-MC ratios in `[3.0, 5.0]` across 16/32/64 grids with `dt`
-proportional to `h^2`, exact bounded CFL-one translation, and periodic
+proportional to `h^2`, complete viscous translating-Taylor-Green limited-MC L1
+ratios in `[3.0, 5.0]` across 12/24/48 grids with `dt <= 0.12 h^2`, exact
+bounded CFL-one translation, and periodic
 component-momentum sums preserved within `5e-14` in the projection mixed-mode
 case; viscous physical-momentum residual stays below `2e-12 N*s`. Subcycling
 must pre-size the viscous canonical to exactly two equal steps, reproduce that

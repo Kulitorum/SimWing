@@ -74,7 +74,11 @@ with viscosity: SSPRK2 diffusion
 advances half a step on each side of the full projected nonlinear transport
 step. The resulting Strang composition is transactional across all three
 sub-integrators, closes their energy-loss sum, and observes second-order
-fixed-grid temporal refinement.
+fixed-grid temporal refinement. An independent continuously viscous,
+Galilean-translated Taylor-Green solution also observes near-second-order L1
+refinement for the complete limited-MC path on 12/24/48 grids with `dt`
+proportional to `h^2`. This remains a smooth periodic oracle, not a cut-cell or
+moving-interface accuracy result.
 A bounded wrapper advances a requested outer interval through equal Strang
 substeps. It pre-sizes the schedule from the explicit viscous limit, then
 restarts the whole private interval with more substeps only when transport

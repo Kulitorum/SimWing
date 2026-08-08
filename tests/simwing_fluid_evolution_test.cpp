@@ -724,6 +724,120 @@ double velocityError(const MacVelocityField& actual,
         / static_cast<double>(3 * actual.xFaces().size()));
 }
 
+MacVelocityField viscousTranslatingTaylorGreen(
+    const PeriodicCartesianGrid& grid,
+    const double timeSeconds,
+    const double kinematicViscositySquareMetersPerSecond) {
+    constexpr double backgroundX = 0.35;
+    constexpr double backgroundY = -0.2;
+    const double amplitude = std::exp(
+        -2.0 * kinematicViscositySquareMetersPerSecond * timeSeconds);
+    MacVelocityField result(grid);
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                const std::size_t index = grid.cellIndex(i, j, k);
+                const auto xFace = grid.xFaceCenterMeters(i, j, k);
+                const auto yFace = grid.yFaceCenterMeters(i, j, k);
+                const double xFacePhaseX =
+                    xFace.x - backgroundX * timeSeconds;
+                const double xFacePhaseY =
+                    xFace.y - backgroundY * timeSeconds;
+                const double yFacePhaseX =
+                    yFace.x - backgroundX * timeSeconds;
+                const double yFacePhaseY =
+                    yFace.y - backgroundY * timeSeconds;
+                result.xFaces()[index] = backgroundX
+                    + amplitude
+                        * std::sin(xFacePhaseX) * std::cos(xFacePhaseY);
+                result.yFaces()[index] = backgroundY
+                    - amplitude
+                        * std::cos(yFacePhaseX) * std::sin(yFacePhaseY);
+            }
+        }
+    }
+    return result;
+}
+
+double viscousTranslatingTaylorGreenError(const std::size_t resolution) {
+    const double twoPi = 2.0 * std::numbers::pi;
+    const PeriodicCartesianGrid grid(
+        {resolution, resolution, 2}, {}, {twoPi, twoPi, 1.0});
+    constexpr double viscosity = 0.02;
+    constexpr double finalTime = 0.08;
+    auto velocity = viscousTranslatingTaylorGreen(grid, 0.0, viscosity);
+    CellScalarField pressure(grid);
+    PeriodicFlowStrangSubcyclingSettings integrationSettings;
+    integrationSettings.flow = strangSettings();
+    integrationSettings.flow.densityKgPerCubicMeter = 1.225;
+    integrationSettings.flow.kinematicViscositySquareMetersPerSecond =
+        viscosity;
+    integrationSettings.flow.advectionReconstruction =
+        VariableMacReconstruction::MonotonizedCentral;
+    integrationSettings.flow.advectionAbsoluteDivergenceTolerancePerSecond =
+        2.0e-10;
+    integrationSettings.flow.projectionAbsoluteResidualTolerance = 1.0e-11;
+    integrationSettings.flow.projectionRelativeResidualTolerance = 1.0e-12;
+    integrationSettings.flow.projectionMaximumIterations = 2000;
+    integrationSettings.flow.absoluteMomentumToleranceNewtonSeconds = 1.0e-10;
+    integrationSettings.flow.absoluteEnergyToleranceJoules = 1.0e-10;
+    integrationSettings.maximumSubsteps = 64;
+    const double spacing = grid.cellSpacingMeters().x;
+    const double requestedTimeStep = 0.12 * spacing * spacing;
+    const std::size_t steps = static_cast<std::size_t>(
+        std::ceil(finalTime / requestedTimeStep));
+    integrationSettings.flow.timeStepSeconds =
+        finalTime / static_cast<double>(steps);
+    bool accepted = true;
+    for (std::size_t step = 0; step < steps; ++step) {
+        const auto diagnostics = advancePeriodicFlowStrangSspRk2Subcycled(
+            grid, velocity, pressure, integrationSettings);
+        accepted = accepted && diagnostics.accepted
+            && diagnostics.completedSubstepCount
+                == diagnostics.plannedSubstepCount
+            && diagnostics.finalDivergenceL2PerSecond < 2.0e-10;
+    }
+    check(accepted,
+          "analytic viscous Taylor-Green: every outer interval is accepted");
+
+    const auto expected = viscousTranslatingTaylorGreen(
+        grid, finalTime, viscosity);
+    double absoluteError = 0.0;
+    for (std::size_t index = 0; index < grid.cellCount(); ++index) {
+        absoluteError += std::abs(
+            velocity.xFaces()[index] - expected.xFaces()[index]);
+        absoluteError += std::abs(
+            velocity.yFaces()[index] - expected.yFaces()[index]);
+    }
+    return absoluteError
+        / static_cast<double>(2 * grid.cellCount());
+}
+
+void testSubcycledStrangAnalyticViscousTaylorGreenRefinement() {
+    const double coarseError = viscousTranslatingTaylorGreenError(12);
+    const double mediumError = viscousTranslatingTaylorGreenError(24);
+    const double fineError = viscousTranslatingTaylorGreenError(48);
+    const double coarseRatio = coarseError / mediumError;
+    const double fineRatio = mediumError / fineError;
+    if (!(coarseRatio > 3.0 && coarseRatio < 5.0
+          && fineRatio > 3.0 && fineRatio < 5.0
+          && fineError < mediumError && mediumError < coarseError)) {
+        std::fprintf(
+            stderr,
+            "analytic viscous Taylor-Green refinement: errors %.17g %.17g "
+            "%.17g, ratios %.17g %.17g\n",
+            coarseError, mediumError, fineError, coarseRatio, fineRatio);
+    }
+    check(coarseRatio > 3.0 && coarseRatio < 5.0,
+          "analytic viscous Taylor-Green: first full-flow ratio is "
+          "second order");
+    check(fineRatio > 3.0 && fineRatio < 5.0,
+          "analytic viscous Taylor-Green: refined ratio remains second order");
+    check(fineError < mediumError && mediumError < coarseError,
+          "analytic viscous Taylor-Green: L1 error decreases monotonically");
+}
+
 void testStrangObservedSecondOrderTemporalRefinement() {
     const double twoPi = 2.0 * std::numbers::pi;
     const PeriodicCartesianGrid grid(
@@ -961,6 +1075,7 @@ int main() {
     testStrangExactCompositionAndDeterminism();
     testStrangSubcyclingExactComposition();
     testStrangSubcyclingStabilityRetryAndRollback();
+    testSubcycledStrangAnalyticViscousTaylorGreenRefinement();
     testStrangObservedSecondOrderTemporalRefinement();
     testStrangRollback();
     testStageFailureRollback();
