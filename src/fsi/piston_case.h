@@ -18,6 +18,8 @@ inline constexpr char strongCoupledPistonCaseChecksum[] =
     "sha256:simwing-strong-light-piston-case-v1";
 inline constexpr char strongCoupledPistonCaseSolverId[] =
     "simwing-fsi-strong-light-piston-v1";
+inline constexpr double strongCoupledPistonStructuralMassKilograms = 6.0;
+inline constexpr double strongCoupledPistonDiscreteAddedMassKilograms = 10.8;
 
 // Visible end-to-end verification harness for the current fixed-topology
 // numerical foundations. A uniform face-aligned pressure solve is bridged by
@@ -55,6 +57,9 @@ struct StrongCoupledPistonStepDiagnostics {
     double acceptedSpeedMetersPerSecond = 0.0;
     double acceptedInterfaceSpeedMetersPerSecond = 0.0;
     double velocityClosureMetersPerSecond = 0.0;
+    double measuredDiscreteAddedMassKilograms = 0.0;
+    double analyticAcceptedSpeedMetersPerSecond = 0.0;
+    double analyticSpeedResidualMetersPerSecond = 0.0;
     bool finite = true;
 
     bool operator==(

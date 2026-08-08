@@ -340,6 +340,11 @@ step from the accepted baseline. Only the converged Structure/fluid epoch
 persists. It is selectable as `simwing-fsi --case strong-piston`; accepted
 immutable frames expose the real coupling count, residuals, retry count,
 interface closure, pressure traction, and transferred impulse/work. The
+projection's endpoint force slope recovers its analytic `10.8 kg` discrete
+added mass. Because force is trapezoidally integrated from the unchanged start
+load, the accepted speed matches `F0*dt/(6 kg + 10.8 kg/2)` rather than the
+unstable weak one-pass acceleration; both mass and speed residual are published.
+The
 `simwing-fsi --case porous-sheet` harness drives fluid through a translating
 linear-resistance sheet, transfers only the sheet reaction to XPBD, and closes
 the pump impulse/work, porous dissipation, and fluid/structure kinetic-energy

@@ -809,7 +809,10 @@ scalar terminal speed, topology-bound motion/traction residuals decide
 convergence, and only the converged Structure/fluid state persists. The
 `--case strong-piston` worker publishes only those accepted epochs, including
 the true iteration/retry counts, interface closure, residuals, traction, and
-transferred impulse/work. The
+transferred impulse/work. Its endpoint pressure-force slope is the analytic
+`10.8 kg` discrete added mass. With trapezoidal start/end force integration,
+the fixed-point speed therefore uses `6 kg + 10.8 kg/2` in its denominator;
+the worker publishes and tests both the recovered mass and speed residual. The
 `--case open-piston` worker adds the nonseparating connected-fluid projection,
 partial-cell geometry, resolved-opening GCL ledger, an explicit plate actuator,
 and a separately reported resisting CFD load. Its pressure reaction now crosses

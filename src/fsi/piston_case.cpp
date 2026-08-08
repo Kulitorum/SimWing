@@ -16,7 +16,6 @@ constexpr double pistonPressurePascals = 110.0;
 constexpr double fluidDensityKgPerCubicMeter = 1.2;
 constexpr double fluidMassKilograms = 28.8;
 constexpr double structuralMassKilograms = 6000.0;
-constexpr double strongStructuralMassKilograms = 6.0;
 
 StructureDefinition makeDefinition(
     const double totalMassKilograms = structuralMassKilograms) {
@@ -315,6 +314,14 @@ void appendStrongPistonFields(
         viewer::FieldAssociation::Global,
         {diagnostics.velocityClosureMetersPerSecond}});
     frame.scalarFields.push_back({
+        "interface.discrete_added_mass", "kg",
+        viewer::FieldAssociation::Global,
+        {diagnostics.measuredDiscreteAddedMassKilograms}});
+    frame.scalarFields.push_back({
+        "coupling.analytic_speed_residual", "m/s",
+        viewer::FieldAssociation::Global,
+        {diagnostics.analyticSpeedResidualMetersPerSecond}});
+    frame.scalarFields.push_back({
         "interface.mean_pressure_traction", "Pa",
         viewer::FieldAssociation::Global,
         {diagnostics.bridge.fluidPressureForceNewtons.x
@@ -454,7 +461,8 @@ const StructureStepSettings& CoupledPistonCase::stepSettings() const noexcept {
 }
 
 StrongCoupledPistonCase::StrongCoupledPistonCase()
-    : structure_(makeDefinition(strongStructuralMassKilograms)),
+    : structure_(makeDefinition(
+          strongCoupledPistonStructuralMassKilograms)),
       grid_(pistonGrid()),
       fluidState_(initialFluidState(
           grid_, 0.0, makeStepSettings().timeStepSeconds)),
@@ -625,9 +633,30 @@ StrongCoupledPistonStepDiagnostics StrongCoupledPistonCase::advance() {
     result.acceptedInterfaceSpeedMetersPerSecond = interfaceSpeed;
     result.velocityClosureMetersPerSecond =
         std::abs(acceptedSpeed - interfaceSpeed);
+    const double acceptedTimeStepSeconds =
+        result.coupling.decision.timeStepSeconds;
+    const double speedChange = interfaceSpeed - startSpeed;
+    const double baselineForceNewtons = baselineTransfer.diagnostics()
+        .fluidPressureForceNewtons.x;
+    if (speedChange != 0.0) {
+        result.measuredDiscreteAddedMassKilograms =
+            -(result.bridge.fluidPressureForceNewtons.x
+              - baselineForceNewtons)
+            * acceptedTimeStepSeconds / speedChange;
+    }
+    result.analyticAcceptedSpeedMetersPerSecond = startSpeed
+        + baselineForceNewtons * acceptedTimeStepSeconds
+            / (strongCoupledPistonStructuralMassKilograms
+               + 0.5
+                   * strongCoupledPistonDiscreteAddedMassKilograms);
+    result.analyticSpeedResidualMetersPerSecond = std::abs(
+        acceptedSpeed - result.analyticAcceptedSpeedMetersPerSecond);
     result.finite = std::isfinite(acceptedSpeed)
         && std::isfinite(interfaceSpeed)
-        && std::isfinite(result.velocityClosureMetersPerSecond);
+        && std::isfinite(result.velocityClosureMetersPerSecond)
+        && std::isfinite(result.measuredDiscreteAddedMassKilograms)
+        && std::isfinite(result.analyticAcceptedSpeedMetersPerSecond)
+        && std::isfinite(result.analyticSpeedResidualMetersPerSecond);
     return result;
 }
 

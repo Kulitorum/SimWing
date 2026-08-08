@@ -210,12 +210,23 @@ void testStrongCoupledLightPiston() {
                   == observed.fluidState().diagnostics,
           "strong piston: accepted Structure and persistent fluid state replay exactly");
     const double explicitWeakSpeed = 660.0
-        * observed.stepSettings().timeStepSeconds / 6.0;
+        * observed.stepSettings().timeStepSeconds
+        / fsi::strongCoupledPistonStructuralMassKilograms;
     check(firstStep.acceptedSpeedMetersPerSecond > 0.0
               && firstStep.acceptedSpeedMetersPerSecond
                   < explicitWeakSpeed
               && firstStep.coupling.solverRunCount > 1,
           "strong piston: light added mass changes the weak one-pass response and requires iteration");
+    checkNear(
+        firstStep.measuredDiscreteAddedMassKilograms,
+        fsi::strongCoupledPistonDiscreteAddedMassKilograms,
+        2.0e-12,
+        "strong piston: projection recovers the analytic discrete added mass");
+    checkNear(
+        firstStep.acceptedSpeedMetersPerSecond,
+        firstStep.analyticAcceptedSpeedMetersPerSecond,
+        2.0e-14,
+        "strong piston: accepted speed matches the trapezoidal added-mass fixed point");
     check(finalStep.acceptedSpeedMetersPerSecond
               > firstStep.acceptedSpeedMetersPerSecond
               && finalStep.velocityClosureMetersPerSecond <= 1.0e-9,
@@ -254,6 +265,11 @@ void testStrongCoupledPistonFrames() {
               && scalarField(
                   finalFrame, "interface.mean_pressure_traction") != nullptr,
           "strong piston frame: accepted geometry and strong-coupling fields are complete");
+    check(scalarField(
+              finalFrame, "interface.discrete_added_mass") != nullptr
+              && scalarField(
+                  finalFrame, "coupling.analytic_speed_residual") != nullptr,
+          "strong piston frame: discrete added-mass oracle is published");
     check(finalFrame.couplingResiduals.displacementMetres <= 1.0e-10,
           "strong piston frame: displacement residual meets its acceptance budget");
     check(finalFrame.couplingResiduals.tractionNewtons <= 1.0e-7,

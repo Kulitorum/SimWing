@@ -1277,6 +1277,7 @@ int main(int argc, char* argv[]) {
                         "simwing-fsi completed %llu strong-piston step(s), "
                         "t=%.9g s, speed=%.9g m/s, coupling-iterations=%llu, "
                         "solver-runs=%llu, retries=%u, velocity-closure=%.3g m/s, "
+                        "added-mass=%.9g kg, analytic-residual=%.3g m/s, "
                         "trace=%s\n",
                         static_cast<unsigned long long>(
                             checkpoint.acceptedStepCount),
@@ -1289,6 +1290,8 @@ int main(int argc, char* argv[]) {
                             coupled.coupling.solverRunCount),
                         coupled.coupling.decision.retryCount,
                         coupled.velocityClosureMetersPerSecond,
+                        coupled.measuredDiscreteAddedMassKilograms,
+                        coupled.analyticSpeedResidualMetersPerSecond,
                         options.tracePath.string().c_str());
                 } else if constexpr (std::is_same_v<
                                   Simulation,
