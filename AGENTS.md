@@ -162,7 +162,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
 - `simwing_scene`: Qt-free scene-v2 data model, deterministic validation, and
   bounded binary serialization under `src/fsi`.
 - `simwing_structure`: Qt-free SimWing-facing adapter around the retained XPBD
-  primitives. It links `softwing_core` and no Playground library.
+  primitives, with a bounded persistent composite checkpoint codec. It links
+  `softwing_core` and no Playground library.
 - `simwing_transfer`: Qt-free topology-bound coupling surface, exact uniform
   triangle and barycentric patch traction integration, independent
   force/moment/power ledgers, and validated additive application to
@@ -568,6 +569,11 @@ makes this a certified aerodynamic solver.
   loads/state, trusted constraint/membrane/bending assembly, explicit optional
   fabric self-contact, rigid-pilot suspension, diagnostics, and composite
   rollback checkpoints without including any Playground header.
+  `structure_checkpoint_persistence.{h,cpp}` composes the SoftBody and optional
+  suspension codecs with the public step/time/load state. Both encode and
+  decode validate through an equivalent rebuilt `Structure`; decode also
+  rejects disagreement between public node state and the opaque body payload
+  before publishing transactional output.
 - `src/fsi/scene_structure.{h,cpp}` deterministically assembles supported
   scene-v2 fabric, suspension junctions, cable segments, and one rigid
   pilot/harness tree into that XPBD boundary. It derives fabric mass from SI
@@ -590,8 +596,8 @@ makes this a certified aerodynamic solver.
   controls, multipliers, ledgers, diagnostics, and bounded UTF-8 text. Decode
   binds counts and identities to an equivalent checkpoint template, verifies
   the complete state fingerprint, and leaves final semantic validation to the
-  live owner's transactional `restore()`. Structure persistence remains the
-  enclosing format.
+  live owner's transactional `restore()`. `simwing_structure` composes both
+  payloads into its enclosing persistent format.
 - `src/viewer/viewer_protocol.{h,cpp}` owns immutable sampled diagnostic frames
   and replayable traces. It uses nonzero 64-bit stable entity/region IDs,
   transactional decoding, configurable limits, and a 256 MiB default encoded

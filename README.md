@@ -197,7 +197,10 @@ bounded/checksummed codecs: the opaque SoftBody payload overlays committed
 mutable state onto an equivalent rebuilt topology without trusting wire
 topology, while the suspension payload preserves rigid-payload, line, control,
 ledger, identity, and diagnostic state behind its complete-state fingerprint.
-Enclosing Structure persistence and control execution for the full composite
+The enclosing Structure codec now combines those payloads with accepted
+step/time and pending/applied nodal-load state, validating both directions
+through an equivalent rebuilt Structure and rejecting public/opaque node-state
+disagreement. Persistence and control execution for the full composite
 open-piston state remain future work. A
 real 3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,

@@ -251,8 +251,12 @@ line and ground multipliers, pending work, stable identities, complete nested
 diagnostics, and bounded UTF-8 text. Decode binds counts and identities to an
 equivalent checkpoint template and verifies the canonical complete-state
 fingerprint; the live owner's transactional `restore()` remains the final
-semantic validator. The enclosing Structure and open-piston files are not yet
-implemented.
+semantic validator. The enclosing `StructureCheckpoint` codec composes both
+solver-owned envelopes with public accepted-step, time, pending-load, and
+last-applied-load state. It validates serialization and decoding through an
+equivalent rebuilt Structure and explicitly compares the restored body nodes
+with their public duplicate before publishing output. The open-piston file is
+not yet implemented.
 
 Material calibration is not optional. Replace prototype fallback constants with
 identified parameter sets, while keeping an explicitly named synthetic material
@@ -509,8 +513,9 @@ and suspension/rigid-payload state, and `simwing_structure` restores them as one
 composite transaction. Both the opaque SoftBody payload and the public
 suspension/rigid-payload checkpoint have bounded, checksummed deterministic
 codecs whose decode is bound to equivalent rebuilt topology and stable
-identities. The enclosing Structure and open-piston file formats remain open.
-The real 3.28 regression now reaches an accepted coupled
+identities. The enclosing Structure format now composes both and validates via
+an equivalent rebuilt adapter; the open-piston file format remains open. The
+real 3.28 regression now reaches an accepted coupled
 structural step and replayable diagnostic trace with synthetic physical export
 settings. Manufacturing flat-pattern UVs, exact authored line-attachment
 vertices, authored paired seams and stitch mechanics, live bidirectional
@@ -936,8 +941,8 @@ Work:
 - in parallel conceptually, use IBAMR or OpenFOAM/preCICE as an external
   reference for selected canonical cases, not as a required GUI dependency;
 - implement arbitrary moving-interface/jump conditions, curved/changing
-  paired grid-side correspondence, refinement, enclosing Structure and full
-  open-piston checkpoint-file persistence, and broader control messages;
+  paired grid-side correspondence, refinement, full open-piston checkpoint-file
+  persistence, and broader control messages;
 - extend the current cell-point pressure, velocity, divergence, and vorticity
   diagnostics with rate-limited AMR blocks, slices, traction, and pressure-jump
   layers as each field becomes available;

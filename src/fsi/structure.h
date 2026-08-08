@@ -251,6 +251,10 @@ inline constexpr std::uint32_t structureCheckpointVersion = 2;
 // optional suspension/rigid-payload checkpoint. Pending nodal loads and public
 // accounting remain visible here for orchestration and persistence adapters.
 struct StructureCheckpoint {
+    // Publicly nameable only for the adapter's separate persistence
+    // translation unit. Its definition remains private to src/fsi.
+    struct Detail;
+
     std::uint32_t version = structureCheckpointVersion;
     std::uint64_t definitionFingerprint = 0;
     std::uint64_t acceptedStepCount = 0;
@@ -261,7 +265,7 @@ struct StructureCheckpoint {
 
 private:
     friend class Structure;
-    struct Detail;
+    friend struct StructureCheckpointPersistenceAccess;
     std::shared_ptr<const Detail> detail;
 };
 

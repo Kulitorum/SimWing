@@ -221,6 +221,8 @@ target_link_libraries(lep_nurbs_model PUBLIC
 add_library(simwing_structure STATIC
     src/fsi/structure.cpp
     src/fsi/structure.h
+    src/fsi/structure_checkpoint_persistence.cpp
+    src/fsi/structure_checkpoint_persistence.h
 )
 target_include_directories(simwing_structure PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"

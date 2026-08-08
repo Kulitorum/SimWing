@@ -1,9 +1,15 @@
 #include "structure.h"
+#include "structure_checkpoint_persistence.h"
 
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <limits>
+#include <span>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -36,6 +42,53 @@ void checkNear(double actual,
                      expected);
         ++failures;
     }
+}
+
+std::vector<std::uint8_t> serializedCheckpoint(
+    const Structure& owner,
+    const simwing::fsi::StructureCheckpoint& checkpoint) {
+    std::vector<std::uint8_t> bytes;
+    simwing::fsi::StructureCheckpointPersistenceError error;
+    check(simwing::fsi::serializeStructureCheckpoint(
+              owner, checkpoint, bytes, &error),
+          "persistent Structure checkpoint serializes");
+    return bytes;
+}
+
+std::uint64_t readU64(const std::vector<std::uint8_t>& bytes,
+                      const std::size_t offset) {
+    std::uint64_t result = 0;
+    for (std::size_t index = 0; index < 8; ++index) {
+        result |= static_cast<std::uint64_t>(bytes[offset + index])
+            << (8U * index);
+    }
+    return result;
+}
+
+void writeU64(std::vector<std::uint8_t>& bytes,
+              const std::size_t offset,
+              std::uint64_t value) {
+    for (std::size_t index = 0; index < 8; ++index) {
+        bytes[offset + index] = static_cast<std::uint8_t>(value & 0xffU);
+        value >>= 8U;
+    }
+}
+
+std::uint64_t wireChecksum(
+    const std::span<const std::uint8_t> bytes) noexcept {
+    std::uint64_t result = 14695981039346656037ULL;
+    for (const std::uint8_t value : bytes) {
+        result ^= value;
+        result *= 1099511628211ULL;
+    }
+    return result;
+}
+
+void refreshChecksum(std::vector<std::uint8_t>& bytes) {
+    const std::size_t size = static_cast<std::size_t>(readU64(bytes, 8));
+    writeU64(bytes, 16,
+             wireChecksum(std::span<const std::uint8_t>{bytes}
+                              .subspan(24, size)));
 }
 
 StructureStepSettings unconstrainedSettings() {
@@ -275,7 +328,7 @@ void testContactCheckpointReplay() {
           "contact checkpoint: diagnostics replay bit-identically");
 }
 
-void testSuspensionPilotCheckpointReplay() {
+StructureDefinition suspensionDefinition() {
     StructureDefinition definition;
     definition.nodes.push_back({{0.0, 0.0, 1.0}, 0.0, true});
     simwing::fsi::StructureSuspensionDefinition suspension;
@@ -292,6 +345,12 @@ void testSuspensionPilotCheckpointReplay() {
          {simwing::fsi::StructureSuspensionEndpointKind::PilotHarness, 300},
          0.75, 10000.0, 0.0, 1});
     definition.suspension = suspension;
+    return definition;
+}
+
+void testSuspensionPilotCheckpointReplay() {
+    StructureDefinition definition = suspensionDefinition();
+    const auto suspension = *definition.suspension;
     Structure structure(std::move(definition));
     StructureStepSettings settings = constraintSettings();
     settings.constraintIterations = suspension.solverIterations;
@@ -319,6 +378,126 @@ void testSuspensionPilotCheckpointReplay() {
           "suspension checkpoint: composite diagnostics replay exactly");
 }
 
+void testPersistentCheckpointComposition() {
+    const StructureDefinition definition = suspensionDefinition();
+    Structure source(definition);
+    StructureStepSettings settings = constraintSettings();
+    settings.constraintIterations = definition.suspension->solverIterations;
+    static_cast<void>(source.step(settings));
+    source.addExternalForce(0, {0.25, -0.5, 0.75});
+    const auto saved = source.checkpoint();
+    const auto bytes = serializedCheckpoint(source, saved);
+    check(serializedCheckpoint(source, saved) == bytes,
+          "persistent Structure encoding is byte deterministic");
+
+    Structure rebuilt(definition);
+    simwing::fsi::StructureCheckpoint decoded;
+    simwing::fsi::StructureCheckpointPersistenceError error;
+    check(simwing::fsi::deserializeStructureCheckpoint(
+              bytes, rebuilt, decoded, &error),
+          "persistent Structure checkpoint decodes on rebuilt topology");
+    check(serializedCheckpoint(rebuilt, decoded) == bytes,
+          "decoded Structure checkpoint re-encodes byte identically");
+    rebuilt.restore(decoded);
+    const auto expectedDiagnostics = source.step(settings);
+    const auto replayDiagnostics = rebuilt.step(settings);
+    check(expectedDiagnostics == replayDiagnostics
+              && source.nodeStates() == rebuilt.nodeStates()
+              && source.suspensionState() == rebuilt.suspensionState()
+              && serializedCheckpoint(source, source.checkpoint())
+                  == serializedCheckpoint(rebuilt, rebuilt.checkpoint()),
+          "decoded composite body/suspension continuation is bit-identical");
+
+    simwing::fsi::StructureCheckpoint output = rebuilt.checkpoint();
+    const auto preserved = serializedCheckpoint(rebuilt, output);
+    const auto reject = [&](std::vector<std::uint8_t> corrupt,
+                            const simwing::fsi::
+                                StructureCheckpointPersistenceErrorCode expected,
+                            const char* message,
+                            const simwing::fsi::StructureCheckpointPersistenceLimits&
+                                limits = {}) {
+        check(!simwing::fsi::deserializeStructureCheckpoint(
+                  corrupt, rebuilt, output, &error, limits)
+                  && error.code == expected
+                  && serializedCheckpoint(rebuilt, output) == preserved,
+              message);
+    };
+
+    auto corrupt = bytes;
+    corrupt[0] ^= 0xffU;
+    reject(corrupt,
+           simwing::fsi::StructureCheckpointPersistenceErrorCode::InvalidMagic,
+           "persistent Structure rejects bad magic transactionally");
+    corrupt = bytes;
+    corrupt[4] = 2;
+    reject(corrupt,
+           simwing::fsi::StructureCheckpointPersistenceErrorCode::
+               UnsupportedVersion,
+           "persistent Structure rejects unsupported protocol versions");
+    corrupt = bytes;
+    corrupt[6] = 1;
+    reject(corrupt,
+           simwing::fsi::StructureCheckpointPersistenceErrorCode::InvalidData,
+           "persistent Structure rejects reserved envelope bits");
+    corrupt = bytes;
+    corrupt.pop_back();
+    reject(corrupt,
+           simwing::fsi::StructureCheckpointPersistenceErrorCode::Truncated,
+           "persistent Structure rejects truncation transactionally");
+    corrupt = bytes;
+    corrupt.push_back(0);
+    reject(corrupt,
+           simwing::fsi::StructureCheckpointPersistenceErrorCode::TrailingData,
+           "persistent Structure rejects trailing data transactionally");
+    corrupt = bytes;
+    corrupt.back() ^= 1U;
+    reject(corrupt,
+           simwing::fsi::StructureCheckpointPersistenceErrorCode::
+               ChecksumMismatch,
+           "persistent Structure detects payload corruption");
+
+    // The public-node copy starts after the 40-byte state header and its
+    // count. Changing it without changing the nested body must be rejected by
+    // the rebuilt-owner validation pass even with a refreshed wire checksum.
+    corrupt = bytes;
+    corrupt[72] ^= 1U;
+    refreshChecksum(corrupt);
+    reject(corrupt,
+           simwing::fsi::StructureCheckpointPersistenceErrorCode::InvalidData,
+           "persistent Structure rejects public/body state disagreement");
+
+    corrupt = bytes;
+    writeU64(corrupt, 64, 5'000'001);
+    refreshChecksum(corrupt);
+    reject(corrupt,
+           simwing::fsi::StructureCheckpointPersistenceErrorCode::LimitExceeded,
+           "persistent Structure bounds node counts before allocation");
+
+    simwing::fsi::StructureCheckpointPersistenceLimits limits;
+    limits.maximumEncodedBytes = bytes.size() - 1;
+    reject(bytes,
+           simwing::fsi::StructureCheckpointPersistenceErrorCode::LimitExceeded,
+           "persistent Structure enforces the byte limit", limits);
+
+    Structure foreign(constrainedPair(
+        StructureConstraintKind::Distance, 1.0).definition());
+    check(!simwing::fsi::deserializeStructureCheckpoint(
+              bytes, foreign, output, &error)
+              && error.code
+                  == simwing::fsi::StructureCheckpointPersistenceErrorCode::
+                      TopologyMismatch
+              && serializedCheckpoint(rebuilt, output) == preserved,
+          "persistent Structure rejects a foreign definition transactionally");
+
+    std::vector<std::uint8_t> callerBytes{1, 2, 3};
+    limits = {};
+    limits.maximumNodes = 0;
+    check(!simwing::fsi::serializeStructureCheckpoint(
+              source, saved, callerBytes, &error, limits)
+              && callerBytes == std::vector<std::uint8_t>({1, 2, 3}),
+          "failed Structure serialization preserves caller output");
+}
+
 } // namespace
 
 int main() {
@@ -329,6 +508,7 @@ int main() {
     testMembraneBoundaryAndValidation();
     testContactCheckpointReplay();
     testSuspensionPilotCheckpointReplay();
+    testPersistentCheckpointComposition();
     if (failures != 0) {
         std::fprintf(stderr, "%d SimWing structure check(s) failed\n", failures);
         return 1;

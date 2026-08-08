@@ -1,5 +1,7 @@
 #include "structure.h"
 
+#include "structure_checkpoint_detail.h"
+
 #include <softwing/soft_body.h>
 #include <softwing/suspension.h>
 
@@ -642,12 +644,6 @@ private:
 }
 
 } // namespace
-
-struct StructureCheckpoint::Detail {
-    softwing::SoftBodyCheckpoint body;
-    std::optional<softwing::SuspensionCheckpoint> suspension;
-    std::vector<StructureNodeState> publicNodes;
-};
 
 struct Structure::Impl {
     explicit Impl(StructureDefinition value)
