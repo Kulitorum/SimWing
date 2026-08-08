@@ -315,6 +315,29 @@ target_include_directories(simwing_fluid PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
 )
 
+add_library(simwing_fluid_frame STATIC
+    src/viewer/fluid_frame.cpp
+    src/viewer/fluid_frame.h
+)
+target_include_directories(simwing_fluid_frame PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/viewer"
+)
+target_link_libraries(simwing_fluid_frame PUBLIC
+    simwing_fluid
+    simwing_viewer_protocol
+)
+
+add_library(simwing_periodic_flow_case STATIC
+    src/fsi/periodic_flow_case.cpp
+    src/fsi/periodic_flow_case.h
+)
+target_include_directories(simwing_periodic_flow_case PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_periodic_flow_case PUBLIC
+    simwing_fluid_frame
+)
+
 add_library(simwing_fluid_structure_bridge STATIC
     src/fsi/face_resolved_bridge.cpp
     src/fsi/face_resolved_bridge.h
@@ -640,6 +663,12 @@ add_executable(simwing-fsi-worker-test
 target_link_libraries(simwing-fsi-worker-test
     PRIVATE simwing_canonical_case)
 
+add_executable(simwing-periodic-flow-case-test
+    tests/simwing_periodic_flow_case_test.cpp
+)
+target_link_libraries(simwing-periodic-flow-case-test
+    PRIVATE simwing_periodic_flow_case)
+
 add_executable(simwing-fluid-projection-test
     tests/simwing_fluid_projection_test.cpp
 )
@@ -777,6 +806,7 @@ add_executable(simwing-fsi
 target_link_libraries(simwing-fsi PRIVATE
     simwing_canonical_case
     simwing_open_piston_case
+    simwing_periodic_flow_case
     simwing_piston_case
 )
 
@@ -889,6 +919,7 @@ set_target_properties(
     simwing-viewer-protocol-test
     simwing-structure-frame-test
     simwing-fsi-worker-test
+    simwing-periodic-flow-case-test
     simwing-fluid-projection-test
     simwing-fluid-interface-jump-test
     simwing-fluid-moving-interface-test
@@ -942,6 +973,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-viewer-protocol-test
         simwing-structure-frame-test
         simwing-fsi-worker-test
+        simwing-periodic-flow-case-test
         simwing-fluid-projection-test
         simwing-fluid-interface-jump-test
         simwing-fluid-moving-interface-test
@@ -1083,6 +1115,8 @@ add_test(NAME simwing_scene_structure COMMAND simwing-scene-structure-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
 add_test(NAME simwing_fsi_worker COMMAND simwing-fsi-worker-test)
+add_test(NAME simwing_periodic_flow_case
+    COMMAND simwing-periodic-flow-case-test)
 add_test(NAME simwing_fluid_projection COMMAND simwing-fluid-projection-test)
 add_test(NAME simwing_fluid_interface_jump
     COMMAND simwing-fluid-interface-jump-test)
@@ -1117,6 +1151,12 @@ add_test(NAME simwing_fsi_piston_headless
         --steps 4
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-piston-headless.swtrace")
+add_test(NAME simwing_fsi_periodic_flow_headless
+    COMMAND simwing-fsi
+        --case periodic-flow
+        --steps 4
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-periodic-flow-headless.swtrace")
 add_test(NAME simwing_fsi_open_piston_headless
     COMMAND simwing-fsi
         --case open-piston

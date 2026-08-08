@@ -381,6 +381,7 @@ src/fsi/
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     piston_case.*           sealed fixed-topology worker canonical
     open_piston_case.*      driven open-control-volume worker canonical
+    periodic_flow_case.*    visible periodic CFD verification worker
     diagnostics.*           conservation, residuals, events, profiling
     checkpoint.*            versioned restart state
     scenarios.*             tunnel, glide, inflation, collapse definitions
@@ -405,6 +406,7 @@ src/gui/
 
 src/viewer/
     viewer_protocol.*       immutable frame/control schema and trace files
+    fluid_frame.*           owning accepted MAC-to-cell diagnostic adapter
     viewer_window.*         standalone Qt/OpenGL diagnostics
     viewer_layers.*         structure, interface, grid, field, and HUD layers
 
@@ -418,7 +420,8 @@ tools/
 Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
-`simwing_open_piston_case`, `simwing-fsi`,
+`simwing_open_piston_case`, `simwing_fluid_frame`,
+`simwing_periodic_flow_case`, `simwing-fsi`,
 `simwing_viewer_protocol`,
 `simwing-viewer`, and focused test executables. Keep Qt out of the numerical
 targets; only the viewer/UI targets link it. Backend interfaces must not be so
@@ -432,6 +435,11 @@ frames, replayable trace protocol, and standalone Qt/OpenGL trace viewer are
 implemented with focused tests. A canonical Qt-free structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.
+The same worker can now select a smooth periodic Taylor-Green CFD case. Its
+owning adapter copies accepted cell pressure and averaged MAC velocity into
+stable cell-centre points, which the unchanged frame protocol carries to the
+viewer for scalar-coloured point rendering. This is inspectable verification
+flow, not a whole-wing CFD claim.
 The exact-model capture now exports validated scene-v2.1 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical
@@ -718,6 +726,13 @@ must pre-size the viscous canonical to exactly two equal steps, reproduce that
 manual schedule bit-for-bit, restart a rejected nonlinear CFL/limiter attempt
 to another exact equal-step schedule, and roll back without retry on projection
 failure or when the configured substep bound is exhausted. The
+periodic-flow worker additionally replays 12 accepted steps bit-for-bit across
+two independent instances. Each immutable frame owns exactly one stable point
+per cell plus pressure, speed, and velocity fields and remains byte-identical
+after the solver advances again. A completed five-frame trace must replay
+consecutive accepted steps, and the headless CLI must write a completed trace
+without linking or launching Qt.
+The
 static 250 Pa slab must retain its two pressure levels within `2e-12 Pa` and
 keep spurious velocity below `2e-13 m/s`; a jump placed on periodic face zero
 has separate `1e-12 Pa` and `1e-13 m/s` budgets. These tolerances apply to the

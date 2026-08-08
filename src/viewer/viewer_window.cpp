@@ -519,10 +519,15 @@ private:
 
         vertices_.reserve(frame_->triangles.size() * 3
                           + frame_->lines.size() * 2
+                          + frame_->vertices.size()
                           + frame_->contacts.size() + frame_->sealing.size());
+        std::vector<bool> referencedVertices(frame_->vertices.size(), false);
         for (std::size_t triangleIndex = 0;
              triangleIndex < frame_->triangles.size(); ++triangleIndex) {
             const DiagnosticTriangle& triangle = frame_->triangles[triangleIndex];
+            referencedVertices[triangle.vertex0] = true;
+            referencedVertices[triangle.vertex1] = true;
+            referencedVertices[triangle.vertex2] = true;
             const Vec3d positions[] = {
                 frame_->vertices[triangle.vertex0].positionMetres,
                 frame_->vertices[triangle.vertex1].positionMetres,
@@ -563,6 +568,8 @@ private:
         lineStart_ = triangleCount_;
         for (std::size_t lineIndex = 0; lineIndex < frame_->lines.size(); ++lineIndex) {
             const DiagnosticLine& line = frame_->lines[lineIndex];
+            referencedVertices[line.vertex0] = true;
+            referencedVertices[line.vertex1] = true;
             QVector3D colour = lineRoleColour(line.role);
             if (field != nullptr) {
                 if (field->association == FieldAssociation::Global) {
@@ -579,6 +586,24 @@ private:
         lineCount_ = static_cast<GLsizei>(vertices_.size()) - lineStart_;
 
         pointStart_ = static_cast<GLsizei>(vertices_.size());
+        for (std::size_t vertexIndex = 0;
+             vertexIndex < frame_->vertices.size(); ++vertexIndex) {
+            if (referencedVertices[vertexIndex]) {
+                continue;
+            }
+            QVector3D colour(0.40F, 0.68F, 0.92F);
+            if (field != nullptr) {
+                if (field->association == FieldAssociation::Global) {
+                    colour = colourMap(field->values[0], minimum, maximum);
+                } else if (field->association == FieldAssociation::Vertex) {
+                    colour = colourMap(
+                        field->values[vertexIndex], minimum, maximum);
+                }
+            }
+            appendVertex(
+                vertices_, frame_->vertices[vertexIndex].positionMetres,
+                {}, colour);
+        }
         for (const ContactMarker& marker : frame_->contacts) {
             appendVertex(vertices_, marker.positionMetres, {},
                          QVector3D(1.0F, 0.22F, 0.18F));

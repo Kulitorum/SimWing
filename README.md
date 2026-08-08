@@ -82,6 +82,13 @@ reports a CFL or limited-reconstruction bound rejection. Projection and ledger
 failures are never retried, the configured substep count is capped, and caller
 pressure/velocity commit only after the complete outer conservation ledger
 passes.
+The `simwing-fsi --case periodic-flow` worker now exercises that complete path
+on an `18 x 18 x 2` Galilean-shifted Taylor-Green field. Every accepted state
+is copied into an immutable trace frame with one cell-centre point per cell,
+exact cell pressure, averaged MAC velocity, speed, and conservation ledgers.
+The standalone viewer renders those otherwise-unconnected points with selectable
+scalar colouring. This makes the verification flow inspectable without making
+it a cut-cell, canopy, or aerodynamic-truth case.
 Both the projected transport and Strang flow paths select donor-cell or limited
 monotonized-central reconstruction explicitly; donor-cell remains the default.
 The original single-stage transport and Euler/SSPRK2 viscosity modes compose
@@ -253,7 +260,12 @@ Run:
 
 ```powershell
 .\build\bin\Release\LEparagliding.exe
+.\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600
+.\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600 --no-viewer
 ```
+
+The first SimWing command launches the standalone trace viewer by default. The
+second is the unthrottled headless form for tests and scripted verification.
 
 `windeployqt` and the OCCT runtime deployment run after the build, so the build
 output is directly runnable. The install target includes the required OCCT

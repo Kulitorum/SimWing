@@ -1,5 +1,6 @@
 #include "canonical_case.h"
 #include "open_piston_case.h"
+#include "periodic_flow_case.h"
 #include "piston_case.h"
 #include "viewer_protocol.h"
 
@@ -41,6 +42,7 @@ enum class WorkerCase {
     Structural,
     Piston,
     OpenPiston,
+    PeriodicFlow,
 };
 
 struct Options {
@@ -54,7 +56,8 @@ struct Options {
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: simwing-fsi [--case structural|piston|open-piston] [--steps N]\n"
+        "Usage: simwing-fsi [--case structural|piston|open-piston|periodic-flow]\n"
+        "                   [--steps N]\n"
         "                   [--trace PATH]\n"
         "                   [--viewer|--no-viewer]\n"
         "\n"
@@ -63,7 +66,9 @@ void printUsage(FILE* stream) {
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
         "'open-piston' adds connected-fluid pressure reaction, partial-cell motion,\n"
         "an independently closed opening-flux GCL ledger, and exact one-face\n"
-        "topology rebasing; consuming its resolved opening is rejected. Interactive\n"
+        "topology rebasing; consuming its resolved opening is rejected.\n"
+        "'periodic-flow' advances the bounded Strang/SSPRK2 Taylor-Green CFD\n"
+        "canonical and publishes cell-centred pressure/velocity points. Interactive\n"
         "runs launch the sibling simwing-viewer with --follow; --no-viewer is\n"
         "unthrottled for tests and CI.\n");
 }
@@ -79,6 +84,10 @@ bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
     }
     if (text == "open-piston") {
         workerCase = WorkerCase::OpenPiston;
+        return true;
+    }
+    if (text == "periodic-flow") {
+        workerCase = WorkerCase::PeriodicFlow;
         return true;
     }
     return false;
@@ -113,12 +122,14 @@ bool parseOptions(int argc,
         } else if (argument == "--case") {
             if (++index >= argc
                 || !parseWorkerCase(argv[index], options.workerCase)) {
-                error = "--case requires 'structural', 'piston', or 'open-piston'";
+                error = "--case requires 'structural', 'piston', "
+                    "'open-piston', or 'periodic-flow'";
                 return false;
             }
         } else if (argument.starts_with("--case=")) {
             if (!parseWorkerCase(argument.substr(7), options.workerCase)) {
-                error = "--case requires 'structural', 'piston', or 'open-piston'";
+                error = "--case requires 'structural', 'piston', "
+                    "'open-piston', or 'periodic-flow'";
                 return false;
             }
         } else if (argument == "--steps") {
@@ -349,6 +360,16 @@ int main(int argc, char* argv[]) {
                 }
             }
 
+            const double stepSeconds = [&] {
+                if constexpr (requires {
+                                  simulation.stepSettings()
+                                      .flow.timeStepSeconds;
+                              }) {
+                    return simulation.stepSettings().flow.timeStepSeconds;
+                } else {
+                    return simulation.stepSettings().timeStepSeconds;
+                }
+            }();
             auto nextFrameTime = std::chrono::steady_clock::now();
             for (std::uint64_t step = 0; step < options.steps; ++step) {
                 const simwing::viewer::DiagnosticFrame frame =
@@ -365,8 +386,7 @@ int main(int argc, char* argv[]) {
                 if (options.viewer) {
                     nextFrameTime += std::chrono::duration_cast<
                         std::chrono::steady_clock::duration>(
-                        std::chrono::duration<double>(
-                            simulation.stepSettings().timeStepSeconds));
+                        std::chrono::duration<double>(stepSeconds));
                     std::this_thread::sleep_until(nextFrameTime);
                 }
             }
@@ -380,32 +400,49 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
 
-            const simwing::fsi::StructureCheckpoint checkpoint =
-                simulation.structure().checkpoint();
-            simwing::fsi::StructureVector3 minimum =
-                checkpoint.nodes.front().positionMeters;
-            simwing::fsi::StructureVector3 maximum = minimum;
-            for (const simwing::fsi::StructureNodeState& node
-                 : checkpoint.nodes) {
-                minimum.x = std::min(minimum.x, node.positionMeters.x);
-                minimum.y = std::min(minimum.y, node.positionMeters.y);
-                minimum.z = std::min(minimum.z, node.positionMeters.z);
-                maximum.x = std::max(maximum.x, node.positionMeters.x);
-                maximum.y = std::max(maximum.y, node.positionMeters.y);
-                maximum.z = std::max(maximum.z, node.positionMeters.z);
+            if constexpr (requires { simulation.structure(); }) {
+                const simwing::fsi::StructureCheckpoint checkpoint =
+                    simulation.structure().checkpoint();
+                simwing::fsi::StructureVector3 minimum =
+                    checkpoint.nodes.front().positionMeters;
+                simwing::fsi::StructureVector3 maximum = minimum;
+                for (const simwing::fsi::StructureNodeState& node
+                     : checkpoint.nodes) {
+                    minimum.x = std::min(minimum.x, node.positionMeters.x);
+                    minimum.y = std::min(minimum.y, node.positionMeters.y);
+                    minimum.z = std::min(minimum.z, node.positionMeters.z);
+                    maximum.x = std::max(maximum.x, node.positionMeters.x);
+                    maximum.y = std::max(maximum.y, node.positionMeters.y);
+                    maximum.z = std::max(maximum.z, node.positionMeters.z);
+                }
+                const simwing::fsi::StructureDiagnostics diagnostics =
+                    simulation.structure().diagnostics();
+                std::printf(
+                    "simwing-fsi completed %llu step(s), t=%.9g s, "
+                    "bounds=[%.6g %.6g %.6g]-[%.6g %.6g %.6g] m, "
+                    "max-strain=%.6g, trace=%s\n",
+                    static_cast<unsigned long long>(
+                        checkpoint.acceptedStepCount),
+                    checkpoint.simulationTimeSeconds,
+                    minimum.x, minimum.y, minimum.z,
+                    maximum.x, maximum.y, maximum.z,
+                    diagnostics.maximumAbsoluteMembraneStrain,
+                    options.tracePath.string().c_str());
+            } else {
+                const auto& diagnostics = simulation.diagnostics();
+                std::printf(
+                    "simwing-fsi completed %llu periodic-flow step(s), "
+                    "t=%.9g s, substeps=%zu, max-CFL=%.6g, "
+                    "divergence-L2=%.6g 1/s, energy=%.9g J, trace=%s\n",
+                    static_cast<unsigned long long>(
+                        simulation.acceptedStepCount()),
+                    simulation.simulationTimeSeconds(),
+                    diagnostics.plannedSubstepCount,
+                    diagnostics.maximumObservedOutgoingCourantNumber,
+                    diagnostics.finalDivergenceL2PerSecond,
+                    diagnostics.kineticEnergyAfterJoules,
+                    options.tracePath.string().c_str());
             }
-            const simwing::fsi::StructureDiagnostics diagnostics =
-                simulation.structure().diagnostics();
-            std::printf("simwing-fsi completed %llu step(s), t=%.9g s, "
-                        "bounds=[%.6g %.6g %.6g]-[%.6g %.6g %.6g] m, "
-                        "max-strain=%.6g, trace=%s\n",
-                        static_cast<unsigned long long>(
-                            checkpoint.acceptedStepCount),
-                        checkpoint.simulationTimeSeconds,
-                        minimum.x, minimum.y, minimum.z,
-                        maximum.x, maximum.y, maximum.z,
-                        diagnostics.maximumAbsoluteMembraneStrain,
-                        options.tracePath.string().c_str());
             return 0;
         };
 
@@ -415,6 +452,10 @@ int main(int argc, char* argv[]) {
         }
         if (options.workerCase == WorkerCase::OpenPiston) {
             simwing::fsi::OpenPistonCase simulation;
+            return run(simulation);
+        }
+        if (options.workerCase == WorkerCase::PeriodicFlow) {
+            simwing::fsi::PeriodicFlowCase simulation;
             return run(simulation);
         }
         simwing::fsi::CanonicalStructuralCase simulation;
