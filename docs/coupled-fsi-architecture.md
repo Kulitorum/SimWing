@@ -441,6 +441,7 @@ src/fsi/
         scene_surface_ownership.* unique internal cell/face area owners
         scene_surface_crossings.* paired oriented internal-face segments
         scene_surface_face_topology.* sparse multi-sheet face-local index
+        scene_surface_face_graph.* provenance-keyed face-local connectivity
         geometry.*          exact surface and region reconstruction
         advection.*         bounded donor/limited-MC MAC transport
         projected_advection.* projected nonlinear SSPRK2 transport
@@ -528,8 +529,10 @@ remain contact and coplanar triangle area remains under face ownership. It
 rejects unresolved periodic-domain boundary area and grid-edge-aligned crossing
 ambiguity. A bounded sparse index groups crossing and coplanar references under
 stable grid-bound MAC-face IDs while retaining each sheet separately and making
-no false union-coverage claim. Volume fractions and region reconstruction remain
-open. A canonical Qt-free
+no false union-coverage claim. A provenance-keyed graph canonically stitches
+shared authored edges, retains opening and grid-edge endpoints, and reports
+node degree without claiming an open graph is a closed region. Volume fractions
+and region reconstruction remain open. A canonical Qt-free
 structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.

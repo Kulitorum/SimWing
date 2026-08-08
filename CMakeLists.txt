@@ -295,6 +295,8 @@ add_library(simwing_scene_fluid_geometry STATIC
     src/fsi/fluid/scene_surface_crossings.h
     src/fsi/fluid/scene_surface_face_topology.cpp
     src/fsi/fluid/scene_surface_face_topology.h
+    src/fsi/fluid/scene_surface_face_graph.cpp
+    src/fsi/fluid/scene_surface_face_graph.h
 )
 target_include_directories(simwing_scene_fluid_geometry PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
@@ -943,6 +945,12 @@ add_executable(simwing-scene-surface-face-topology-test
 target_link_libraries(simwing-scene-surface-face-topology-test
     PRIVATE simwing_scene_fluid_geometry)
 
+add_executable(simwing-scene-surface-face-graph-test
+    tests/simwing_scene_surface_face_graph_test.cpp
+)
+target_link_libraries(simwing-scene-surface-face-graph-test
+    PRIVATE simwing_scene_fluid_geometry)
+
 add_executable(simwing-scene-fluid-quadrature-test
     tests/simwing_scene_fluid_quadrature_test.cpp
 )
@@ -1348,6 +1356,7 @@ set_target_properties(
     simwing-scene-surface-ownership-test
     simwing-scene-surface-crossings-test
     simwing-scene-surface-face-topology-test
+    simwing-scene-surface-face-graph-test
     simwing-scene-fluid-quadrature-test
     simwing-viewer-protocol-test
     simwing-vector-glyphs-test
@@ -1427,6 +1436,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-scene-surface-ownership-test
         simwing-scene-surface-crossings-test
         simwing-scene-surface-face-topology-test
+        simwing-scene-surface-face-graph-test
         simwing-scene-fluid-quadrature-test
         simwing-viewer-protocol-test
         simwing-vector-glyphs-test
@@ -1603,6 +1613,8 @@ add_test(NAME simwing_scene_surface_crossings
     COMMAND simwing-scene-surface-crossings-test)
 add_test(NAME simwing_scene_surface_face_topology
     COMMAND simwing-scene-surface-face-topology-test)
+add_test(NAME simwing_scene_surface_face_graph
+    COMMAND simwing-scene-surface-face-graph-test)
 add_test(NAME simwing_scene_fluid_quadrature
     COMMAND simwing-scene-fluid-quadrature-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
