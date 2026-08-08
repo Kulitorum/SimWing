@@ -1,0 +1,264 @@
+#include "fluid/evolution.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <stdexcept>
+#include <utility>
+
+namespace simwing::fsi::fluid {
+namespace {
+
+bool finite(const Vector3& value) noexcept {
+    return std::isfinite(value.x)
+        && std::isfinite(value.y)
+        && std::isfinite(value.z);
+}
+
+Vector3 subtract(const Vector3& first, const Vector3& second) noexcept {
+    return {first.x - second.x,
+            first.y - second.y,
+            first.z - second.z};
+}
+
+double length(const Vector3& value) noexcept {
+    return std::hypot(value.x, value.y, value.z);
+}
+
+double combinedTolerance(const double absoluteTolerance,
+                         const double relativeTolerance,
+                         const double firstScale,
+                         const double secondScale) noexcept {
+    return absoluteTolerance
+        + relativeTolerance * std::max(firstScale, secondScale);
+}
+
+void validateSettings(const PeriodicLinearFlowSettings& settings) {
+    const std::array finiteValues{
+        settings.densityKgPerCubicMeter,
+        settings.transportVelocityMetersPerSecond.x,
+        settings.transportVelocityMetersPerSecond.y,
+        settings.transportVelocityMetersPerSecond.z,
+        settings.kinematicViscositySquareMetersPerSecond,
+        settings.timeStepSeconds,
+        settings.maximumTotalCourantNumber,
+        settings.maximumDiffusionNumber,
+        settings.projectionAbsoluteResidualTolerance,
+        settings.projectionRelativeResidualTolerance,
+        settings.absoluteMomentumToleranceNewtonSeconds,
+        settings.relativeMomentumTolerance,
+        settings.absoluteEnergyToleranceJoules,
+        settings.relativeEnergyTolerance,
+    };
+    if (!std::ranges::all_of(finiteValues, [](const double value) {
+            return std::isfinite(value);
+        })
+        || settings.densityKgPerCubicMeter <= 0.0
+        || settings.kinematicViscositySquareMetersPerSecond < 0.0
+        || settings.timeStepSeconds <= 0.0
+        || settings.maximumTotalCourantNumber <= 0.0
+        || settings.maximumTotalCourantNumber > 1.0
+        || settings.maximumDiffusionNumber <= 0.0
+        || settings.maximumDiffusionNumber > 0.5
+        || settings.projectionAbsoluteResidualTolerance < 0.0
+        || settings.projectionRelativeResidualTolerance < 0.0
+        || settings.projectionMaximumIterations == 0
+        || settings.absoluteMomentumToleranceNewtonSeconds < 0.0
+        || settings.relativeMomentumTolerance < 0.0
+        || settings.absoluteEnergyToleranceJoules < 0.0
+        || settings.relativeEnergyTolerance < 0.0) {
+        throw std::invalid_argument(
+            "periodic linear-flow settings are invalid");
+    }
+}
+
+Vector3 momentumNewtonSeconds(
+    const PeriodicCartesianGrid& grid,
+    const MacVelocityField& velocity,
+    const double densityKgPerCubicMeter) {
+    Vector3 result;
+    for (const double value : velocity.xFaces()) {
+        result.x += value;
+    }
+    for (const double value : velocity.yFaces()) {
+        result.y += value;
+    }
+    for (const double value : velocity.zFaces()) {
+        result.z += value;
+    }
+    const double sampleMass = densityKgPerCubicMeter
+        * grid.cellVolumeCubicMeters();
+    result.x *= sampleMass;
+    result.y *= sampleMass;
+    result.z *= sampleMass;
+    return result;
+}
+
+} // namespace
+
+PeriodicLinearFlowDiagnostics advancePeriodicLinearFlow(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const PeriodicLinearFlowSettings& settings) {
+    validateSettings(settings);
+    if (!velocityMetersPerSecond.matches(grid)
+        || !pressurePascals.matches(grid)) {
+        throw std::invalid_argument(
+            "periodic linear-flow fields do not match their grid");
+    }
+    if (!isFinite(velocityMetersPerSecond) || !isFinite(pressurePascals)) {
+        throw std::invalid_argument(
+            "periodic linear-flow fields must be finite");
+    }
+
+    PeriodicLinearFlowDiagnostics diagnostics;
+    diagnostics.momentumBeforeNewtonSeconds = momentumNewtonSeconds(
+        grid, velocityMetersPerSecond, settings.densityKgPerCubicMeter);
+    diagnostics.momentumAfterNewtonSeconds =
+        diagnostics.momentumBeforeNewtonSeconds;
+    diagnostics.kineticEnergyBeforeJoules = kineticEnergyJoules(
+        grid, velocityMetersPerSecond, settings.densityKgPerCubicMeter);
+    diagnostics.kineticEnergyAfterJoules =
+        diagnostics.kineticEnergyBeforeJoules;
+    CellScalarField divergence(grid);
+    computeDivergence(grid, velocityMetersPerSecond, divergence);
+    diagnostics.initialDivergenceL2PerSecond = l2Norm(divergence);
+
+    auto candidateVelocity = velocityMetersPerSecond;
+    auto candidatePressure = pressurePascals;
+    UniformMacAdvectionSettings advectionSettings;
+    advectionSettings.densityKgPerCubicMeter =
+        settings.densityKgPerCubicMeter;
+    advectionSettings.transportVelocityMetersPerSecond =
+        settings.transportVelocityMetersPerSecond;
+    advectionSettings.timeStepSeconds = settings.timeStepSeconds;
+    advectionSettings.maximumTotalCourantNumber =
+        settings.maximumTotalCourantNumber;
+    advectionSettings.absoluteMomentumToleranceNewtonSeconds =
+        settings.absoluteMomentumToleranceNewtonSeconds;
+    advectionSettings.relativeMomentumTolerance =
+        settings.relativeMomentumTolerance;
+    advectionSettings.absoluteEnergyToleranceJoules =
+        settings.absoluteEnergyToleranceJoules;
+    advectionSettings.relativeEnergyTolerance =
+        settings.relativeEnergyTolerance;
+    diagnostics.advection = advectVelocityByUniformFlow(
+        grid, candidateVelocity, advectionSettings);
+    if (!diagnostics.advection.accepted) {
+        diagnostics.failureStage =
+            PeriodicLinearFlowFailureStage::Advection;
+        diagnostics.finite = diagnostics.advection.finite;
+        return diagnostics;
+    }
+    diagnostics.advectionNumericalEnergyLossJoules =
+        diagnostics.advection.numericalKineticEnergyLossJoules;
+
+    PeriodicMacDiffusionSettings diffusionSettings;
+    diffusionSettings.densityKgPerCubicMeter =
+        settings.densityKgPerCubicMeter;
+    diffusionSettings.kinematicViscositySquareMetersPerSecond =
+        settings.kinematicViscositySquareMetersPerSecond;
+    diffusionSettings.timeStepSeconds = settings.timeStepSeconds;
+    diffusionSettings.maximumDiffusionNumber =
+        settings.maximumDiffusionNumber;
+    diffusionSettings.absoluteMomentumToleranceNewtonSeconds =
+        settings.absoluteMomentumToleranceNewtonSeconds;
+    diffusionSettings.relativeMomentumTolerance =
+        settings.relativeMomentumTolerance;
+    diffusionSettings.absoluteEnergyToleranceJoules =
+        settings.absoluteEnergyToleranceJoules;
+    diffusionSettings.relativeEnergyTolerance =
+        settings.relativeEnergyTolerance;
+    diagnostics.diffusion = diffuseVelocityExplicit(
+        grid, candidateVelocity, diffusionSettings);
+    if (!diagnostics.diffusion.accepted) {
+        diagnostics.failureStage =
+            PeriodicLinearFlowFailureStage::Diffusion;
+        diagnostics.finite = diagnostics.advection.finite
+            && diagnostics.diffusion.finite;
+        return diagnostics;
+    }
+    diagnostics.viscousEnergyLossJoules =
+        diagnostics.diffusion.dissipatedKineticEnergyJoules;
+
+    ProjectionSettings projectionSettings;
+    projectionSettings.densityKgPerCubicMeter =
+        settings.densityKgPerCubicMeter;
+    projectionSettings.timeStepSeconds = settings.timeStepSeconds;
+    projectionSettings.absoluteResidualTolerance =
+        settings.projectionAbsoluteResidualTolerance;
+    projectionSettings.relativeResidualTolerance =
+        settings.projectionRelativeResidualTolerance;
+    projectionSettings.maximumIterations =
+        settings.projectionMaximumIterations;
+    diagnostics.projection = projectVelocity(
+        grid, candidateVelocity, candidatePressure, projectionSettings);
+    if (!diagnostics.projection.converged) {
+        diagnostics.failureStage =
+            PeriodicLinearFlowFailureStage::Projection;
+        diagnostics.finite = diagnostics.advection.finite
+            && diagnostics.diffusion.finite;
+        return diagnostics;
+    }
+
+    diagnostics.momentumAfterNewtonSeconds = momentumNewtonSeconds(
+        grid, candidateVelocity, settings.densityKgPerCubicMeter);
+    diagnostics.momentumResidualNewtonSeconds = subtract(
+        diagnostics.momentumAfterNewtonSeconds,
+        diagnostics.momentumBeforeNewtonSeconds);
+    diagnostics.momentumResidualNormNewtonSeconds = length(
+        diagnostics.momentumResidualNewtonSeconds);
+    diagnostics.kineticEnergyAfterJoules = kineticEnergyJoules(
+        grid, candidateVelocity, settings.densityKgPerCubicMeter);
+    diagnostics.projectionEnergyLossJoules =
+        diagnostics.projection.kineticEnergyBeforeJoules
+        - diagnostics.projection.kineticEnergyAfterJoules;
+    diagnostics.totalEnergyLossJoules =
+        diagnostics.kineticEnergyBeforeJoules
+        - diagnostics.kineticEnergyAfterJoules;
+    diagnostics.finalDivergenceL2PerSecond =
+        diagnostics.projection.divergenceL2AfterPerSecond;
+    diagnostics.finite = diagnostics.advection.finite
+        && diagnostics.diffusion.finite
+        && finite(diagnostics.momentumAfterNewtonSeconds)
+        && finite(diagnostics.momentumResidualNewtonSeconds)
+        && std::isfinite(
+            diagnostics.momentumResidualNormNewtonSeconds)
+        && std::isfinite(diagnostics.kineticEnergyBeforeJoules)
+        && std::isfinite(diagnostics.kineticEnergyAfterJoules)
+        && std::isfinite(
+            diagnostics.advectionNumericalEnergyLossJoules)
+        && std::isfinite(diagnostics.viscousEnergyLossJoules)
+        && std::isfinite(diagnostics.projectionEnergyLossJoules)
+        && std::isfinite(diagnostics.totalEnergyLossJoules)
+        && std::isfinite(diagnostics.initialDivergenceL2PerSecond)
+        && std::isfinite(diagnostics.finalDivergenceL2PerSecond)
+        && isFinite(candidateVelocity) && isFinite(candidatePressure);
+    const double momentumTolerance = combinedTolerance(
+        settings.absoluteMomentumToleranceNewtonSeconds,
+        settings.relativeMomentumTolerance,
+        length(diagnostics.momentumBeforeNewtonSeconds),
+        length(diagnostics.momentumAfterNewtonSeconds));
+    const double energyTolerance = combinedTolerance(
+        settings.absoluteEnergyToleranceJoules,
+        settings.relativeEnergyTolerance,
+        std::abs(diagnostics.kineticEnergyBeforeJoules),
+        std::abs(diagnostics.kineticEnergyAfterJoules));
+    diagnostics.accepted = diagnostics.finite
+        && diagnostics.momentumResidualNormNewtonSeconds
+            <= momentumTolerance
+        && diagnostics.kineticEnergyAfterJoules
+            <= diagnostics.kineticEnergyBeforeJoules + energyTolerance;
+    if (!diagnostics.accepted) {
+        diagnostics.failureStage =
+            PeriodicLinearFlowFailureStage::Conservation;
+        return diagnostics;
+    }
+
+    velocityMetersPerSecond = std::move(candidateVelocity);
+    pressurePascals = std::move(candidatePressure);
+    return diagnostics;
+}
+
+} // namespace simwing::fsi::fluid

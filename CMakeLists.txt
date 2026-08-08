@@ -294,6 +294,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/checkpoint.h
     src/fsi/fluid/diffusion.cpp
     src/fsi/fluid/diffusion.h
+    src/fsi/fluid/evolution.cpp
+    src/fsi/fluid/evolution.h
     src/fsi/fluid/grid.cpp
     src/fsi/fluid/grid.h
     src/fsi/fluid/interface_jump.cpp
@@ -676,6 +678,11 @@ add_executable(simwing-fluid-advection-test
 )
 target_link_libraries(simwing-fluid-advection-test PRIVATE simwing_fluid)
 
+add_executable(simwing-fluid-evolution-test
+    tests/simwing_fluid_evolution_test.cpp
+)
+target_link_libraries(simwing-fluid-evolution-test PRIVATE simwing_fluid)
+
 add_executable(simwing-transfer-test
     tests/simwing_transfer_test.cpp
 )
@@ -878,6 +885,7 @@ set_target_properties(
     simwing-fluid-checkpoint-test
     simwing-fluid-diffusion-test
     simwing-fluid-advection-test
+    simwing-fluid-evolution-test
     simwing-transfer-test
     simwing-coupling-test
     simwing-fluid-structure-bridge-test
@@ -928,6 +936,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-fluid-checkpoint-test
         simwing-fluid-diffusion-test
         simwing-fluid-advection-test
+        simwing-fluid-evolution-test
         simwing-transfer-test
         simwing-coupling-test
         simwing-fluid-structure-bridge-test
@@ -1073,6 +1082,8 @@ add_test(NAME simwing_fluid_diffusion
     COMMAND simwing-fluid-diffusion-test)
 add_test(NAME simwing_fluid_advection
     COMMAND simwing-fluid-advection-test)
+add_test(NAME simwing_fluid_evolution
+    COMMAND simwing-fluid-evolution-test)
 add_test(NAME simwing_transfer COMMAND simwing-transfer-test)
 add_test(NAME simwing_coupling COMMAND simwing-coupling-test)
 add_test(NAME simwing_fluid_structure_bridge

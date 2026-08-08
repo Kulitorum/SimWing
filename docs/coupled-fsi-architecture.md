@@ -389,6 +389,7 @@ src/fsi/
         geometry.*          discrete surface and region reconstruction
         advection.*         bounded uniform-flow MAC transport oracle
         diffusion.*         bounded periodic MAC viscosity verification
+        evolution.*         transactional linear fluid macro-step
         projection.*
         interface_jump.*
         moving_interface.*  grid-face constraints and region topology
@@ -468,7 +469,14 @@ discrete divergence, and becomes an exact one-cell periodic translation at the
 sharp CFL-one boundary. Its full-period sine regression converges at the
 expected first order. This is the bounded baseline for later second-order
 variable/nonlinear convection, not that production operator itself. A
-canonical single-crossing
+first composed periodic macro-step now runs this bounded transport, explicit
+viscosity, and the zero-mean projection on private candidates. Velocity and
+pressure commit together only after every stage and an independent aggregate
+momentum/kinetic-energy ledger pass. Its regression is bit-identical to the
+three standalone operators, retains every stage diagnostic, and rejects at
+advection, diffusion, or projection without changing either input field. This
+is the first complete linear evolution path, not yet nonlinear convection or a
+second-order production integrator. A canonical single-crossing
 grid-face field now retains stable surface IDs, two distinct fluid-region IDs,
 and the signed pressure discontinuity. Its paired sharp gradient and Poisson
 source preserve a static pressurized slab without smoothing the pressure or
@@ -624,7 +632,8 @@ cases meet their declared tolerances.
 
 Status: in progress. `simwing_fluid` currently owns the uniform periodic
 verification grid, bounded uniform-flow velocity transport, explicit laminar
-velocity diffusion, pressure projection, and fixed-topology face-aligned moving
+velocity diffusion, their transactional composed macro-step, pressure
+projection, and fixed-topology face-aligned moving
 constraints, plus the first open planar one-partial-cell control-volume
 operator, its exact next-plane topology rebase, and the bounded physical
 cut-surface reaction geometry described above. On solve failure it preserves

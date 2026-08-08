@@ -45,6 +45,13 @@ performs an exact one-cell periodic shift; below that limit it preserves
 component momentum, the maximum principle, non-increasing kinetic energy, and
 discrete solenoidal modes. It is intentionally first order and does not yet
 claim higher-order or nonlinear self-advection.
+Those two evolution primitives now compose with the zero-mean pressure solve in
+one transactional periodic fluid step. Every stage runs on candidate fields;
+velocity and pressure commit together only when transport bounds, viscous
+stability, projection convergence, and the final momentum/energy ledger all
+pass. Focused rollback cases fail each stage independently without changing
+either caller field. This is the first complete linear fluid evolution path,
+not yet the nonlinear production Navier-Stokes step.
 A validated single-crossing sharp-interface
 field now preserves a prescribed two-sided static pressure jump without
 smearing or spurious flow, including across the periodic domain boundary.
