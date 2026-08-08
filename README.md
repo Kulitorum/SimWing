@@ -312,8 +312,12 @@ rollback boundary. It accepts only a fresh iteration baseline and exposes one
 restore-and-begin operation, ensuring a reduced attempt cannot start from the
 discarded Structure, fluid, or Aitken state. Within an active attempt it also
 owns a solver-only checkpoint: Structure and fluid rewind before the next
-fixed-point solve while the advanced Aitken iterate remains intact. The
-repeated fluid/Structure solve still remains to be wired. The
+fixed-point solve while the advanced Aitken iterate remains intact. A generic
+Qt-free loop driver now invokes a typed physical-solver callback, validates its
+accepted epoch, advances Aitken/convergence, performs those iteration rewinds,
+and carries exhaustion through bounded full-state retries. Terminal numerical
+failure or a callback exception restores the accepted macro-step baseline. A
+real fluid/Structure worker callback still remains to be wired. The
 macro-step surface supplies the residual norms from
 stable-ID-bound baseline/previous/current kinematics and consecutive nodal
 traction results. It uses maximum physical nodal updates, references motion to

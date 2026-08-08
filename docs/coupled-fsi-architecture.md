@@ -760,7 +760,13 @@ starts from identical Structure, fluid, and relaxation state. Repeating a
 fixed-point iteration within that attempt uses a separate transactional
 solver-only checkpoint: Structure and fluid return to the same macro-step
 baseline while the advanced relaxed interface and Aitken history are retained.
-The repeated solver loop remains future worker work.
+A generic Qt-free loop now drives a typed physical-solver callback through
+those states. It validates each returned Structure/fluid epoch, advances the
+relaxation/convergence owner, rewinds only the solvers between iterations, and
+performs full rollback before a reduced retry. Converged output remains live;
+terminal retry failure, invalid callback output, or an exception restores the
+accepted baseline. The first real fluid/Structure callback remains future
+worker work.
 The topology-bound
 macro-step surface computes the decision's
 inputs from saved-baseline, previous, and current stable-ID kinematics plus two
@@ -1322,9 +1328,8 @@ coupling. A matching global lift coefficient alone is insufficient.
 
 Work:
 
-- compose the checkpointable iteration owner with fluid and Structure rollback
-  through the existing macro-step state owner into a complete repeated solver
-  loop, then add IQN-ILS;
+- connect a real fluid/Structure solve to the generic rollback-safe repeated
+  macro-step driver, then add IQN-ILS;
 - drive adaptive macro-step control from the existing retry policy and coupled
   residual budgets;
 - validate static inflation and steady deformed trim before maneuvers;

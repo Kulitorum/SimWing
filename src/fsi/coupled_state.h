@@ -4,6 +4,9 @@
 #include "fluid/checkpoint.h"
 
 #include <cstdint>
+#include <functional>
+#include <span>
+#include <vector>
 
 namespace simwing::fsi {
 
@@ -175,6 +178,7 @@ public:
     [[nodiscard]] CouplingMacroStepRetryDecision reportTerminalIteration();
     void restoreSolversForNextIteration();
     [[nodiscard]] CouplingMacroStepRetryDecision restoreAndBeginRetry();
+    void restoreAttemptBaseline();
 
 private:
     StrongCouplingRollbackState state_;
@@ -182,5 +186,38 @@ private:
     StrongCouplingSolverCheckpoint solverBaseline_;
     CouplingMacroStepRetry retry_;
 };
+
+struct StrongCouplingSolverResult {
+    std::vector<double> unrelaxedInterface;
+    CouplingResidualNorms residuals;
+
+    bool operator==(const StrongCouplingSolverResult&) const = default;
+};
+
+using StrongCouplingSolverCallback = std::function<StrongCouplingSolverResult(
+    Structure&,
+    const fluid::PeriodicCartesianGrid&,
+    fluid::MovingInterfaceFluidState&,
+    std::span<const double>,
+    double)>;
+
+struct StrongCouplingMacroStepRunResult {
+    CouplingMacroStepRetryDecision decision;
+    StrongCouplingIterationResult lastIteration;
+    std::uint64_t solverRunCount = 0;
+
+    bool operator==(const StrongCouplingMacroStepRunResult&) const = default;
+};
+
+// Runs one complete bounded macro-step. The callback mutates only the physical
+// solver owners and returns one unrelaxed interface candidate plus already
+// reduced residuals. Nonterminal fixed-point iterations rewind Structure and
+// fluid while retaining Aitken history. Exhausted attempts rewind all state
+// before a smaller retry; terminal failure also leaves the accepted baseline
+// intact. Callback and validation failures restore the active baseline before
+// propagating the exception.
+[[nodiscard]] StrongCouplingMacroStepRunResult runStrongCouplingMacroStep(
+    StrongCouplingMacroStepState& macroStep,
+    const StrongCouplingSolverCallback& solve);
 
 } // namespace simwing::fsi

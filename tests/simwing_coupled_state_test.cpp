@@ -151,6 +151,24 @@ void mutate(StrongCouplingRollbackState& state) {
     static_cast<void>(state.iteration().advance(candidate, residuals));
 }
 
+void mutatePhysicalSolvers(
+    Structure& structure,
+    fluid::MovingInterfaceFluidState& fluidState,
+    const double timeStepSeconds) {
+    structure.addExternalForce(0, {2.0, 0.0, 0.0});
+    StructureStepSettings settings;
+    settings.timeStepSeconds = timeStepSeconds;
+    settings.substeps = 1;
+    settings.constraintIterations = 0;
+    settings.gravityMetersPerSecondSquared = {};
+    settings.velocityDampingPerSecond = 0.0;
+    static_cast<void>(structure.step(settings));
+    fluidState.velocityMetersPerSecond.xFaces().front()
+        += timeStepSeconds;
+    fluidState.pressurePascals.values().front()
+        -= timeStepSeconds;
+}
+
 void testCompositeRollbackAndReplay() {
     constexpr std::uint64_t fingerprint = 0x5c02'0001ULL;
     const auto grid = fluidGrid();
@@ -600,6 +618,206 @@ void testMacroStepStateRewindsSolversBetweenIterations() {
           "macro-step iteration: next solve starts at the physical baseline with advanced Aitken state");
 }
 
+StrongCouplingMacroStepState runnerMacroStep(
+    const std::uint64_t fingerprint,
+    const CouplingConvergenceSettings& convergenceSettings,
+    const CouplingMacroStepRetrySettings& retrySettings) {
+    const auto grid = fluidGrid();
+    const std::array<double, 2> initial{0.0, 0.0};
+    StrongCouplingRollbackState state(
+        fingerprint,
+        Structure(structureDefinition()),
+        grid,
+        acceptedFluidState(grid),
+        StrongCouplingIteration(
+            fingerprint, initial, {}, convergenceSettings));
+    return StrongCouplingMacroStepState(
+        std::move(state), 0.08, retrySettings);
+}
+
+void testStrongCouplingRunnerConvergesAfterRetry() {
+    constexpr std::uint64_t fingerprint = 0x5c05'0001ULL;
+    CouplingConvergenceSettings convergence;
+    convergence.minimumIterations = 2;
+    convergence.maximumIterations = 2;
+    CouplingMacroStepRetrySettings retries;
+    retries.maximumRetries = 2;
+    retries.reductionFactor = 0.5;
+    retries.minimumTimeStepSeconds = 0.01;
+    auto macroStep = runnerMacroStep(fingerprint, convergence, retries);
+    const auto baseline = macroStep.rollbackState().solverCheckpoint();
+    const double baselineFluidVelocity = macroStep.rollbackState()
+        .fluidState().velocityMetersPerSecond.xFaces().front();
+    std::uint64_t largeStepRuns = 0;
+    std::uint64_t reducedStepRuns = 0;
+    bool everyRunStartedAtBaseline = true;
+
+    const StrongCouplingSolverCallback solve =
+        [&](Structure& structure,
+            const fluid::PeriodicCartesianGrid&,
+            fluid::MovingInterfaceFluidState& fluidState,
+            const std::span<const double> current,
+            const double timeStepSeconds) {
+            const auto currentStructure = structure.checkpoint();
+            everyRunStartedAtBaseline = everyRunStartedAtBaseline
+                && sameStructureState(
+                    currentStructure, baseline.structure)
+                && fluidState.velocityMetersPerSecond.xFaces().front()
+                    == baselineFluidVelocity;
+            mutatePhysicalSolvers(
+                structure, fluidState, timeStepSeconds);
+
+            const bool largeStep = timeStepSeconds == 0.08;
+            std::uint64_t& runs = largeStep
+                ? largeStepRuns : reducedStepRuns;
+            ++runs;
+            StrongCouplingSolverResult result;
+            result.unrelaxedInterface.assign(
+                current.begin(), current.end());
+            if (largeStep || runs == 1) {
+                result.residuals = {
+                    1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+            }
+            return result;
+        };
+
+    const auto result = runStrongCouplingMacroStep(macroStep, solve);
+    const auto& state = macroStep.rollbackState();
+    check(result.decision.status
+              == CouplingMacroStepRetryStatus::Accepted
+              && result.decision.retryCount == 1
+              && result.decision.timeStepSeconds == 0.04
+              && result.lastIteration.status
+                  == StrongCouplingIterationStatus::Converged
+              && result.solverRunCount == 4
+              && largeStepRuns == 2
+              && reducedStepRuns == 2,
+          "runner: exhausted large step retries and converges at the reduced step");
+    check(everyRunStartedAtBaseline
+              && state.structure().acceptedStepCount() == 1
+              && state.structure().simulationTimeSeconds() == 0.04
+              && state.fluidState().velocityMetersPerSecond
+                     .xFaces().front() == baselineFluidVelocity + 0.04
+              && state.iteration().completedIterationCount() == 2,
+          "runner: each solve rewinds physically while accepted final state is retained");
+}
+
+void testStrongCouplingRunnerFailureAndExceptionRollback() {
+    constexpr std::uint64_t fingerprint = 0x5c05'0002ULL;
+    CouplingConvergenceSettings convergence;
+    convergence.minimumIterations = 1;
+    convergence.maximumIterations = 1;
+    CouplingMacroStepRetrySettings retries;
+    retries.maximumRetries = 1;
+    retries.reductionFactor = 0.5;
+    retries.minimumTimeStepSeconds = 0.01;
+    auto failedMacroStep = runnerMacroStep(
+        fingerprint, convergence, retries);
+    const auto failedBaseline =
+        failedMacroStep.rollbackState().checkpoint();
+    const StrongCouplingSolverCallback neverConverges =
+        [](Structure& structure,
+           const fluid::PeriodicCartesianGrid&,
+           fluid::MovingInterfaceFluidState& fluidState,
+           const std::span<const double> current,
+           const double timeStepSeconds) {
+            mutatePhysicalSolvers(
+                structure, fluidState, timeStepSeconds);
+            StrongCouplingSolverResult result;
+            result.unrelaxedInterface.assign(
+                current.begin(), current.end());
+            result.residuals = {
+                1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+            return result;
+        };
+    const auto failed = runStrongCouplingMacroStep(
+        failedMacroStep, neverConverges);
+    const auto failedState = failedMacroStep.rollbackState().checkpoint();
+    check(failed.decision.status
+              == CouplingMacroStepRetryStatus::Failed
+              && failed.solverRunCount == 2
+              && sameStructureState(
+                  failedState.structure, failedBaseline.structure)
+              && sameFluidCheckpoint(
+                  failedState.fluid, failedBaseline.fluid)
+              && failedState.iteration == failedBaseline.iteration,
+          "runner: terminal retry failure leaves the accepted baseline intact");
+
+    auto throwingMacroStep = runnerMacroStep(
+        fingerprint + 1, convergence, retries);
+    const auto throwingBaseline =
+        throwingMacroStep.rollbackState().checkpoint();
+    const StrongCouplingSolverCallback returnsUnacceptedFluid =
+        [](Structure& structure,
+           const fluid::PeriodicCartesianGrid&,
+           fluid::MovingInterfaceFluidState& fluidState,
+           const std::span<const double> current,
+           const double timeStepSeconds) {
+            mutatePhysicalSolvers(
+                structure, fluidState, timeStepSeconds);
+            fluidState.diagnostics.finite = false;
+            StrongCouplingSolverResult result;
+            result.unrelaxedInterface.assign(
+                current.begin(), current.end());
+            return result;
+        };
+    expectRejected(
+        [&] {
+            static_cast<void>(runStrongCouplingMacroStep(
+                throwingMacroStep, returnsUnacceptedFluid));
+        },
+        "runner: an unaccepted callback fluid epoch is rejected");
+    const auto afterInvalidFluid =
+        throwingMacroStep.rollbackState().checkpoint();
+    check(sameStructureState(
+              afterInvalidFluid.structure, throwingBaseline.structure)
+              && sameFluidCheckpoint(
+                  afterInvalidFluid.fluid, throwingBaseline.fluid)
+              && afterInvalidFluid.iteration
+                  == throwingBaseline.iteration,
+          "runner: rejected physical results restore the complete baseline");
+
+    const StrongCouplingSolverCallback throwsAfterMutation =
+        [](Structure& structure,
+           const fluid::PeriodicCartesianGrid&,
+           fluid::MovingInterfaceFluidState& fluidState,
+           std::span<const double>,
+           const double timeStepSeconds) -> StrongCouplingSolverResult {
+            mutatePhysicalSolvers(
+                structure, fluidState, timeStepSeconds);
+            throw std::runtime_error("synthetic coupled solver failure");
+        };
+    bool exceptionPropagated = false;
+    try {
+        static_cast<void>(runStrongCouplingMacroStep(
+            throwingMacroStep, throwsAfterMutation));
+    } catch (const std::runtime_error&) {
+        exceptionPropagated = true;
+    }
+    const auto throwingState =
+        throwingMacroStep.rollbackState().checkpoint();
+    check(exceptionPropagated
+              && throwingMacroStep.decision().status
+                  == CouplingMacroStepRetryStatus::Attempting
+              && sameStructureState(
+                  throwingState.structure, throwingBaseline.structure)
+              && sameFluidCheckpoint(
+                  throwingState.fluid, throwingBaseline.fluid)
+              && throwingState.iteration == throwingBaseline.iteration,
+          "runner: callback exceptions propagate only after full baseline rollback");
+
+    const auto beforeEmpty = throwingMacroStep.rollbackState().checkpoint();
+    expectRejected(
+        [&] {
+            static_cast<void>(runStrongCouplingMacroStep(
+                throwingMacroStep, {}));
+        },
+        "runner: an empty solver callback is rejected");
+    check(throwingMacroStep.rollbackState().iteration().checkpoint()
+              == beforeEmpty.iteration,
+          "runner: invalid startup preserves the fresh macro-step");
+}
+
 } // namespace
 
 int main() {
@@ -611,6 +829,8 @@ int main() {
     testMacroStepStateRestoresBeforeRetry();
     testMacroStepStateAcceptanceAndFreshBaseline();
     testMacroStepStateRewindsSolversBetweenIterations();
+    testStrongCouplingRunnerConvergesAfterRetry();
+    testStrongCouplingRunnerFailureAndExceptionRollback();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d strong-coupling rollback check(s) failed\n",

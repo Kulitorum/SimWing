@@ -386,4 +386,64 @@ StrongCouplingMacroStepState::restoreAndBeginRetry() {
     return retry_.beginRetry();
 }
 
+void StrongCouplingMacroStepState::restoreAttemptBaseline() {
+    if (retry_.status() == CouplingMacroStepRetryStatus::Accepted) {
+        throw std::logic_error(
+            "accepted strong-coupling state cannot be discarded");
+    }
+    state_.restore(baseline_);
+}
+
+StrongCouplingMacroStepRunResult runStrongCouplingMacroStep(
+    StrongCouplingMacroStepState& macroStep,
+    const StrongCouplingSolverCallback& solve) {
+    auto& state = macroStep.rollbackState();
+    if (!solve
+        || macroStep.decision().status
+            != CouplingMacroStepRetryStatus::Attempting
+        || state.iteration().status()
+            != StrongCouplingIterationStatus::Iterating
+        || state.iteration().completedIterationCount() != 0) {
+        throw std::invalid_argument(
+            "strong-coupling runner requires a fresh active macro-step and solver");
+    }
+
+    StrongCouplingMacroStepRunResult result;
+    try {
+        while (true) {
+            const StrongCouplingSolverResult solved = solve(
+                state.structure(),
+                state.grid(),
+                state.fluidState(),
+                state.iteration().currentInterface(),
+                macroStep.decision().timeStepSeconds);
+            ++result.solverRunCount;
+            static_cast<void>(state.solverCheckpoint());
+            result.lastIteration = state.iteration().advance(
+                solved.unrelaxedInterface, solved.residuals);
+
+            if (result.lastIteration.status
+                    == StrongCouplingIterationStatus::Iterating) {
+                macroStep.restoreSolversForNextIteration();
+                continue;
+            }
+
+            result.decision = macroStep.reportTerminalIteration();
+            if (result.decision.status
+                    == CouplingMacroStepRetryStatus::RetryPending) {
+                static_cast<void>(macroStep.restoreAndBeginRetry());
+                continue;
+            }
+            if (result.decision.status
+                    == CouplingMacroStepRetryStatus::Failed) {
+                macroStep.restoreAttemptBaseline();
+            }
+            return result;
+        }
+    } catch (...) {
+        macroStep.restoreAttemptBaseline();
+        throw;
+    }
+}
+
 } // namespace simwing::fsi
