@@ -208,9 +208,10 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   moving/porous state including the predicted-field provenance required to
   reconstruct midpoint samples, canonical resistance definitions, prescribed
   jumps, and complete nested diagnostics. Both are immutable and bound to exact
-  grid/topology fingerprints. A deterministic bounded/checksummed little-endian
-  codec currently persists the moving-only field, interface-kinematics/topology,
-  and nested-diagnostic state; moving/porous persistence remains separate work.
+  grid/topology fingerprints. Distinct deterministic bounded/checksummed
+  little-endian codecs persist the moving-only state and the complete
+  moving/porous composition; the latter nests and revalidates the former rather
+  than duplicating its interface/field wire contract.
   Its viscosity operators are a bounded explicit periodic MAC Euler oracle and
   a two-stage SSPRK2 path, both with the sharp
   `nu*dt*sum(1/h^2) <= 0.5` per-stage stability contract, exact zero/uniform

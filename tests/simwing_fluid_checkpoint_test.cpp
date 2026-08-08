@@ -54,6 +54,17 @@ std::vector<std::uint8_t> serializedCheckpoint(
     return bytes;
 }
 
+std::vector<std::uint8_t> serializedMovingPorousCheckpoint(
+    const MovingPorousFluidCheckpoint& checkpoint) {
+    std::vector<std::uint8_t> bytes;
+    MovingInterfaceFluidCheckpointError error;
+    check(simwing::fsi::fluid::serializeMovingPorousFluidCheckpoint(
+              checkpoint, bytes, &error)
+              && !error && !bytes.empty(),
+          "persistent moving porous helper serializes accepted state");
+    return bytes;
+}
+
 void refreshPersistentChecksum(std::vector<std::uint8_t>& bytes) {
     constexpr std::size_t envelopeBytes = 24;
     constexpr std::size_t checksumOffset = 16;
@@ -86,6 +97,30 @@ bool sameCheckpoint(
             == secondState.velocityMetersPerSecond
         && firstState.pressurePascals == secondState.pressurePascals
         && firstState.interfaces == secondState.interfaces
+        && firstState.diagnostics == secondState.diagnostics;
+}
+
+bool sameMovingPorousCheckpoint(
+    const PeriodicCartesianGrid& grid,
+    const MovingPorousFluidCheckpoint& first,
+    const MovingPorousFluidCheckpoint& second) {
+    const auto firstState = restoreMovingPorousFluidState(grid, first);
+    const auto secondState = restoreMovingPorousFluidState(grid, second);
+    return first.version == second.version
+        && first.cellCounts == second.cellCounts
+        && first.lowerMeters == second.lowerMeters
+        && first.upperMeters == second.upperMeters
+        && first.scalarSampleCount == second.scalarSampleCount
+        && first.topologyFingerprint == second.topologyFingerprint
+        && firstState.predictedVelocityMetersPerSecond
+            == secondState.predictedVelocityMetersPerSecond
+        && firstState.velocityMetersPerSecond
+            == secondState.velocityMetersPerSecond
+        && firstState.pressurePascals == secondState.pressurePascals
+        && firstState.interfaces == secondState.interfaces
+        && firstState.porousCrossings == secondState.porousCrossings
+        && firstState.prescribedPressureJumps
+            == secondState.prescribedPressureJumps
         && firstState.diagnostics == secondState.diagnostics;
 }
 
@@ -199,6 +234,25 @@ MovingPorousProjectionSettings movingPorousSettings(
     settings.iteration.relaxation = 0.5;
     settings.iteration.maximumNonlinearIterations = 100;
     return settings;
+}
+
+MovingPorousFluidCheckpoint movingPorousCheckpoint(
+    const PorousConstitutiveEvaluation evaluation) {
+    const auto grid = movingPorousGrid();
+    const auto interfaces = movingPorousInterfaces(grid);
+    const auto porous = movingPorousCrossings(grid);
+    const auto prescribed = movingPorousBalance(
+        grid, evaluation == PorousConstitutiveEvaluation::Endpoint
+            ? 1.5 : 0.25);
+    MacVelocityField predicted(grid);
+    MacVelocityField velocity = predicted;
+    CellScalarField pressure(grid);
+    const auto diagnostics = projectVelocityWithMovingAndPorousInterfaces(
+        grid, velocity, pressure, interfaces,
+        porous, prescribed, movingPorousSettings(evaluation));
+    return checkpointMovingPorousFluidState(
+        grid, predicted, velocity, pressure, interfaces,
+        porous, prescribed, diagnostics);
 }
 
 void testAcceptedStateRoundTrip() {
@@ -477,6 +531,206 @@ void testMovingPorousStrictValidation() {
         "moving porous checkpoint validation: non-finite provenance cannot be captured");
 }
 
+void testMovingPorousPersistentRoundTrip() {
+    const auto grid = movingPorousGrid();
+    for (const auto evaluation : {
+             PorousConstitutiveEvaluation::Endpoint,
+             PorousConstitutiveEvaluation::Midpoint}) {
+        const auto checkpoint = movingPorousCheckpoint(evaluation);
+        const auto first = serializedMovingPorousCheckpoint(checkpoint);
+        const auto second = serializedMovingPorousCheckpoint(checkpoint);
+        MovingPorousFluidCheckpoint decoded;
+        MovingInterfaceFluidCheckpointError error{
+            MovingInterfaceFluidCheckpointErrorCode::InvalidData, "old"};
+        check(first == second
+                  && simwing::fsi::fluid::deserializeMovingPorousFluidCheckpoint(
+                      first, decoded, &error)
+                  && !error
+                  && sameMovingPorousCheckpoint(
+                      grid, checkpoint, decoded)
+                  && serializedMovingPorousCheckpoint(decoded) == first,
+              "persistent moving porous round trip preserves endpoint/midpoint state and bytes");
+    }
+
+    const auto movingPorous = movingPorousCheckpoint(
+        PorousConstitutiveEvaluation::Midpoint);
+    const auto movingPorousBytes =
+        serializedMovingPorousCheckpoint(movingPorous);
+    const auto movingGrid = makeGrid();
+    const auto movingInterfaces = makeInterfaces(movingGrid, 3, 0.125);
+    MacVelocityField movingVelocity(movingGrid);
+    CellScalarField movingPressure(movingGrid);
+    const auto movingDiagnostics = projectVelocityWithMovingInterfaces(
+        movingGrid, movingVelocity, movingPressure,
+        movingInterfaces, projectionSettings());
+    const auto movingOnly = checkpointMovingInterfaceFluidState(
+        movingGrid, movingVelocity, movingPressure,
+        movingInterfaces, movingDiagnostics);
+    const auto movingOnlyBytes = serializedCheckpoint(movingOnly);
+    MovingPorousFluidCheckpoint porousOutput;
+    MovingInterfaceFluidCheckpoint movingOutput;
+    MovingInterfaceFluidCheckpointError error;
+    check(!simwing::fsi::fluid::deserializeMovingInterfaceFluidCheckpoint(
+              movingPorousBytes, movingOutput, &error)
+              && error.code
+                  == MovingInterfaceFluidCheckpointErrorCode::InvalidMagic
+              && !simwing::fsi::fluid::deserializeMovingPorousFluidCheckpoint(
+                  movingOnlyBytes, porousOutput, &error)
+              && error.code
+                  == MovingInterfaceFluidCheckpointErrorCode::InvalidMagic,
+          "persistent moving porous codec has a distinct wire identity");
+}
+
+void testMovingPorousPersistentCorruptionAndLimits() {
+    const auto grid = movingPorousGrid();
+    const auto checkpoint = movingPorousCheckpoint(
+        PorousConstitutiveEvaluation::Midpoint);
+    const auto valid = serializedMovingPorousCheckpoint(checkpoint);
+    MovingPorousFluidCheckpoint output = checkpoint;
+    MovingInterfaceFluidCheckpointError error;
+    const auto expectPersistentRejected = [&]
+        (const std::vector<std::uint8_t>& candidate,
+         const MovingInterfaceFluidCheckpointErrorCode expected,
+         const MovingInterfaceFluidCheckpointLimits& limits,
+         const char* message) {
+        output = checkpoint;
+        error = {};
+        check(!simwing::fsi::fluid::deserializeMovingPorousFluidCheckpoint(
+                  candidate, output, &error, limits)
+                  && error.code == expected
+                  && sameMovingPorousCheckpoint(grid, checkpoint, output),
+              message);
+    };
+
+    auto corrupt = valid;
+    corrupt[0] ^= 0xffU;
+    expectPersistentRejected(
+        corrupt, MovingInterfaceFluidCheckpointErrorCode::InvalidMagic, {},
+        "persistent moving porous checkpoint rejects bad magic transactionally");
+    corrupt = valid;
+    ++corrupt[4];
+    expectPersistentRejected(
+        corrupt,
+        MovingInterfaceFluidCheckpointErrorCode::UnsupportedVersion, {},
+        "persistent moving porous checkpoint rejects unsupported protocol versions");
+    corrupt = valid;
+    corrupt[6] = 1;
+    expectPersistentRejected(
+        corrupt, MovingInterfaceFluidCheckpointErrorCode::InvalidData, {},
+        "persistent moving porous checkpoint rejects reserved bits");
+    corrupt = valid;
+    corrupt.pop_back();
+    expectPersistentRejected(
+        corrupt, MovingInterfaceFluidCheckpointErrorCode::Truncated, {},
+        "persistent moving porous checkpoint rejects truncation");
+    corrupt = valid;
+    corrupt.push_back(0);
+    expectPersistentRejected(
+        corrupt, MovingInterfaceFluidCheckpointErrorCode::TrailingData, {},
+        "persistent moving porous checkpoint rejects trailing bytes");
+    corrupt = valid;
+    corrupt.back() ^= 0x80U;
+    expectPersistentRejected(
+        corrupt,
+        MovingInterfaceFluidCheckpointErrorCode::ChecksumMismatch, {},
+        "persistent moving porous checkpoint detects checksum damage");
+
+    MovingInterfaceFluidCheckpointLimits byteLimit;
+    byteLimit.maximumBytes = valid.size() - 1;
+    expectPersistentRejected(
+        valid, MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+        byteLimit,
+        "persistent moving porous checkpoint enforces its total byte limit");
+    MovingInterfaceFluidCheckpointLimits sampleLimit;
+    sampleLimit.maximumScalarSamples = grid.cellCount() - 1;
+    expectPersistentRejected(
+        valid, MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+        sampleLimit,
+        "persistent moving porous checkpoint enforces its field-sample limit");
+    MovingInterfaceFluidCheckpointLimits porousLimit;
+    porousLimit.maximumPorousCrossings =
+        movingPorousCrossings(grid).size() - 1;
+    expectPersistentRejected(
+        valid, MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+        porousLimit,
+        "persistent moving porous checkpoint enforces its porous-crossing limit");
+    std::vector<std::uint8_t> limitedBytes{1, 2, 3};
+    check(!simwing::fsi::fluid::serializeMovingPorousFluidCheckpoint(
+              checkpoint, limitedBytes, &error, porousLimit)
+              && error.code
+                  == MovingInterfaceFluidCheckpointErrorCode::LimitExceeded
+              && limitedBytes.empty(),
+          "persistent moving porous encoding enforces crossing limits transactionally");
+    MovingInterfaceFluidCheckpointLimits jumpLimit;
+    jumpLimit.maximumPressureJumpFaces =
+        movingPorousBalance(grid, 0.25).faceCount() - 1;
+    expectPersistentRejected(
+        valid, MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+        jumpLimit,
+        "persistent moving porous checkpoint enforces its pressure-jump limit");
+    MovingInterfaceFluidCheckpointLimits interfaceLimit;
+    interfaceLimit.maximumInterfaceFaces =
+        movingPorousInterfaces(grid).faceCount() - 1;
+    expectPersistentRejected(
+        valid, MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+        interfaceLimit,
+        "persistent moving porous checkpoint enforces nested interface limits");
+
+    constexpr std::size_t envelopeBytes = 24;
+    constexpr std::size_t topologyFingerprintPayloadOffset = 84;
+    constexpr std::size_t movingByteCountPayloadOffset = 92;
+    const auto readU64 = [](const std::vector<std::uint8_t>& bytes,
+                            const std::size_t offset) {
+        std::uint64_t value = 0;
+        for (std::size_t byte = 0; byte < sizeof(value); ++byte) {
+            value |= static_cast<std::uint64_t>(bytes[offset + byte])
+                << (8U * byte);
+        }
+        return value;
+    };
+    const std::size_t nestedBytes = static_cast<std::size_t>(readU64(
+        valid, envelopeBytes + movingByteCountPayloadOffset));
+    constexpr std::size_t movingBytesPayloadOffset =
+        movingByteCountPayloadOffset + sizeof(std::uint64_t);
+    corrupt = valid;
+    corrupt[envelopeBytes + movingBytesPayloadOffset] ^= 0xffU;
+    refreshPersistentChecksum(corrupt);
+    expectPersistentRejected(
+        corrupt, MovingInterfaceFluidCheckpointErrorCode::InvalidMagic, {},
+        "persistent moving porous checkpoint validates its nested moving envelope");
+
+    const std::size_t porousCountOffset = envelopeBytes
+        + movingBytesPayloadOffset + nestedBytes
+        + 3 * (sizeof(std::uint64_t)
+               + grid.cellCount() * sizeof(double));
+    corrupt = valid;
+    for (std::size_t byte = 0; byte < sizeof(std::uint64_t); ++byte) {
+        corrupt[porousCountOffset + byte] = static_cast<std::uint8_t>(
+            1'000'000ULL >> (8U * byte));
+    }
+    refreshPersistentChecksum(corrupt);
+    expectPersistentRejected(
+        corrupt, MovingInterfaceFluidCheckpointErrorCode::Truncated, {},
+        "persistent moving porous checkpoint checks crossing bytes before allocation");
+
+    corrupt = valid;
+    corrupt[envelopeBytes + topologyFingerprintPayloadOffset] ^= 1U;
+    refreshPersistentChecksum(corrupt);
+    expectPersistentRejected(
+        corrupt, MovingInterfaceFluidCheckpointErrorCode::InvalidData, {},
+        "persistent moving porous checkpoint recomputes its topology fingerprint");
+
+    auto invalid = checkpoint;
+    ++invalid.topologyFingerprint;
+    limitedBytes = {1, 2, 3};
+    check(!simwing::fsi::fluid::serializeMovingPorousFluidCheckpoint(
+              invalid, limitedBytes, &error)
+              && error.code
+                  == MovingInterfaceFluidCheckpointErrorCode::InvalidData
+              && limitedBytes.empty(),
+          "persistent moving porous serialization rejects invalid source metadata");
+}
+
 void testPersistentRoundTrip() {
     const auto grid = makeGrid();
     const auto interfaces = makeInterfaces(grid, 3, 0.125);
@@ -732,6 +986,8 @@ int main() {
     testMovingPorousAcceptedStateRoundTrip();
     testMovingPorousTopologyBinding();
     testMovingPorousStrictValidation();
+    testMovingPorousPersistentRoundTrip();
+    testMovingPorousPersistentCorruptionAndLimits();
     testPersistentRoundTrip();
     testPersistentCorruptionAndLimits();
     testStrictValidation();

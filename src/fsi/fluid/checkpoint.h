@@ -15,11 +15,15 @@ inline constexpr std::uint32_t movingInterfaceFluidCheckpointVersion = 1;
 inline constexpr std::uint32_t movingPorousFluidCheckpointVersion = 1;
 inline constexpr std::uint16_t
     movingInterfaceFluidCheckpointProtocolVersion = 1;
+inline constexpr std::uint16_t
+    movingPorousFluidCheckpointProtocolVersion = 1;
 
 struct MovingInterfaceFluidCheckpointLimits {
     std::uint64_t maximumBytes = 64ULL * 1024ULL * 1024ULL;
     std::uint64_t maximumScalarSamples = 5'000'000;
     std::uint64_t maximumInterfaceFaces = 1'000'000;
+    std::uint64_t maximumPorousCrossings = 1'000'000;
+    std::uint64_t maximumPressureJumpFaces = 1'000'000;
     std::uint64_t maximumFluidRegions = 1'000'000;
     std::uint64_t maximumDiagnosticSurfaces = 1'000'000;
 };
@@ -122,6 +126,11 @@ private:
     friend MovingPorousFluidState restoreMovingPorousFluidState(
         const PeriodicCartesianGrid&,
         const MovingPorousFluidCheckpoint&);
+    friend bool serializeMovingPorousFluidCheckpoint(
+        const MovingPorousFluidCheckpoint&,
+        std::vector<std::uint8_t>&,
+        MovingInterfaceFluidCheckpointError*,
+        const MovingInterfaceFluidCheckpointLimits&);
 
     struct Detail;
     std::shared_ptr<const Detail> detail;
@@ -140,6 +149,22 @@ private:
 [[nodiscard]] bool deserializeMovingInterfaceFluidCheckpoint(
     std::span<const std::uint8_t> bytes,
     MovingInterfaceFluidCheckpoint& checkpoint,
+    MovingInterfaceFluidCheckpointError* error = nullptr,
+    const MovingInterfaceFluidCheckpointLimits& limits = {});
+
+// The coupled codec uses its own envelope magic/version and nests the complete
+// moving-only checkpoint payload. Porous definitions, prescribed jumps,
+// predicted velocity provenance, nonlinear diagnostics, and outer acceptance
+// are encoded alongside it under the same total byte and record limits.
+[[nodiscard]] bool serializeMovingPorousFluidCheckpoint(
+    const MovingPorousFluidCheckpoint& checkpoint,
+    std::vector<std::uint8_t>& bytes,
+    MovingInterfaceFluidCheckpointError* error = nullptr,
+    const MovingInterfaceFluidCheckpointLimits& limits = {});
+
+[[nodiscard]] bool deserializeMovingPorousFluidCheckpoint(
+    std::span<const std::uint8_t> bytes,
+    MovingPorousFluidCheckpoint& checkpoint,
     MovingInterfaceFluidCheckpointError* error = nullptr,
     const MovingInterfaceFluidCheckpointLimits& limits = {});
 

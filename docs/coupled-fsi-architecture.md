@@ -855,8 +855,13 @@ normal, and reconstructed diagnostic pressure. A static headless worker makes
   the pre-projection velocity needed to reconstruct endpoint or midpoint
   constitutive samples and prescribed-source power exactly. Capture and restore
   revalidate the calibrated law, combined crossing ownership, nested moving
-  projection, jump/dissipation ledgers, and committed fields. Its bounded
-  persistent encoding remains open.
+  projection, jump/dissipation ledgers, and committed fields. A distinct
+  bounded, checksummed, deterministic little-endian codec now nests the complete
+  moving-only envelope and adds that provenance, canonical porous definitions,
+  prescribed jumps, nonlinear diagnostics, and outer acceptance. Decode is
+  transactional, reuses both accepted-state validators, and enforces independent
+  byte, field, interface, porous-crossing, pressure-jump, region, and diagnostic
+  limits before publishing output.
   The regression budgets are:
 gradient/divergence adjoint error at or below `2e-14` in the canonical
 integral, Taylor-Green maximum divergence below `2e-14 1/s` with a

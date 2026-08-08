@@ -13,9 +13,15 @@
 namespace simwing::fsi::fluid {
 namespace {
 
-constexpr std::array<std::uint8_t, 4> magic{'S', 'W', 'M', 'F'};
+constexpr std::array<std::uint8_t, 4> movingInterfaceMagic{
+    'S', 'W', 'M', 'F'};
+constexpr std::array<std::uint8_t, 4> movingPorousMagic{
+    'S', 'W', 'M', 'P'};
 constexpr std::size_t envelopeBytes = 24;
 constexpr std::size_t interfaceFaceRecordBytes = 57;
+constexpr std::size_t porousCrossingRecordBytes = 81;
+constexpr std::size_t pressureJumpRecordBytes = 65;
+constexpr std::size_t porousSampleRecordBytes = 113;
 constexpr std::size_t regionDiagnosticRecordBytes = 40;
 constexpr std::size_t faceDiagnosticRecordBytes = 249;
 constexpr std::size_t surfaceDiagnosticRecordBytes = 192;
@@ -80,6 +86,10 @@ public:
         return finiteDouble(value.x)
             && finiteDouble(value.y)
             && finiteDouble(value.z);
+    }
+
+    bool bytes(const std::span<const std::uint8_t> values) {
+        return raw(values.data(), values.size());
     }
 
     [[nodiscard]] bool exceeded() const noexcept { return exceeded_; }
@@ -180,6 +190,17 @@ public:
         return true;
     }
 
+    bool bytes(const std::size_t count,
+               std::span<const std::uint8_t>& values) {
+        if (count > bytes_.size() - position_) {
+            truncated_ = true;
+            return false;
+        }
+        values = bytes_.subspan(position_, count);
+        position_ += count;
+        return true;
+    }
+
     [[nodiscard]] bool atEnd() const noexcept {
         return position_ == bytes_.size();
     }
@@ -271,7 +292,7 @@ bool readProjectionDiagnostics(
         && reader.finiteDouble(value.kineticEnergyAfterJoules)
         && reader.finiteDouble(value.pressureMeanPascals)
         && reader.count(
-            value.pressureJumpFaceCount, limits.maximumInterfaceFaces)
+            value.pressureJumpFaceCount, limits.maximumPressureJumpFaces)
         && reader.finiteDouble(
             value.pressureJumpSourceCompatibilityPascalsPerSquareMeter);
 }
@@ -374,6 +395,179 @@ bool readAxis(Reader& reader, GridFaceAxis& axis) {
         return false;
     }
     axis = static_cast<GridFaceAxis>(encoded);
+    return true;
+}
+
+bool writePressureJump(
+    Writer& writer,
+    const GridFacePressureJump& value) {
+    return writer.u64(value.surfaceStableId)
+        && writer.u64(value.minusRegionStableId)
+        && writer.u64(value.plusRegionStableId)
+        && writer.u8(static_cast<std::uint8_t>(value.axis))
+        && writer.count(value.i)
+        && writer.count(value.j)
+        && writer.count(value.k)
+        && writer.finiteDouble(value.pressureJumpPascals)
+        && writer.finiteDouble(value.crossingFraction);
+}
+
+bool readPressureJump(
+    Reader& reader,
+    GridFacePressureJump& value,
+    const GridCellCounts counts) {
+    return reader.u64(value.surfaceStableId)
+        && reader.u64(value.minusRegionStableId)
+        && reader.u64(value.plusRegionStableId)
+        && readAxis(reader, value.axis)
+        && reader.count(value.i, counts.x)
+        && reader.count(value.j, counts.y)
+        && reader.count(value.k, counts.z)
+        && reader.finiteDouble(value.pressureJumpPascals)
+        && reader.finiteDouble(value.crossingFraction);
+}
+
+bool writePorousCrossing(
+    Writer& writer,
+    const PorousGridFaceCrossing& value) {
+    return writer.u64(value.surfaceStableId)
+        && writer.u64(value.minusRegionStableId)
+        && writer.u64(value.plusRegionStableId)
+        && writer.u8(static_cast<std::uint8_t>(value.axis))
+        && writer.count(value.i)
+        && writer.count(value.j)
+        && writer.count(value.k)
+        && writer.finiteDouble(value.crossingFraction)
+        && writer.finiteDouble(
+            value.surfaceNormalVelocityMetersPerSecond)
+        && writer.finiteDouble(
+            value.resistance.linearPascalSecondsPerMeter)
+        && writer.finiteDouble(
+            value.resistance
+                .quadraticPascalSecondsSquaredPerSquareMeter);
+}
+
+bool readPorousCrossing(
+    Reader& reader,
+    PorousGridFaceCrossing& value,
+    const GridCellCounts counts) {
+    return reader.u64(value.surfaceStableId)
+        && reader.u64(value.minusRegionStableId)
+        && reader.u64(value.plusRegionStableId)
+        && readAxis(reader, value.axis)
+        && reader.count(value.i, counts.x)
+        && reader.count(value.j, counts.y)
+        && reader.count(value.k, counts.z)
+        && reader.finiteDouble(value.crossingFraction)
+        && reader.finiteDouble(
+            value.surfaceNormalVelocityMetersPerSecond)
+        && reader.finiteDouble(
+            value.resistance.linearPascalSecondsPerMeter)
+        && reader.finiteDouble(
+            value.resistance
+                .quadraticPascalSecondsSquaredPerSquareMeter);
+}
+
+bool writePorousDiagnostics(
+    Writer& writer,
+    const PorousProjectionDiagnostics& value) {
+    if (!writer.u8(value.accepted ? 1 : 0)
+        || !writer.u8(value.finite ? 1 : 0)
+        || !writer.u8(static_cast<std::uint8_t>(
+            value.constitutiveEvaluation))
+        || !writer.count(value.nonlinearIterationCount)
+        || !writer.count(value.porousCrossingCount)
+        || !writer.finiteDouble(
+            value.initialMaximumNormalVelocityResidualMetersPerSecond)
+        || !writer.finiteDouble(
+            value.finalMaximumNormalVelocityResidualMetersPerSecond)
+        || !writer.finiteDouble(
+            value.finalMaximumPressureJumpResidualPascals)
+        || !writer.finiteDouble(value.totalDissipationWatts)
+        || !writer.finiteDouble(value.totalPorousDissipationJoules)
+        || !writer.vector3(value.totalPressureJumpForceOnFluidNewtons)
+        || !writer.vector3(
+            value.totalPressureJumpImpulseOnFluidNewtonSeconds)
+        || !writer.finiteDouble(value.totalPressureJumpPowerToFluidWatts)
+        || !writer.finiteDouble(value.totalPressureJumpWorkToFluidJoules)
+        || !writeProjectionDiagnostics(writer, value.projection)
+        || !writer.count(value.samples.size())) {
+        return false;
+    }
+    for (const auto& sample : value.samples) {
+        if (!writePressureJump(writer, sample.pressureJump)
+            || !writer.finiteDouble(
+                sample.fluidNormalVelocityMetersPerSecond)
+            || !writer.finiteDouble(
+                sample.surfaceNormalVelocityMetersPerSecond)
+            || !writer.finiteDouble(
+                sample.relativeNormalVelocityMetersPerSecond)
+            || !writer.finiteDouble(sample.faceAreaSquareMeters)
+            || !writer.finiteDouble(
+                sample.volumeFlowRateCubicMetersPerSecond)
+            || !writer.finiteDouble(sample.dissipationWatts)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool readPorousDiagnostics(
+    Reader& reader,
+    PorousProjectionDiagnostics& value,
+    const GridCellCounts counts,
+    const MovingInterfaceFluidCheckpointLimits& limits) {
+    std::uint8_t evaluation = 0;
+    if (!reader.boolean(value.accepted)
+        || !reader.boolean(value.finite)
+        || !reader.u8(evaluation)
+        || evaluation > static_cast<std::uint8_t>(
+            PorousConstitutiveEvaluation::Midpoint)
+        || !reader.count(
+            value.nonlinearIterationCount,
+            limits.maximumScalarSamples)
+        || !reader.count(
+            value.porousCrossingCount,
+            limits.maximumPorousCrossings)
+        || !reader.finiteDouble(
+            value.initialMaximumNormalVelocityResidualMetersPerSecond)
+        || !reader.finiteDouble(
+            value.finalMaximumNormalVelocityResidualMetersPerSecond)
+        || !reader.finiteDouble(
+            value.finalMaximumPressureJumpResidualPascals)
+        || !reader.finiteDouble(value.totalDissipationWatts)
+        || !reader.finiteDouble(value.totalPorousDissipationJoules)
+        || !reader.vector3(value.totalPressureJumpForceOnFluidNewtons)
+        || !reader.vector3(
+            value.totalPressureJumpImpulseOnFluidNewtonSeconds)
+        || !reader.finiteDouble(value.totalPressureJumpPowerToFluidWatts)
+        || !reader.finiteDouble(value.totalPressureJumpWorkToFluidJoules)
+        || !readProjectionDiagnostics(reader, value.projection, limits)) {
+        return false;
+    }
+    value.constitutiveEvaluation =
+        static_cast<PorousConstitutiveEvaluation>(evaluation);
+    std::size_t sampleCount = 0;
+    if (!reader.count(sampleCount, limits.maximumPorousCrossings)
+        || !reader.fixedRecords(sampleCount, porousSampleRecordBytes)) {
+        return false;
+    }
+    value.samples.resize(sampleCount);
+    for (auto& sample : value.samples) {
+        if (!readPressureJump(reader, sample.pressureJump, counts)
+            || !reader.finiteDouble(
+                sample.fluidNormalVelocityMetersPerSecond)
+            || !reader.finiteDouble(
+                sample.surfaceNormalVelocityMetersPerSecond)
+            || !reader.finiteDouble(
+                sample.relativeNormalVelocityMetersPerSecond)
+            || !reader.finiteDouble(sample.faceAreaSquareMeters)
+            || !reader.finiteDouble(
+                sample.volumeFlowRateCubicMetersPerSecond)
+            || !reader.finiteDouble(sample.dissipationWatts)) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -561,6 +755,49 @@ bool writePayload(
         && writeMovingDiagnostics(writer, state.diagnostics);
 }
 
+bool writeMovingPorousPayload(
+    Writer& writer,
+    const MovingPorousFluidCheckpoint& checkpoint,
+    const MovingPorousFluidState& state,
+    const std::span<const std::uint8_t> movingCheckpointBytes) {
+    const auto counts = checkpoint.cellCounts;
+    if (!writer.u32(checkpoint.version)
+        || !writer.count(counts.x)
+        || !writer.count(counts.y)
+        || !writer.count(counts.z)
+        || !writer.vector3(checkpoint.lowerMeters)
+        || !writer.vector3(checkpoint.upperMeters)
+        || !writer.count(checkpoint.scalarSampleCount)
+        || !writer.u64(checkpoint.topologyFingerprint)
+        || !writer.count(movingCheckpointBytes.size())
+        || !writer.bytes(movingCheckpointBytes)
+        || !writeField(
+            writer, state.predictedVelocityMetersPerSecond.xFaces())
+        || !writeField(
+            writer, state.predictedVelocityMetersPerSecond.yFaces())
+        || !writeField(
+            writer, state.predictedVelocityMetersPerSecond.zFaces())
+        || !writer.count(state.porousCrossings.size())) {
+        return false;
+    }
+    for (const auto& crossing : state.porousCrossings) {
+        if (!writePorousCrossing(writer, crossing)) {
+            return false;
+        }
+    }
+    if (!writer.count(state.prescribedPressureJumps.faceCount())) {
+        return false;
+    }
+    for (const auto& crossing : state.prescribedPressureJumps.faces()) {
+        if (!writePressureJump(writer, crossing)) {
+            return false;
+        }
+    }
+    return writePorousDiagnostics(writer, state.diagnostics.porous)
+        && writer.u8(state.diagnostics.finite ? 1 : 0)
+        && writer.u8(state.diagnostics.accepted ? 1 : 0);
+}
+
 } // namespace
 
 bool serializeMovingInterfaceFluidCheckpoint(
@@ -588,6 +825,8 @@ bool serializeMovingInterfaceFluidCheckpoint(
             restoreMovingInterfaceFluidState(grid, checkpoint);
         if (state.interfaces.faceCount() > limits.maximumInterfaceFaces
             || state.interfaces.regionCount() > limits.maximumFluidRegions
+            || state.diagnostics.projection.pressureJumpFaceCount
+                > limits.maximumPressureJumpFaces
             || state.diagnostics.surfaces.size()
                 > limits.maximumDiagnosticSurfaces) {
             return fail(
@@ -608,7 +847,9 @@ bool serializeMovingInterfaceFluidCheckpoint(
                 "fluid checkpoint payload cannot be serialized");
         }
         bytes.reserve(envelopeBytes + payload.size());
-        bytes.insert(bytes.end(), magic.begin(), magic.end());
+        bytes.insert(
+            bytes.end(), movingInterfaceMagic.begin(),
+            movingInterfaceMagic.end());
         Writer envelope(
             bytes, static_cast<std::size_t>(limits.maximumBytes));
         if (!envelope.u16(movingInterfaceFluidCheckpointProtocolVersion)
@@ -657,12 +898,14 @@ bool deserializeMovingInterfaceFluidCheckpoint(
                     MovingInterfaceFluidCheckpointErrorCode::Truncated,
                     "fluid checkpoint envelope is truncated");
     }
-    if (!std::ranges::equal(magic, bytes.first(magic.size()))) {
+    if (!std::ranges::equal(
+            movingInterfaceMagic,
+            bytes.first(movingInterfaceMagic.size()))) {
         return fail(error,
                     MovingInterfaceFluidCheckpointErrorCode::InvalidMagic,
                     "fluid checkpoint magic is invalid");
     }
-    Reader envelope(bytes.subspan(magic.size()));
+    Reader envelope(bytes.subspan(movingInterfaceMagic.size()));
     std::uint16_t protocolVersion = 0;
     std::uint16_t reserved = 0;
     std::uint64_t payloadSize = 0;
@@ -825,6 +1068,349 @@ bool deserializeMovingInterfaceFluidCheckpoint(
         return fail(error,
                     MovingInterfaceFluidCheckpointErrorCode::InvalidData,
                     exception.what());
+    }
+}
+
+bool serializeMovingPorousFluidCheckpoint(
+    const MovingPorousFluidCheckpoint& checkpoint,
+    std::vector<std::uint8_t>& bytes,
+    MovingInterfaceFluidCheckpointError* error,
+    const MovingInterfaceFluidCheckpointLimits& limits) {
+    clearError(error);
+    bytes.clear();
+    if (!validLimits(limits)) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+            "configured moving porous checkpoint limits are invalid");
+    }
+    if (checkpoint.scalarSampleCount > limits.maximumScalarSamples) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+            "moving porous checkpoint exceeds the scalar-sample limit");
+    }
+    try {
+        const PeriodicCartesianGrid grid(
+            checkpoint.cellCounts,
+            checkpoint.lowerMeters, checkpoint.upperMeters);
+        const MovingPorousFluidState state =
+            restoreMovingPorousFluidState(grid, checkpoint);
+        if (state.porousCrossings.size()
+                > limits.maximumPorousCrossings
+            || state.prescribedPressureJumps.faceCount()
+                > limits.maximumPressureJumpFaces
+            || state.diagnostics.porous.samples.size()
+                > limits.maximumPorousCrossings
+            || state.diagnostics.porous.projection.pressureJumpFaceCount
+                > limits.maximumPressureJumpFaces) {
+            return fail(
+                error,
+                MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+                "moving porous checkpoint crossings exceed configured limits");
+        }
+
+        const MovingInterfaceFluidCheckpoint movingCheckpoint =
+            checkpointMovingInterfaceFluidState(
+                grid, state.velocityMetersPerSecond,
+                state.pressurePascals, state.interfaces,
+                state.diagnostics.movingInterface);
+        std::vector<std::uint8_t> movingBytes;
+        MovingInterfaceFluidCheckpointError movingError;
+        if (!serializeMovingInterfaceFluidCheckpoint(
+                movingCheckpoint, movingBytes, &movingError, limits)) {
+            return fail(
+                error, movingError.code,
+                "nested moving checkpoint: " + movingError.message);
+        }
+
+        std::vector<std::uint8_t> payload;
+        Writer payloadWriter(
+            payload,
+            static_cast<std::size_t>(limits.maximumBytes) - envelopeBytes);
+        if (!writeMovingPorousPayload(
+                payloadWriter, checkpoint, state, movingBytes)) {
+            return fail(
+                error,
+                payloadWriter.exceeded()
+                    ? MovingInterfaceFluidCheckpointErrorCode::LimitExceeded
+                    : MovingInterfaceFluidCheckpointErrorCode::InvalidData,
+                "moving porous checkpoint payload cannot be serialized");
+        }
+        bytes.reserve(envelopeBytes + payload.size());
+        bytes.insert(
+            bytes.end(), movingPorousMagic.begin(), movingPorousMagic.end());
+        Writer envelope(
+            bytes, static_cast<std::size_t>(limits.maximumBytes));
+        if (!envelope.u16(movingPorousFluidCheckpointProtocolVersion)
+            || !envelope.u16(0)
+            || !envelope.u64(static_cast<std::uint64_t>(payload.size()))
+            || !envelope.u64(checksum(payload))) {
+            bytes.clear();
+            return fail(
+                error,
+                MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+                "moving porous checkpoint envelope exceeds the byte limit");
+        }
+        bytes.insert(bytes.end(), payload.begin(), payload.end());
+        return true;
+    } catch (const std::bad_alloc&) {
+        bytes.clear();
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+            "unable to allocate moving porous checkpoint encoding");
+    } catch (const std::length_error&) {
+        bytes.clear();
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+            "moving porous checkpoint exceeds platform limits");
+    } catch (const std::exception& exception) {
+        bytes.clear();
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::InvalidData,
+            exception.what());
+    }
+}
+
+bool deserializeMovingPorousFluidCheckpoint(
+    const std::span<const std::uint8_t> bytes,
+    MovingPorousFluidCheckpoint& checkpoint,
+    MovingInterfaceFluidCheckpointError* error,
+    const MovingInterfaceFluidCheckpointLimits& limits) {
+    clearError(error);
+    if (!validLimits(limits) || bytes.size() > limits.maximumBytes) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+            "moving porous checkpoint exceeds the byte limit");
+    }
+    if (bytes.size() < envelopeBytes) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::Truncated,
+            "moving porous checkpoint envelope is truncated");
+    }
+    if (!std::ranges::equal(
+            movingPorousMagic,
+            bytes.first(movingPorousMagic.size()))) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::InvalidMagic,
+            "moving porous checkpoint magic is invalid");
+    }
+    Reader envelope(bytes.subspan(movingPorousMagic.size()));
+    std::uint16_t protocolVersion = 0;
+    std::uint16_t reserved = 0;
+    std::uint64_t payloadSize = 0;
+    std::uint64_t expectedChecksum = 0;
+    if (!envelope.u16(protocolVersion)
+        || !envelope.u16(reserved)
+        || !envelope.u64(payloadSize)
+        || !envelope.u64(expectedChecksum)) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::Truncated,
+            "moving porous checkpoint envelope is truncated");
+    }
+    if (protocolVersion != movingPorousFluidCheckpointProtocolVersion) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::UnsupportedVersion,
+            "moving porous checkpoint protocol version is unsupported");
+    }
+    if (reserved != 0) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::InvalidData,
+            "moving porous checkpoint reserved bits are nonzero");
+    }
+    const std::uint64_t availablePayload = bytes.size() - envelopeBytes;
+    if (payloadSize > availablePayload) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::Truncated,
+            "moving porous checkpoint payload is truncated");
+    }
+    if (payloadSize < availablePayload) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::TrailingData,
+            "moving porous checkpoint has trailing data");
+    }
+    const auto payload = bytes.subspan(
+        envelopeBytes, static_cast<std::size_t>(payloadSize));
+    if (checksum(payload) != expectedChecksum) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::ChecksumMismatch,
+            "moving porous checkpoint checksum does not match");
+    }
+
+    try {
+        Reader reader(payload);
+        std::uint32_t stateVersion = 0;
+        GridCellCounts counts;
+        Vector3 lowerMeters;
+        Vector3 upperMeters;
+        std::size_t scalarSampleCount = 0;
+        std::uint64_t topologyFingerprint = 0;
+        std::size_t movingByteCount = 0;
+        if (!reader.u32(stateVersion)
+            || !reader.count(counts.x, limits.maximumScalarSamples)
+            || !reader.count(counts.y, limits.maximumScalarSamples)
+            || !reader.count(counts.z, limits.maximumScalarSamples)
+            || !reader.vector3(lowerMeters)
+            || !reader.vector3(upperMeters)
+            || !reader.count(
+                scalarSampleCount, limits.maximumScalarSamples)
+            || !reader.u64(topologyFingerprint)
+            || !reader.count(movingByteCount, limits.maximumBytes)) {
+            return fail(
+                error, readerErrorCode(reader),
+                "moving porous checkpoint metadata is invalid");
+        }
+        if (stateVersion != movingPorousFluidCheckpointVersion) {
+            return fail(
+                error,
+                MovingInterfaceFluidCheckpointErrorCode::UnsupportedVersion,
+                "moving porous checkpoint state version is unsupported");
+        }
+        const PeriodicCartesianGrid grid(
+            counts, lowerMeters, upperMeters);
+        if (grid.cellCount() != scalarSampleCount) {
+            return fail(
+                error,
+                MovingInterfaceFluidCheckpointErrorCode::InvalidData,
+                "moving porous checkpoint grid sample count is inconsistent");
+        }
+
+        std::span<const std::uint8_t> movingBytes;
+        if (!reader.fixedRecords(movingByteCount, 1)
+            || !reader.bytes(movingByteCount, movingBytes)) {
+            return fail(
+                error, readerErrorCode(reader),
+                "nested moving checkpoint is truncated");
+        }
+        MovingInterfaceFluidCheckpoint movingCheckpoint;
+        MovingInterfaceFluidCheckpointError movingError;
+        if (!deserializeMovingInterfaceFluidCheckpoint(
+                movingBytes, movingCheckpoint, &movingError, limits)) {
+            return fail(
+                error, movingError.code,
+                "nested moving checkpoint: " + movingError.message);
+        }
+        const MovingInterfaceFluidState movingState =
+            restoreMovingInterfaceFluidState(grid, movingCheckpoint);
+
+        MacVelocityField predictedVelocity(grid);
+        if (!readField(
+                reader, predictedVelocity.xFaces(),
+                scalarSampleCount, limits)
+            || !readField(
+                reader, predictedVelocity.yFaces(),
+                scalarSampleCount, limits)
+            || !readField(
+                reader, predictedVelocity.zFaces(),
+                scalarSampleCount, limits)) {
+            return fail(
+                error, readerErrorCode(reader),
+                "moving porous checkpoint predicted field is invalid");
+        }
+
+        std::size_t porousCrossingCount = 0;
+        if (!reader.count(
+                porousCrossingCount, limits.maximumPorousCrossings)
+            || !reader.fixedRecords(
+                porousCrossingCount, porousCrossingRecordBytes)) {
+            return fail(
+                error, readerErrorCode(reader),
+                "moving porous checkpoint crossings are invalid");
+        }
+        std::vector<PorousGridFaceCrossing> porousCrossings(
+            porousCrossingCount);
+        for (auto& crossing : porousCrossings) {
+            if (!readPorousCrossing(reader, crossing, counts)) {
+                return fail(
+                    error, readerErrorCode(reader),
+                    "moving porous checkpoint crossing is invalid");
+            }
+        }
+
+        std::size_t prescribedCount = 0;
+        if (!reader.count(
+                prescribedCount, limits.maximumPressureJumpFaces)
+            || !reader.fixedRecords(
+                prescribedCount, pressureJumpRecordBytes)) {
+            return fail(
+                error, readerErrorCode(reader),
+                "moving porous prescribed jumps are invalid");
+        }
+        std::vector<GridFacePressureJump> prescribedFaces(prescribedCount);
+        for (auto& crossing : prescribedFaces) {
+            if (!readPressureJump(reader, crossing, counts)) {
+                return fail(
+                    error, readerErrorCode(reader),
+                    "moving porous prescribed jump is invalid");
+            }
+        }
+        const SharpPressureJumpField prescribedPressureJumps(
+            grid, std::move(prescribedFaces));
+
+        MovingPorousProjectionDiagnostics diagnostics;
+        if (!readPorousDiagnostics(
+                reader, diagnostics.porous, counts, limits)
+            || !reader.boolean(diagnostics.finite)
+            || !reader.boolean(diagnostics.accepted)) {
+            return fail(
+                error, readerErrorCode(reader),
+                "moving porous checkpoint diagnostics are invalid");
+        }
+        diagnostics.movingInterface = movingState.diagnostics;
+        if (!reader.atEnd()) {
+            return fail(
+                error,
+                MovingInterfaceFluidCheckpointErrorCode::TrailingData,
+                "moving porous checkpoint payload has trailing data");
+        }
+
+        MovingPorousFluidCheckpoint candidate =
+            checkpointMovingPorousFluidState(
+                grid, predictedVelocity,
+                movingState.velocityMetersPerSecond,
+                movingState.pressurePascals,
+                movingState.interfaces, porousCrossings,
+                prescribedPressureJumps, diagnostics);
+        if (candidate.version != stateVersion
+            || candidate.cellCounts != counts
+            || candidate.lowerMeters != lowerMeters
+            || candidate.upperMeters != upperMeters
+            || candidate.scalarSampleCount != scalarSampleCount
+            || candidate.topologyFingerprint != topologyFingerprint) {
+            return fail(
+                error,
+                MovingInterfaceFluidCheckpointErrorCode::InvalidData,
+                "moving porous checkpoint public metadata does not match its state");
+        }
+        checkpoint = std::move(candidate);
+        return true;
+    } catch (const std::bad_alloc&) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+            "unable to allocate moving porous checkpoint state");
+    } catch (const std::length_error&) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::LimitExceeded,
+            "moving porous checkpoint state exceeds platform limits");
+    } catch (const std::exception& exception) {
+        return fail(
+            error,
+            MovingInterfaceFluidCheckpointErrorCode::InvalidData,
+            exception.what());
     }
 }
 
