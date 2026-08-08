@@ -263,8 +263,8 @@ void testTopologyRebaseAndCollisionRollback() {
     check(rejected
               && simulation.topologyRebaseCount()
                   == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
-              && simulation.porousFaceCoordinate()
-                  == fsi::coupledPorousSheetPumpFaceCoordinate - 1,
+              && simulation.porousTopology()
+                  == fsi::coupledPorousSheetTerminalSafeTopology,
           "porous-sheet topology: later pump-surface collision is rejected explicitly");
 }
 
@@ -683,8 +683,8 @@ void testTerminalSafePointPersistence() {
               && terminal.acceptedStepCount > 350
               && terminal.topologyRebaseCount
                   == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
-              && terminal.porousTopology.faceCoordinate
-                  == fsi::coupledPorousSheetPumpFaceCoordinate - 1,
+              && terminal.porousTopology
+                  == fsi::coupledPorousSheetTerminalSafeTopology,
           "porous-sheet terminal checkpoint: collision leaves an accepted safe point");
 
     const auto bytes = encodeCheckpoint(owner, terminal);
@@ -739,25 +739,49 @@ void testTerminalSafePointPersistence() {
 void testEveryRebasedEpochPersists() {
     fsi::CoupledPorousSheetCase owner;
     std::uint64_t observedRebases = 0;
+    bool observedPeriodicWrap = false;
+    bool observedUnwrappedPhysicalPlane = false;
     for (std::uint64_t attempt = 0;
          attempt < 5000
          && observedRebases
              < fsi::coupledPorousSheetMaximumOrdinaryRebaseCount;
          ++attempt) {
         static_cast<void>(owner.advance());
+        const auto& currentMapping = owner.diagnostics().bridge.mapping;
+        if (owner.porousTopology().periodicImage == 1
+            && currentMapping.physicalPlaneCoordinateMeters > 4.0) {
+            observedUnwrappedPhysicalPlane = true;
+            check(std::abs(
+                      currentMapping.gridPlaneCoordinateMeters + 4.0
+                      - currentMapping.physicalPlaneCoordinateMeters)
+                      < 1.0e-12,
+                  "porous-sheet rebase checkpoint: wrapped grid and unwrapped physical planes stay explicit");
+        }
         if (!owner.diagnostics().topologyRebasedThisStep) {
             continue;
         }
         ++observedRebases;
         const auto checkpoint = owner.checkpoint();
+        const auto expectedTopology =
+            fsi::coupledPorousSheetTopologyAfterRebases(
+                observedRebases);
+        const bool wrappedThisStep = expectedTopology.faceCoordinate == 0
+            && expectedTopology.periodicImage == 1;
+        observedPeriodicWrap = observedPeriodicWrap || wrappedThisStep;
         check(checkpoint.topologyRebaseCount == observedRebases
-                  && checkpoint.porousTopology.faceCoordinate
-                      == fsi::coupledPorousSheetInitialFaceCoordinate
-                          + observedRebases
-                  && checkpoint.porousTopology.axis
-                      == fsi::fluid::GridFaceAxis::X
-                  && checkpoint.porousTopology.periodicImage == 0,
+                  && checkpoint.porousTopology == expectedTopology,
               "porous-sheet rebase checkpoint: every ordinary epoch is explicit");
+        if (wrappedThisStep) {
+            const auto& mapping = owner.diagnostics().bridge.mapping;
+            check(mapping.physicalPlaneCoordinateMeters
+                      == owner.diagnostics()
+                             .sheetPositionAtConstitutiveTimeMeters
+                      && std::abs(
+                          mapping.gridPlaneCoordinateMeters
+                          - mapping.physicalPlaneCoordinateMeters)
+                          < 1.0e-12,
+                  "porous-sheet rebase checkpoint: face wrap preserves the crossing before the physical boundary");
+        }
 
         const auto bytes = encodeCheckpoint(owner, checkpoint);
         fsi::CoupledPorousSheetCheckpoint decoded;
@@ -780,9 +804,11 @@ void testEveryRebasedEpochPersists() {
     }
     check(observedRebases
               == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
+              && observedPeriodicWrap
+              && observedUnwrappedPhysicalPlane
               && owner.topologyRebaseCount() == observedRebases
-              && owner.porousFaceCoordinate()
-                  == fsi::coupledPorousSheetPumpFaceCoordinate - 1,
+              && owner.porousTopology()
+                  == fsi::coupledPorousSheetTerminalSafeTopology,
           "porous-sheet rebase checkpoint: all pre-pump epochs are covered");
 }
 

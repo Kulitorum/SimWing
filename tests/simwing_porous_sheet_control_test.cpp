@@ -169,8 +169,8 @@ void testNumericalFailureRemainsAtSafePoint() {
               && response.acceptedStepCount > 330
               && simulation.topologyRebaseCount()
                   == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
-              && simulation.porousFaceCoordinate()
-                  == fsi::coupledPorousSheetPumpFaceCoordinate - 1,
+              && simulation.porousTopology()
+                  == fsi::coupledPorousSheetTerminalSafeTopology,
           "porous-sheet control exposes the last accepted state after pump collision");
 
     const std::uint64_t safeStep = simulation.acceptedStepCount();
@@ -187,8 +187,8 @@ void testNumericalFailureRemainsAtSafePoint() {
               && savedCheckpoint->simulationTimeSeconds == safeTime
               && savedCheckpoint->topologyRebaseCount
                   == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
-              && savedCheckpoint->porousTopology.faceCoordinate
-                  == fsi::coupledPorousSheetPumpFaceCoordinate - 1
+              && savedCheckpoint->porousTopology
+                  == fsi::coupledPorousSheetTerminalSafeTopology
               && publishedFrameCount == safeStep,
           "porous-sheet control checkpoints only the collision safe point");
     if (!savedCheckpoint) {
@@ -209,8 +209,8 @@ void testNumericalFailureRemainsAtSafePoint() {
               && restored.simulationTimeSeconds() == safeTime
               && restored.topologyRebaseCount()
                   == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
-              && restored.porousFaceCoordinate()
-                  == fsi::coupledPorousSheetPumpFaceCoordinate - 1,
+              && restored.porousTopology()
+                  == fsi::coupledPorousSheetTerminalSafeTopology,
           "porous-sheet control collision checkpoint repeats without mutation");
 
     check(session.execute(

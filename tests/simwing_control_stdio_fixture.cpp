@@ -559,8 +559,8 @@ int verifyPorousSheetResponses(
     if (collisionSafeStep <= checkpointStep + 1
         || collisionReplay.topologyRebaseCount()
             != fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
-        || collisionReplay.porousFaceCoordinate()
-            != fsi::coupledPorousSheetPumpFaceCoordinate - 1
+        || collisionReplay.porousTopology()
+            != fsi::coupledPorousSheetTerminalSafeTopology
         || collisionError
             != "coupled porous sheet reached the pump-surface topology") {
         std::fprintf(stderr,
@@ -746,8 +746,8 @@ int verifyPorousCollisionResponses(
         || checkpoint.simulationTimeSeconds != safeTime
         || checkpoint.topologyRebaseCount
             != fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
-        || checkpoint.porousTopology.faceCoordinate
-            != fsi::coupledPorousSheetPumpFaceCoordinate - 1) {
+        || checkpoint.porousTopology
+            != fsi::coupledPorousSheetTerminalSafeTopology) {
         std::fprintf(stderr,
                      "porous collision checkpoint is not the terminal safe point\n");
         return 1;

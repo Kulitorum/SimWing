@@ -61,7 +61,8 @@ StructureVector3 toStructure(const fluid::Vector3& value) {
 }
 
 fluid::PeriodicCartesianGrid makeGrid() {
-    return {{8, 2, 3}, {}, {4.0, 2.0, 3.0}};
+    return {{coupledPorousSheetGridFaceCount, 2, 3},
+            {}, {4.0, 2.0, 3.0}};
 }
 
 double fluidMassKilograms(const fluid::PeriodicCartesianGrid& grid) {
@@ -145,14 +146,11 @@ fluid::PorousProjectionSettings makeProjectionSettings() {
 
 std::vector<fluid::PorousGridFaceCrossing> makePorousSheet(
     const fluid::PeriodicCartesianGrid& grid,
-    const std::size_t faceCoordinate,
+    const fluid::MovingPorousFaceTopology& topology,
     const double sheetPositionMeters,
     const double sheetVelocityMetersPerSecond) {
     const double fraction = fluid::movingPorousCrossingFraction(
-        grid,
-        {fluid::movingPorousFaceTopologyVersion,
-         fluid::GridFaceAxis::X, faceCoordinate, 0},
-        sheetPositionMeters);
+        grid, topology, sheetPositionMeters);
     const auto counts = grid.cellCounts();
     std::vector<fluid::PorousGridFaceCrossing> result;
     result.reserve(counts.y * counts.z);
@@ -163,7 +161,7 @@ std::vector<fluid::PorousGridFaceCrossing> makePorousSheet(
                 minusRegionStableId,
                 plusRegionStableId,
                 fluid::GridFaceAxis::X,
-                faceCoordinate,
+                topology.faceCoordinate,
                 j,
                 k,
                 fraction,
@@ -204,7 +202,7 @@ std::vector<fluid::PorousFaceTractionDiagnostics> referenceFaces(
     fluid::MacVelocityField velocity(grid);
     fluid::CellScalarField pressure(grid);
     const auto porous = makePorousSheet(
-        grid, coupledPorousSheetInitialFaceCoordinate,
+        grid, coupledPorousSheetInitialTopology,
         initialSheetPositionMeters, 0.0);
     const auto pump = makePump(grid);
     const auto projected = fluid::projectVelocityWithPorousInterfaces(
@@ -423,8 +421,8 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
             fluid::selectMovingPorousTopology(
                 grid_, porousTopology_,
                 sheetPositionAtConstitutiveTime);
-        if (topology.topology.faceCoordinate
-            == coupledPorousSheetPumpFaceCoordinate) {
+        if (topology.topology
+            == coupledPorousSheetPumpCollisionTopology) {
             throw std::runtime_error(
                 "coupled porous sheet reached the pump-surface topology");
         }
@@ -432,7 +430,7 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
         fluid::MacVelocityField candidateVelocity = velocity_;
         fluid::CellScalarField candidatePressure = pressure_;
         const auto porous = makePorousSheet(
-            grid_, topology.topology.faceCoordinate,
+            grid_, topology.topology,
             sheetPositionAtConstitutiveTime,
             sheetVelocityAtConstitutiveTime);
         const auto pump = makePump(grid_);
@@ -606,6 +604,9 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
         candidate.accepted = candidate.finite
             && projection.accepted && traction.accepted
             && mapped.diagnostics().accepted
+            && candidate.porousTopology
+                == coupledPorousSheetTopologyAfterRebases(
+                    candidate.topologyRebaseCount)
             && length(fluidImpulseResidual) <= 2.0e-10
             && length(sheetImpulseResidual) <= 2.0e-10
             && candidate.momentumResidualNormNewtonSeconds <= 3.0e-10
@@ -693,20 +694,11 @@ void CoupledPorousSheetCase::restore(
             != coupledPorousSheetCaseFingerprint
         || !std::isfinite(checkpointValue.simulationTimeSeconds)
         || checkpointValue.simulationTimeSeconds < 0.0
-        || checkpointValue.porousTopology.version
-            != fluid::movingPorousFaceTopologyVersion
-        || checkpointValue.porousTopology.axis
-            != fluid::GridFaceAxis::X
-        || checkpointValue.porousTopology.periodicImage != 0
-        || checkpointValue.porousTopology.faceCoordinate
-            >= grid_.cellCounts().x
-        || checkpointValue.porousTopology.faceCoordinate
-            == coupledPorousSheetPumpFaceCoordinate
         || checkpointValue.topologyRebaseCount
             > coupledPorousSheetMaximumOrdinaryRebaseCount
-        || checkpointValue.porousTopology.faceCoordinate
-            != coupledPorousSheetInitialFaceCoordinate
-                + checkpointValue.topologyRebaseCount
+        || checkpointValue.porousTopology
+            != coupledPorousSheetTopologyAfterRebases(
+                checkpointValue.topologyRebaseCount)
         || !checkpointValue.detail) {
         throw std::invalid_argument(
             "coupled porous sheet checkpoint metadata is invalid");
@@ -795,6 +787,21 @@ void CoupledPorousSheetCase::restore(
             + fluidMass * fluidVelocity;
         const double fieldKineticEnergy = fluid::kineticEnergyJoules(
             grid_, detail.velocity, fluidDensityKgPerCubicMeter);
+        const double topologyDomainLengthMeters =
+            grid_.upperMeters().x - grid_.lowerMeters().x;
+        double expectedWrappedPlaneCoordinateMeters =
+            diagnostics.sheetPositionAtConstitutiveTimeMeters
+            - static_cast<double>(
+                checkpointValue.porousTopology.periodicImage)
+                * topologyDomainLengthMeters;
+        if (expectedWrappedPlaneCoordinateMeters < grid_.lowerMeters().x) {
+            expectedWrappedPlaneCoordinateMeters +=
+                topologyDomainLengthMeters;
+        } else if (expectedWrappedPlaneCoordinateMeters
+                   >= grid_.upperMeters().x) {
+            expectedWrappedPlaneCoordinateMeters -=
+                topologyDomainLengthMeters;
+        }
         if (!diagnostics.accepted || !diagnostics.finite
             || diagnostics.version
                 != coupledPorousSheetDiagnosticsVersion
@@ -815,8 +822,11 @@ void CoupledPorousSheetCase::restore(
             || !diagnostics.porousTraction.accepted
             || !diagnostics.bridge.accepted
             || !diagnostics.transfer.finite
-            || diagnostics.bridge.mapping.gridPlaneCoordinateMeters
+            || diagnostics.bridge.mapping.physicalPlaneCoordinateMeters
                 != diagnostics.sheetPositionAtConstitutiveTimeMeters
+            || std::abs(
+                diagnostics.bridge.mapping.gridPlaneCoordinateMeters
+                - expectedWrappedPlaneCoordinateMeters) > 1.0e-12
             || std::ranges::any_of(
                 diagnostics.porousTraction.faces,
                 [&](const auto& face) {

@@ -260,9 +260,9 @@ frames with visible deterministic motion. The
 `simwing-fsi --case porous-sheet` harness drives fluid through a translating
 linear-resistance sheet, transfers only the sheet reaction to XPBD, and closes
 the pump impulse/work, porous dissipation, and fluid/structure kinetic-energy
-ledgers before publishing a frame. It uses that reusable selector to commit
-three consecutive MAC-face rebases as the sheet enters each ordinary dual-cell
-segment, then stops before colliding with
+ledgers before publishing a frame. It uses that reusable selector to commit six
+consecutive MAC-face rebases, including the wrapped `7 -> 0` epoch with signed
+periodic image `1`, then stops before colliding with the next periodic image of
 the prescribed pump surface. Its in-memory composite checkpoint restores the
 complete accepted state with exact next-frame replay;
 the checksummed persistent form reuses Structure's codec, stores the complete

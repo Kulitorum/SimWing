@@ -16,26 +16,45 @@ namespace simwing::fsi {
 struct CoupledPorousSheetCheckpointCodecAccess;
 
 inline constexpr char coupledPorousSheetCaseChecksum[] =
-    "sha256:simwing-coupled-porous-sheet-case-v4";
+    "sha256:simwing-coupled-porous-sheet-case-v5";
 inline constexpr char coupledPorousSheetCaseSolverId[] =
-    "simwing-fsi-coupled-porous-sheet-worker-v4";
-inline constexpr std::uint32_t coupledPorousSheetDiagnosticsVersion = 4;
-inline constexpr std::uint32_t coupledPorousSheetCheckpointVersion = 4;
+    "simwing-fsi-coupled-porous-sheet-worker-v5";
+inline constexpr std::uint32_t coupledPorousSheetDiagnosticsVersion = 5;
+inline constexpr std::uint32_t coupledPorousSheetCheckpointVersion = 5;
 inline constexpr std::uint64_t coupledPorousSheetCaseFingerprint =
-    0x3a7e902cd5b14f68ULL;
+    0xc4196d3b85e72a0fULL;
+inline constexpr std::size_t coupledPorousSheetGridFaceCount = 8;
 inline constexpr std::size_t coupledPorousSheetInitialFaceCoordinate = 3;
-inline constexpr std::size_t coupledPorousSheetPumpFaceCoordinate = 7;
+inline constexpr std::size_t coupledPorousSheetPumpFaceCoordinate = 2;
 inline constexpr std::uint64_t
     coupledPorousSheetMaximumOrdinaryRebaseCount =
         coupledPorousSheetPumpFaceCoordinate
+        + coupledPorousSheetGridFaceCount
         - coupledPorousSheetInitialFaceCoordinate - 1;
-inline constexpr fluid::MovingPorousFaceTopology
-    coupledPorousSheetInitialTopology{
+[[nodiscard]] inline constexpr fluid::MovingPorousFaceTopology
+coupledPorousSheetTopologyAfterRebases(const std::uint64_t rebaseCount) {
+    const std::uint64_t unwrappedFaceCoordinate =
+        coupledPorousSheetInitialFaceCoordinate + rebaseCount;
+    return {
         fluid::movingPorousFaceTopologyVersion,
         fluid::GridFaceAxis::X,
-        coupledPorousSheetInitialFaceCoordinate,
-        0,
+        static_cast<std::size_t>(
+            unwrappedFaceCoordinate % coupledPorousSheetGridFaceCount),
+        static_cast<std::int64_t>(
+            unwrappedFaceCoordinate / coupledPorousSheetGridFaceCount),
     };
+}
+inline constexpr fluid::MovingPorousFaceTopology
+    coupledPorousSheetInitialTopology =
+        coupledPorousSheetTopologyAfterRebases(0);
+inline constexpr fluid::MovingPorousFaceTopology
+    coupledPorousSheetTerminalSafeTopology =
+        coupledPorousSheetTopologyAfterRebases(
+            coupledPorousSheetMaximumOrdinaryRebaseCount);
+inline constexpr fluid::MovingPorousFaceTopology
+    coupledPorousSheetPumpCollisionTopology =
+        coupledPorousSheetTopologyAfterRebases(
+            coupledPorousSheetMaximumOrdinaryRebaseCount + 1);
 
 struct CoupledPorousSheetStepDiagnostics {
     std::uint32_t version = coupledPorousSheetDiagnosticsVersion;
@@ -101,10 +120,10 @@ private:
 // transfers only the equal-and-opposite sheet reaction into XPBD. The scalar
 // midpoint relation is analytic for this linear material, so fluid, sheet,
 // pump, and dissipation ledgers can be checked independently. The sheet may
-// rebind to the next MAC face across several dual-cell boundaries while
-// preserving physical position and accepted fluid state. It rejects the later
-// collision with the pump surface. General strong coupling remains outside
-// this case.
+// rebind to the next MAC face across several dual-cell boundaries and one
+// periodic wrap while preserving unwrapped physical position and accepted
+// fluid state. It rejects the later collision with the next periodic image of
+// the pump surface. General strong coupling remains outside this case.
 class CoupledPorousSheetCase final {
 public:
     CoupledPorousSheetCase();
