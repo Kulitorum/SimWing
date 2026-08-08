@@ -893,6 +893,7 @@ PorousSurfaceTractionDiagnostics evaluatePorousSurfaceTractionImpl(
     }
 
     PorousSurfaceTractionDiagnostics result;
+    result.timeStepSeconds = timeStepSeconds;
     result.faces.reserve(source.samples.size());
     std::map<std::uint64_t, PorousSurfaceTractionAggregate> surfaces;
     const GridCellCounts counts = grid.cellCounts();

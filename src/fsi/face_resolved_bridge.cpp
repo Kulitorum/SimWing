@@ -386,6 +386,79 @@ faceKey(const fluid::MovingInterfaceFaceDiagnostics& face) {
     return center;
 }
 
+fluid::MovingInterfaceFaceDiagnostics asMovingFace(
+    const fluid::PorousFaceTractionDiagnostics& source) {
+    fluid::MovingInterfaceFaceDiagnostics result;
+    result.surfaceStableId = source.surfaceStableId;
+    result.minusRegionStableId = source.minusRegionStableId;
+    result.plusRegionStableId = source.plusRegionStableId;
+    result.axis = source.axis;
+    result.i = source.i;
+    result.j = source.j;
+    result.k = source.k;
+    result.lowerCornerMeters = source.lowerCornerMeters;
+    result.upperCornerMeters = source.upperCornerMeters;
+    result.areaSquareMeters = source.areaSquareMeters;
+    result.normalVelocityMetersPerSecond =
+        source.surfaceNormalVelocityMetersPerSecond;
+    if (std::isfinite(source.areaSquareMeters)
+        && source.areaSquareMeters > 0.0) {
+        result.pressureTractionPascals = {
+            source.pressureForceOnSurfaceNewtons.x
+                / source.areaSquareMeters,
+            source.pressureForceOnSurfaceNewtons.y
+                / source.areaSquareMeters,
+            source.pressureForceOnSurfaceNewtons.z
+                / source.areaSquareMeters,
+        };
+    }
+    result.pressureForceNewtons =
+        source.pressureForceOnSurfaceNewtons;
+    result.pressurePowerWatts =
+        source.pressurePowerToSurfaceWatts;
+    return result;
+}
+
+std::vector<fluid::MovingInterfaceFaceDiagnostics> asMovingFaces(
+    const std::vector<fluid::PorousFaceTractionDiagnostics>& source) {
+    std::vector<fluid::MovingInterfaceFaceDiagnostics> result;
+    result.reserve(source.size());
+    for (const auto& face : source) {
+        result.push_back(asMovingFace(face));
+    }
+    return result;
+}
+
+fluid::MovingInterfaceProjectionDiagnostics asMovingDiagnostics(
+    const fluid::PorousSurfaceTractionDiagnostics& source) {
+    fluid::MovingInterfaceProjectionDiagnostics result;
+    result.projection.converged = true;
+    result.interfaceVersion = fluid::faceAlignedMovingInterfaceVersion;
+    result.interfaceFaceCount = source.faces.size();
+    result.finite = source.finite;
+    result.faces.reserve(source.faces.size());
+    for (const auto& face : source.faces) {
+        result.faces.push_back(asMovingFace(face));
+    }
+    result.surfaces.reserve(source.surfaces.size());
+    for (const auto& sourceSurface : source.surfaces) {
+        fluid::MovingInterfaceSurfaceDiagnostics surface;
+        surface.stableId = sourceSurface.stableId;
+        surface.faceCount = sourceSurface.faceCount;
+        surface.areaSquareMeters = sourceSurface.areaSquareMeters;
+        surface.pressureForceNewtons =
+            sourceSurface.pressureForceOnSurfaceNewtons;
+        surface.pressureImpulseNewtonSeconds =
+            sourceSurface.pressureImpulseOnSurfaceNewtonSeconds;
+        surface.pressurePowerWatts =
+            sourceSurface.pressurePowerToSurfaceWatts;
+        surface.pressureWorkJoules =
+            sourceSurface.pressureWorkToSurfaceJoules;
+        result.surfaces.push_back(surface);
+    }
+    return result;
+}
+
 } // namespace
 
 PlanarFaceResolvedTransferResult::PlanarFaceResolvedTransferResult(
@@ -401,6 +474,22 @@ PlanarFaceResolvedTransferResult::transferResult() const noexcept {
 
 const PlanarFaceResolvedBridgeDiagnostics&
 PlanarFaceResolvedTransferResult::diagnostics() const noexcept {
+    return diagnostics_;
+}
+
+PorousFaceResolvedTransferResult::PorousFaceResolvedTransferResult(
+    ConservativeTransferResult transferResult,
+    PorousFaceResolvedBridgeDiagnostics diagnostics)
+    : transferResult_(std::move(transferResult)),
+      diagnostics_(std::move(diagnostics)) {}
+
+const ConservativeTransferResult&
+PorousFaceResolvedTransferResult::transferResult() const noexcept {
+    return transferResult_;
+}
+
+const PorousFaceResolvedBridgeDiagnostics&
+PorousFaceResolvedTransferResult::diagnostics() const noexcept {
     return diagnostics_;
 }
 
@@ -626,6 +715,19 @@ PlanarFaceResolvedFluidStructureBridge(
     }
 }
 
+PlanarFaceResolvedFluidStructureBridge::
+PlanarFaceResolvedFluidStructureBridge(
+    const Structure& target,
+    const std::uint64_t fluidSurfaceStableId,
+    std::vector<CouplingSurfaceNodeDefinition> nodes,
+    std::vector<CouplingSurfaceTriangleDefinition> triangles,
+    std::vector<fluid::PorousFaceTractionDiagnostics> referenceFaces,
+    const PlanarFaceResolvedBridgeSettings& settings)
+    : PlanarFaceResolvedFluidStructureBridge(
+        target, fluidSurfaceStableId,
+        std::move(nodes), std::move(triangles),
+        asMovingFaces(referenceFaces), settings) {}
+
 std::uint64_t
 PlanarFaceResolvedFluidStructureBridge::fluidSurfaceStableId() const noexcept {
     return fluidSurfaceStableId_;
@@ -660,6 +762,24 @@ PlanarFaceResolvedFluidStructureBridge::evaluateMovingPlane(
     const double physicalPlaneCoordinateMeters) const {
     return evaluateImpl(
         fluidDiagnostics, nodeKinematics, physicalPlaneCoordinateMeters);
+}
+
+PorousFaceResolvedTransferResult
+PlanarFaceResolvedFluidStructureBridge::evaluatePorousSurface(
+    const fluid::PorousSurfaceTractionDiagnostics& porousTraction,
+    const std::span<const CouplingNodeKinematics> nodeKinematics) const {
+    return evaluatePorousImpl(
+        porousTraction, nodeKinematics, std::nullopt);
+}
+
+PorousFaceResolvedTransferResult
+PlanarFaceResolvedFluidStructureBridge::evaluateMovingPorousSurface(
+    const fluid::PorousSurfaceTractionDiagnostics& porousTraction,
+    const std::span<const CouplingNodeKinematics> nodeKinematics,
+    const double physicalPlaneCoordinateMeters) const {
+    return evaluatePorousImpl(
+        porousTraction, nodeKinematics,
+        physicalPlaneCoordinateMeters);
 }
 
 PlanarFaceResolvedTransferResult
@@ -798,6 +918,137 @@ PlanarFaceResolvedFluidStructureBridge::evaluateCutSurface(
             "cut-surface and structural transfer ledgers do not close");
     }
     return result;
+}
+
+PorousFaceResolvedTransferResult
+PlanarFaceResolvedFluidStructureBridge::evaluatePorousImpl(
+    const fluid::PorousSurfaceTractionDiagnostics& porousTraction,
+    const std::span<const CouplingNodeKinematics> nodeKinematics,
+    const std::optional<double> physicalPlaneCoordinateMeters) const {
+    if (porousTraction.version != fluid::porousSurfaceTractionVersion
+        || !porousTraction.finite || !porousTraction.accepted
+        || !std::isfinite(porousTraction.timeStepSeconds)
+        || !(porousTraction.timeStepSeconds > 0.0)) {
+        throw std::invalid_argument(
+            "porous face bridge requires accepted traction diagnostics");
+    }
+    const auto sourceSurface = std::lower_bound(
+        porousTraction.surfaces.begin(), porousTraction.surfaces.end(),
+        fluidSurfaceStableId_,
+        [](const fluid::PorousSurfaceTractionAggregate& candidate,
+           const std::uint64_t stableId) {
+            return candidate.stableId < stableId;
+        });
+    if (sourceSurface == porousTraction.surfaces.end()
+        || sourceSurface->stableId != fluidSurfaceStableId_
+        || sourceSurface->faceCount != faces_.size()
+        || !std::isfinite(sourceSurface->areaSquareMeters)
+        || !(sourceSurface->areaSquareMeters > 0.0)
+        || !finite(sourceSurface->pressureForceOnFluidNewtons)
+        || !finite(sourceSurface->pressureImpulseOnFluidNewtonSeconds)
+        || !finite(sourceSurface->pressureForceOnSurfaceNewtons)
+        || !finite(sourceSurface->pressureImpulseOnSurfaceNewtonSeconds)
+        || !std::isfinite(sourceSurface->pressurePowerToFluidWatts)
+        || !std::isfinite(sourceSurface->pressureWorkToFluidJoules)
+        || !std::isfinite(sourceSurface->pressurePowerToSurfaceWatts)
+        || !std::isfinite(sourceSurface->pressureWorkToSurfaceJoules)
+        || !std::isfinite(sourceSurface->dissipationWatts)
+        || !std::isfinite(sourceSurface->dissipatedEnergyJoules)
+        || !std::isfinite(sourceSurface->energyResidualJoules)) {
+        throw std::invalid_argument(
+            "porous face bridge surface aggregate is absent or invalid");
+    }
+
+    const auto synthetic = asMovingDiagnostics(porousTraction);
+    const auto mapped = evaluateImpl(
+        synthetic, nodeKinematics, physicalPlaneCoordinateMeters);
+    PorousFaceResolvedBridgeDiagnostics diagnostics;
+    diagnostics.fluidSurfaceStableId = fluidSurfaceStableId_;
+    diagnostics.timeStepSeconds = porousTraction.timeStepSeconds;
+    diagnostics.pressureForceOnFluidNewtons = toStructure(
+        sourceSurface->pressureForceOnFluidNewtons);
+    diagnostics.pressureImpulseOnFluidNewtonSeconds = toStructure(
+        sourceSurface->pressureImpulseOnFluidNewtonSeconds);
+    diagnostics.pressurePowerToFluidWatts =
+        sourceSurface->pressurePowerToFluidWatts;
+    diagnostics.pressureWorkToFluidJoules =
+        sourceSurface->pressureWorkToFluidJoules;
+    diagnostics.pressureForceOnSurfaceNewtons = toStructure(
+        sourceSurface->pressureForceOnSurfaceNewtons);
+    diagnostics.pressureImpulseOnSurfaceNewtonSeconds = toStructure(
+        sourceSurface->pressureImpulseOnSurfaceNewtonSeconds);
+    diagnostics.pressurePowerToSurfaceWatts =
+        sourceSurface->pressurePowerToSurfaceWatts;
+    diagnostics.pressureWorkToSurfaceJoules =
+        sourceSurface->pressureWorkToSurfaceJoules;
+    diagnostics.porousDissipationWatts =
+        sourceSurface->dissipationWatts;
+    diagnostics.porousDissipatedEnergyJoules =
+        sourceSurface->dissipatedEnergyJoules;
+    diagnostics.sourceEnergyResidualJoules =
+        sourceSurface->energyResidualJoules;
+    diagnostics.mapping = mapped.diagnostics();
+    diagnostics.transferredSurfaceImpulseNewtonSeconds = scale(
+        diagnostics.mapping.structureSurfaceForceNewtons,
+        diagnostics.timeStepSeconds);
+    diagnostics.impulseResidualNewtonSeconds = subtract(
+        diagnostics.transferredSurfaceImpulseNewtonSeconds,
+        diagnostics.pressureImpulseOnSurfaceNewtonSeconds);
+    diagnostics.impulseResidualNormNewtonSeconds = length(
+        diagnostics.impulseResidualNewtonSeconds);
+    diagnostics.transferredSurfaceWorkJoules =
+        diagnostics.mapping.structureSurfacePowerWatts
+        * diagnostics.timeStepSeconds;
+    diagnostics.workResidualJoules =
+        diagnostics.transferredSurfaceWorkJoules
+        - diagnostics.pressureWorkToSurfaceJoules;
+    diagnostics.finite =
+        finite(diagnostics.pressureForceOnFluidNewtons)
+        && finite(diagnostics.pressureImpulseOnFluidNewtonSeconds)
+        && finite(diagnostics.pressureForceOnSurfaceNewtons)
+        && finite(diagnostics.pressureImpulseOnSurfaceNewtonSeconds)
+        && finite(diagnostics.transferredSurfaceImpulseNewtonSeconds)
+        && finite(diagnostics.impulseResidualNewtonSeconds)
+        && std::isfinite(diagnostics.pressurePowerToFluidWatts)
+        && std::isfinite(diagnostics.pressureWorkToFluidJoules)
+        && std::isfinite(diagnostics.pressurePowerToSurfaceWatts)
+        && std::isfinite(diagnostics.pressureWorkToSurfaceJoules)
+        && std::isfinite(diagnostics.porousDissipationWatts)
+        && std::isfinite(diagnostics.porousDissipatedEnergyJoules)
+        && std::isfinite(diagnostics.sourceEnergyResidualJoules)
+        && std::isfinite(
+            diagnostics.impulseResidualNormNewtonSeconds)
+        && std::isfinite(diagnostics.transferredSurfaceWorkJoules)
+        && std::isfinite(diagnostics.workResidualJoules)
+        && diagnostics.mapping.finite;
+    const double impulseTolerance = diagnostics.timeStepSeconds
+        * combinedTolerance(
+            settings_.absoluteForceToleranceNewtons,
+            settings_.relativeForceTolerance,
+            length(diagnostics.mapping.structureSurfaceForceNewtons),
+            length(diagnostics.pressureForceOnSurfaceNewtons));
+    const double workTolerance = diagnostics.timeStepSeconds
+        * combinedTolerance(
+            settings_.absolutePowerToleranceWatts,
+            settings_.relativePowerTolerance,
+            std::abs(diagnostics.mapping.structureSurfacePowerWatts),
+            std::abs(diagnostics.pressurePowerToSurfaceWatts));
+    const double energyScale =
+        std::abs(diagnostics.pressureWorkToFluidJoules)
+        + std::abs(diagnostics.pressureWorkToSurfaceJoules)
+        + std::abs(diagnostics.porousDissipatedEnergyJoules);
+    diagnostics.accepted = diagnostics.finite
+        && diagnostics.impulseResidualNormNewtonSeconds
+            <= impulseTolerance
+        && std::abs(diagnostics.workResidualJoules) <= workTolerance
+        && std::abs(diagnostics.sourceEnergyResidualJoules)
+            <= 1.0e-10 + 1.0e-11 * energyScale;
+    if (!diagnostics.accepted) {
+        throw std::invalid_argument(
+            "porous face bridge impulse, work, or energy ledger did not close");
+    }
+    return {
+        mapped.transferResult(), std::move(diagnostics)};
 }
 
 PlanarFaceResolvedTransferResult

@@ -719,7 +719,13 @@ patches immutable while explicitly separating the current Eulerian grid plane
 from the unwrapped physical plane. It accepts only a matching rigid structural
 translation and uniform normal velocity, with independent position and velocity
 correspondence ledgers, and is verified for X, Y, and Z normals and periodic
-grid-plane wrap. The `--case piston` worker now evaluates compatible
+grid-plane wrap. Accepted porous traction can cross the same stable-ID planar
+mapping without reinterpreting the fluid load as a structural load: the bridge
+selects the equal-and-opposite sheet reaction, excludes separately prescribed
+pressure sources, and independently closes source-to-structure impulse and
+work while carrying porous dissipation as its own energy ledger. Fixed and
+rigid-normal translated correspondence are supported; general deforming or
+nonplanar porous-sheet mapping is not. The `--case piston` worker now evaluates compatible
 start/end face-resolved fluid samples, trapezoidally integrates them, accepts
 the impulse through XPBD, and publishes the resulting moving two-triangle
 surface and CFD ledger fields to the standalone viewer. The
@@ -868,7 +874,10 @@ normal, and reconstructed diagnostic pressure. A static headless worker makes
   fluid velocity, sheet work uses authored sheet velocity, and their deficit
   closes against porous dissipation per face, per surface, and globally.
   Separately prescribed pressure sources are deliberately not attributed to
-  porous-sheet traction.
+  porous-sheet traction. The stable-ID planar fluid/structure bridge consumes
+  that accepted boundary directly, transfers only the sheet reaction through
+  the existing overlap quadrature, and requires both force-to-impulse and
+  power-to-work closure over the recorded projection time step.
   The regression budgets are:
 gradient/divergence adjoint error at or below `2e-14` in the canonical
 integral, Taylor-Green maximum divergence below `2e-14 1/s` with a

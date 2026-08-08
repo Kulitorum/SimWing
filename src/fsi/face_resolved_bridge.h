@@ -2,6 +2,7 @@
 
 #include "fluid/planar_cut_surface.h"
 #include "fluid/moving_interface.h"
+#include "fluid/porous_interface.h"
 #include "transfer.h"
 
 #include <array>
@@ -93,6 +94,56 @@ private:
     PlanarFaceResolvedBridgeDiagnostics diagnostics_;
 };
 
+inline constexpr std::uint32_t porousFaceResolvedBridgeVersion = 1;
+
+struct PorousFaceResolvedBridgeDiagnostics {
+    std::uint32_t version = porousFaceResolvedBridgeVersion;
+    std::uint64_t fluidSurfaceStableId = 0;
+    double timeStepSeconds = 0.0;
+    StructureVector3 pressureForceOnFluidNewtons;
+    StructureVector3 pressureImpulseOnFluidNewtonSeconds;
+    double pressurePowerToFluidWatts = 0.0;
+    double pressureWorkToFluidJoules = 0.0;
+    StructureVector3 pressureForceOnSurfaceNewtons;
+    StructureVector3 pressureImpulseOnSurfaceNewtonSeconds;
+    double pressurePowerToSurfaceWatts = 0.0;
+    double pressureWorkToSurfaceJoules = 0.0;
+    double porousDissipationWatts = 0.0;
+    double porousDissipatedEnergyJoules = 0.0;
+    double sourceEnergyResidualJoules = 0.0;
+    StructureVector3 transferredSurfaceImpulseNewtonSeconds;
+    StructureVector3 impulseResidualNewtonSeconds;
+    double impulseResidualNormNewtonSeconds = 0.0;
+    double transferredSurfaceWorkJoules = 0.0;
+    double workResidualJoules = 0.0;
+    PlanarFaceResolvedBridgeDiagnostics mapping;
+    bool finite = true;
+    bool accepted = false;
+
+    bool operator==(
+        const PorousFaceResolvedBridgeDiagnostics&) const = default;
+};
+
+class PorousFaceResolvedTransferResult final {
+public:
+    [[nodiscard]] const ConservativeTransferResult&
+    transferResult() const noexcept;
+    [[nodiscard]] const PorousFaceResolvedBridgeDiagnostics&
+    diagnostics() const noexcept;
+
+    bool operator==(
+        const PorousFaceResolvedTransferResult&) const = default;
+
+private:
+    friend class PlanarFaceResolvedFluidStructureBridge;
+    PorousFaceResolvedTransferResult(
+        ConservativeTransferResult transferResult,
+        PorousFaceResolvedBridgeDiagnostics diagnostics);
+
+    ConservativeTransferResult transferResult_;
+    PorousFaceResolvedBridgeDiagnostics diagnostics_;
+};
+
 // Planar bridge for one set of axis-aligned MAC tiles.
 // Reference triangles are clipped against every tile once. Each overlap area
 // and centroid becomes a material barycentric quadrature patch, so later
@@ -113,6 +164,14 @@ public:
         std::vector<fluid::MovingInterfaceFaceDiagnostics> referenceFaces,
         const PlanarFaceResolvedBridgeSettings& settings = {});
 
+    PlanarFaceResolvedFluidStructureBridge(
+        const Structure& target,
+        std::uint64_t fluidSurfaceStableId,
+        std::vector<CouplingSurfaceNodeDefinition> nodes,
+        std::vector<CouplingSurfaceTriangleDefinition> triangles,
+        std::vector<fluid::PorousFaceTractionDiagnostics> referenceFaces,
+        const PlanarFaceResolvedBridgeSettings& settings = {});
+
     [[nodiscard]] std::uint64_t fluidSurfaceStableId() const noexcept;
     [[nodiscard]] const ConservativeSurfaceTransfer& transfer() const noexcept;
     [[nodiscard]] std::size_t overlapPatchCount() const noexcept;
@@ -130,6 +189,16 @@ public:
     [[nodiscard]] PlanarFaceResolvedTransferResult evaluateCutSurface(
         const fluid::PlanarCutSurfacePressureDiagnostics& cutSurface,
         std::span<const CouplingNodeKinematics> nodeKinematics) const;
+
+    [[nodiscard]] PorousFaceResolvedTransferResult evaluatePorousSurface(
+        const fluid::PorousSurfaceTractionDiagnostics& porousTraction,
+        std::span<const CouplingNodeKinematics> nodeKinematics) const;
+
+    [[nodiscard]] PorousFaceResolvedTransferResult
+    evaluateMovingPorousSurface(
+        const fluid::PorousSurfaceTractionDiagnostics& porousTraction,
+        std::span<const CouplingNodeKinematics> nodeKinematics,
+        double physicalPlaneCoordinateMeters) const;
 
 private:
     struct FaceDefinition {
@@ -154,6 +223,11 @@ private:
 
     [[nodiscard]] PlanarFaceResolvedTransferResult evaluateImpl(
         const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
+        std::span<const CouplingNodeKinematics> nodeKinematics,
+        std::optional<double> physicalPlaneCoordinateMeters) const;
+
+    [[nodiscard]] PorousFaceResolvedTransferResult evaluatePorousImpl(
+        const fluid::PorousSurfaceTractionDiagnostics& porousTraction,
         std::span<const CouplingNodeKinematics> nodeKinematics,
         std::optional<double> physicalPlaneCoordinateMeters) const;
 

@@ -197,6 +197,53 @@ MovingInterfaceProjectionDiagnostics fluidPistonDiagnostics(
         grid, velocity, pressure, interfaces, settings);
 }
 
+simwing::fsi::fluid::PorousSurfaceTractionDiagnostics
+porousSurfaceTraction(const double crossingFraction = 0.4) {
+    const auto grid = pistonGrid();
+    const FaceAlignedMovingInterface interfaces(grid, slabFaces(grid));
+    const auto counts = grid.cellCounts();
+    std::vector<simwing::fsi::fluid::PorousGridFaceCrossing> porous;
+    std::vector<simwing::fsi::fluid::GridFacePressureJump> prescribed;
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            porous.push_back({
+                300, 10, 11, GridFaceAxis::X, 3, j, k,
+                crossingFraction, 0.1, {10.0, 0.0}});
+            prescribed.push_back({
+                400, 11, 10, GridFaceAxis::X, 5, j, k,
+                1.5, 0.6});
+        }
+    }
+    simwing::fsi::fluid::MovingPorousProjectionSettings settings;
+    settings.movingProjection.projection.densityKgPerCubicMeter = 1.2;
+    settings.movingProjection.projection.timeStepSeconds = 0.4;
+    settings.movingProjection.projection.absoluteResidualTolerance =
+        1.0e-11;
+    settings.movingProjection.projection.relativeResidualTolerance =
+        1.0e-13;
+    settings.movingProjection.projection.maximumIterations = 1000;
+    settings.movingProjection
+        .absoluteRegionVolumeRateToleranceCubicMetersPerSecond = 1.0e-12;
+    settings.iteration.absoluteNormalVelocityToleranceMetersPerSecond =
+        1.0e-12;
+    settings.iteration.relativeNormalVelocityTolerance = 1.0e-12;
+    settings.iteration.absolutePressureJumpTolerancePascals = 1.0e-11;
+    settings.iteration.relativePressureJumpTolerance = 1.0e-12;
+    settings.iteration.relaxation = 0.5;
+    settings.iteration.maximumNonlinearIterations = 100;
+    MacVelocityField velocity(grid);
+    CellScalarField pressure(grid);
+    const simwing::fsi::fluid::SharpPressureJumpField pressureSource(
+        grid, std::move(prescribed));
+    const auto diagnostics =
+        simwing::fsi::fluid::projectVelocityWithMovingAndPorousInterfaces(
+            grid, velocity, pressure, interfaces,
+            porous, pressureSource, settings);
+    return simwing::fsi::fluid::evaluatePorousSurfaceTraction(
+        grid, diagnostics,
+        settings.movingProjection.projection.timeStepSeconds);
+}
+
 FaceAlignedMovingInterface openPlaneInterfaces(
     const GridFaceAxis axis,
     const std::size_t movingPlaneCoordinate,
@@ -820,6 +867,130 @@ void testMovingPlanarCorrespondenceAllAxes() {
     }
 }
 
+void testPorousFaceResolvedTransfer() {
+    const auto traction = porousSurfaceTraction();
+    Structure structure(movingPlaneDefinition(GridFaceAxis::X, 1.45));
+    PlanarFaceResolvedFluidStructureBridge bridge(
+        structure, 300, pistonNodes(), pistonTriangles(),
+        traction.faces);
+    const auto kinematics = translatingKinematics(
+        bridge.transfer(), structure, 0.1);
+    const auto first = bridge.evaluatePorousSurface(
+        traction, kinematics);
+    const auto second = bridge.evaluatePorousSurface(
+        traction, kinematics);
+    const auto& diagnostics = first.diagnostics();
+
+    check(first == second && diagnostics.accepted && diagnostics.finite
+              && diagnostics.version
+                  == simwing::fsi::porousFaceResolvedBridgeVersion
+              && diagnostics.fluidSurfaceStableId == 300
+              && diagnostics.mapping.fluidFaceCount == 6
+              && diagnostics.mapping.overlapPatchCount > 0,
+          "porous bridge: stable-ID face transfer replays deterministically");
+    checkVectorNear(diagnostics.pressureForceOnFluidNewtons,
+                    {-9.0, 0.0, 0.0}, 2.0e-10,
+                    "porous bridge: fluid-side porous force remains explicit");
+    checkVectorNear(diagnostics.pressureForceOnSurfaceNewtons,
+                    {9.0, 0.0, 0.0}, 2.0e-10,
+                    "porous bridge: equal-and-opposite sheet load is selected for transfer");
+    checkVectorNear(
+        diagnostics.mapping.structureSurfaceForceNewtons,
+        {9.0, 0.0, 0.0}, 2.0e-10,
+        "porous bridge: structural quadrature receives the sheet reaction");
+    checkVectorNear(
+        diagnostics.transferredSurfaceImpulseNewtonSeconds,
+        {3.6, 0.0, 0.0}, 2.0e-10,
+        "porous bridge: mapped sheet force retains its macro-step impulse");
+    check(diagnostics.impulseResidualNormNewtonSeconds < 3.0e-15,
+          "porous bridge: source and transferred impulses close");
+    checkNear(diagnostics.pressurePowerToFluidWatts,
+              -2.25, 2.0e-10,
+              "porous bridge: fluid pressure power is not reassigned to structure");
+    checkNear(diagnostics.pressurePowerToSurfaceWatts,
+              0.9, 2.0e-10,
+              "porous bridge: authored sheet power remains explicit");
+    checkNear(diagnostics.mapping.structureSurfacePowerWatts,
+              0.9, 2.0e-10,
+              "porous bridge: structural kinematics reproduce sheet power");
+    checkNear(diagnostics.transferredSurfaceWorkJoules,
+              0.36, 2.0e-10,
+              "porous bridge: structural pressure work integrates over the macro step");
+    checkNear(diagnostics.workResidualJoules,
+              0.0, 3.0e-16,
+              "porous bridge: source and transferred work close");
+    checkNear(diagnostics.porousDissipatedEnergyJoules,
+              0.54, 2.0e-10,
+              "porous bridge: material dissipation remains separate from structure work");
+    checkNear(diagnostics.sourceEnergyResidualJoules,
+              0.0, 3.0e-16,
+              "porous bridge: fluid, sheet, and dissipative energy identity survives transfer");
+
+    ConservativeMacroStepCoupling coupling(bridge.transfer());
+    const std::array<double, 2> offsets{0.0, 0.4};
+    const std::array samples{
+        first.transferResult(), second.transferResult()};
+    const auto integrated = coupling.integrate(offsets, samples);
+    checkVectorNear(
+        integrated.diagnostics().integratedSurfaceImpulseNewtonSeconds,
+        diagnostics.pressureImpulseOnSurfaceNewtonSeconds,
+        2.0e-10,
+        "porous bridge: sheet reaction reaches temporal coupling as the same impulse");
+    checkNear(integrated.diagnostics().integratedSurfaceWorkJoules,
+              diagnostics.pressureWorkToSurfaceJoules, 2.0e-10,
+              "porous bridge: sheet power reaches temporal coupling as the same work");
+
+    PlanarFaceResolvedBridgeSettings movingSettings;
+    movingSettings.correspondenceMode =
+        PlanarFaceCorrespondenceMode::RigidNormalTranslation;
+    PlanarFaceResolvedFluidStructureBridge movingBridge(
+        structure, 300, pistonNodes(), pistonTriangles(),
+        traction.faces, movingSettings);
+    const auto movedTraction = porousSurfaceTraction(0.6);
+    const auto movedKinematics = movingPlaneKinematics(
+        movingBridge.transfer(), structure, 1.55, 0.1);
+    const auto moved = movingBridge.evaluateMovingPorousSurface(
+        movedTraction, movedKinematics, 1.55);
+    check(moved.diagnostics().accepted
+              && moved.diagnostics().mapping.correspondenceMode
+                  == PlanarFaceCorrespondenceMode::RigidNormalTranslation,
+          "porous bridge: rigid sheet motion uses the explicit moving correspondence");
+    checkNear(
+        moved.diagnostics().mapping.normalTranslationFromReferenceMeters,
+        0.1, 2.0e-16,
+        "porous bridge: subcell sheet translation remains geometric, not a load shortcut");
+    checkVectorNear(
+        moved.diagnostics().mapping.structureSurfaceForceNewtons,
+        {9.0, 0.0, 0.0}, 2.0e-10,
+        "porous bridge: translated sheet retains conservative force transfer");
+
+    auto rejected = traction;
+    rejected.accepted = false;
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluatePorousSurface(
+            rejected, kinematics)); },
+        "porous bridge validation: unaccepted traction is rejected");
+    auto corruptedImpulse = traction;
+    corruptedImpulse.surfaces.front()
+        .pressureImpulseOnSurfaceNewtonSeconds.x += 1.0;
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluatePorousSurface(
+            corruptedImpulse, kinematics)); },
+        "porous bridge validation: source impulse must match mapped force");
+    auto wrongVelocity = kinematics;
+    for (auto& node : wrongVelocity) {
+        node.velocityMetersPerSecond.x = 0.2;
+    }
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluatePorousSurface(
+            traction, wrongVelocity)); },
+        "porous bridge validation: structural velocity must match sheet power");
+    expectRejected(
+        [&] { static_cast<void>(movingBridge.evaluatePorousSurface(
+            traction, kinematics)); },
+        "porous bridge validation: moving correspondence requires an explicit physical plane");
+}
+
 } // namespace
 
 int main() {
@@ -828,6 +999,7 @@ int main() {
     testFaceResolvedNonuniformPressureTransfer();
     testMovingPlanarFaceCorrespondence();
     testMovingPlanarCorrespondenceAllAxes();
+    testPorousFaceResolvedTransfer();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing fluid-structure bridge check(s) failed\n",

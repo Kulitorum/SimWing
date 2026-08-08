@@ -182,7 +182,7 @@ struct MovingPorousProjectionDiagnostics {
         const MovingPorousProjectionDiagnostics&) const = default;
 };
 
-inline constexpr std::uint32_t porousSurfaceTractionVersion = 1;
+inline constexpr std::uint32_t porousSurfaceTractionVersion = 2;
 
 struct PorousFaceTractionDiagnostics {
     std::uint64_t surfaceStableId = 0;
@@ -236,6 +236,7 @@ struct PorousSurfaceTractionAggregate {
 
 struct PorousSurfaceTractionDiagnostics {
     std::uint32_t version = porousSurfaceTractionVersion;
+    double timeStepSeconds = 0.0;
     std::vector<PorousFaceTractionDiagnostics> faces;
     std::vector<PorousSurfaceTractionAggregate> surfaces;
     Vector3 totalPressureForceOnFluidNewtons;

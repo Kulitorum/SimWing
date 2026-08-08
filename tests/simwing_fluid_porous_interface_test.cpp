@@ -811,6 +811,8 @@ void testPorousSurfaceTractionLedgers() {
 
     check(traction.accepted && traction.finite
               && traction.version == porousSurfaceTractionVersion
+              && traction.timeStepSeconds
+                  == settings.movingProjection.projection.timeStepSeconds
               && traction.faces.size() == 6
               && traction.surfaces.size() == 1
               && traction == fixedView,
