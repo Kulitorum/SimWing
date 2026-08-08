@@ -192,7 +192,7 @@ bool serializeCoupledPorousSheetCheckpoint(
                     "coupled porous sheet checkpoint limits are invalid");
     }
     try {
-        CoupledPorousSheetCase validator;
+        CoupledPorousSheetCase validator(owner.motionDirection());
         validator.restore(checkpointValue);
         const auto& detail =
             CoupledPorousSheetCheckpointCodecAccess::detail(checkpointValue);
@@ -367,7 +367,7 @@ bool deserializeCoupledPorousSheetCheckpoint(
         const std::int64_t topologyPeriodicImage =
             std::bit_cast<std::int64_t>(payload.u64());
         if (stateVersion != coupledPorousSheetCheckpointVersion
-            || caseFingerprint != coupledPorousSheetCaseFingerprint
+            || caseFingerprint != owner.caseFingerprint()
             || topologyVersion != fluid::movingPorousFaceTopologyVersion
             || topologyAxis
                 > static_cast<std::uint32_t>(fluid::GridFaceAxis::Z)
@@ -459,7 +459,7 @@ bool deserializeCoupledPorousSheetCheckpoint(
                         "coupled porous sheet checkpoint fields are invalid");
         }
 
-        CoupledPorousSheetCase replay;
+        CoupledPorousSheetCase replay(owner.motionDirection());
         for (std::uint64_t step = 0; step < acceptedStepCount; ++step) {
             static_cast<void>(replay.advance());
         }

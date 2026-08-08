@@ -274,6 +274,12 @@ midpoint, so the last accepted endpoint before pump collision can also be
 persisted and deterministically repeats the same transactional rejection after
 restore. A process-level restart at step 900 additionally resumes the ordinary
 wrapped `face=0, image=1` epoch and advances only new accepted frames.
+A focused reverse-direction instance of the same worker flips the pump and
+material motion together, crosses the `0 -> 7` wrap into signed image `-1`,
+persists and resumes that epoch, and rejects its next negative pump image. The
+immutable direction has distinct provenance and checkpoint identity;
+cross-direction restore is rejected. The CLI remains the positive-direction
+canonical.
 The
 `simwing-fsi --case open-piston` harness drives a `6000 kg` plate at
 `0.05 m/s`, exposes the resisting CFD pressure separately from its actuator,

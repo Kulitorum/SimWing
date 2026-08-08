@@ -812,6 +812,112 @@ void testEveryRebasedEpochPersists() {
           "porous-sheet rebase checkpoint: all pre-pump epochs are covered");
 }
 
+void testReverseTopologyAndPersistence() {
+    constexpr auto reverseDirection =
+        fsi::CoupledPorousSheetMotionDirection::Negative;
+    fsi::CoupledPorousSheetCase owner(reverseDirection);
+    const auto firstFrame = owner.advance();
+    check(firstFrame.sceneChecksum
+              == fsi::coupledPorousSheetReverseCaseChecksum
+              && firstFrame.solverCommit
+                  == fsi::coupledPorousSheetReverseCaseSolverId
+              && owner.caseFingerprint()
+                  == fsi::coupledPorousSheetReverseCaseFingerprint
+              && owner.diagnostics()
+                     .fluidVelocityAfterMetersPerSecond < 0.0
+              && owner.diagnostics()
+                     .sheetVelocityAfterMetersPerSecond < 0.0
+              && owner.diagnostics().pumpImpulseNewtonSeconds.x < 0.0
+              && owner.diagnostics().momentumResidualNormNewtonSeconds
+                  < 3.0e-10,
+          "porous-sheet reverse: provenance and conservative motion reverse together");
+
+    bool observedNegativeWrap = false;
+    bool persistedNegativeWrap = false;
+    for (std::uint64_t attempt = 0;
+         attempt < 5000
+         && owner.topologyRebaseCount()
+             < fsi::coupledPorousSheetMaximumOrdinaryRebaseCount;
+         ++attempt) {
+        static_cast<void>(owner.advance());
+        if (!owner.diagnostics().topologyRebasedThisStep) {
+            continue;
+        }
+        const auto expected =
+            fsi::coupledPorousSheetTopologyAfterRebases(
+                reverseDirection, owner.topologyRebaseCount());
+        check(owner.porousTopology() == expected
+                  && owner.diagnostics().porousTopology == expected,
+              "porous-sheet reverse: every negative rebase owns its complete epoch");
+        if (expected.faceCoordinate != 7
+            || expected.periodicImage != -1) {
+            continue;
+        }
+
+        observedNegativeWrap = true;
+        const auto checkpoint = owner.checkpoint();
+        const auto bytes = encodeCheckpoint(owner, checkpoint);
+        fsi::CoupledPorousSheetCheckpoint decoded;
+        fsi::CoupledPorousSheetCheckpointPersistenceError error;
+        const bool decodedOk =
+            fsi::deserializeCoupledPorousSheetCheckpoint(
+                bytes, owner, decoded, &error);
+        check(decodedOk
+                  && decoded.caseFingerprint
+                      == fsi::coupledPorousSheetReverseCaseFingerprint
+                  && decoded.porousTopology == expected,
+              "porous-sheet reverse: negative wrapped epoch persists exactly");
+        if (!decodedOk) {
+            return;
+        }
+        fsi::CoupledPorousSheetCase foreignOwner;
+        auto foreignDestination = foreignOwner.checkpoint();
+        error = {};
+        check(!fsi::deserializeCoupledPorousSheetCheckpoint(
+                  bytes, foreignOwner, foreignDestination, &error)
+                  && error.code
+                      == fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::InvalidData
+                  && foreignDestination.caseFingerprint
+                      == fsi::coupledPorousSheetCaseFingerprint
+                  && foreignDestination.acceptedStepCount == 0,
+              "porous-sheet reverse: persistent direction identity rejects cross-restore");
+        fsi::CoupledPorousSheetCase restored(reverseDirection);
+        restored.restore(decoded);
+        check(serialized(owner.advance())
+                  == serialized(restored.advance()),
+              "porous-sheet reverse: negative wrapped restart continues bit-identically");
+        persistedNegativeWrap = true;
+    }
+
+    check(observedNegativeWrap && persistedNegativeWrap
+              && owner.topologyRebaseCount()
+                  == fsi::coupledPorousSheetMaximumOrdinaryRebaseCount
+              && owner.porousTopology()
+                  == fsi::coupledPorousSheetReverseTerminalSafeTopology,
+          "porous-sheet reverse: all pre-pump epochs include the negative wrap");
+
+    const auto terminal = owner.checkpoint();
+    bool collisionRejected = false;
+    for (std::uint64_t attempt = 0;
+         attempt < 5000 && !collisionRejected; ++attempt) {
+        try {
+            static_cast<void>(owner.advance());
+        } catch (const std::exception& exception) {
+            collisionRejected = std::string(exception.what())
+                == "coupled porous sheet reached the pump-surface topology";
+        }
+    }
+    check(collisionRejected
+              && owner.porousTopology()
+                  == fsi::coupledPorousSheetReverseTerminalSafeTopology,
+          "porous-sheet reverse: next negative pump image rejects without mutation");
+
+    fsi::CoupledPorousSheetCase positiveOwner;
+    expectRestoreRejected(
+        positiveOwner, terminal,
+        "porous-sheet reverse: direction-specific checkpoint identity is transactional");
+}
+
 } // namespace
 
 int main() {
@@ -822,6 +928,7 @@ int main() {
     testPersistentCheckpoint();
     testEveryRebasedEpochPersists();
     testTerminalSafePointPersistence();
+    testReverseTopologyAndPersistence();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing coupled porous-sheet check(s) failed\n",

@@ -994,6 +994,12 @@ continues bit-identically. A later collision with the next periodic image of
 the prescribed pump surface is rejected by the case after selection; this
 remains a planar oracle, not a
 general moving cut-cell remap or a general strong-coupling solve.
+A direction-specific companion instantiates the same boundary with negative
+pump pressure, reverses both fluid and XPBD momentum, crosses six negative
+rebases including `0 -> 7` into signed image `-1`, and persists that wrapped
+epoch with distinct provenance and case fingerprint. It then rejects the next
+negative pump image transactionally. This reverse mode is a focused symmetry
+oracle; the worker CLI continues to expose the positive canonical.
 Its immutable in-memory checkpoint owns the nested Structure state, MAC
 velocity, pressure, and last accepted coupled diagnostics. Restore validates
 the case identity, exact step/time epoch, rigid sheet state, uniform fluid
@@ -1004,8 +1010,10 @@ The distinct `SWPS` persistent envelope reuses the validated Structure codec
 and stores the topology version, axis, wrapped face, signed periodic image, all
 three MAC velocity components, and pressure explicitly. The in-memory owner and
 diagnostic frame carry that same complete topology epoch rather than rebuilding
-it from a face index. Because this canonical has no runtime-varying controls,
-decode regenerates its coupled diagnostic across topology epochs by bounded replay and
+it from a face index. Motion direction is immutable construction metadata with
+its own case fingerprint; there are no runtime-varying controls. Decode
+regenerates its coupled diagnostic in the owner's direction across topology
+epochs by bounded replay and
 requires the decoded Structure and every field sample to match that replay
 bit-for-bit. Magic,
 protocol, reserved bits, payload size, checksum, nested Structure state, total
@@ -1188,9 +1196,10 @@ The coupled porous-sheet oracle now also exercises the accepted
 fluid-to-structure boundary end to end: a periodic pump drives midpoint flow,
 the porous adapter excludes that pump from material traction, the bridge maps
 only the sheet reaction, and XPBD receives the same impulse and work. Its six
-ordinary MAC-face topology rebases, periodic wrap, per-epoch checkpoint replay,
-and later explicit pump-collision rejection remain intentionally smaller gates than
-general moving porous topology. Checkpoint topology belongs to the accepted
+positive and six negative MAC-face topology rebases, both signed wrap
+directions, per-epoch checkpoint replay, and later explicit pump-collision
+rejection remain intentionally smaller gates than general moving porous
+topology. Checkpoint topology belongs to the accepted
 constitutive midpoint rather than the possibly farther endpoint; this permits
 the terminal accepted state to persist and reproduce the same collision
 transactionally after restore.

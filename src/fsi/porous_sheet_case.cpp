@@ -21,8 +21,53 @@ constexpr std::uint64_t plusRegionStableId = 11;
 constexpr double initialSheetPositionMeters = 1.45;
 constexpr double fluidDensityKgPerCubicMeter = 1.2;
 constexpr double sheetMassKilograms = 60.0;
-constexpr double pumpPressureJumpPascals = 1.5;
+constexpr double pumpPressureJumpMagnitudePascals = 1.5;
 constexpr double linearResistancePascalSecondsPerMeter = 10.0;
+
+double pumpPressureJumpPascals(
+    const CoupledPorousSheetMotionDirection direction) {
+    switch (direction) {
+    case CoupledPorousSheetMotionDirection::Positive:
+        return pumpPressureJumpMagnitudePascals;
+    case CoupledPorousSheetMotionDirection::Negative:
+        return -pumpPressureJumpMagnitudePascals;
+    }
+    throw std::invalid_argument(
+        "coupled porous sheet motion direction is invalid");
+}
+
+std::size_t pumpFaceCoordinate(
+    const CoupledPorousSheetMotionDirection direction) {
+    switch (direction) {
+    case CoupledPorousSheetMotionDirection::Positive:
+        return coupledPorousSheetPumpFaceCoordinate;
+    case CoupledPorousSheetMotionDirection::Negative:
+        return coupledPorousSheetReversePumpFaceCoordinate;
+    }
+    throw std::invalid_argument(
+        "coupled porous sheet motion direction is invalid");
+}
+
+const char* caseChecksum(
+    const CoupledPorousSheetMotionDirection direction) {
+    return direction == CoupledPorousSheetMotionDirection::Positive
+        ? coupledPorousSheetCaseChecksum
+        : coupledPorousSheetReverseCaseChecksum;
+}
+
+const char* caseSolverId(
+    const CoupledPorousSheetMotionDirection direction) {
+    return direction == CoupledPorousSheetMotionDirection::Positive
+        ? coupledPorousSheetCaseSolverId
+        : coupledPorousSheetReverseCaseSolverId;
+}
+
+std::uint64_t fingerprintForDirection(
+    const CoupledPorousSheetMotionDirection direction) {
+    return direction == CoupledPorousSheetMotionDirection::Positive
+        ? coupledPorousSheetCaseFingerprint
+        : coupledPorousSheetReverseCaseFingerprint;
+}
 
 StructureVector3 add(const StructureVector3& first,
                      const StructureVector3& second) {
@@ -174,8 +219,12 @@ std::vector<fluid::PorousGridFaceCrossing> makePorousSheet(
 }
 
 fluid::SharpPressureJumpField makePump(
-    const fluid::PeriodicCartesianGrid& grid) {
+    const fluid::PeriodicCartesianGrid& grid,
+    const CoupledPorousSheetMotionDirection direction) {
     const auto counts = grid.cellCounts();
+    const std::size_t faceCoordinate = pumpFaceCoordinate(direction);
+    const double pressureJumpPascals =
+        pumpPressureJumpPascals(direction);
     std::vector<fluid::GridFacePressureJump> result;
     result.reserve(counts.y * counts.z);
     for (std::size_t k = 0; k < counts.z; ++k) {
@@ -185,10 +234,10 @@ fluid::SharpPressureJumpField makePump(
                 plusRegionStableId,
                 minusRegionStableId,
                 fluid::GridFaceAxis::X,
-                coupledPorousSheetPumpFaceCoordinate,
+                faceCoordinate,
                 j,
                 k,
-                pumpPressureJumpPascals,
+                pressureJumpPascals,
                 0.5,
             });
         }
@@ -198,13 +247,14 @@ fluid::SharpPressureJumpField makePump(
 
 std::vector<fluid::PorousFaceTractionDiagnostics> referenceFaces(
     const fluid::PeriodicCartesianGrid& grid,
-    const fluid::PorousProjectionSettings& settings) {
+    const fluid::PorousProjectionSettings& settings,
+    const CoupledPorousSheetMotionDirection direction) {
     fluid::MacVelocityField velocity(grid);
     fluid::CellScalarField pressure(grid);
     const auto porous = makePorousSheet(
         grid, coupledPorousSheetInitialTopology,
         initialSheetPositionMeters, 0.0);
-    const auto pump = makePump(grid);
+    const auto pump = makePump(grid, direction);
     const auto projected = fluid::projectVelocityWithPorousInterfaces(
         grid, velocity, pressure, porous, pump, settings);
     const auto traction = fluid::evaluatePorousSurfaceTraction(
@@ -340,8 +390,10 @@ void appendFrameFields(
 
 } // namespace
 
-CoupledPorousSheetCase::CoupledPorousSheetCase()
-    : grid_(makeGrid()),
+CoupledPorousSheetCase::CoupledPorousSheetCase(
+    const CoupledPorousSheetMotionDirection direction)
+    : direction_(direction),
+      grid_(makeGrid()),
       velocity_(grid_),
       pressure_(grid_),
       projectionSettings_(makeProjectionSettings()),
@@ -349,7 +401,7 @@ CoupledPorousSheetCase::CoupledPorousSheetCase()
       bridge_(
           structure_, porousSheetSurfaceStableId,
           makeCouplingNodes(), makeCouplingTriangles(),
-          referenceFaces(grid_, projectionSettings_),
+          referenceFaces(grid_, projectionSettings_, direction_),
           makeBridgeSettings()),
       coupling_(bridge_.transfer()),
       frameMapping_(structure_, makeFrameMapping()),
@@ -363,8 +415,8 @@ CoupledPorousSheetCase::CoupledPorousSheetCase()
 
 viewer::TraceHeader CoupledPorousSheetCase::traceHeader() const {
     return {
-        coupledPorousSheetCaseChecksum,
-        coupledPorousSheetCaseSolverId,
+        caseChecksum(direction_),
+        caseSolverId(direction_),
     };
 }
 
@@ -393,6 +445,7 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
         const double timeStep = stepSettings_.timeStepSeconds;
         const double fluidMass = fluidMassKilograms(grid_);
         const double area = sheetAreaSquareMeters(grid_);
+        const double pumpPressure = pumpPressureJumpPascals(direction_);
         const double relativeVelocityBefore =
             fluidVelocityBefore - sheetVelocityBefore;
         const double denominator = 1.0
@@ -402,7 +455,7 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
         const double relativeVelocityAtConstitutiveTime =
             (relativeVelocityBefore
              + 0.5 * timeStep * area
-                 * pumpPressureJumpPascals / fluidMass)
+                 * pumpPressure / fluidMass)
             / denominator;
         const double predictedSheetForce = area
             * linearResistancePascalSecondsPerMeter
@@ -422,7 +475,9 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
                 grid_, porousTopology_,
                 sheetPositionAtConstitutiveTime);
         if (topology.topology
-            == coupledPorousSheetPumpCollisionTopology) {
+            == coupledPorousSheetTopologyAfterRebases(
+                direction_,
+                coupledPorousSheetMaximumOrdinaryRebaseCount + 1)) {
             throw std::runtime_error(
                 "coupled porous sheet reached the pump-surface topology");
         }
@@ -433,7 +488,7 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
             grid_, topology.topology,
             sheetPositionAtConstitutiveTime,
             sheetVelocityAtConstitutiveTime);
-        const auto pump = makePump(grid_);
+        const auto pump = makePump(grid_, direction_);
         const fluid::PorousProjectionDiagnostics projection =
             fluid::projectVelocityWithPorousInterfaces(
                 grid_, candidateVelocity, candidatePressure,
@@ -508,7 +563,7 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
         candidate.porousImpulseOnSheetNewtonSeconds =
             mapped.diagnostics().pressureImpulseOnSurfaceNewtonSeconds;
         candidate.pumpImpulseNewtonSeconds = {
-            area * pumpPressureJumpPascals * timeStep, 0.0, 0.0};
+            area * pumpPressure * timeStep, 0.0, 0.0};
         candidate.momentumResidualNewtonSeconds = subtract(
             add(candidate.actualFluidImpulseNewtonSeconds,
                 candidate.actualSheetImpulseNewtonSeconds),
@@ -606,7 +661,7 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
             && mapped.diagnostics().accepted
             && candidate.porousTopology
                 == coupledPorousSheetTopologyAfterRebases(
-                    candidate.topologyRebaseCount)
+                    direction_, candidate.topologyRebaseCount)
             && length(fluidImpulseResidual) <= 2.0e-10
             && length(sheetImpulseResidual) <= 2.0e-10
             && candidate.momentumResidualNormNewtonSeconds <= 3.0e-10
@@ -621,8 +676,8 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
         }
 
         viewer::StructureFrameContext context;
-        context.sceneChecksum = coupledPorousSheetCaseChecksum;
-        context.solverCommit = coupledPorousSheetCaseSolverId;
+        context.sceneChecksum = caseChecksum(direction_);
+        context.solverCommit = caseSolverId(direction_);
         context.timeStepSeconds = timeStep;
         context.couplingIteration = 1;
         context.couplingResiduals.displacementMetres =
@@ -677,6 +732,7 @@ viewer::DiagnosticFrame CoupledPorousSheetCase::advance() {
 CoupledPorousSheetCheckpoint
 CoupledPorousSheetCase::checkpoint() const {
     CoupledPorousSheetCheckpoint result;
+    result.caseFingerprint = fingerprintForDirection(direction_);
     result.acceptedStepCount = structure_.acceptedStepCount();
     result.simulationTimeSeconds = structure_.simulationTimeSeconds();
     result.topologyRebaseCount = topologyRebaseCount_;
@@ -691,14 +747,14 @@ void CoupledPorousSheetCase::restore(
     const CoupledPorousSheetCheckpoint& checkpointValue) {
     if (checkpointValue.version != coupledPorousSheetCheckpointVersion
         || checkpointValue.caseFingerprint
-            != coupledPorousSheetCaseFingerprint
+            != fingerprintForDirection(direction_)
         || !std::isfinite(checkpointValue.simulationTimeSeconds)
         || checkpointValue.simulationTimeSeconds < 0.0
         || checkpointValue.topologyRebaseCount
             > coupledPorousSheetMaximumOrdinaryRebaseCount
         || checkpointValue.porousTopology
             != coupledPorousSheetTopologyAfterRebases(
-                checkpointValue.topologyRebaseCount)
+                direction_, checkpointValue.topologyRebaseCount)
         || !checkpointValue.detail) {
         throw std::invalid_argument(
             "coupled porous sheet checkpoint metadata is invalid");
@@ -780,7 +836,7 @@ void CoupledPorousSheetCase::restore(
         const double fluidMass = fluidMassKilograms(grid_);
         const double expectedSystemMomentum =
             sheetAreaSquareMeters(grid_)
-            * pumpPressureJumpPascals
+            * pumpPressureJumpPascals(direction_)
             * checkpointValue.simulationTimeSeconds;
         const double actualSystemMomentum =
             structureDiagnostics.linearMomentumKgMetersPerSecond.x
@@ -890,6 +946,15 @@ CoupledPorousSheetCase::acceptedStepCount() const noexcept {
 
 double CoupledPorousSheetCase::simulationTimeSeconds() const noexcept {
     return structure_.simulationTimeSeconds();
+}
+
+CoupledPorousSheetMotionDirection
+CoupledPorousSheetCase::motionDirection() const noexcept {
+    return direction_;
+}
+
+std::uint64_t CoupledPorousSheetCase::caseFingerprint() const noexcept {
+    return fingerprintForDirection(direction_);
 }
 
 std::uint64_t
