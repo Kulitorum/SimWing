@@ -1402,7 +1402,7 @@ add_test(NAME simwing_fsi_porous_sheet_headless
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-porous-sheet-headless.swtrace")
 set_tests_properties(simwing_fsi_porous_sheet_headless PROPERTIES
-    PASS_REGULAR_EXPRESSION "completed 120 step\\(s\\)")
+    PASS_REGULAR_EXPRESSION "completed 120 porous-sheet step\\(s\\)")
 add_test(NAME simwing_fsi_periodic_flow_headless
     COMMAND simwing-fsi
         --case periodic-flow
@@ -1514,6 +1514,49 @@ add_test(NAME simwing_fsi_checkpoint_interval_requires_output
         --checkpoint-every 2)
 set_tests_properties(simwing_fsi_checkpoint_interval_requires_output PROPERTIES
     WILL_FAIL TRUE)
+add_test(NAME simwing_fsi_porous_sheet_checkpoint_write
+    COMMAND simwing-fsi
+        --case porous-sheet
+        --steps 60
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-porous-sheet-checkpoint-write.swtrace"
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-porous-sheet.swps"
+        --checkpoint-every 30)
+set_tests_properties(simwing_fsi_porous_sheet_checkpoint_write PROPERTIES
+    PASS_REGULAR_EXPRESSION "completed 60 porous-sheet step\\(s\\).*checkpoint-writes=2")
+add_test(NAME simwing_fsi_porous_sheet_checkpoint_resume
+    COMMAND simwing-fsi
+        --case porous-sheet
+        --steps 3
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-porous-sheet-checkpoint-resume.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-porous-sheet.swps"
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-porous-sheet.swps"
+        --checkpoint-every 2)
+set_tests_properties(simwing_fsi_porous_sheet_checkpoint_resume PROPERTIES
+    DEPENDS simwing_fsi_porous_sheet_checkpoint_write
+    PASS_REGULAR_EXPRESSION "completed 63 porous-sheet step\\(s\\).*checkpoint-writes=2")
+add_test(NAME simwing_fsi_porous_sheet_checkpoint_verify
+    COMMAND simwing-fsi
+        --case porous-sheet
+        --steps 0
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-porous-sheet-checkpoint-verify.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-porous-sheet.swps")
+set_tests_properties(simwing_fsi_porous_sheet_checkpoint_verify PROPERTIES
+    DEPENDS simwing_fsi_porous_sheet_checkpoint_resume
+    PASS_REGULAR_EXPRESSION "completed 63 porous-sheet step\\(s\\)")
+add_test(NAME simwing_fsi_porous_sheet_rejects_foreign_checkpoint
+    COMMAND simwing-fsi
+        --case porous-sheet
+        --steps 0
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-porous-sheet-foreign.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-periodic-flow.swpc")
+set_tests_properties(simwing_fsi_porous_sheet_rejects_foreign_checkpoint
+    PROPERTIES
+        DEPENDS simwing_fsi_periodic_flow_checkpoint_verify
+        WILL_FAIL TRUE)
 add_test(NAME simwing_fsi_open_piston_headless
     COMMAND simwing-fsi
         --case open-piston

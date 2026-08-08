@@ -788,4 +788,13 @@ CoupledPorousSheetCase::diagnostics() const noexcept {
     return diagnostics_;
 }
 
+std::uint64_t
+CoupledPorousSheetCase::acceptedStepCount() const noexcept {
+    return structure_.acceptedStepCount();
+}
+
+double CoupledPorousSheetCase::simulationTimeSeconds() const noexcept {
+    return structure_.simulationTimeSeconds();
+}
+
 } // namespace simwing::fsi

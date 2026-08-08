@@ -102,6 +102,8 @@ public:
     [[nodiscard]] const StructureStepSettings& stepSettings() const noexcept;
     [[nodiscard]] const CoupledPorousSheetStepDiagnostics&
     diagnostics() const noexcept;
+    [[nodiscard]] std::uint64_t acceptedStepCount() const noexcept;
+    [[nodiscard]] double simulationTimeSeconds() const noexcept;
 
 private:
     fluid::PeriodicCartesianGrid grid_;

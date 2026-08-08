@@ -411,6 +411,8 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case pressure-jump --steps 4 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case porous-flow --steps 120 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case porous-sheet --steps 120 --no-viewer
+.\build\bin\Release\simwing-fsi.exe --case porous-sheet --steps 60 --no-viewer --checkpoint-out porous-sheet.swps --checkpoint-every 30
+.\build\bin\Release\simwing-fsi.exe --case porous-sheet --checkpoint-in porous-sheet.swps --steps 30 --checkpoint-out porous-sheet.swps --checkpoint-every 30
 ```
 
 The first SimWing command launches the standalone trace viewer by default. The

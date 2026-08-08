@@ -984,7 +984,10 @@ regenerates its coupled diagnostic by bounded replay and requires the decoded
 Structure and every field sample to match that replay bit-for-bit. Magic,
 protocol, reserved bits, payload size, checksum, nested Structure state, total
 bytes, scalar samples, and replay steps are bounded and rejected before the
-destination checkpoint changes.
+destination checkpoint changes. The standard worker checkpoint flags now write
+and restore this envelope before trace creation. Same-path resume is atomic,
+steps are additional, autosaves use absolute accepted-step multiples, and the
+final accepted state is not written twice.
 The case checkpoint must restore the initial state and a later accepted state,
 then reproduce the next frame bit-for-bit in both the original and an equivalent
 rebuilt worker. Version, case fingerprint, grid, sample count, step, time, and

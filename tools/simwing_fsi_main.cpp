@@ -7,6 +7,7 @@
 #include "piston_case.h"
 #include "porous_flow_case.h"
 #include "porous_sheet_case.h"
+#include "porous_sheet_checkpoint_persistence.h"
 #include "pressure_jump_case.h"
 #include "viewer_protocol.h"
 #include "worker_control_stream.h"
@@ -100,7 +101,8 @@ void printUsage(FILE* stream) {
         "periodic pump drives fluid through it inside one topology epoch.\n"
         "'pressure-jump' repeatedly verifies a static split-region slab and\n"
         "publishes each ordered sharp-interface layer. Open-piston\n"
-        "and periodic-flow checkpoint paths restore/save exact accepted state;\n"
+        "porous-sheet, open-piston, and periodic-flow checkpoint paths\n"
+        "restore/save exact accepted state;\n"
         "--checkpoint-every\n"
         "autosaves at absolute accepted-step multiples and the final state. --steps\n"
         "counts additional intervals. --control-stdio instead exchanges bounded\n"
@@ -271,8 +273,10 @@ bool parseOptions(int argc,
     if ((!options.checkpointInputPath.empty()
          || !options.checkpointOutputPath.empty())
         && options.workerCase != WorkerCase::PeriodicFlow
-        && options.workerCase != WorkerCase::OpenPiston) {
-        error = "checkpoint paths require --case open-piston or periodic-flow";
+        && options.workerCase != WorkerCase::OpenPiston
+        && options.workerCase != WorkerCase::PorousSheet) {
+        error = "checkpoint paths require --case open-piston, porous-sheet, "
+            "or periodic-flow";
         return false;
     }
     if (options.checkpointEvery != 0
@@ -636,6 +640,41 @@ bool writeOpenPistonCheckpoint(
     return atomicallyWriteCheckpointBytes(path, bytes, error);
 }
 
+bool readPorousSheetCheckpoint(
+    const std::filesystem::path& path,
+    simwing::fsi::CoupledPorousSheetCheckpoint& checkpoint,
+    std::string& error) {
+    const simwing::fsi::CoupledPorousSheetCheckpointPersistenceLimits limits;
+    std::vector<std::uint8_t> bytes;
+    if (!readCheckpointBytes(
+            path, limits.maximumEncodedBytes, bytes, error)) {
+        return false;
+    }
+    simwing::fsi::CoupledPorousSheetCase owner;
+    simwing::fsi::CoupledPorousSheetCheckpointPersistenceError protocolError;
+    if (!simwing::fsi::deserializeCoupledPorousSheetCheckpoint(
+            bytes, owner, checkpoint, &protocolError, limits)) {
+        error = protocolError.message;
+        return false;
+    }
+    return true;
+}
+
+bool writePorousSheetCheckpoint(
+    const std::filesystem::path& path,
+    const simwing::fsi::CoupledPorousSheetCase& owner,
+    const simwing::fsi::CoupledPorousSheetCheckpoint& checkpoint,
+    std::string& error) {
+    std::vector<std::uint8_t> bytes;
+    simwing::fsi::CoupledPorousSheetCheckpointPersistenceError protocolError;
+    if (!simwing::fsi::serializeCoupledPorousSheetCheckpoint(
+            owner, checkpoint, bytes, &protocolError)) {
+        error = protocolError.message;
+        return false;
+    }
+    return atomicallyWriteCheckpointBytes(path, bytes, error);
+}
+
 bool configureBinaryControlStdio(std::string& error) {
 #ifdef _WIN32
     if (_setmode(_fileno(stdin), _O_BINARY) == -1) {
@@ -865,6 +904,8 @@ int main(int argc, char* argv[]) {
             restoredPeriodicFlowCheckpoint;
         std::optional<simwing::fsi::OpenPistonCaseCheckpoint>
             restoredOpenPistonCheckpoint;
+        std::optional<simwing::fsi::CoupledPorousSheetCheckpoint>
+            restoredPorousSheetCheckpoint;
         if (!options.checkpointInputPath.empty()) {
             bool restored = false;
             if (options.workerCase == WorkerCase::PeriodicFlow) {
@@ -872,11 +913,16 @@ int main(int argc, char* argv[]) {
                 restored = readPeriodicFlowCheckpoint(
                     options.checkpointInputPath,
                     *restoredPeriodicFlowCheckpoint, error);
-            } else {
+            } else if (options.workerCase == WorkerCase::OpenPiston) {
                 restoredOpenPistonCheckpoint.emplace();
                 restored = readOpenPistonCheckpoint(
                     options.checkpointInputPath,
                     *restoredOpenPistonCheckpoint, error);
+            } else {
+                restoredPorousSheetCheckpoint.emplace();
+                restored = readPorousSheetCheckpoint(
+                    options.checkpointInputPath,
+                    *restoredPorousSheetCheckpoint, error);
             }
             if (!restored) {
                 std::fprintf(stderr, "checkpoint restore failed: %s\n",
@@ -961,7 +1007,9 @@ int main(int argc, char* argv[]) {
                     std::is_same_v<Simulation,
                                    simwing::fsi::PeriodicFlowCase>
                     || std::is_same_v<Simulation,
-                                      simwing::fsi::OpenPistonCase>) {
+                                      simwing::fsi::OpenPistonCase>
+                    || std::is_same_v<Simulation,
+                                      simwing::fsi::CoupledPorousSheetCase>) {
                     if (options.checkpointEvery != 0
                         && simulation.acceptedStepCount()
                                % options.checkpointEvery == 0) {
@@ -972,9 +1020,16 @@ int main(int argc, char* argv[]) {
                                 return writePeriodicFlowCheckpoint(
                                     options.checkpointOutputPath,
                                     simulation.checkpoint(), error);
-                            } else {
+                            } else if constexpr (std::is_same_v<
+                                                     Simulation,
+                                                     simwing::fsi::OpenPistonCase>) {
                                 return writeOpenPistonCheckpoint(
                                     options.checkpointOutputPath,
+                                    simulation.checkpoint(), error);
+                            } else {
+                                return writePorousSheetCheckpoint(
+                                    options.checkpointOutputPath,
+                                    simulation,
                                     simulation.checkpoint(), error);
                             }
                         }();
@@ -1013,7 +1068,9 @@ int main(int argc, char* argv[]) {
                 std::is_same_v<Simulation,
                                simwing::fsi::PeriodicFlowCase>
                 || std::is_same_v<Simulation,
-                                  simwing::fsi::OpenPistonCase>) {
+                                  simwing::fsi::OpenPistonCase>
+                || std::is_same_v<Simulation,
+                                  simwing::fsi::CoupledPorousSheetCase>) {
                 if (!options.checkpointOutputPath.empty()
                     && lastCheckpointStep
                         != simulation.acceptedStepCount()) {
@@ -1024,9 +1081,16 @@ int main(int argc, char* argv[]) {
                             return writePeriodicFlowCheckpoint(
                                 options.checkpointOutputPath,
                                 simulation.checkpoint(), error);
-                        } else {
+                        } else if constexpr (std::is_same_v<
+                                                 Simulation,
+                                                 simwing::fsi::OpenPistonCase>) {
                             return writeOpenPistonCheckpoint(
                                 options.checkpointOutputPath,
+                                simulation.checkpoint(), error);
+                        } else {
+                            return writePorousSheetCheckpoint(
+                                options.checkpointOutputPath,
+                                simulation,
                                 simulation.checkpoint(), error);
                         }
                     }();
@@ -1072,6 +1136,31 @@ int main(int argc, char* argv[]) {
                         minimum.x, minimum.y, minimum.z,
                         maximum.x, maximum.y, maximum.z,
                         diagnostics.maximumAbsoluteMembraneStrain,
+                        static_cast<unsigned long long>(
+                            checkpointWriteCount),
+                        options.tracePath.string().c_str());
+                } else if constexpr (std::is_same_v<
+                                         Simulation,
+                                         simwing::fsi::CoupledPorousSheetCase>) {
+                    const auto& coupled = simulation.diagnostics();
+                    const double sheetPosition =
+                        checkpoint.nodes.front().positionMeters.x;
+                    const double sheetSpeed =
+                        checkpoint.nodes.front().velocityMetersPerSecond.x;
+                    const double fluidSpeed =
+                        simulation.velocity().xFaces().front();
+                    std::printf(
+                        "simwing-fsi completed %llu porous-sheet step(s), "
+                        "t=%.9g s, sheet-x=%.9g m, sheet-speed=%.9g m/s, "
+                        "fluid-speed=%.9g m/s, energy-residual=%.3g J, "
+                        "checkpoint-writes=%llu, trace=%s\n",
+                        static_cast<unsigned long long>(
+                        checkpoint.acceptedStepCount),
+                        checkpoint.simulationTimeSeconds,
+                        sheetPosition,
+                        sheetSpeed,
+                        fluidSpeed,
+                        coupled.energyResidualJoules,
                         static_cast<unsigned long long>(
                             checkpointWriteCount),
                         options.tracePath.string().c_str());
@@ -1168,6 +1257,9 @@ int main(int argc, char* argv[]) {
         }
         if (options.workerCase == WorkerCase::PorousSheet) {
             simwing::fsi::CoupledPorousSheetCase simulation;
+            if (restoredPorousSheetCheckpoint) {
+                simulation.restore(*restoredPorousSheetCheckpoint);
+            }
             return run(simulation);
         }
         simwing::fsi::CanonicalStructuralCase simulation;
