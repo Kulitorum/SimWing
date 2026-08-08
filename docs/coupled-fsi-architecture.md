@@ -837,8 +837,14 @@ normal, and reconstructed diagnostic pressure. A static headless worker makes
   each connected fluid component, constrained velocities remain exact, and an
   overlapping moving/jump face is rejected transactionally. The translating
   sealed-slab canonical reconstructs a second analytic pressure slab inside one
-  component without spurious flow. This remains fixed-grid coexistence, not a
-  general moving porous-sheet solve. The regression budgets are:
+  component without spurious flow. The nonlinear Darcy-Forchheimer iteration
+  can now use that combined disconnected solve directly. A translating
+  two-region slab closes endpoint and midpoint porous slip on unconstrained
+  interior faces while retaining exact wall velocity, final moving-reaction
+  diagnostics, separate porous jump/work/dissipation ledgers, deterministic
+  replay, empty-topology delegation, and transactional failure. This remains
+  fixed-grid coexistence, not a general moving porous-sheet or cut-cell solve.
+  The regression budgets are:
 gradient/divergence adjoint error at or below `2e-14` in the canonical
 integral, Taylor-Green maximum divergence below `2e-14 1/s` with a
 bit-identical zero correction, discretely manufactured post-projection L2

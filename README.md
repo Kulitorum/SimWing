@@ -192,6 +192,14 @@ composition, rolls back all prior operators on a later failure, and observes
 second-order temporal refinement for the uniform driven canonical. Empty
 topology delegates to the original bulk Strang path without changing its
 fields or nested diagnostics.
+The nonlinear porous iteration can also use the disconnected moving-interface
+projector as its inner solve. A translating two-region slab retains exact wall
+velocities while endpoint or midpoint porous slip closes on unconstrained
+interior faces; the final moving-wall reaction and porous jump ledgers remain
+separate. Empty topology is exact to the moving-only path, and a face claimed
+by both an impermeable constraint and a porous jump is rejected transactionally.
+This is fixed-grid coexistence with moving boundaries, not yet moving porous
+cut-cell topology.
 A pressure-driven companion advances a uniform fluid plug with an
 implicit-midpoint nonlinear solve; every step independently closes pressure
 impulse, driving work, porous dissipation, and kinetic energy.

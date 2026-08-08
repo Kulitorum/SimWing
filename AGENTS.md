@@ -831,7 +831,12 @@ makes this a certified aerodynamic solver.
   into explicit fluid force/impulse and power/work ledgers while keeping porous
   dissipation separate. It is composed into both the first periodic macro-step
   and the symmetric porous-half/bulk-Strang/porous-half second-order fixed-grid
-  integrator. Moving cut-cell topology remains outside this boundary.
+  integrator. Its nonlinear iteration can also select the disconnected
+  moving-interface/jump projector as the inner solve, retaining the final
+  moving reaction diagnostic while porous/prescribed jump ledgers remain
+  separate. Impermeable and porous faces cannot overlap. This supports
+  fixed-grid moving boundaries around porous flow, not moving porous cut-cell
+  topology.
 - `src/fsi/fluid/porous_flow.{h,cpp}` owns the pressure-driven uniform-plug
   midpoint oracle. It solves the nonlinear Darcy-Forchheimer response exactly
   for each time step and independently closes pressure impulse and
@@ -952,6 +957,10 @@ For second-order fixed-grid porous evolution, `simwing_fluid_evolution` must
 also preserve exact porous-half/bulk-Strang/porous-half composition, summed
 interface ledgers, later-stage rollback, bit-exact empty-topology bulk
 delegation, and the driven-flow temporal-refinement ratios in `[3.8, 4.2]`.
+For porous flow inside fixed-topology moving regions,
+`simwing_fluid_porous_interface` must preserve endpoint/midpoint constitutive
+closure, exact constrained velocity, separate moving-reaction and porous-jump
+ledgers, bit-exact empty delegation, overlap rejection, and nonlinear rollback.
 
 | Change area | Minimum relevant checks |
 |---|---|

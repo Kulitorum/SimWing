@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fluid/moving_interface.h"
 #include "fluid/projection.h"
 
 #include <cstdint>
@@ -147,7 +148,8 @@ struct PorousProjectionDiagnostics {
 // sources or other static interfaces and participate in every trial. Failure
 // commits neither velocity nor pressure. This fixed-grid Picard boundary
 // supports nonuniform porous tiles and prescribed sheet-normal velocity, but it
-// is not yet moving cut-cell topology or a complete coupled flow integrator.
+// is not moving cut-cell topology. Complete fixed-grid macro-step composition
+// is owned by fluid/evolution.h.
 [[nodiscard]] PorousProjectionDiagnostics projectVelocityWithPorousInterfaces(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& predictedVelocityMetersPerSecond,
@@ -162,5 +164,48 @@ struct PorousProjectionDiagnostics {
     const std::vector<PorousGridFaceCrossing>& porousCrossings,
     const SharpPressureJumpField& prescribedPressureJumps,
     const PorousProjectionSettings& settings = {});
+
+struct MovingPorousProjectionSettings {
+    MovingInterfaceProjectionSettings movingProjection;
+    PorousIterationSettings iteration;
+
+    bool operator==(const MovingPorousProjectionSettings&) const = default;
+};
+
+struct MovingPorousProjectionDiagnostics {
+    PorousProjectionDiagnostics porous;
+    MovingInterfaceProjectionDiagnostics movingInterface;
+    bool finite = true;
+    bool accepted = false;
+
+    bool operator==(
+        const MovingPorousProjectionDiagnostics&) const = default;
+};
+
+// Closes the same endpoint/midpoint porous law through the disconnected
+// moving-interface projector. Impermeable moving faces and porous/prescribed
+// jump faces remain separately owned; any overlap is rejected by the combined
+// projector before caller fields can change. The retained moving diagnostic is
+// the last inner projection, so its complete face/surface reaction ledger
+// corresponds to the accepted endpoint or the reported failure. Empty porous
+// and prescribed topology delegates to the exact moving-only projection.
+[[nodiscard]] MovingPorousProjectionDiagnostics
+projectVelocityWithMovingAndPorousInterfaces(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& predictedVelocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const FaceAlignedMovingInterface& movingInterfaces,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const MovingPorousProjectionSettings& settings = {});
+
+[[nodiscard]] MovingPorousProjectionDiagnostics
+projectVelocityWithMovingAndPorousInterfaces(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& predictedVelocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const FaceAlignedMovingInterface& movingInterfaces,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField& prescribedPressureJumps,
+    const MovingPorousProjectionSettings& settings = {});
 
 } // namespace simwing::fsi::fluid
