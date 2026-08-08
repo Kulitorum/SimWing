@@ -109,6 +109,10 @@ through `--checkpoint-in` and atomically replaces `--checkpoint-out`; requested
 steps are additional after restore. For long runs, `--checkpoint-every N` also
 saves after accepted absolute step multiples and at the final state, so a
 resumed run keeps the original cadence and never writes a rejected candidate.
+Moving-porous-flow checkpoint validation regenerates bounded canonical history;
+batch checkpoint output is therefore limited to 10,000 total accepted steps.
+Runs that would exceed that bound fail before opening the trace or checkpoint,
+including after adding the restored step count.
 A first transport-neutral worker-control protocol now defines versioned,
 checksummed, byte-bounded `advance`, `checkpoint`, and `stop` commands with
 correlated `ready`, `advanced`, `checkpointed`, `stopped`, and coded-error
@@ -485,7 +489,8 @@ second is the unthrottled headless form for tests and scripted verification.
 The checkpoint commands save and resume exact accepted worker state. Resumed
 steps are additional, autosave cadence uses absolute accepted-step multiples,
 and input/output may name the same atomically replaced file.
-For periodic flow, open piston, or porous sheet, programmatic controllers can
+For periodic flow, moving porous flow, open piston, or porous sheet,
+programmatic controllers can
 replace
 `--steps` with `--control-stdio`; that mode requires binary protocol input and
 an explicit stop command, so it is not an interactive terminal interface.

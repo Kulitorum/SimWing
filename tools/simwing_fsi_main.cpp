@@ -1020,6 +1020,28 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        if (!options.controlStdio
+            && options.workerCase == WorkerCase::MovingPorousFlow
+            && !options.checkpointOutputPath.empty()) {
+            const simwing::fsi::MovingPorousFlowCaseCheckpointPersistenceLimits
+                limits;
+            const std::uint64_t restoredSteps =
+                restoredMovingPorousFlowCheckpoint
+                ? restoredMovingPorousFlowCheckpoint->acceptedStepCount
+                : 0;
+            if (restoredSteps > limits.maximumReplaySteps
+                || options.steps
+                    > limits.maximumReplaySteps - restoredSteps) {
+                std::fprintf(
+                    stderr,
+                    "moving-porous-flow checkpoint output would exceed "
+                    "the %llu-step deterministic replay limit\n",
+                    static_cast<unsigned long long>(
+                        limits.maximumReplaySteps));
+                return 2;
+            }
+        }
+
         std::ofstream output(options.tracePath,
                              std::ios::binary | std::ios::trunc);
         if (!output) {

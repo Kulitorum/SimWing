@@ -1556,6 +1556,12 @@ set_tests_properties(simwing_fsi_moving_porous_flow_checkpoint_verify PROPERTIES
     DEPENDS simwing_fsi_moving_porous_flow_checkpoint_resume
     PASS_REGULAR_EXPRESSION
         "completed 105 moving-porous-flow step\\(s\\).*topology-rebases=5, face=0, image=2")
+add_test(NAME simwing_fsi_moving_porous_flow_checkpoint_replay_limit
+    COMMAND ${CMAKE_COMMAND}
+        "-DSIMWING_FSI=$<TARGET_FILE:simwing-fsi>"
+        "-DTRACE_FILE=${CMAKE_BINARY_DIR}/simwing-moving-porous-flow-limit.swtrace"
+        "-DCHECKPOINT_FILE=${CMAKE_BINARY_DIR}/simwing-moving-porous-flow-limit.swmf"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunSimWingCheckpointLimitTest.cmake")
 add_test(NAME simwing_fsi_control_stdio
     COMMAND ${CMAKE_COMMAND}
         "-DSIMWING_FSI=$<TARGET_FILE:simwing-fsi>"

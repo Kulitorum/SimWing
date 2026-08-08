@@ -533,6 +533,10 @@ absolute step/time in Ready and writes only newly accepted frames to its trace.
 The moving porous regression crosses the second wrap, checkpoints step 101,
 verifies exact step-102 continuation, then restores and publishes only that
 same next accepted frame.
+Because the moving-flow file codec validates stored state by regenerating a
+bounded canonical history, batch runs configured to write that checkpoint
+fail before trace creation when restored plus requested steps would exceed the
+10,000-step replay ceiling.
 The porous-sheet stdio regression advances through its first topology rebase,
 persists accepted step 330, reproduces step 331 in the original run, and emits
 that same single next frame after a restored Ready response. The original run
