@@ -19,6 +19,7 @@ using simwing::fsi::fluid::PeriodicCartesianGrid;
 using simwing::fsi::fluid::PlanarControlVolumeStep;
 using simwing::fsi::fluid::PlanarMovingControlVolume;
 using simwing::fsi::fluid::projectVelocityWithMovingInterfaces;
+using simwing::fsi::fluid::rebasePlanarMovingControlVolume;
 
 int failures = 0;
 
@@ -41,6 +42,23 @@ void checkNear(const double actual,
     }
 }
 
+double maximumVelocityDifference(
+    const MacVelocityField& first,
+    const MacVelocityField& second) {
+    double result = 0.0;
+    const auto accumulate = [&](const auto firstValues,
+                                const auto secondValues) {
+        for (std::size_t index = 0; index < firstValues.size(); ++index) {
+            result = std::max(
+                result, std::abs(firstValues[index] - secondValues[index]));
+        }
+    };
+    accumulate(first.xFaces(), second.xFaces());
+    accumulate(first.yFaces(), second.yFaces());
+    accumulate(first.zFaces(), second.zFaces());
+    return result;
+}
+
 template<typename Callback>
 void expectRejected(Callback&& callback, const char* message) {
     bool rejected = false;
@@ -56,20 +74,46 @@ PeriodicCartesianGrid pistonGrid() {
     return PeriodicCartesianGrid({8, 2, 3}, {}, {4.0, 2.0, 3.0});
 }
 
-std::vector<GridFaceMovingInterface> pistonFaces(
+std::vector<GridFaceMovingInterface> completePlaneFaces(
     const PeriodicCartesianGrid& grid,
-    const double speedMetersPerSecond = 0.25) {
+    const GridFaceAxis axis,
+    const std::size_t planeCoordinate,
+    const std::uint64_t surfaceStableId,
+    const std::uint64_t regionStableId,
+    const double speedMetersPerSecond) {
     std::vector<GridFaceMovingInterface> result;
     const auto counts = grid.cellCounts();
     for (std::size_t k = 0; k < counts.z; ++k) {
         for (std::size_t j = 0; j < counts.y; ++j) {
-            result.push_back({
-                300, 9, 9, GridFaceAxis::X, 6, j, k,
-                speedMetersPerSecond,
-            });
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                const std::size_t coordinate = axis == GridFaceAxis::X
+                    ? i : (axis == GridFaceAxis::Y ? j : k);
+                if (coordinate == planeCoordinate) {
+                    result.push_back({
+                        surfaceStableId,
+                        regionStableId,
+                        regionStableId,
+                        axis,
+                        i,
+                        j,
+                        k,
+                        speedMetersPerSecond,
+                    });
+                }
+            }
         }
     }
     return result;
+}
+
+std::vector<GridFaceMovingInterface> pistonFaces(
+    const PeriodicCartesianGrid& grid,
+    const double speedMetersPerSecond = 0.25,
+    const std::size_t planeCoordinate = 6,
+    const std::uint64_t regionStableId = 9) {
+    return completePlaneFaces(
+        grid, GridFaceAxis::X, planeCoordinate, 300,
+        regionStableId, speedMetersPerSecond);
 }
 
 MovingInterfaceProjectionSettings projectionSettings() {
@@ -169,32 +213,12 @@ void testAcceleratedOpenPistonAndGcl() {
 void testAllAxisControlVolumes() {
     const PeriodicCartesianGrid grid(
         {4, 4, 4}, {}, {4.0, 4.0, 4.0});
-    const auto counts = grid.cellCounts();
     for (std::size_t axisIndex = 0; axisIndex < 3; ++axisIndex) {
         const auto axis = static_cast<GridFaceAxis>(axisIndex);
-        std::vector<GridFaceMovingInterface> faces;
-        for (std::size_t k = 0; k < counts.z; ++k) {
-            for (std::size_t j = 0; j < counts.y; ++j) {
-                for (std::size_t i = 0; i < counts.x; ++i) {
-                    const std::size_t coordinate = axis == GridFaceAxis::X
-                        ? i : (axis == GridFaceAxis::Y ? j : k);
-                    if (coordinate == 3) {
-                        faces.push_back({
-                            400 + axisIndex,
-                            20 + axisIndex,
-                            20 + axisIndex,
-                            axis,
-                            i,
-                            j,
-                            k,
-                            0.125,
-                        });
-                    }
-                }
-            }
-        }
         const FaceAlignedMovingInterface interfaces(
-            grid, std::move(faces));
+            grid, completePlaneFaces(
+                grid, axis, 3, 400 + axisIndex,
+                20 + axisIndex, 0.125));
         const PlanarMovingControlVolume controlVolume(
             grid, interfaces, 400 + axisIndex, 1);
         MacVelocityField velocity(grid);
@@ -219,7 +243,136 @@ void testAllAxisControlVolumes() {
                   "axes: partial-cell geometry has analytic volume change");
         checkNear(control.openingTransportVolumeCubicMeters, 0.2, 2.0e-12,
                   "axes: projected opening transport matches every orientation");
+
+        const auto terminal = controlVolume.evaluate(
+            grid, velocity, fluid, {0.9, 1.0, 0.8, true});
+        const FaceAlignedMovingInterface rebasedInterfaces(
+            grid, completePlaneFaces(
+                grid, axis, 0, 400 + axisIndex,
+                20 + axisIndex, 0.125));
+        const auto rebased = rebasePlanarMovingControlVolume(
+            grid, controlVolume, rebasedInterfaces, terminal);
+        check(terminal.accepted && rebased.diagnostics.accepted
+                  && rebased.controlVolume.movingPlaneCoordinate() == 0,
+              "axes: terminal steps rebase across the periodic boundary");
+        checkNear(rebased.diagnostics.previousTerminalVolumeCubicMeters,
+                  48.0, 0.0,
+                  "axes: terminal volume includes the completed partial cell");
+        checkNear(rebased.controlVolume.referenceVolumeCubicMeters(),
+                  48.0, 0.0,
+                  "axes: wrapped reference volume preserves continuity");
+        checkNear(rebased.diagnostics.volumeContinuityResidualCubicMeters,
+                  0.0, 0.0,
+                  "axes: periodic topology rebase has exact volume continuity");
     }
+}
+
+void testExplicitTopologyRebase() {
+    const auto grid = pistonGrid();
+    const FaceAlignedMovingInterface interfaces(
+        grid, pistonFaces(grid));
+    const PlanarMovingControlVolume controlVolume(
+        grid, interfaces, 300, 2);
+    MacVelocityField velocity(grid);
+    CellScalarField pressure(grid);
+    const auto fluid = projectVelocityWithMovingInterfaces(
+        grid, velocity, pressure, interfaces, projectionSettings());
+    const auto terminal = controlVolume.evaluate(
+        grid, velocity, fluid, {0.4, 0.5, 0.4, true});
+    check(terminal.accepted
+              && terminal.endCutCellVolumeFraction == 1.0
+              && terminal.movingPlaneCoordinate == 6
+              && terminal.openingPlaneCoordinate == 2,
+          "rebase: an explicitly terminal old epoch reaches one full cell");
+
+    const FaceAlignedMovingInterface rebasedInterfaces(
+        grid, pistonFaces(grid, 0.25, 7));
+    const auto first = rebasePlanarMovingControlVolume(
+        grid, controlVolume, rebasedInterfaces, terminal);
+    const auto second = rebasePlanarMovingControlVolume(
+        grid, controlVolume, rebasedInterfaces, terminal);
+    check(first.diagnostics == second.diagnostics
+              && first.diagnostics.accepted
+              && first.diagnostics.previousMovingPlaneCoordinate == 6
+              && first.diagnostics.rebasedMovingPlaneCoordinate == 7,
+          "rebase: candidate topology and ledger replay deterministically");
+    checkNear(first.diagnostics.completedCellOffsetMeters, 0.5, 0.0,
+              "rebase: completed offset equals one normal cell spacing");
+    checkNear(first.diagnostics.previousTerminalVolumeCubicMeters, 15.0, 0.0,
+              "rebase: old terminal chamber has five full layers");
+    checkNear(first.diagnostics.rebasedReferenceVolumeCubicMeters, 15.0, 0.0,
+              "rebase: next topology converts the partial cell to a full layer");
+    checkNear(first.diagnostics.volumeContinuityResidualCubicMeters, 0.0, 0.0,
+              "rebase: old and new topology volumes meet exactly");
+
+    auto rebasedVelocity = velocity;
+    auto rebasedPressure = pressure;
+    const auto rebasedFluid = projectVelocityWithMovingInterfaces(
+        grid, rebasedVelocity, rebasedPressure, rebasedInterfaces,
+        projectionSettings());
+    const auto continued = first.controlVolume.evaluate(
+        grid, rebasedVelocity, rebasedFluid, {0.0, 0.1, 0.4});
+    check(maximumVelocityDifference(rebasedVelocity, velocity) < 2.0e-12
+              && continued.accepted,
+          "rebase: compatible plug flow remaps within projection tolerance");
+    checkNear(continued.startVolumeCubicMeters, 15.0, 0.0,
+              "rebase: the next epoch starts at the old terminal volume");
+    checkNear(continued.endVolumeCubicMeters, 15.6, 4.0e-15,
+              "rebase: partial-cell growth continues after the crossing");
+
+    auto corruptedTerminal = terminal;
+    corruptedTerminal.endVolumeCubicMeters += 1.0;
+    const auto corrupted = rebasePlanarMovingControlVolume(
+        grid, controlVolume, rebasedInterfaces, corruptedTerminal);
+    check(!corrupted.diagnostics.accepted
+              && std::abs(corrupted.diagnostics
+                              .volumeContinuityResidualCubicMeters) > 0.9,
+          "rebase: a broken terminal volume ledger is not accepted");
+    auto corruptedArea = terminal;
+    corruptedArea.crossSectionAreaSquareMeters += 1.0;
+    const auto areaMismatch = rebasePlanarMovingControlVolume(
+        grid, controlVolume, rebasedInterfaces, corruptedArea);
+    check(!areaMismatch.diagnostics.accepted,
+          "rebase: a broken terminal area ledger is not accepted");
+
+    const auto nonterminal = controlVolume.evaluate(
+        grid, velocity, fluid, {0.0, 0.1, 0.4});
+    const auto early = rebasePlanarMovingControlVolume(
+        grid, controlVolume, rebasedInterfaces, nonterminal);
+    check(!early.diagnostics.accepted,
+          "rebase: an incomplete partial cell cannot advance topology");
+
+    const FaceAlignedMovingInterface skippedInterfaces(
+        grid, pistonFaces(grid, 0.25, 0));
+    expectRejected(
+        [&] { static_cast<void>(rebasePlanarMovingControlVolume(
+            grid, controlVolume, skippedInterfaces, terminal)); },
+        "rebase: candidate topology cannot skip a MAC plane");
+    const FaceAlignedMovingInterface changedRegionInterfaces(
+        grid, pistonFaces(grid, 0.25, 7, 10));
+    expectRejected(
+        [&] { static_cast<void>(rebasePlanarMovingControlVolume(
+            grid, controlVolume, changedRegionInterfaces, terminal)); },
+        "rebase: candidate topology cannot change stable fluid identity");
+
+    const FaceAlignedMovingInterface finalEpochInterfaces(
+        grid, pistonFaces(grid, 0.25, 1));
+    const PlanarMovingControlVolume finalEpoch(
+        grid, finalEpochInterfaces, 300, 2);
+    MacVelocityField finalVelocity(grid);
+    CellScalarField finalPressure(grid);
+    const auto finalFluid = projectVelocityWithMovingInterfaces(
+        grid, finalVelocity, finalPressure, finalEpochInterfaces,
+        projectionSettings());
+    const auto fullDomainTerminal = finalEpoch.evaluate(
+        grid, finalVelocity, finalFluid, {0.4, 0.5, 0.4, true});
+    const FaceAlignedMovingInterface collidingInterfaces(
+        grid, pistonFaces(grid, 0.25, 2));
+    expectRejected(
+        [&] { static_cast<void>(rebasePlanarMovingControlVolume(
+            grid, finalEpoch, collidingInterfaces,
+            fullDomainTerminal)); },
+        "rebase: moving surface cannot consume its resolved opening");
 }
 
 void testValidationAndFailedLedgers() {
@@ -296,6 +449,7 @@ void testValidationAndFailedLedgers() {
 int main() {
     testAcceleratedOpenPistonAndGcl();
     testAllAxisControlVolumes();
+    testExplicitTopologyRebase();
     testValidationAndFailedLedgers();
     if (failures != 0) {
         std::fprintf(stderr,

@@ -126,10 +126,94 @@ void testVisibleOpenPistonAndDeterminism() {
           "open piston: visible numerical residuals meet their budgets");
 }
 
+void testAcceptedTopologyRebase() {
+    fsi::OpenPistonCase first;
+    fsi::OpenPistonCase second;
+    viewer::DiagnosticFrame crossingFrame;
+    constexpr std::uint64_t stepsToFirstRebase = 1200;
+    for (std::uint64_t step = 0; step < stepsToFirstRebase; ++step) {
+        crossingFrame = first.advance();
+        const auto replay = second.advance();
+        if (step + 2 >= stepsToFirstRebase) {
+            check(serialized(crossingFrame) == serialized(replay),
+                  "rebase: frames around the topology crossing replay bit-for-bit");
+        }
+    }
+
+    check(first.topologyRebaseCount() == 1
+              && second.topologyRebaseCount() == 1
+              && first.movingPlaneCoordinate() == 7
+              && first.surfaceOffsetMeters() == 0.0,
+          "rebase: the accepted worker advances exactly one MAC plane");
+    const auto& control = first.controlVolumeDiagnostics();
+    const auto& rebase = first.lastRebaseDiagnostics();
+    check(control.accepted
+              && control.movingPlaneCoordinate == 6
+              && control.endCutCellVolumeFraction == 1.0
+              && rebase.accepted
+              && rebase.previousMovingPlaneCoordinate == 6
+              && rebase.rebasedMovingPlaneCoordinate == 7,
+          "rebase: terminal and candidate epochs remain explicit");
+    checkNear(control.endVolumeCubicMeters, 15.0, 2.0e-13,
+              "rebase: the terminal old epoch reaches five full layers");
+    checkNear(rebase.rebasedReferenceVolumeCubicMeters, 15.0, 0.0,
+              "rebase: the new epoch starts at the same chamber volume");
+    checkNear(rebase.volumeContinuityResidualCubicMeters, 0.0, 0.0,
+              "rebase: topology transition preserves volume exactly");
+    check(first.lastRebaseVelocityResidualMetersPerSecond() < 2.0e-12,
+          "rebase: constraint remap preserves material velocity within budget");
+    for (const auto& node : first.structure().checkpoint().nodes) {
+        checkNear(node.positionMeters.x, 3.5, 2.0e-13,
+                  "rebase: structural plate reaches the crossed grid face");
+    }
+
+    const auto* crossingCount = scalarField(
+        crossingFrame, "fluid.topology_rebase_count");
+    const auto* crossingVolume = scalarField(
+        crossingFrame, "fluid.chamber_volume");
+    const auto* crossingFraction = scalarField(
+        crossingFrame, "fluid.cut_cell_fraction");
+    const auto* crossingVolumeResidual = scalarField(
+        crossingFrame, "fluid.rebase_volume_residual");
+    const auto* crossingVelocityResidual = scalarField(
+        crossingFrame, "fluid.rebase_velocity_residual");
+    check(crossingCount != nullptr
+              && crossingCount->values.front() == 1.0
+              && crossingVolume != nullptr
+              && crossingVolume->values.front() == 15.0
+              && crossingFraction != nullptr
+              && crossingFraction->values.front() == 1.0,
+          "rebase: crossing frame publishes its epoch and terminal geometry");
+    check(crossingVolumeResidual != nullptr
+              && crossingVolumeResidual->values.front() == 0.0
+              && crossingVelocityResidual != nullptr
+              && crossingVelocityResidual->values.front() < 2.0e-12,
+          "rebase: crossing frame exposes volume and velocity residuals");
+
+    const auto continuedFrame = first.advance();
+    const auto replayContinuedFrame = second.advance();
+    check(serialized(continuedFrame) == serialized(replayContinuedFrame),
+          "rebase: the first partial-cell step in the new epoch replays");
+    const double nextOffset = 0.05
+        * first.stepSettings().timeStepSeconds;
+    check(first.topologyRebaseCount() == 1
+              && first.movingPlaneCoordinate() == 7,
+          "rebase: ordinary continuation does not create another epoch");
+    checkNear(first.surfaceOffsetMeters(), nextOffset, 2.0e-17,
+              "rebase: partial-cell offset restarts from zero");
+    checkNear(first.controlVolumeDiagnostics().startVolumeCubicMeters,
+              15.0, 0.0,
+              "rebase: continued geometry starts at the terminal old volume");
+    checkNear(first.controlVolumeDiagnostics().endVolumeCubicMeters,
+              15.0 + 6.0 * nextOffset, 2.0e-13,
+              "rebase: chamber growth continues in the new epoch");
+}
+
 } // namespace
 
 int main() {
     testVisibleOpenPistonAndDeterminism();
+    testAcceptedTopologyRebase();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing open piston case check(s) failed\n",

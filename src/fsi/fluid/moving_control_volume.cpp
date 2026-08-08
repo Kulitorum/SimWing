@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 
 namespace simwing::fsi::fluid {
 namespace {
@@ -132,6 +133,7 @@ void validateSettings(const PlanarControlVolumeSettings& settings) {
     const double nonnegative[] = {
         settings.absoluteVelocityToleranceMetersPerSecond,
         settings.relativeVelocityTolerance,
+        settings.absolutePositionToleranceMeters,
         settings.absoluteAreaToleranceSquareMeters,
         settings.absoluteVolumeToleranceCubicMeters,
         settings.relativeVolumeTolerance,
@@ -272,6 +274,11 @@ PlanarMovingControlVolume::fluidRegionStableId() const noexcept {
     return fluidRegionStableId_;
 }
 
+bool PlanarMovingControlVolume::matches(
+    const PeriodicCartesianGrid& grid) const noexcept {
+    return sameGrid(grid, cellCounts_, lowerMeters_, upperMeters_);
+}
+
 GridFaceAxis PlanarMovingControlVolume::axis() const noexcept {
     return axis_;
 }
@@ -289,6 +296,11 @@ PlanarMovingControlVolume::openingPlaneCoordinate() const noexcept {
 double PlanarMovingControlVolume::crossSectionAreaSquareMeters()
     const noexcept {
     return crossSectionAreaSquareMeters_;
+}
+
+double PlanarMovingControlVolume::normalCellSpacingMeters()
+    const noexcept {
+    return normalCellSpacingMeters_;
 }
 
 double PlanarMovingControlVolume::referenceVolumeCubicMeters()
@@ -325,12 +337,17 @@ PlanarControlVolumeDiagnostics PlanarMovingControlVolume::evaluate(
         || step.startSurfaceOffsetMeters < 0.0
         || step.endSurfaceOffsetMeters < 0.0
         || !(step.durationSeconds > 0.0)
+        || step.startSurfaceOffsetMeters >= normalCellSpacingMeters_
         || step.startSurfaceOffsetMeters
             > normalCellSpacingMeters_
                 - settings.minimumRemainingCellLengthMeters
-        || step.endSurfaceOffsetMeters
-            > normalCellSpacingMeters_
-                - settings.minimumRemainingCellLengthMeters) {
+        || (step.endsAtCellBoundary
+                ? step.endSurfaceOffsetMeters
+                    != normalCellSpacingMeters_
+                : step.endSurfaceOffsetMeters >= normalCellSpacingMeters_
+                    || step.endSurfaceOffsetMeters
+                        > normalCellSpacingMeters_
+                            - settings.minimumRemainingCellLengthMeters)) {
         throw std::invalid_argument(
             "planar control-volume step leaves its supported cut-cell interval");
     }
@@ -339,6 +356,8 @@ PlanarControlVolumeDiagnostics PlanarMovingControlVolume::evaluate(
     diagnostics.movingSurfaceStableId = movingSurfaceStableId_;
     diagnostics.fluidRegionStableId = fluidRegionStableId_;
     diagnostics.axis = axis_;
+    diagnostics.movingPlaneCoordinate = movingPlaneCoordinate_;
+    diagnostics.openingPlaneCoordinate = openingPlaneCoordinate_;
     diagnostics.movingSurfaceFaceCount = surfaceFaces_.size();
     diagnostics.openingFaceCount = openingFaceIndices_.size();
     diagnostics.crossSectionAreaSquareMeters =
@@ -494,6 +513,122 @@ PlanarControlVolumeDiagnostics PlanarMovingControlVolume::evaluate(
         && std::abs(diagnostics.continuityResidualCubicMeters)
             <= volumeTolerance;
     return diagnostics;
+}
+
+PlanarControlVolumeRebaseResult rebasePlanarMovingControlVolume(
+    const PeriodicCartesianGrid& grid,
+    const PlanarMovingControlVolume& current,
+    const FaceAlignedMovingInterface& rebasedInterfaces,
+    const PlanarControlVolumeDiagnostics& terminalDiagnostics,
+    const PlanarControlVolumeSettings& settings) {
+    validateSettings(settings);
+    if (!current.matches(grid)) {
+        throw std::invalid_argument(
+            "planar control-volume rebase grid does not match "
+            "its current epoch");
+    }
+    if (terminalDiagnostics.version != planarMovingControlVolumeVersion
+        || !terminalDiagnostics.finite
+        || !terminalDiagnostics.accepted
+        || terminalDiagnostics.movingSurfaceStableId
+            != current.movingSurfaceStableId()
+        || terminalDiagnostics.fluidRegionStableId
+            != current.fluidRegionStableId()
+        || terminalDiagnostics.axis != current.axis()
+        || terminalDiagnostics.movingPlaneCoordinate
+            != current.movingPlaneCoordinate()
+        || terminalDiagnostics.openingPlaneCoordinate
+            != current.openingPlaneCoordinate()) {
+        throw std::invalid_argument(
+            "planar control-volume rebase requires its accepted terminal ledger");
+    }
+
+    PlanarMovingControlVolume rebased(
+        grid, rebasedInterfaces, current.movingSurfaceStableId(),
+        current.openingPlaneCoordinate());
+    const std::size_t expectedPlane =
+        (current.movingPlaneCoordinate()
+         + 1) % axisCount(grid.cellCounts(), current.axis());
+    if (rebased.movingPlaneCoordinate() != expectedPlane
+        || rebased.axis() != current.axis()
+        || rebased.fluidRegionStableId() != current.fluidRegionStableId()
+        || rebased.openingPlaneCoordinate()
+            != current.openingPlaneCoordinate()
+        || rebased.crossSectionAreaSquareMeters()
+            != current.crossSectionAreaSquareMeters()
+        || rebased.normalCellSpacingMeters()
+            != current.normalCellSpacingMeters()) {
+        throw std::invalid_argument(
+            "planar control-volume rebase must advance exactly "
+            "one compatible MAC plane");
+    }
+
+    PlanarControlVolumeRebaseDiagnostics diagnostics;
+    diagnostics.movingSurfaceStableId = current.movingSurfaceStableId();
+    diagnostics.fluidRegionStableId = current.fluidRegionStableId();
+    diagnostics.axis = current.axis();
+    diagnostics.previousMovingPlaneCoordinate =
+        current.movingPlaneCoordinate();
+    diagnostics.rebasedMovingPlaneCoordinate =
+        rebased.movingPlaneCoordinate();
+    diagnostics.openingPlaneCoordinate = current.openingPlaneCoordinate();
+    diagnostics.completedCellOffsetMeters =
+        terminalDiagnostics.endCutCellVolumeFraction
+        * current.normalCellSpacingMeters();
+    diagnostics.previousTerminalVolumeCubicMeters =
+        terminalDiagnostics.endVolumeCubicMeters;
+    diagnostics.rebasedReferenceVolumeCubicMeters =
+        rebased.referenceVolumeCubicMeters();
+    diagnostics.volumeContinuityResidualCubicMeters =
+        diagnostics.rebasedReferenceVolumeCubicMeters
+        - diagnostics.previousTerminalVolumeCubicMeters;
+
+    const double expectedCompletedVolume =
+        current.crossSectionAreaSquareMeters()
+        * current.normalCellSpacingMeters();
+    const double expectedTerminalVolume =
+        current.referenceVolumeCubicMeters() + expectedCompletedVolume;
+    const double volumeTolerance = combinedTolerance(
+        settings.absoluteVolumeToleranceCubicMeters,
+        settings.relativeVolumeTolerance,
+        std::abs(expectedTerminalVolume),
+        std::max(
+            std::abs(terminalDiagnostics.endVolumeCubicMeters),
+            std::abs(rebased.referenceVolumeCubicMeters())));
+    const double areaTolerance = combinedTolerance(
+        settings.absoluteAreaToleranceSquareMeters,
+        settings.relativeVolumeTolerance,
+        current.crossSectionAreaSquareMeters(),
+        std::abs(terminalDiagnostics.crossSectionAreaSquareMeters));
+    const double positionTolerance = combinedTolerance(
+        settings.absolutePositionToleranceMeters,
+        settings.relativeVolumeTolerance,
+        current.normalCellSpacingMeters(),
+        std::abs(diagnostics.completedCellOffsetMeters));
+    diagnostics.finite =
+        std::isfinite(diagnostics.completedCellOffsetMeters)
+        && std::isfinite(diagnostics.previousTerminalVolumeCubicMeters)
+        && std::isfinite(diagnostics.rebasedReferenceVolumeCubicMeters)
+        && std::isfinite(diagnostics.volumeContinuityResidualCubicMeters);
+    diagnostics.accepted = diagnostics.finite
+        && std::abs(diagnostics.completedCellOffsetMeters
+                    - current.normalCellSpacingMeters())
+            <= positionTolerance
+        && std::abs(terminalDiagnostics.referenceVolumeCubicMeters
+                    - current.referenceVolumeCubicMeters())
+            <= volumeTolerance
+        && std::abs(terminalDiagnostics.crossSectionAreaSquareMeters
+                    - current.crossSectionAreaSquareMeters())
+            <= areaTolerance
+        && std::abs(terminalDiagnostics.endCutCellVolumeCubicMeters
+                    - expectedCompletedVolume)
+            <= volumeTolerance
+        && std::abs(terminalDiagnostics.endVolumeCubicMeters
+                    - expectedTerminalVolume)
+            <= volumeTolerance
+        && std::abs(diagnostics.volumeContinuityResidualCubicMeters)
+            <= volumeTolerance;
+    return {std::move(rebased), diagnostics};
 }
 
 } // namespace simwing::fsi::fluid

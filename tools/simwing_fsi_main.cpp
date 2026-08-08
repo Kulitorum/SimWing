@@ -62,7 +62,8 @@ void printUsage(FILE* stream) {
         "trace. 'structural' is the original analytic XPBD harness; 'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
         "'open-piston' adds connected-fluid pressure reaction, partial-cell motion,\n"
-        "and an independently closed opening-flux GCL ledger. Interactive\n"
+        "an independently closed opening-flux GCL ledger, and exact one-face\n"
+        "topology rebasing; consuming its resolved opening is rejected. Interactive\n"
         "runs launch the sibling simwing-viewer with --follow; --no-viewer is\n"
         "unthrottled for tests and CI.\n");
 }

@@ -6,14 +6,15 @@
 #include "structure_frame.h"
 #include "viewer_protocol.h"
 
+#include <cstddef>
 #include <cstdint>
 
 namespace simwing::fsi {
 
 inline constexpr char openPistonCaseChecksum[] =
-    "sha256:simwing-open-control-volume-piston-case-v1";
+    "sha256:simwing-open-control-volume-piston-case-v2";
 inline constexpr char openPistonCaseSolverId[] =
-    "simwing-fsi-open-control-volume-piston-worker-v1";
+    "simwing-fsi-open-control-volume-piston-worker-v2";
 
 // Visible verification harness for an accelerating planar piston in one
 // connected periodic fluid region. A complete moving sheet is nonseparating:
@@ -21,7 +22,9 @@ inline constexpr char openPistonCaseSolverId[] =
 // open control-volume section. An actuator supplies the prescribed initial
 // structural impulse while CFD supplies the resisting pressure load. The
 // piston then coasts, exercising partial-cell volume and opening-flux GCL
-// ledgers on every accepted step. It stops before topology rebase is required.
+// ledgers on every accepted step. At an exact MAC-face crossing it validates
+// volume continuity, remaps the constraint by one face without a material
+// velocity jump, and commits the new topology only with the complete frame.
 class OpenPistonCase final {
 public:
     OpenPistonCase();
@@ -38,7 +41,13 @@ public:
     [[nodiscard]] const StructureStepSettings& stepSettings() const noexcept;
     [[nodiscard]] const fluid::PlanarControlVolumeDiagnostics&
     controlVolumeDiagnostics() const noexcept;
+    [[nodiscard]] const fluid::PlanarControlVolumeRebaseDiagnostics&
+    lastRebaseDiagnostics() const noexcept;
     [[nodiscard]] double surfaceOffsetMeters() const noexcept;
+    [[nodiscard]] std::size_t movingPlaneCoordinate() const noexcept;
+    [[nodiscard]] std::uint64_t topologyRebaseCount() const noexcept;
+    [[nodiscard]] double lastRebaseVelocityResidualMetersPerSecond()
+        const noexcept;
 
 private:
     fluid::PeriodicCartesianGrid grid_;
@@ -52,7 +61,10 @@ private:
     StructureStepSettings stepSettings_;
     fluid::PlanarMovingControlVolume controlVolume_;
     fluid::PlanarControlVolumeDiagnostics controlVolumeDiagnostics_;
+    fluid::PlanarControlVolumeRebaseDiagnostics lastRebaseDiagnostics_;
     double surfaceOffsetMeters_ = 0.0;
+    double lastRebaseVelocityResidualMetersPerSecond_ = 0.0;
+    std::uint64_t topologyRebaseCount_ = 0;
 };
 
 } // namespace simwing::fsi

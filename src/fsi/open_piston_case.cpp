@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -15,6 +16,8 @@ constexpr std::uint64_t connectedFluidRegionStableId = 9;
 constexpr double fluidDensityKgPerCubicMeter = 1.2;
 constexpr double structuralMassKilograms = 6000.0;
 constexpr double coastSpeedMetersPerSecond = 0.05;
+constexpr double rebasePositionToleranceMeters = 1.0e-12;
+constexpr double rebaseVelocityToleranceMetersPerSecond = 2.0e-12;
 
 StructureDefinition makeDefinition() {
     StructureDefinition definition;
@@ -68,7 +71,8 @@ fluid::PeriodicCartesianGrid makeGrid() {
 
 std::vector<fluid::GridFaceMovingInterface> makeInterfaceFaces(
     const fluid::PeriodicCartesianGrid& grid,
-    const double speedMetersPerSecond) {
+    const double speedMetersPerSecond,
+    const std::size_t movingPlaneCoordinate) {
     std::vector<fluid::GridFaceMovingInterface> faces;
     const auto counts = grid.cellCounts();
     faces.reserve(counts.y * counts.z);
@@ -79,7 +83,7 @@ std::vector<fluid::GridFaceMovingInterface> makeInterfaceFaces(
                 connectedFluidRegionStableId,
                 connectedFluidRegionStableId,
                 fluid::GridFaceAxis::X,
-                6,
+                movingPlaneCoordinate,
                 j,
                 k,
                 speedMetersPerSecond,
@@ -91,9 +95,11 @@ std::vector<fluid::GridFaceMovingInterface> makeInterfaceFaces(
 
 fluid::FaceAlignedMovingInterface makeInterfaces(
     const fluid::PeriodicCartesianGrid& grid,
-    const double speedMetersPerSecond) {
+    const double speedMetersPerSecond,
+    const std::size_t movingPlaneCoordinate = 6) {
     return fluid::FaceAlignedMovingInterface(
-        grid, makeInterfaceFaces(grid, speedMetersPerSecond));
+        grid, makeInterfaceFaces(
+            grid, speedMetersPerSecond, movingPlaneCoordinate));
 }
 
 fluid::MovingInterfaceProjectionSettings projectionSettings(
@@ -141,6 +147,23 @@ double maximumRigidVelocityError(
     return result;
 }
 
+double maximumFluidVelocityDifference(
+    const fluid::MacVelocityField& first,
+    const fluid::MacVelocityField& second) {
+    double result = 0.0;
+    const auto accumulate = [&](const auto firstValues,
+                                const auto secondValues) {
+        for (std::size_t index = 0; index < firstValues.size(); ++index) {
+            result = std::max(
+                result, std::abs(firstValues[index] - secondValues[index]));
+        }
+    };
+    accumulate(first.xFaces(), second.xFaces());
+    accumulate(first.yFaces(), second.yFaces());
+    accumulate(first.zFaces(), second.zFaces());
+    return result;
+}
+
 double acceptanceResidual(
     const std::vector<StructureNodeState>& before,
     const std::vector<StructureNodeState>& after,
@@ -177,7 +200,10 @@ void appendFields(
     const fluid::PlanarControlVolumeDiagnostics& controlDiagnostics,
     const UniformFluidStructureBridgeDiagnostics& bridgeDiagnostics,
     const TimeIntegratedTransferDiagnostics& integratedDiagnostics,
-    const double actuatorImpulseNewtonSeconds) {
+    const double actuatorImpulseNewtonSeconds,
+    const std::uint64_t topologyRebaseCount,
+    const double rebaseVolumeResidualCubicMeters,
+    const double rebaseVelocityResidualMetersPerSecond) {
     frame.scalarFields.push_back({
         "interface.pressure_traction", "Pa",
         viewer::FieldAssociation::Triangle,
@@ -211,6 +237,18 @@ void appendFields(
     frame.scalarFields.push_back({
         "fluid.divergence_l2", "1/s", viewer::FieldAssociation::Global,
         {fluidDiagnostics.projection.divergenceL2AfterPerSecond}});
+    frame.scalarFields.push_back({
+        "fluid.topology_rebase_count", "1",
+        viewer::FieldAssociation::Global,
+        {static_cast<double>(topologyRebaseCount)}});
+    frame.scalarFields.push_back({
+        "fluid.rebase_volume_residual", "m^3",
+        viewer::FieldAssociation::Global,
+        {rebaseVolumeResidualCubicMeters}});
+    frame.scalarFields.push_back({
+        "fluid.rebase_velocity_residual", "m/s",
+        viewer::FieldAssociation::Global,
+        {rebaseVelocityResidualMetersPerSecond}});
 }
 
 } // namespace
@@ -256,11 +294,23 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
             "open piston no longer has rigid translational velocity");
     }
     const double endSpeed = coastSpeedMetersPerSecond;
-    const double endOffset = surfaceOffsetMeters_ + endSpeed * timeStep;
+    const double rawEndOffset =
+        surfaceOffsetMeters_ + endSpeed * timeStep;
+    const double cellSpacing =
+        controlVolume_.normalCellSpacingMeters();
+    const bool endsAtCellBoundary =
+        rawEndOffset >= cellSpacing - rebasePositionToleranceMeters;
+    if (rawEndOffset > cellSpacing + rebasePositionToleranceMeters) {
+        throw std::runtime_error(
+            "open piston crossed a MAC face away from a macro-step boundary");
+    }
+    const double endOffset = endsAtCellBoundary
+        ? cellSpacing : rawEndOffset;
 
     auto candidateVelocity = fluidVelocity_;
     auto candidatePressure = fluidPressure_;
-    const auto endInterfaces = makeInterfaces(grid_, endSpeed);
+    const auto endInterfaces = makeInterfaces(
+        grid_, endSpeed, controlVolume_.movingPlaneCoordinate());
     const auto endFluid = fluid::projectVelocityWithMovingInterfaces(
         grid_, candidateVelocity, candidatePressure, endInterfaces,
         projectionSettings(timeStep));
@@ -270,10 +320,52 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
     }
     const auto controlDiagnostics = controlVolume_.evaluate(
         grid_, candidateVelocity, endFluid,
-        {surfaceOffsetMeters_, endOffset, timeStep});
+        {surfaceOffsetMeters_, endOffset, timeStep,
+         endsAtCellBoundary});
     if (!controlDiagnostics.accepted) {
         throw std::runtime_error(
             "open piston geometric-conservation ledger did not close");
+    }
+
+    auto acceptedFluid = endFluid;
+    std::optional<fluid::PlanarControlVolumeRebaseResult> rebase;
+    double rebaseVolumeResidual = 0.0;
+    double rebaseVelocityResidual = 0.0;
+    if (endsAtCellBoundary) {
+        const std::size_t rebasedPlane =
+            (controlVolume_.movingPlaneCoordinate() + 1)
+            % grid_.cellCounts().x;
+        const auto rebasedInterfaces = makeInterfaces(
+            grid_, endSpeed, rebasedPlane);
+        rebase.emplace(fluid::rebasePlanarMovingControlVolume(
+            grid_, controlVolume_, rebasedInterfaces,
+            controlDiagnostics));
+        if (!rebase->diagnostics.accepted) {
+            throw std::runtime_error(
+                "open piston topology-rebase volume ledger did not close");
+        }
+
+        auto rebasedVelocity = candidateVelocity;
+        auto rebasedPressure = candidatePressure;
+        const auto rebasedFluid =
+            fluid::projectVelocityWithMovingInterfaces(
+                grid_, rebasedVelocity, rebasedPressure,
+                rebasedInterfaces, projectionSettings(timeStep));
+        rebaseVelocityResidual = maximumFluidVelocityDifference(
+            candidateVelocity, rebasedVelocity);
+        if (!rebasedFluid.projection.converged
+            || !rebasedFluid.finite
+            || rebaseVelocityResidual
+                > rebaseVelocityToleranceMetersPerSecond) {
+            throw std::runtime_error(
+                "open piston topology rebase changed its accepted "
+                "fluid velocity");
+        }
+        rebaseVolumeResidual = rebase->diagnostics
+            .volumeContinuityResidualCubicMeters;
+        candidateVelocity = std::move(rebasedVelocity);
+        candidatePressure = std::move(rebasedPressure);
+        acceptedFluid = rebasedFluid;
     }
 
     const auto startKinematics = bridge_.transfer().captureKinematics(
@@ -336,7 +428,7 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
     context.couplingResiduals.tractionNewtons =
         bridgeDiagnostics.forceResidualNormNewtons;
     context.couplingResiduals.fluid =
-        endFluid.projection.divergenceL2AfterPerSecond;
+        acceptedFluid.projection.divergenceL2AfterPerSecond;
     context.couplingResiduals.structure =
         structureDiagnostics.maximumMembraneResidual;
     context.couplingResiduals.interfacePowerWatts =
@@ -353,7 +445,7 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
     };
     context.conservation.totalEnergyJoules =
         structureDiagnostics.kineticEnergyJoules
-        + endFluid.projection.kineticEnergyAfterJoules;
+        + acceptedFluid.projection.kineticEnergyAfterJoules;
     context.conservation.interfaceForceResidualNewtons =
         toViewer(bridgeDiagnostics.forceResidualNewtons);
     context.conservation.interfaceMomentResidualNewtonMetres =
@@ -366,8 +458,11 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
     try {
         frame = viewer::buildStructureFrame(
             structure_, frameMapping_, context);
-        appendFields(frame, endFluid, controlDiagnostics, bridgeDiagnostics,
-                     integratedDiagnostics, actuatorImpulse);
+        appendFields(
+            frame, acceptedFluid, controlDiagnostics, bridgeDiagnostics,
+            integratedDiagnostics, actuatorImpulse,
+            topologyRebaseCount_ + (endsAtCellBoundary ? 1 : 0),
+            rebaseVolumeResidual, rebaseVelocityResidual);
         viewer::ProtocolError error;
         if (!viewer::validateFrame(frame, &error)) {
             throw std::runtime_error(
@@ -381,9 +476,18 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
 
     fluidVelocity_ = std::move(candidateVelocity);
     fluidPressure_ = std::move(candidatePressure);
-    fluidDiagnostics_ = endFluid;
+    fluidDiagnostics_ = acceptedFluid;
     controlVolumeDiagnostics_ = controlDiagnostics;
-    surfaceOffsetMeters_ = endOffset;
+    if (rebase.has_value()) {
+        controlVolume_ = std::move(rebase->controlVolume);
+        lastRebaseDiagnostics_ = rebase->diagnostics;
+        lastRebaseVelocityResidualMetersPerSecond_ =
+            rebaseVelocityResidual;
+        ++topologyRebaseCount_;
+        surfaceOffsetMeters_ = 0.0;
+    } else {
+        surfaceOffsetMeters_ = endOffset;
+    }
     return frame;
 }
 
@@ -400,8 +504,26 @@ OpenPistonCase::controlVolumeDiagnostics() const noexcept {
     return controlVolumeDiagnostics_;
 }
 
+const fluid::PlanarControlVolumeRebaseDiagnostics&
+OpenPistonCase::lastRebaseDiagnostics() const noexcept {
+    return lastRebaseDiagnostics_;
+}
+
 double OpenPistonCase::surfaceOffsetMeters() const noexcept {
     return surfaceOffsetMeters_;
+}
+
+std::size_t OpenPistonCase::movingPlaneCoordinate() const noexcept {
+    return controlVolume_.movingPlaneCoordinate();
+}
+
+std::uint64_t OpenPistonCase::topologyRebaseCount() const noexcept {
+    return topologyRebaseCount_;
+}
+
+double OpenPistonCase::lastRebaseVelocityResidualMetersPerSecond()
+    const noexcept {
+    return lastRebaseVelocityResidualMetersPerSecond_;
 }
 
 } // namespace simwing::fsi
