@@ -678,6 +678,11 @@ add_executable(simwing-fluid-advection-test
 )
 target_link_libraries(simwing-fluid-advection-test PRIVATE simwing_fluid)
 
+add_executable(simwing-fluid-variable-advection-test
+    tests/simwing_fluid_variable_advection_test.cpp
+)
+target_link_libraries(simwing-fluid-variable-advection-test PRIVATE simwing_fluid)
+
 add_executable(simwing-fluid-evolution-test
     tests/simwing_fluid_evolution_test.cpp
 )
@@ -885,6 +890,7 @@ set_target_properties(
     simwing-fluid-checkpoint-test
     simwing-fluid-diffusion-test
     simwing-fluid-advection-test
+    simwing-fluid-variable-advection-test
     simwing-fluid-evolution-test
     simwing-transfer-test
     simwing-coupling-test
@@ -936,6 +942,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-fluid-checkpoint-test
         simwing-fluid-diffusion-test
         simwing-fluid-advection-test
+        simwing-fluid-variable-advection-test
         simwing-fluid-evolution-test
         simwing-transfer-test
         simwing-coupling-test
@@ -1082,6 +1089,8 @@ add_test(NAME simwing_fluid_diffusion
     COMMAND simwing-fluid-diffusion-test)
 add_test(NAME simwing_fluid_advection
     COMMAND simwing-fluid-advection-test)
+add_test(NAME simwing_fluid_variable_advection
+    COMMAND simwing-fluid-variable-advection-test)
 add_test(NAME simwing_fluid_evolution
     COMMAND simwing-fluid-evolution-test)
 add_test(NAME simwing_transfer COMMAND simwing-transfer-test)

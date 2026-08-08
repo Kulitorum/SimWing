@@ -200,14 +200,19 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   Its first velocity-evolution operator is a bounded explicit periodic MAC
   viscosity step with the sharp `nu*dt*sum(1/h^2) <= 0.5` stability contract,
   exact zero/uniform modes, and accepted momentum/energy ledgers.
-  Its first transport oracle advects all three MAC components with a prescribed
-  uniform velocity using an unsplit conservative donor-cell update. It is
+  Its transport baseline advects all three MAC components with conservative
+  donor-cell updates. The prescribed-uniform oracle is
   maximum-principle bounded for total absolute CFL at or below one, preserves
-  periodic momentum and solenoidal modes, and is deliberately first order; it
-  is not yet nonlinear or production convection.
-  The first composed periodic evolution step runs that transport, viscosity,
-  and the zero-mean projection on candidates and commits velocity and pressure
-  together only after every stage and the aggregate conservation ledger pass.
+  periodic momentum and solenoidal modes, and delegates bit-exactly from a
+  variable-flow operator. That operator reconstructs shared staggered
+  control-volume fluxes from a divergence-free MAC field, supports nonlinear
+  self-advection, and preserves periodic component momentum, bounds, and
+  non-increasing energy under its local outgoing-CFL limit. Both remain first
+  order, not the intended second-order production convection.
+  The composed periodic evolution step selects uniform or nonlinear transport,
+  then runs viscosity and the zero-mean projection on candidates and commits
+  velocity and pressure together only after every stage and the aggregate
+  conservation ledger pass.
   It has no Playground dependency and is not yet an arbitrary/multiple-crossing
   or whole-wing flow solver.
 - `simwing_viewer_protocol`: Qt-free immutable diagnostic-frame and trace
@@ -563,14 +568,18 @@ makes this a certified aerodynamic solver.
   number without mutation, preserves component momentum, cannot increase
   kinetic energy inside its declared stability interval, and is not yet the
   intended second-order production time integrator.
-- `src/fsi/fluid/advection.{h,cpp}` owns the bounded uniform-flow transport
-  oracle for the periodic MAC components. Its unsplit donor-cell step is a
-  convex combination only when `sum(abs(U_i)*dt/h_i) <= 1`; accepted steps
-  preserve component momentum, cannot create a new component extremum or add
-  kinetic energy, and commute with the discrete divergence. Higher-order
-  variable/nonlinear convection remains future work.
-- `src/fsi/fluid/evolution.{h,cpp}` composes uniform-flow transport, explicit
-  viscosity, and periodic projection into the first complete fluid macro-step.
+- `src/fsi/fluid/advection.{h,cpp}` owns the bounded donor-cell transport
+  operators for periodic MAC components. The prescribed-uniform oracle is a
+  convex combination when `sum(abs(U_i)*dt/h_i) <= 1` and commutes with the
+  discrete divergence. The variable-flow path averages a divergence-free MAC
+  advector onto each translated component control volume, uses one shared
+  upwind flux per periodic face, and supports safe self-advection aliasing.
+  Accepted steps preserve component momentum, bounds, and non-increasing
+  kinetic energy under the local outgoing-CFL limit. It is the conservative
+  first-order baseline; second-order reconstruction remains future work.
+- `src/fsi/fluid/evolution.{h,cpp}` composes selectable uniform or nonlinear
+  self-advection, explicit viscosity, and periodic projection into the first
+  complete fluid macro-step.
   Stage diagnostics remain intact, the aggregate momentum/energy/divergence
   ledger is checked independently, and failure at advection, diffusion,
   projection, or final conservation commits neither velocity nor pressure.
@@ -673,7 +682,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 55 configured tests on Windows. The Fortran-reference test is
+There are 56 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 
@@ -689,7 +698,7 @@ paths that release CI deliberately excludes from its offscreen test command.
 | Playground body/pressure/cells/material | `playground_pressure_solve`, `playground_cells`, `playground_metrics`, `playground_material`, `softwing_material`, and the deterministic bench guards below |
 | Playground contact | `playground_contact`, `playground_contact_integration`, plus a relevant bench/GUI scenario |
 | SimWing scene/structure/viewer foundations | `simwing_scene`, `simwing_model_scene_export`, `simwing_model_scene_real_export`, `simwing_structure`, `simwing_scene_structure`, `simwing_viewer_protocol`, `simwing_structure_frame`, plus `softwing_material`/`softwing_cell_volume` when core primitives change and `softwing_suspension_checkpoint` for payload/suspension state |
-| SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`, `simwing_fluid_moving_interface`, `simwing_fluid_control_volume`, `simwing_fluid_cut_surface`, `simwing_fluid_checkpoint`, `simwing_fluid_diffusion`, `simwing_fluid_advection`, `simwing_fluid_evolution`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing projection/diffusion/transport energy, transactional failure and composed all-stage rollback, deterministic replay, Taylor-Green invariance, manufactured second-order pressure and viscous-eigenvalue convergence, exact zero/uniform/Nyquist viscous modes and the `0.5` explicit stability boundary, bounded donor-cell uniform transport with exact CFL-one shift, divergence commutation, and observed first-order refinement, exact standalone-versus-composed stage equivalence, stable region/interface orientation, static sharp-jump balance, exact X/Y/Z face constraints, separate adjacent-pressure and complete direct-enforcement reaction ledgers, canonical face-tile geometry/traction ledgers, per-region compatibility/gauges, analytic translating-slab pressure impulse/work, open-piston partial-cell/surface-sweep/opening-flux GCL closure, exact X/Y/Z one-plane rebase volume continuity, accepted physical cut-plane area/force/moment/power, macro-step-average endpoint resampling, periodic-image closure, and immutable grid/topology-bound accepted-state checkpoint replay |
+| SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`, `simwing_fluid_moving_interface`, `simwing_fluid_control_volume`, `simwing_fluid_cut_surface`, `simwing_fluid_checkpoint`, `simwing_fluid_diffusion`, `simwing_fluid_advection`, `simwing_fluid_variable_advection`, `simwing_fluid_evolution`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing projection/diffusion/transport energy, transactional failure and composed all-stage rollback, deterministic replay, Taylor-Green invariance, manufactured second-order pressure and viscous-eigenvalue convergence, exact zero/uniform/Nyquist viscous modes and the `0.5` explicit stability boundary, bounded donor-cell uniform transport with exact CFL-one shift and divergence commutation, exact uniform delegation from the variable path, divergence-free staggered control-volume flux closure, safe nonlinear self-advection aliasing, observed first-order uniform and variable-shear refinement, exact standalone-versus-composed uniform/nonlinear stage equivalence, stable region/interface orientation, static sharp-jump balance, exact X/Y/Z face constraints, separate adjacent-pressure and complete direct-enforcement reaction ledgers, canonical face-tile geometry/traction ledgers, per-region compatibility/gauges, analytic translating-slab pressure impulse/work, open-piston partial-cell/surface-sweep/opening-flux GCL closure, exact X/Y/Z one-plane rebase volume continuity, accepted physical cut-plane area/force/moment/power, macro-step-average endpoint resampling, periodic-image closure, and immutable grid/topology-bound accepted-state checkpoint replay |
 | SimWing conservative transfer | `simwing_transfer`; preserve stable topology/Structure binding, analytic uniform and barycentric-quadrature area/force/moment, rigid translation/rotation power, independent ledger closure, additive nodal load application, and rejection before mutation for foreign results/structures |
 | SimWing macro-step coupling | `simwing_coupling`; preserve strictly ordered local sample time, topology/duration binding, analytic moving-piston impulse and pressure-volume work, independent temporal ledger closure, momentum delivery through XPBD, deterministic replay, and pre-load checkpoint rollback on failure |
 | SimWing fluid/structure bridge and piston workers | `simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing_open_piston_case`, `simwing_fsi_piston_headless`, `simwing_fsi_open_piston_headless`, `simwing_fsi_open_piston_rebase_headless`; preserve the strict uniform subset, planar face-resolved nonuniform transfer, stable surface/geometry binding, complete nonoverlapping coverage, per-face and aggregate area/force/moment/power closure, rigid-normal X/Y/Z grid/physical-plane correspondence and velocity binding, analytic impulse delivery, explicit actuator-versus-complete-CFD reaction, bit-identical replay through periodic topology crossings and composite checkpoint restore, open-piston structure/fluid/actuator/system momentum residual below `1e-8 N*s` and energy residual below `2e-9 J`, accepted-only frames, and Qt-free headless execution |

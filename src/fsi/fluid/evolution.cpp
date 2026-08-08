@@ -33,7 +33,7 @@ double combinedTolerance(const double absoluteTolerance,
         + relativeTolerance * std::max(firstScale, secondScale);
 }
 
-void validateSettings(const PeriodicLinearFlowSettings& settings) {
+void validateSettings(const PeriodicFlowSettings& settings) {
     const std::array finiteValues{
         settings.densityKgPerCubicMeter,
         settings.transportVelocityMetersPerSecond.x,
@@ -42,6 +42,8 @@ void validateSettings(const PeriodicLinearFlowSettings& settings) {
         settings.kinematicViscositySquareMetersPerSecond,
         settings.timeStepSeconds,
         settings.maximumTotalCourantNumber,
+        settings.advectionAbsoluteDivergenceTolerancePerSecond,
+        settings.advectionRelativeDivergenceTolerance,
         settings.maximumDiffusionNumber,
         settings.projectionAbsoluteResidualTolerance,
         settings.projectionRelativeResidualTolerance,
@@ -53,11 +55,17 @@ void validateSettings(const PeriodicLinearFlowSettings& settings) {
     if (!std::ranges::all_of(finiteValues, [](const double value) {
             return std::isfinite(value);
         })
+        || (settings.advectionMode
+                != PeriodicFlowAdvectionMode::PrescribedUniform
+            && settings.advectionMode
+                != PeriodicFlowAdvectionMode::SelfAdvectingMac)
         || settings.densityKgPerCubicMeter <= 0.0
         || settings.kinematicViscositySquareMetersPerSecond < 0.0
         || settings.timeStepSeconds <= 0.0
         || settings.maximumTotalCourantNumber <= 0.0
         || settings.maximumTotalCourantNumber > 1.0
+        || settings.advectionAbsoluteDivergenceTolerancePerSecond < 0.0
+        || settings.advectionRelativeDivergenceTolerance < 0.0
         || settings.maximumDiffusionNumber <= 0.0
         || settings.maximumDiffusionNumber > 0.5
         || settings.projectionAbsoluteResidualTolerance < 0.0
@@ -68,7 +76,7 @@ void validateSettings(const PeriodicLinearFlowSettings& settings) {
         || settings.absoluteEnergyToleranceJoules < 0.0
         || settings.relativeEnergyTolerance < 0.0) {
         throw std::invalid_argument(
-            "periodic linear-flow settings are invalid");
+            "periodic flow settings are invalid");
     }
 }
 
@@ -96,23 +104,24 @@ Vector3 momentumNewtonSeconds(
 
 } // namespace
 
-PeriodicLinearFlowDiagnostics advancePeriodicLinearFlow(
+PeriodicFlowDiagnostics advancePeriodicFlow(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
-    const PeriodicLinearFlowSettings& settings) {
+    const PeriodicFlowSettings& settings) {
     validateSettings(settings);
     if (!velocityMetersPerSecond.matches(grid)
         || !pressurePascals.matches(grid)) {
         throw std::invalid_argument(
-            "periodic linear-flow fields do not match their grid");
+            "periodic flow fields do not match their grid");
     }
     if (!isFinite(velocityMetersPerSecond) || !isFinite(pressurePascals)) {
         throw std::invalid_argument(
-            "periodic linear-flow fields must be finite");
+            "periodic flow fields must be finite");
     }
 
-    PeriodicLinearFlowDiagnostics diagnostics;
+    PeriodicFlowDiagnostics diagnostics;
+    diagnostics.advectionMode = settings.advectionMode;
     diagnostics.momentumBeforeNewtonSeconds = momentumNewtonSeconds(
         grid, velocityMetersPerSecond, settings.densityKgPerCubicMeter);
     diagnostics.momentumAfterNewtonSeconds =
@@ -127,32 +136,72 @@ PeriodicLinearFlowDiagnostics advancePeriodicLinearFlow(
 
     auto candidateVelocity = velocityMetersPerSecond;
     auto candidatePressure = pressurePascals;
-    UniformMacAdvectionSettings advectionSettings;
-    advectionSettings.densityKgPerCubicMeter =
-        settings.densityKgPerCubicMeter;
-    advectionSettings.transportVelocityMetersPerSecond =
-        settings.transportVelocityMetersPerSecond;
-    advectionSettings.timeStepSeconds = settings.timeStepSeconds;
-    advectionSettings.maximumTotalCourantNumber =
-        settings.maximumTotalCourantNumber;
-    advectionSettings.absoluteMomentumToleranceNewtonSeconds =
-        settings.absoluteMomentumToleranceNewtonSeconds;
-    advectionSettings.relativeMomentumTolerance =
-        settings.relativeMomentumTolerance;
-    advectionSettings.absoluteEnergyToleranceJoules =
-        settings.absoluteEnergyToleranceJoules;
-    advectionSettings.relativeEnergyTolerance =
-        settings.relativeEnergyTolerance;
-    diagnostics.advection = advectVelocityByUniformFlow(
-        grid, candidateVelocity, advectionSettings);
-    if (!diagnostics.advection.accepted) {
-        diagnostics.failureStage =
-            PeriodicLinearFlowFailureStage::Advection;
-        diagnostics.finite = diagnostics.advection.finite;
-        return diagnostics;
+    switch (settings.advectionMode) {
+    case PeriodicFlowAdvectionMode::PrescribedUniform: {
+        UniformMacAdvectionSettings advectionSettings;
+        advectionSettings.densityKgPerCubicMeter =
+            settings.densityKgPerCubicMeter;
+        advectionSettings.transportVelocityMetersPerSecond =
+            settings.transportVelocityMetersPerSecond;
+        advectionSettings.timeStepSeconds = settings.timeStepSeconds;
+        advectionSettings.maximumTotalCourantNumber =
+            settings.maximumTotalCourantNumber;
+        advectionSettings.absoluteMomentumToleranceNewtonSeconds =
+            settings.absoluteMomentumToleranceNewtonSeconds;
+        advectionSettings.relativeMomentumTolerance =
+            settings.relativeMomentumTolerance;
+        advectionSettings.absoluteEnergyToleranceJoules =
+            settings.absoluteEnergyToleranceJoules;
+        advectionSettings.relativeEnergyTolerance =
+            settings.relativeEnergyTolerance;
+        diagnostics.uniformAdvection = advectVelocityByUniformFlow(
+            grid, candidateVelocity, advectionSettings);
+        if (!diagnostics.uniformAdvection.accepted) {
+            diagnostics.failureStage =
+                PeriodicFlowFailureStage::Advection;
+            diagnostics.finite = diagnostics.uniformAdvection.finite;
+            return diagnostics;
+        }
+        diagnostics.advectionNumericalEnergyLossJoules =
+            diagnostics.uniformAdvection.numericalKineticEnergyLossJoules;
+        break;
     }
-    diagnostics.advectionNumericalEnergyLossJoules =
-        diagnostics.advection.numericalKineticEnergyLossJoules;
+    case PeriodicFlowAdvectionMode::SelfAdvectingMac: {
+        VariableMacAdvectionSettings advectionSettings;
+        advectionSettings.densityKgPerCubicMeter =
+            settings.densityKgPerCubicMeter;
+        advectionSettings.timeStepSeconds = settings.timeStepSeconds;
+        advectionSettings.maximumLocalOutgoingCourantNumber =
+            settings.maximumTotalCourantNumber;
+        advectionSettings.absoluteDivergenceTolerancePerSecond =
+            settings.advectionAbsoluteDivergenceTolerancePerSecond;
+        advectionSettings.relativeDivergenceTolerance =
+            settings.advectionRelativeDivergenceTolerance;
+        advectionSettings.absoluteMomentumToleranceNewtonSeconds =
+            settings.absoluteMomentumToleranceNewtonSeconds;
+        advectionSettings.relativeMomentumTolerance =
+            settings.relativeMomentumTolerance;
+        advectionSettings.absoluteEnergyToleranceJoules =
+            settings.absoluteEnergyToleranceJoules;
+        advectionSettings.relativeEnergyTolerance =
+            settings.relativeEnergyTolerance;
+        diagnostics.variableAdvection = advectVelocityByMacFlow(
+            grid, candidateVelocity, candidateVelocity,
+            advectionSettings);
+        if (!diagnostics.variableAdvection.accepted) {
+            diagnostics.failureStage =
+                PeriodicFlowFailureStage::Advection;
+            diagnostics.finite = diagnostics.variableAdvection.finite;
+            return diagnostics;
+        }
+        diagnostics.advectionNumericalEnergyLossJoules =
+            diagnostics.variableAdvection.numericalKineticEnergyLossJoules;
+        break;
+    }
+    default:
+        throw std::invalid_argument(
+            "periodic flow advection mode is invalid");
+    }
 
     PeriodicMacDiffusionSettings diffusionSettings;
     diffusionSettings.densityKgPerCubicMeter =
@@ -174,8 +223,12 @@ PeriodicLinearFlowDiagnostics advancePeriodicLinearFlow(
         grid, candidateVelocity, diffusionSettings);
     if (!diagnostics.diffusion.accepted) {
         diagnostics.failureStage =
-            PeriodicLinearFlowFailureStage::Diffusion;
-        diagnostics.finite = diagnostics.advection.finite
+            PeriodicFlowFailureStage::Diffusion;
+        const bool advectionFinite = settings.advectionMode
+                == PeriodicFlowAdvectionMode::PrescribedUniform
+            ? diagnostics.uniformAdvection.finite
+            : diagnostics.variableAdvection.finite;
+        diagnostics.finite = advectionFinite
             && diagnostics.diffusion.finite;
         return diagnostics;
     }
@@ -196,8 +249,12 @@ PeriodicLinearFlowDiagnostics advancePeriodicLinearFlow(
         grid, candidateVelocity, candidatePressure, projectionSettings);
     if (!diagnostics.projection.converged) {
         diagnostics.failureStage =
-            PeriodicLinearFlowFailureStage::Projection;
-        diagnostics.finite = diagnostics.advection.finite
+            PeriodicFlowFailureStage::Projection;
+        const bool advectionFinite = settings.advectionMode
+                == PeriodicFlowAdvectionMode::PrescribedUniform
+            ? diagnostics.uniformAdvection.finite
+            : diagnostics.variableAdvection.finite;
+        diagnostics.finite = advectionFinite
             && diagnostics.diffusion.finite;
         return diagnostics;
     }
@@ -219,7 +276,11 @@ PeriodicLinearFlowDiagnostics advancePeriodicLinearFlow(
         - diagnostics.kineticEnergyAfterJoules;
     diagnostics.finalDivergenceL2PerSecond =
         diagnostics.projection.divergenceL2AfterPerSecond;
-    diagnostics.finite = diagnostics.advection.finite
+    const bool advectionFinite = settings.advectionMode
+            == PeriodicFlowAdvectionMode::PrescribedUniform
+        ? diagnostics.uniformAdvection.finite
+        : diagnostics.variableAdvection.finite;
+    diagnostics.finite = advectionFinite
         && diagnostics.diffusion.finite
         && finite(diagnostics.momentumAfterNewtonSeconds)
         && finite(diagnostics.momentumResidualNewtonSeconds)
@@ -252,7 +313,7 @@ PeriodicLinearFlowDiagnostics advancePeriodicLinearFlow(
             <= diagnostics.kineticEnergyBeforeJoules + energyTolerance;
     if (!diagnostics.accepted) {
         diagnostics.failureStage =
-            PeriodicLinearFlowFailureStage::Conservation;
+            PeriodicFlowFailureStage::Conservation;
         return diagnostics;
     }
 

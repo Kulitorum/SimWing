@@ -387,9 +387,9 @@ src/fsi/
     fluid/
         grid.*              block hierarchy and field storage
         geometry.*          discrete surface and region reconstruction
-        advection.*         bounded uniform-flow MAC transport oracle
+        advection.*         bounded uniform/variable MAC transport
         diffusion.*         bounded periodic MAC viscosity verification
-        evolution.*         transactional linear fluid macro-step
+        evolution.*         transactional selectable fluid macro-step
         projection.*
         interface_jump.*
         moving_interface.*  grid-face constraints and region topology
@@ -468,15 +468,23 @@ create a new component extremum or increase kinetic energy, commutes with the
 discrete divergence, and becomes an exact one-cell periodic translation at the
 sharp CFL-one boundary. Its full-period sine regression converges at the
 expected first order. This is the bounded baseline for later second-order
-variable/nonlinear convection, not that production operator itself. A
-first composed periodic macro-step now runs this bounded transport, explicit
-viscosity, and the zero-mean projection on private candidates. Velocity and
-pressure commit together only after every stage and an independent aggregate
-momentum/kinetic-energy ledger pass. Its regression is bit-identical to the
-three standalone operators, retains every stage diagnostic, and rejects at
-advection, diffusion, or projection without changing either input field. This
-is the first complete linear evolution path, not yet nonlinear convection or a
-second-order production integrator. A canonical single-crossing
+convection, not that production operator itself. A variable-flow donor-cell
+companion now averages a divergence-free MAC advector onto every translated
+component control-volume face and uses one shared periodic upwind flux. The
+uniform subset delegates bit-exactly to the oracle. General accepted steps
+preserve all three component momenta, stay within old-time component bounds,
+and do not add kinetic energy under a local outgoing-CFL limit; the aliased
+field path supplies first-order nonlinear self-advection. A periodic shear
+fixture observes the expected first-order refinement. This is the conservative
+variable-flow baseline for later second-order reconstruction, not that
+production operator itself. The composed periodic macro-step selects either
+transport, then runs explicit viscosity and the zero-mean projection on private
+candidates. Velocity and pressure commit together only after every stage and
+an independent aggregate momentum/kinetic-energy ledger pass. Regressions are
+bit-identical to their standalone uniform or nonlinear stages, retain every
+stage diagnostic, and reject at advection, diffusion, or projection without
+changing either input field. This is the first complete nonlinear evolution
+path, but its transport and time integration remain first order. A canonical single-crossing
 grid-face field now retains stable surface IDs, two distinct fluid-region IDs,
 and the signed pressure discontinuity. Its paired sharp gradient and Poisson
 source preserve a static pressurized slab without smoothing the pressure or
@@ -631,8 +639,9 @@ cases meet their declared tolerances.
 ### Phase 2 — CFD verification kernel
 
 Status: in progress. `simwing_fluid` currently owns the uniform periodic
-verification grid, bounded uniform-flow velocity transport, explicit laminar
-velocity diffusion, their transactional composed macro-step, pressure
+verification grid, bounded uniform and divergence-free variable-flow velocity
+transport, nonlinear self-advection, explicit laminar velocity diffusion,
+their transactional selectable composed macro-step, pressure
 projection, and fixed-topology face-aligned moving
 constraints, plus the first open planar one-partial-cell control-volume
 operator, its exact next-plane topology rebase, and the bounded physical

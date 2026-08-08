@@ -44,14 +44,21 @@ donor-cell update to all periodic MAC components. At total absolute CFL one it
 performs an exact one-cell periodic shift; below that limit it preserves
 component momentum, the maximum principle, non-increasing kinetic energy, and
 discrete solenoidal modes. It is intentionally first order and does not yet
-claim higher-order or nonlinear self-advection.
-Those two evolution primitives now compose with the zero-mean pressure solve in
-one transactional periodic fluid step. Every stage runs on candidate fields;
-velocity and pressure commit together only when transport bounds, viscous
-stability, projection convergence, and the final momentum/energy ledger all
-pass. Focused rollback cases fail each stage independently without changing
-either caller field. This is the first complete linear fluid evolution path,
-not yet the nonlinear production Navier-Stokes step.
+claim higher order. A variable-flow companion reconstructs one shared upwind
+flux on every periodic face of each translated component control volume. It
+requires a divergence-free MAC advector, delegates uniform fields bit-exactly
+to the oracle, and supports safe nonlinear self-advection. Under its local
+outgoing-CFL limit it preserves component momentum and bounds without adding
+kinetic energy; a periodic shear fixture observes first-order convergence.
+The transport mode now composes with viscosity and the zero-mean pressure solve
+in one transactional periodic fluid step. Every stage runs on candidate
+fields; velocity and pressure commit together only when transport bounds,
+viscous stability, projection convergence, and the final momentum/energy
+ledger all pass. Focused rollback cases fail each stage independently without
+changing either caller field. This is the first complete nonlinear fluid
+evolution path, but its donor-cell convection and forward-Euler viscosity are
+still first-order verification operators rather than the intended second-order
+production Navier-Stokes scheme.
 A validated single-crossing sharp-interface
 field now preserves a prescribed two-sided static pressure jump without
 smearing or spurious flow, including across the periodic domain boundary.

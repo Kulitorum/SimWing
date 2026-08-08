@@ -9,9 +9,14 @@
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t periodicLinearFlowStepVersion = 1;
+inline constexpr std::uint32_t periodicFlowStepVersion = 2;
 
-enum class PeriodicLinearFlowFailureStage : std::uint8_t {
+enum class PeriodicFlowAdvectionMode : std::uint8_t {
+    PrescribedUniform = 0,
+    SelfAdvectingMac = 1,
+};
+
+enum class PeriodicFlowFailureStage : std::uint8_t {
     None = 0,
     Advection = 1,
     Diffusion = 2,
@@ -19,12 +24,16 @@ enum class PeriodicLinearFlowFailureStage : std::uint8_t {
     Conservation = 4,
 };
 
-struct PeriodicLinearFlowSettings {
+struct PeriodicFlowSettings {
     double densityKgPerCubicMeter = 1.225;
+    PeriodicFlowAdvectionMode advectionMode =
+        PeriodicFlowAdvectionMode::PrescribedUniform;
     Vector3 transportVelocityMetersPerSecond;
     double kinematicViscositySquareMetersPerSecond = 1.5e-5;
     double timeStepSeconds = 1.0 / 60.0;
     double maximumTotalCourantNumber = 1.0;
+    double advectionAbsoluteDivergenceTolerancePerSecond = 1.0e-11;
+    double advectionRelativeDivergenceTolerance = 1.0e-12;
     double maximumDiffusionNumber = 0.5;
     double projectionAbsoluteResidualTolerance = 1.0e-12;
     double projectionRelativeResidualTolerance = 1.0e-10;
@@ -35,9 +44,12 @@ struct PeriodicLinearFlowSettings {
     double relativeEnergyTolerance = 1.0e-12;
 };
 
-struct PeriodicLinearFlowDiagnostics {
-    std::uint32_t version = periodicLinearFlowStepVersion;
-    UniformMacAdvectionDiagnostics advection;
+struct PeriodicFlowDiagnostics {
+    std::uint32_t version = periodicFlowStepVersion;
+    PeriodicFlowAdvectionMode advectionMode =
+        PeriodicFlowAdvectionMode::PrescribedUniform;
+    UniformMacAdvectionDiagnostics uniformAdvection;
+    VariableMacAdvectionDiagnostics variableAdvection;
     PeriodicMacDiffusionDiagnostics diffusion;
     ProjectionDiagnostics projection;
     Vector3 momentumBeforeNewtonSeconds;
@@ -52,24 +64,24 @@ struct PeriodicLinearFlowDiagnostics {
     double totalEnergyLossJoules = 0.0;
     double initialDivergenceL2PerSecond = 0.0;
     double finalDivergenceL2PerSecond = 0.0;
-    PeriodicLinearFlowFailureStage failureStage =
-        PeriodicLinearFlowFailureStage::None;
+    PeriodicFlowFailureStage failureStage =
+        PeriodicFlowFailureStage::None;
     bool finite = true;
     bool accepted = false;
 
     bool operator==(
-        const PeriodicLinearFlowDiagnostics&) const = default;
+        const PeriodicFlowDiagnostics&) const = default;
 };
 
-// First complete periodic verification step: bounded uniform-flow transport,
-// explicit laminar viscosity, then the zero-mean pressure projection. It is a
-// linear transport canonical, not nonlinear Navier-Stokes convection. All
-// stages run on candidates; velocity and pressure commit together only after
-// every stage and the final momentum/energy ledger are accepted.
-[[nodiscard]] PeriodicLinearFlowDiagnostics advancePeriodicLinearFlow(
+// Complete periodic verification step: bounded donor-cell transport, explicit
+// laminar viscosity, then the zero-mean pressure projection. Transport may be
+// the exact prescribed-uniform oracle or first-order nonlinear MAC
+// self-advection. All stages run on candidates; velocity and pressure commit
+// together only after every stage and the final momentum/energy ledger pass.
+[[nodiscard]] PeriodicFlowDiagnostics advancePeriodicFlow(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
-    const PeriodicLinearFlowSettings& settings = {});
+    const PeriodicFlowSettings& settings = {});
 
 } // namespace simwing::fsi::fluid

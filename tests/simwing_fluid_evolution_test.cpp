@@ -11,12 +11,15 @@ namespace {
 using simwing::fsi::fluid::CellScalarField;
 using simwing::fsi::fluid::MacVelocityField;
 using simwing::fsi::fluid::PeriodicCartesianGrid;
-using simwing::fsi::fluid::PeriodicLinearFlowFailureStage;
-using simwing::fsi::fluid::PeriodicLinearFlowSettings;
+using simwing::fsi::fluid::PeriodicFlowAdvectionMode;
+using simwing::fsi::fluid::PeriodicFlowFailureStage;
+using simwing::fsi::fluid::PeriodicFlowSettings;
 using simwing::fsi::fluid::PeriodicMacDiffusionSettings;
 using simwing::fsi::fluid::ProjectionSettings;
 using simwing::fsi::fluid::UniformMacAdvectionSettings;
-using simwing::fsi::fluid::advancePeriodicLinearFlow;
+using simwing::fsi::fluid::VariableMacAdvectionSettings;
+using simwing::fsi::fluid::advancePeriodicFlow;
+using simwing::fsi::fluid::advectVelocityByMacFlow;
 using simwing::fsi::fluid::advectVelocityByUniformFlow;
 using simwing::fsi::fluid::diffuseVelocityExplicit;
 using simwing::fsi::fluid::projectVelocity;
@@ -41,8 +44,8 @@ void expectRejected(Callback&& callback, const char* message) {
     check(rejected, message);
 }
 
-PeriodicLinearFlowSettings settings() {
-    PeriodicLinearFlowSettings result;
+PeriodicFlowSettings settings() {
+    PeriodicFlowSettings result;
     result.densityKgPerCubicMeter = 1.2;
     result.transportVelocityMetersPerSecond = {0.3, -0.2, 0.0};
     result.kinematicViscositySquareMetersPerSecond = 0.02;
@@ -147,16 +150,16 @@ void testExactStageCompositionAndDeterminism() {
     auto secondVelocity = firstVelocity;
     CellScalarField firstPressure(grid);
     CellScalarField secondPressure(grid);
-    const auto first = advancePeriodicLinearFlow(
+    const auto first = advancePeriodicFlow(
         grid, firstVelocity, firstPressure, flowSettings);
-    const auto second = advancePeriodicLinearFlow(
+    const auto second = advancePeriodicFlow(
         grid, secondVelocity, secondPressure, flowSettings);
     check(first.accepted
-              && first.failureStage == PeriodicLinearFlowFailureStage::None
+              && first.failureStage == PeriodicFlowFailureStage::None
               && firstVelocity == expectedVelocity
               && firstPressure == expectedPressure,
           "composition: accepted macro-step equals its three verified stages exactly");
-    check(first.advection == expectedAdvection
+    check(first.uniformAdvection == expectedAdvection
               && first.diffusion == expectedDiffusion
               && first.projection == expectedProjection,
           "composition: stage diagnostics retain their exact standalone contracts");
@@ -191,7 +194,7 @@ void testExactNoOp() {
     auto noOpSettings = settings();
     noOpSettings.transportVelocityMetersPerSecond = {};
     noOpSettings.kinematicViscositySquareMetersPerSecond = 0.0;
-    const auto diagnostics = advancePeriodicLinearFlow(
+    const auto diagnostics = advancePeriodicFlow(
         grid, velocity, pressure, noOpSettings);
     check(diagnostics.accepted
               && diagnostics.projection.iterationCount == 0
@@ -199,6 +202,122 @@ void testExactNoOp() {
               && pressure == originalPressure
               && diagnostics.totalEnergyLossJoules == 0.0,
           "no-op: solenoidal zero-transport inviscid step is bit-identical");
+}
+
+void testExactNonlinearStageComposition() {
+    const double twoPi = 2.0 * std::numbers::pi;
+    const PeriodicCartesianGrid grid(
+        {24, 24, 3}, {}, {twoPi, twoPi, 1.0});
+    auto flowSettings = settings();
+    flowSettings.advectionMode =
+        PeriodicFlowAdvectionMode::SelfAdvectingMac;
+    flowSettings.timeStepSeconds = 0.02;
+    flowSettings.advectionAbsoluteDivergenceTolerancePerSecond = 3.0e-12;
+
+    auto expectedVelocity = taylorGreen(grid);
+    CellScalarField expectedPressure(grid);
+    VariableMacAdvectionSettings advectionSettings;
+    advectionSettings.densityKgPerCubicMeter =
+        flowSettings.densityKgPerCubicMeter;
+    advectionSettings.timeStepSeconds = flowSettings.timeStepSeconds;
+    advectionSettings.maximumLocalOutgoingCourantNumber =
+        flowSettings.maximumTotalCourantNumber;
+    advectionSettings.absoluteDivergenceTolerancePerSecond =
+        flowSettings.advectionAbsoluteDivergenceTolerancePerSecond;
+    advectionSettings.relativeDivergenceTolerance =
+        flowSettings.advectionRelativeDivergenceTolerance;
+    advectionSettings.absoluteMomentumToleranceNewtonSeconds =
+        flowSettings.absoluteMomentumToleranceNewtonSeconds;
+    advectionSettings.relativeMomentumTolerance =
+        flowSettings.relativeMomentumTolerance;
+    advectionSettings.absoluteEnergyToleranceJoules =
+        flowSettings.absoluteEnergyToleranceJoules;
+    advectionSettings.relativeEnergyTolerance =
+        flowSettings.relativeEnergyTolerance;
+    const auto expectedAdvection = advectVelocityByMacFlow(
+        grid, expectedVelocity, expectedVelocity, advectionSettings);
+
+    PeriodicMacDiffusionSettings diffusionSettings;
+    diffusionSettings.densityKgPerCubicMeter =
+        flowSettings.densityKgPerCubicMeter;
+    diffusionSettings.kinematicViscositySquareMetersPerSecond =
+        flowSettings.kinematicViscositySquareMetersPerSecond;
+    diffusionSettings.timeStepSeconds = flowSettings.timeStepSeconds;
+    diffusionSettings.maximumDiffusionNumber =
+        flowSettings.maximumDiffusionNumber;
+    diffusionSettings.absoluteMomentumToleranceNewtonSeconds =
+        flowSettings.absoluteMomentumToleranceNewtonSeconds;
+    diffusionSettings.relativeMomentumTolerance =
+        flowSettings.relativeMomentumTolerance;
+    diffusionSettings.absoluteEnergyToleranceJoules =
+        flowSettings.absoluteEnergyToleranceJoules;
+    diffusionSettings.relativeEnergyTolerance =
+        flowSettings.relativeEnergyTolerance;
+    const auto expectedDiffusion = diffuseVelocityExplicit(
+        grid, expectedVelocity, diffusionSettings);
+
+    ProjectionSettings projectionSettings;
+    projectionSettings.densityKgPerCubicMeter =
+        flowSettings.densityKgPerCubicMeter;
+    projectionSettings.timeStepSeconds = flowSettings.timeStepSeconds;
+    projectionSettings.absoluteResidualTolerance =
+        flowSettings.projectionAbsoluteResidualTolerance;
+    projectionSettings.relativeResidualTolerance =
+        flowSettings.projectionRelativeResidualTolerance;
+    projectionSettings.maximumIterations =
+        flowSettings.projectionMaximumIterations;
+    const auto expectedProjection = projectVelocity(
+        grid, expectedVelocity, expectedPressure, projectionSettings);
+
+    auto actualVelocity = taylorGreen(grid);
+    CellScalarField actualPressure(grid);
+    const auto actual = advancePeriodicFlow(
+        grid, actualVelocity, actualPressure, flowSettings);
+    check(expectedAdvection.accepted && expectedDiffusion.accepted
+              && expectedProjection.converged && actual.accepted
+              && actual.advectionMode
+                  == PeriodicFlowAdvectionMode::SelfAdvectingMac
+              && actualVelocity == expectedVelocity
+              && actualPressure == expectedPressure,
+          "nonlinear composition: macro-step equals its standalone stages exactly");
+    check(actual.variableAdvection == expectedAdvection
+              && actual.diffusion == expectedDiffusion
+              && actual.projection == expectedProjection,
+          "nonlinear composition: variable-advection diagnostics remain exact");
+    check(actual.variableAdvection.numericalKineticEnergyLossJoules > 0.0
+              && actual.projection.iterationCount > 0
+              && actual.finalDivergenceL2PerSecond < 1.0e-10,
+          "nonlinear composition: self-advection is dissipative and projection restores continuity");
+}
+
+void testDeterministicNonlinearSequence() {
+    const double twoPi = 2.0 * std::numbers::pi;
+    const PeriodicCartesianGrid grid(
+        {20, 20, 3}, {}, {twoPi, twoPi, 1.0});
+    auto firstVelocity = taylorGreen(grid);
+    auto secondVelocity = firstVelocity;
+    CellScalarField firstPressure(grid);
+    CellScalarField secondPressure(grid);
+    auto flowSettings = settings();
+    flowSettings.advectionMode =
+        PeriodicFlowAdvectionMode::SelfAdvectingMac;
+    flowSettings.timeStepSeconds = 0.01;
+    flowSettings.kinematicViscositySquareMetersPerSecond = 0.01;
+    for (std::size_t step = 0; step < 12; ++step) {
+        const auto first = advancePeriodicFlow(
+            grid, firstVelocity, firstPressure, flowSettings);
+        const auto second = advancePeriodicFlow(
+            grid, secondVelocity, secondPressure, flowSettings);
+        check(first.accepted && second.accepted,
+              "nonlinear sequence: every projected self-advection step is accepted");
+        check(first == second
+                  && firstVelocity == secondVelocity
+                  && firstPressure == secondPressure,
+              "nonlinear sequence: repeated macro-steps replay bit-for-bit");
+        check(first.variableAdvection.divergenceCompatible
+                  && first.finalDivergenceL2PerSecond < 1.0e-10,
+              "nonlinear sequence: each committed field remains eligible for its next step");
+    }
 }
 
 void testStageFailureRollback() {
@@ -212,11 +331,11 @@ void testStageFailureRollback() {
     auto advectionFailure = settings();
     advectionFailure.transportVelocityMetersPerSecond = {20.0, 20.0, 20.0};
     advectionFailure.timeStepSeconds = 1.0;
-    const auto rejectedAdvection = advancePeriodicLinearFlow(
+    const auto rejectedAdvection = advancePeriodicFlow(
         grid, advectionVelocity, advectionPressure, advectionFailure);
     check(!rejectedAdvection.accepted
               && rejectedAdvection.failureStage
-                  == PeriodicLinearFlowFailureStage::Advection
+                  == PeriodicFlowFailureStage::Advection
               && advectionVelocity == originalVelocity
               && advectionPressure == originalPressure,
           "rollback: unstable advection commits neither velocity nor pressure");
@@ -227,11 +346,11 @@ void testStageFailureRollback() {
     diffusionFailure.transportVelocityMetersPerSecond = {};
     diffusionFailure.kinematicViscositySquareMetersPerSecond = 20.0;
     diffusionFailure.timeStepSeconds = 1.0;
-    const auto rejectedDiffusion = advancePeriodicLinearFlow(
+    const auto rejectedDiffusion = advancePeriodicFlow(
         grid, diffusionVelocity, diffusionPressure, diffusionFailure);
     check(!rejectedDiffusion.accepted
               && rejectedDiffusion.failureStage
-                  == PeriodicLinearFlowFailureStage::Diffusion
+                  == PeriodicFlowFailureStage::Diffusion
               && diffusionVelocity == originalVelocity
               && diffusionPressure == originalPressure,
           "rollback: unstable diffusion discards an accepted advection candidate");
@@ -244,11 +363,11 @@ void testStageFailureRollback() {
     projectionFailure.projectionAbsoluteResidualTolerance = 1.0e-30;
     projectionFailure.projectionRelativeResidualTolerance = 0.0;
     projectionFailure.projectionMaximumIterations = 1;
-    const auto rejectedProjection = advancePeriodicLinearFlow(
+    const auto rejectedProjection = advancePeriodicFlow(
         grid, projectionVelocity, projectionPressure, projectionFailure);
     check(!rejectedProjection.accepted
               && rejectedProjection.failureStage
-                  == PeriodicLinearFlowFailureStage::Projection
+                  == PeriodicFlowFailureStage::Projection
               && projectionVelocity == originalVelocity
               && projectionPressure == originalPressure,
           "rollback: failed projection discards all earlier stage candidates");
@@ -264,7 +383,7 @@ void testInvalidInputsAreTransactional() {
     auto invalid = settings();
     invalid.maximumDiffusionNumber = 0.51;
     expectRejected(
-        [&] { static_cast<void>(advancePeriodicLinearFlow(
+        [&] { static_cast<void>(advancePeriodicFlow(
             grid, velocity, pressure, invalid)); },
         "validation: unsafe composed settings are rejected");
     check(velocity == originalVelocity && pressure == originalPressure,
@@ -272,10 +391,21 @@ void testInvalidInputsAreTransactional() {
 
     velocity = originalVelocity;
     pressure = originalPressure;
+    invalid = settings();
+    invalid.advectionMode = static_cast<PeriodicFlowAdvectionMode>(255);
+    expectRejected(
+        [&] { static_cast<void>(advancePeriodicFlow(
+            grid, velocity, pressure, invalid)); },
+        "validation: an unknown composed advection mode is rejected");
+    check(velocity == originalVelocity && pressure == originalPressure,
+          "validation: rejected advection mode mutates neither field");
+
+    velocity = originalVelocity;
+    pressure = originalPressure;
     velocity.xFaces().front() =
         std::numeric_limits<double>::quiet_NaN();
     expectRejected(
-        [&] { static_cast<void>(advancePeriodicLinearFlow(
+        [&] { static_cast<void>(advancePeriodicFlow(
             grid, velocity, pressure, settings())); },
         "validation: non-finite composed input is rejected");
     check(std::isnan(velocity.xFaces().front())
@@ -287,7 +417,7 @@ void testInvalidInputsAreTransactional() {
     velocity = originalVelocity;
     pressure = originalPressure;
     expectRejected(
-        [&] { static_cast<void>(advancePeriodicLinearFlow(
+        [&] { static_cast<void>(advancePeriodicFlow(
             foreignGrid, velocity, pressure, settings())); },
         "validation: mismatched composed fields are rejected");
     check(velocity == originalVelocity && pressure == originalPressure,
@@ -299,6 +429,8 @@ void testInvalidInputsAreTransactional() {
 int main() {
     testExactStageCompositionAndDeterminism();
     testExactNoOp();
+    testExactNonlinearStageComposition();
+    testDeterministicNonlinearSequence();
     testStageFailureRollback();
     testInvalidInputsAreTransactional();
     if (failures != 0) {
