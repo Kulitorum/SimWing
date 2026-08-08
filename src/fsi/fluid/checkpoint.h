@@ -5,10 +5,44 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
+#include <string>
+#include <vector>
 
 namespace simwing::fsi::fluid {
 
 inline constexpr std::uint32_t movingInterfaceFluidCheckpointVersion = 1;
+inline constexpr std::uint16_t
+    movingInterfaceFluidCheckpointProtocolVersion = 1;
+
+struct MovingInterfaceFluidCheckpointLimits {
+    std::uint64_t maximumBytes = 64ULL * 1024ULL * 1024ULL;
+    std::uint64_t maximumScalarSamples = 5'000'000;
+    std::uint64_t maximumInterfaceFaces = 1'000'000;
+    std::uint64_t maximumFluidRegions = 1'000'000;
+    std::uint64_t maximumDiagnosticSurfaces = 1'000'000;
+};
+
+enum class MovingInterfaceFluidCheckpointErrorCode {
+    None,
+    InvalidData,
+    InvalidMagic,
+    UnsupportedVersion,
+    LimitExceeded,
+    Truncated,
+    TrailingData,
+    ChecksumMismatch,
+};
+
+struct MovingInterfaceFluidCheckpointError {
+    MovingInterfaceFluidCheckpointErrorCode code =
+        MovingInterfaceFluidCheckpointErrorCode::None;
+    std::string message;
+
+    [[nodiscard]] explicit operator bool() const noexcept {
+        return code != MovingInterfaceFluidCheckpointErrorCode::None;
+    }
+};
 
 struct MovingInterfaceFluidState {
     MacVelocityField velocityMetersPerSecond;
@@ -47,6 +81,22 @@ private:
     struct Detail;
     std::shared_ptr<const Detail> detail;
 };
+
+// Deterministic bounded little-endian persistence for the complete accepted
+// state. Decode reconstructs the grid/interface objects and commits the output
+// only after checkpointMovingInterfaceFluidState accepts all fields and nested
+// diagnostics, including the recomputed topology fingerprint.
+[[nodiscard]] bool serializeMovingInterfaceFluidCheckpoint(
+    const MovingInterfaceFluidCheckpoint& checkpoint,
+    std::vector<std::uint8_t>& bytes,
+    MovingInterfaceFluidCheckpointError* error = nullptr,
+    const MovingInterfaceFluidCheckpointLimits& limits = {});
+
+[[nodiscard]] bool deserializeMovingInterfaceFluidCheckpoint(
+    std::span<const std::uint8_t> bytes,
+    MovingInterfaceFluidCheckpoint& checkpoint,
+    MovingInterfaceFluidCheckpointError* error = nullptr,
+    const MovingInterfaceFluidCheckpointLimits& limits = {});
 
 // Captures accepted, finite velocity, pressure, interface, and diagnostic
 // state. Unaccepted projection output is never checkpointable.

@@ -402,7 +402,7 @@ src/fsi/
         interface_jump.*
         moving_interface.*  grid-face constraints and region topology
         moving_control_volume.* open planar GCL and topology epochs
-        checkpoint.*        accepted fluid/topology epoch checkpoint
+        checkpoint.*        accepted fluid/topology checkpoint + persistence
         turbulence.*
         boundaries.*
 
@@ -685,9 +685,17 @@ strong-coupling convergence decision.
 The first fluid checkpoint boundary is now implemented for an accepted
 face-aligned moving-interface epoch. It captures pressure, velocity, exact
 interface kinematics, and the complete projection diagnostics in an immutable
-in-memory payload. Restore rebinds exact grid metadata and a deterministic
-topology fingerprint before returning a candidate state. The open-piston worker
-composes that payload with the complete Structure checkpoint, partial-cell
+in-memory payload. Its deterministic bounded/checksummed little-endian codec
+persists the complete state and reconstructs the grid/interface before reusing
+the accepted-state validator transactionally. Restore rebinds exact grid
+metadata and a deterministic topology fingerprint before returning a candidate
+state. The codec regression requires byte-identical repeated and decode/re-encode
+output for the complete nested state and for a rebased topology epoch. It
+rejects bad magic/version/reserved bits, truncation, trailing bytes, checksum
+damage, a recomputed-topology mismatch, and byte/sample/face/region/surface
+limits without changing the caller's prior checkpoint.
+The open-piston worker composes that payload with the complete Structure
+checkpoint, partial-cell
 offset/topology epoch, and committed coupling/conservation diagnostics. An
 ordinary continuation and the first steps after both a normal and periodic
 plane rebase replay bit-for-bit in the same or an equivalent rebuilt worker.
@@ -748,8 +756,10 @@ operator, its exact next-plane topology rebase, and the bounded physical
 cut-surface reaction geometry described above. On solve failure it preserves
 the input pressure and velocity bit-for-bit so future macro-step retry can be
 transactional. Accepted moving-interface state now also has a versioned,
-immutable in-memory checkpoint bound to exact grid geometry and a stable
-topology fingerprint. It also owns a canonical single-crossing sharp pressure-jump
+immutable checkpoint bound to exact grid geometry and a stable topology
+fingerprint, plus deterministic bounded persistent serialization of its exact
+fields, interface kinematics, topology, and nested projection diagnostics. It
+also owns a canonical single-crossing sharp pressure-jump
 field with explicit surface and two-sided region identity; duplicate crossings
 on one grid face are rejected rather than merged. The regression budgets are:
 gradient/divergence adjoint error at or below `2e-14` in the canonical
@@ -905,8 +915,8 @@ Work:
 - in parallel conceptually, use IBAMR or OpenFOAM/preCICE as an external
   reference for selected canonical cases, not as a required GUI dependency;
 - implement arbitrary moving-interface/jump conditions, curved/changing
-  paired grid-side correspondence, refinement, and persistent fluid-checkpoint
-  serialization/control messages;
+  paired grid-side correspondence, refinement, full composite checkpoint-file
+  persistence, and broader control messages;
 - extend the current cell-point pressure, velocity, divergence, and vorticity
   diagnostics with rate-limited AMR blocks, slices, traction, and pressure-jump
   layers as each field becomes available;

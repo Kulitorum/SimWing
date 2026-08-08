@@ -303,6 +303,7 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/advection.h
     src/fsi/fluid/checkpoint.cpp
     src/fsi/fluid/checkpoint.h
+    src/fsi/fluid/checkpoint_persistence.cpp
     src/fsi/fluid/diffusion.cpp
     src/fsi/fluid/diffusion.h
     src/fsi/fluid/evolution.cpp

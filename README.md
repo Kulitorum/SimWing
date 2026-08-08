@@ -189,8 +189,11 @@ pressure, velocity, projection diagnostics, grid geometry, and interface
 topology behind an immutable payload. The open-piston worker composes it with
 the full XPBD checkpoint, partial-cell epoch, and conservation ledgers; an
 equivalent rebuilt worker resumes bit-for-bit, including immediately after
-both ordinary and periodic topology rebases. Persistent checkpoint files and
-control execution for this composite open-piston state remain future work. A
+both ordinary and periodic topology rebases. The contained accepted
+moving-interface fluid epoch now has a deterministic bounded/checksummed file
+codec that preserves fields, interface topology/kinematics, and complete
+projection diagnostics. Persistence and control execution for the full
+composite open-piston state remain future work. A
 real 3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,
 checkpoint replay, and completed trace using synthetic physical settings.
