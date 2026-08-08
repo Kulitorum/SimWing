@@ -407,6 +407,8 @@ Names are provisional, but ownership should be explicit:
 src/fsi/
     scene.*                 schema, serialization, validation, stable IDs
     structure.*             adapter around softwing_core
+    scene_structure.*       authoritative scene-to-XPBD assembly
+    scene_fluid_surface.*   compact two-sided surface + accepted motion
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -467,6 +469,7 @@ tools/
 ```
 
 Likely CMake targets are `simwing_scene`, `simwing_structure`,
+`simwing_scene_structure`, `simwing_scene_fluid_surface`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
 `simwing_coupled_state`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
@@ -486,9 +489,13 @@ abstract that they hide grid layout or force extra full-field copies.
 ## Delivery phases and gates
 
 Current foundation status: the Qt-free scene-v2 core, XPBD structural adapter,
-deterministic scene-to-structure assembly, immutable structural diagnostic
-frames, replayable trace protocol, and standalone Qt/OpenGL trace viewer are
-implemented with focused tests. A canonical Qt-free structural worker now
+deterministic scene-to-structure assembly, stable-ID-sorted two-sided fluid
+surface extraction with accepted Structure-state capture, immutable structural
+diagnostic frames, replayable trace protocol, and standalone Qt/OpenGL trace
+viewer are implemented with focused tests. The surface adapter preserves
+authored winding, side regions, porous material, and opening order, but does
+not yet classify grid crossings or cut cells; it rejects opening-only vertices
+until their structural motion is defined. A canonical Qt-free structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.
 The same worker can now select a smooth periodic Taylor-Green CFD case. Its

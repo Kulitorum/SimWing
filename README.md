@@ -432,6 +432,12 @@ control protocol without launching the viewer. A
 real 3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,
 checkpoint replay, and completed trace using synthetic physical settings.
+An authoritative Qt-free surface bridge now compacts the scene's used fluid
+regions and porous materials with stable-ID-sorted vertices, oriented
+two-sided triangles, and ordered openings, then captures the corresponding
+motion from one accepted Structure checkpoint. It deliberately does not infer
+grid crossings or cut cells, and it rejects opening-only vertices until they
+have a trusted structural motion rule.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,
