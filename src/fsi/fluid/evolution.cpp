@@ -22,6 +22,12 @@ Vector3 subtract(const Vector3& first, const Vector3& second) noexcept {
             first.z - second.z};
 }
 
+Vector3 add(const Vector3& first, const Vector3& second) noexcept {
+    return {first.x + second.x,
+            first.y + second.y,
+            first.z + second.z};
+}
+
 double length(const Vector3& value) noexcept {
     return std::hypot(value.x, value.y, value.z);
 }
@@ -275,11 +281,18 @@ std::size_t boundedSubstepCount(
         1, static_cast<std::size_t>(std::ceil(requestedCount)));
 }
 
+struct PorousPeriodicProjectionInput {
+    const std::vector<PorousGridFaceCrossing>* crossings = nullptr;
+    const SharpPressureJumpField* prescribedPressureJumps = nullptr;
+    const PorousIterationSettings* iteration = nullptr;
+};
+
 PeriodicFlowDiagnostics advancePeriodicFlowImpl(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
     const SharpPressureJumpField* pressureJumps,
+    const PorousPeriodicProjectionInput* porousProjection,
     const PeriodicFlowSettings& settings);
 
 PeriodicFlowStrangSspRk2Diagnostics
@@ -307,7 +320,7 @@ PeriodicFlowDiagnostics advancePeriodicFlow(
     const PeriodicFlowSettings& settings) {
     return advancePeriodicFlowImpl(
         grid, velocityMetersPerSecond, pressurePascals,
-        nullptr, settings);
+        nullptr, nullptr, settings);
 }
 
 PeriodicFlowDiagnostics advancePeriodicFlow(
@@ -318,7 +331,48 @@ PeriodicFlowDiagnostics advancePeriodicFlow(
     const PeriodicFlowSettings& settings) {
     return advancePeriodicFlowImpl(
         grid, velocityMetersPerSecond, pressurePascals,
-        &pressureJumps, settings);
+        &pressureJumps, nullptr, settings);
+}
+
+PeriodicFlowDiagnostics advancePeriodicFlow(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const PorousIterationSettings& porousIteration,
+    const PeriodicFlowSettings& settings) {
+    if (porousCrossings.empty()) {
+        return advancePeriodicFlow(
+            grid, velocityMetersPerSecond, pressurePascals, settings);
+    }
+    const PorousPeriodicProjectionInput input{
+        &porousCrossings, nullptr, &porousIteration};
+    return advancePeriodicFlowImpl(
+        grid, velocityMetersPerSecond, pressurePascals,
+        nullptr, &input, settings);
+}
+
+PeriodicFlowDiagnostics advancePeriodicFlow(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField& prescribedPressureJumps,
+    const PorousIterationSettings& porousIteration,
+    const PeriodicFlowSettings& settings) {
+    if (porousCrossings.empty() && prescribedPressureJumps.empty()) {
+        if (!prescribedPressureJumps.matches(grid)) {
+            throw std::invalid_argument(
+                "periodic porous-flow jumps do not match their grid");
+        }
+        return advancePeriodicFlow(
+            grid, velocityMetersPerSecond, pressurePascals, settings);
+    }
+    const PorousPeriodicProjectionInput input{
+        &porousCrossings, &prescribedPressureJumps, &porousIteration};
+    return advancePeriodicFlowImpl(
+        grid, velocityMetersPerSecond, pressurePascals,
+        nullptr, &input, settings);
 }
 
 namespace {
@@ -328,14 +382,22 @@ PeriodicFlowDiagnostics advancePeriodicFlowImpl(
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
     const SharpPressureJumpField* pressureJumps,
+    const PorousPeriodicProjectionInput* porousProjection,
     const PeriodicFlowSettings& settings) {
     validateSettings(settings);
     if (!velocityMetersPerSecond.matches(grid)
         || !pressurePascals.matches(grid)
         || (pressureJumps != nullptr
-            && !pressureJumps->matches(grid))) {
+            && !pressureJumps->matches(grid))
+        || (porousProjection != nullptr
+            && porousProjection->prescribedPressureJumps != nullptr
+            && !porousProjection->prescribedPressureJumps->matches(grid))) {
         throw std::invalid_argument(
             "periodic flow fields or pressure jumps do not match their grid");
+    }
+    if (pressureJumps != nullptr && porousProjection != nullptr) {
+        throw std::invalid_argument(
+            "periodic flow cannot select two projection owners");
     }
     if (!isFinite(velocityMetersPerSecond) || !isFinite(pressurePascals)) {
         throw std::invalid_argument(
@@ -487,14 +549,43 @@ PeriodicFlowDiagnostics advancePeriodicFlowImpl(
         settings.projectionRelativeResidualTolerance;
     projectionSettings.maximumIterations =
         settings.projectionMaximumIterations;
-    diagnostics.projection = pressureJumps == nullptr
-        ? projectVelocity(
-            grid, candidateVelocity, candidatePressure,
-            projectionSettings)
-        : projectVelocityWithPressureJumps(
-            grid, candidateVelocity, candidatePressure,
-            *pressureJumps, projectionSettings);
-    if (!diagnostics.projection.converged) {
+    bool projectionAccepted = false;
+    if (porousProjection != nullptr) {
+        PorousProjectionSettings coupledSettings;
+        coupledSettings.projection = projectionSettings;
+        coupledSettings.iteration = *porousProjection->iteration;
+        if (porousProjection->prescribedPressureJumps == nullptr) {
+            diagnostics.porousProjection =
+                projectVelocityWithPorousInterfaces(
+                    grid, candidateVelocity, candidatePressure,
+                    *porousProjection->crossings, coupledSettings);
+        } else {
+            diagnostics.porousProjection =
+                projectVelocityWithPorousInterfaces(
+                    grid, candidateVelocity, candidatePressure,
+                    *porousProjection->crossings,
+                    *porousProjection->prescribedPressureJumps,
+                    coupledSettings);
+        }
+        diagnostics.projection = diagnostics.porousProjection.projection;
+        diagnostics.pressureJumpImpulseOnFluidNewtonSeconds =
+            diagnostics.porousProjection
+                .totalPressureJumpImpulseOnFluidNewtonSeconds;
+        diagnostics.pressureJumpWorkToFluidJoules =
+            diagnostics.porousProjection
+                .totalPressureJumpWorkToFluidJoules;
+        projectionAccepted = diagnostics.porousProjection.accepted;
+    } else {
+        diagnostics.projection = pressureJumps == nullptr
+            ? projectVelocity(
+                grid, candidateVelocity, candidatePressure,
+                projectionSettings)
+            : projectVelocityWithPressureJumps(
+                grid, candidateVelocity, candidatePressure,
+                *pressureJumps, projectionSettings);
+        projectionAccepted = diagnostics.projection.converged;
+    }
+    if (!projectionAccepted) {
         diagnostics.failureStage =
             PeriodicFlowFailureStage::Projection;
         const bool advectionFinite = settings.advectionMode
@@ -502,24 +593,30 @@ PeriodicFlowDiagnostics advancePeriodicFlowImpl(
             ? diagnostics.uniformAdvection.finite
             : diagnostics.variableAdvection.finite;
         diagnostics.finite = advectionFinite
-            && diffusionFinite;
+            && diffusionFinite
+            && (porousProjection == nullptr
+                || diagnostics.porousProjection.finite);
         return diagnostics;
     }
 
     diagnostics.momentumAfterNewtonSeconds = momentumNewtonSeconds(
         grid, candidateVelocity, settings.densityKgPerCubicMeter);
     diagnostics.momentumResidualNewtonSeconds = subtract(
-        diagnostics.momentumAfterNewtonSeconds,
-        diagnostics.momentumBeforeNewtonSeconds);
+        subtract(
+            diagnostics.momentumAfterNewtonSeconds,
+            diagnostics.momentumBeforeNewtonSeconds),
+        diagnostics.pressureJumpImpulseOnFluidNewtonSeconds);
     diagnostics.momentumResidualNormNewtonSeconds = length(
         diagnostics.momentumResidualNewtonSeconds);
     diagnostics.kineticEnergyAfterJoules = kineticEnergyJoules(
         grid, candidateVelocity, settings.densityKgPerCubicMeter);
     diagnostics.projectionEnergyLossJoules =
         diagnostics.projection.kineticEnergyBeforeJoules
+        + diagnostics.pressureJumpWorkToFluidJoules
         - diagnostics.projection.kineticEnergyAfterJoules;
     diagnostics.totalEnergyLossJoules =
         diagnostics.kineticEnergyBeforeJoules
+        + diagnostics.pressureJumpWorkToFluidJoules
         - diagnostics.kineticEnergyAfterJoules;
     diagnostics.finalDivergenceL2PerSecond =
         diagnostics.projection.divergenceL2AfterPerSecond;
@@ -529,6 +626,10 @@ PeriodicFlowDiagnostics advancePeriodicFlowImpl(
         : diagnostics.variableAdvection.finite;
     diagnostics.finite = advectionFinite
         && diffusionFinite
+        && (porousProjection == nullptr
+            || diagnostics.porousProjection.finite)
+        && finite(diagnostics.pressureJumpImpulseOnFluidNewtonSeconds)
+        && std::isfinite(diagnostics.pressureJumpWorkToFluidJoules)
         && finite(diagnostics.momentumAfterNewtonSeconds)
         && finite(diagnostics.momentumResidualNewtonSeconds)
         && std::isfinite(
@@ -546,18 +647,23 @@ PeriodicFlowDiagnostics advancePeriodicFlowImpl(
     const double momentumTolerance = combinedTolerance(
         settings.absoluteMomentumToleranceNewtonSeconds,
         settings.relativeMomentumTolerance,
-        length(diagnostics.momentumBeforeNewtonSeconds),
+        length(add(
+            diagnostics.momentumBeforeNewtonSeconds,
+            diagnostics.pressureJumpImpulseOnFluidNewtonSeconds)),
         length(diagnostics.momentumAfterNewtonSeconds));
     const double energyTolerance = combinedTolerance(
         settings.absoluteEnergyToleranceJoules,
         settings.relativeEnergyTolerance,
-        std::abs(diagnostics.kineticEnergyBeforeJoules),
+        std::abs(diagnostics.kineticEnergyBeforeJoules
+                 + diagnostics.pressureJumpWorkToFluidJoules),
         std::abs(diagnostics.kineticEnergyAfterJoules));
     diagnostics.accepted = diagnostics.finite
         && diagnostics.momentumResidualNormNewtonSeconds
             <= momentumTolerance
         && diagnostics.kineticEnergyAfterJoules
-            <= diagnostics.kineticEnergyBeforeJoules + energyTolerance;
+            <= diagnostics.kineticEnergyBeforeJoules
+                + diagnostics.pressureJumpWorkToFluidJoules
+                + energyTolerance;
     if (!diagnostics.accepted) {
         diagnostics.failureStage =
             PeriodicFlowFailureStage::Conservation;

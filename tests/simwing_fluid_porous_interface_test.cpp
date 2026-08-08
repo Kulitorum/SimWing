@@ -208,12 +208,13 @@ PorousProjectionSettings coupledSettings() {
     settings.projection.absoluteResidualTolerance = 1.0e-12;
     settings.projection.relativeResidualTolerance = 1.0e-13;
     settings.projection.maximumIterations = 1000;
-    settings.absoluteNormalVelocityToleranceMetersPerSecond = 1.0e-12;
-    settings.relativeNormalVelocityTolerance = 1.0e-12;
-    settings.absolutePressureJumpTolerancePascals = 1.0e-11;
-    settings.relativePressureJumpTolerance = 1.0e-12;
-    settings.relaxation = 0.5;
-    settings.maximumNonlinearIterations = 100;
+    settings.iteration.absoluteNormalVelocityToleranceMetersPerSecond =
+        1.0e-12;
+    settings.iteration.relativeNormalVelocityTolerance = 1.0e-12;
+    settings.iteration.absolutePressureJumpTolerancePascals = 1.0e-11;
+    settings.iteration.relativePressureJumpTolerance = 1.0e-12;
+    settings.iteration.relaxation = 0.5;
+    settings.iteration.maximumNonlinearIterations = 100;
     return settings;
 }
 
@@ -369,7 +370,7 @@ void testImplicitGridPressureFluxCoupling() {
               "coupled porous: nonlinear endpoint flow matches the analytic root");
 
     auto midpointSettings = coupledSettings();
-    midpointSettings.constitutiveEvaluation =
+    midpointSettings.iteration.constitutiveEvaluation =
         PorousConstitutiveEvaluation::Midpoint;
     MacVelocityField midpointVelocity(grid);
     CellScalarField midpointPressure(grid);
@@ -533,11 +534,12 @@ void testCoupledPorousDelegationValidationAndRollback() {
     const auto originalVelocity = failedVelocity;
     const auto originalPressure = failedPressure;
     auto truncated = settings;
-    truncated.maximumNonlinearIterations = 1;
-    truncated.absoluteNormalVelocityToleranceMetersPerSecond = 1.0e-30;
-    truncated.relativeNormalVelocityTolerance = 0.0;
-    truncated.absolutePressureJumpTolerancePascals = 1.0e-30;
-    truncated.relativePressureJumpTolerance = 0.0;
+    truncated.iteration.maximumNonlinearIterations = 1;
+    truncated.iteration.absoluteNormalVelocityToleranceMetersPerSecond =
+        1.0e-30;
+    truncated.iteration.relativeNormalVelocityTolerance = 0.0;
+    truncated.iteration.absolutePressureJumpTolerancePascals = 1.0e-30;
+    truncated.iteration.relativePressureJumpTolerance = 0.0;
     const auto failed = projectVelocityWithPorousInterfaces(
         grid, failedVelocity, failedPressure, coupledPorousPlane(grid),
         coupledDrivingPlane(grid), truncated);
@@ -548,7 +550,7 @@ void testCoupledPorousDelegationValidationAndRollback() {
           "coupled porous: nonlinear failure commits neither field");
 
     auto invalid = settings;
-    invalid.relaxation = 0.0;
+    invalid.iteration.relaxation = 0.0;
     expectInvalid(
         [&] {
             static_cast<void>(projectVelocityWithPorousInterfaces(
@@ -561,7 +563,7 @@ void testCoupledPorousDelegationValidationAndRollback() {
           "coupled porous: invalid settings are rejected before mutation");
 
     invalid = settings;
-    invalid.constitutiveEvaluation =
+    invalid.iteration.constitutiveEvaluation =
         static_cast<PorousConstitutiveEvaluation>(99);
     expectInvalid(
         [&] {

@@ -898,9 +898,13 @@ the kinetic-energy change and reproduces the exact nonlinear scalar plug oracle.
 The accepted diagnostic separately sums every porous and prescribed oriented
 jump into fluid force/impulse and power/work, evaluated at the selected
 constitutive time, while porous dissipation remains its own nonnegative ledger.
-This is the accounting boundary required before a composed flow integrator may
-admit interface-driven momentum or energy. It is not moving cut-cell topology,
-and midpoint pressure coupling is not yet composed into a complete second-order
+The first complete periodic macro-step now consumes those ledgers explicitly:
+aggregate momentum subtracts jump impulse and its energy ceiling includes jump
+work. Its uniform midpoint driven acceleration and unforced porous decay close
+analytically, an exhausted nonlinear solve rolls back advection and diffusion as
+well as projection, and empty topology preserves the original arithmetic
+bit-for-bit. It is not moving cut-cell topology, and midpoint pressure coupling
+is not yet carried through both projections of the complete second-order
 general flow step.
 A pressure-driven uniform-plug companion uses the exact nonlinear implicit
 midpoint to close pressure impulse and the

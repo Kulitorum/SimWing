@@ -90,8 +90,7 @@ enum class PorousConstitutiveEvaluation : std::uint8_t {
     Midpoint = 1,
 };
 
-struct PorousProjectionSettings {
-    ProjectionSettings projection;
+struct PorousIterationSettings {
     PorousConstitutiveEvaluation constitutiveEvaluation =
         PorousConstitutiveEvaluation::Endpoint;
     double absoluteNormalVelocityToleranceMetersPerSecond = 1.0e-10;
@@ -100,6 +99,13 @@ struct PorousProjectionSettings {
     double relativePressureJumpTolerance = 1.0e-8;
     double relaxation = 0.5;
     std::size_t maximumNonlinearIterations = 100;
+
+    bool operator==(const PorousIterationSettings&) const = default;
+};
+
+struct PorousProjectionSettings {
+    ProjectionSettings projection;
+    PorousIterationSettings iteration;
 
     bool operator==(const PorousProjectionSettings&) const = default;
 };

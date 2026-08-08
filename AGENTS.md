@@ -789,6 +789,14 @@ makes this a certified aerodynamic solver.
   L1 regression uses 12/24/48 grids with `dt <= 0.12 h^2` and requires both
   successive error ratios in `[3.0, 5.0]`; this is a smooth periodic full-flow
   oracle, not a cut-cell or moving-interface accuracy claim.
+  The first macro-step also has a porous-projection overload. Flow settings
+  remain sole owner of density, time step, and linear tolerances; the porous
+  input supplies only nonlinear controls. Its aggregate momentum residual
+  subtracts diagnosed jump impulse, and its energy ceiling includes diagnosed
+  jump work. Midpoint driven acceleration and unforced porous decay close those
+  ledgers; nonlinear failure rolls back every prior stage and empty topology
+  delegates bit-for-bit to the original path. The two-stage Strang path does
+  not yet perform nonlinear porous updates.
 - `src/fsi/fluid/checkpoint.{h,cpp}` owns the versioned in-memory checkpoint for
   one accepted moving-interface fluid epoch. Its immutable payload includes
   pressure, velocity, exact interface kinematics, and projection diagnostics;
@@ -817,8 +825,9 @@ makes this a certified aerodynamic solver.
   nonlinear plug oracle and closes its pressure-work/dissipation/kinetic-energy
   identity. Accepted diagnostics sum all porous and prescribed oriented jumps
   into explicit fluid force/impulse and power/work ledgers while keeping porous
-  dissipation separate. It is not moving cut-cell topology or yet composed into
-  a complete second-order coupled flow integrator.
+  dissipation separate. It is composed into the first periodic macro-step, but
+  not moving cut-cell topology or yet both stages of the complete second-order
+  coupled flow integrator.
 - `src/fsi/fluid/porous_flow.{h,cpp}` owns the pressure-driven uniform-plug
   midpoint oracle. It solves the nonlinear Darcy-Forchheimer response exactly
   for each time step and independently closes pressure impulse and

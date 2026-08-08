@@ -2,6 +2,7 @@
 
 #include "fluid/advection.h"
 #include "fluid/diffusion.h"
+#include "fluid/porous_interface.h"
 #include "fluid/projection.h"
 #include "fluid/projected_advection.h"
 
@@ -11,7 +12,7 @@
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t periodicFlowStepVersion = 3;
+inline constexpr std::uint32_t periodicFlowStepVersion = 4;
 inline constexpr std::uint32_t periodicFlowStrangSspRk2Version = 1;
 inline constexpr std::uint32_t periodicFlowStrangSubcyclingVersion = 1;
 inline constexpr std::size_t periodicFlowStrangMaximumSubsteps = 4096;
@@ -67,6 +68,9 @@ struct PeriodicFlowDiagnostics {
     PeriodicMacDiffusionDiagnostics explicitDiffusion;
     PeriodicMacDiffusionSspRk2Diagnostics sspRk2Diffusion;
     ProjectionDiagnostics projection;
+    PorousProjectionDiagnostics porousProjection;
+    Vector3 pressureJumpImpulseOnFluidNewtonSeconds;
+    double pressureJumpWorkToFluidJoules = 0.0;
     Vector3 momentumBeforeNewtonSeconds;
     Vector3 momentumAfterNewtonSeconds;
     Vector3 momentumResidualNewtonSeconds;
@@ -105,6 +109,29 @@ struct PeriodicFlowDiagnostics {
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
     const SharpPressureJumpField& pressureJumps,
+    const PeriodicFlowSettings& settings = {});
+
+// Replaces the final linear projection with the bounded nonlinear porous
+// projection. The flow settings remain the sole owner of density, time step,
+// and linear-solver tolerances; porousIteration supplies only constitutive-time
+// and nonlinear convergence controls. Jump impulse/work are included explicitly
+// in the aggregate momentum and energy acceptance. Empty porous and prescribed
+// topology delegates to the original path.
+[[nodiscard]] PeriodicFlowDiagnostics advancePeriodicFlow(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const PorousIterationSettings& porousIteration,
+    const PeriodicFlowSettings& settings = {});
+
+[[nodiscard]] PeriodicFlowDiagnostics advancePeriodicFlow(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField& prescribedPressureJumps,
+    const PorousIterationSettings& porousIteration,
     const PeriodicFlowSettings& settings = {});
 
 enum class PeriodicFlowStrangFailureStage : std::uint8_t {

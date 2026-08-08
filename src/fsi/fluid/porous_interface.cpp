@@ -100,7 +100,8 @@ double faceArea(const PeriodicCartesianGrid& grid,
 }
 
 void validateProjectionSettings(const PorousProjectionSettings& settings) {
-    switch (settings.constitutiveEvaluation) {
+    const auto& iteration = settings.iteration;
+    switch (iteration.constitutiveEvaluation) {
     case PorousConstitutiveEvaluation::Endpoint:
     case PorousConstitutiveEvaluation::Midpoint:
         break;
@@ -109,28 +110,28 @@ void validateProjectionSettings(const PorousProjectionSettings& settings) {
             "porous projection constitutive time is invalid");
     }
     if (!std::isfinite(
-            settings.absoluteNormalVelocityToleranceMetersPerSecond)
-        || settings.absoluteNormalVelocityToleranceMetersPerSecond < 0.0
-        || !std::isfinite(settings.relativeNormalVelocityTolerance)
-        || settings.relativeNormalVelocityTolerance < 0.0
-        || (settings.absoluteNormalVelocityToleranceMetersPerSecond == 0.0
-            && settings.relativeNormalVelocityTolerance == 0.0)) {
+            iteration.absoluteNormalVelocityToleranceMetersPerSecond)
+        || iteration.absoluteNormalVelocityToleranceMetersPerSecond < 0.0
+        || !std::isfinite(iteration.relativeNormalVelocityTolerance)
+        || iteration.relativeNormalVelocityTolerance < 0.0
+        || (iteration.absoluteNormalVelocityToleranceMetersPerSecond == 0.0
+            && iteration.relativeNormalVelocityTolerance == 0.0)) {
         throw std::invalid_argument(
             "porous projection velocity tolerances are invalid");
     }
-    if (!std::isfinite(settings.absolutePressureJumpTolerancePascals)
-        || settings.absolutePressureJumpTolerancePascals < 0.0
-        || !std::isfinite(settings.relativePressureJumpTolerance)
-        || settings.relativePressureJumpTolerance < 0.0
-        || (settings.absolutePressureJumpTolerancePascals == 0.0
-            && settings.relativePressureJumpTolerance == 0.0)) {
+    if (!std::isfinite(iteration.absolutePressureJumpTolerancePascals)
+        || iteration.absolutePressureJumpTolerancePascals < 0.0
+        || !std::isfinite(iteration.relativePressureJumpTolerance)
+        || iteration.relativePressureJumpTolerance < 0.0
+        || (iteration.absolutePressureJumpTolerancePascals == 0.0
+            && iteration.relativePressureJumpTolerance == 0.0)) {
         throw std::invalid_argument(
             "porous projection pressure-jump tolerances are invalid");
     }
-    if (!std::isfinite(settings.relaxation)
-        || !(settings.relaxation > 0.0)
-        || settings.relaxation > 1.0
-        || settings.maximumNonlinearIterations == 0) {
+    if (!std::isfinite(iteration.relaxation)
+        || !(iteration.relaxation > 0.0)
+        || iteration.relaxation > 1.0
+        || iteration.maximumNonlinearIterations == 0) {
         throw std::invalid_argument(
             "porous projection relaxation and iteration bound are invalid");
     }
@@ -444,7 +445,8 @@ PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
     }
 
     PorousProjectionDiagnostics diagnostics;
-    diagnostics.constitutiveEvaluation = settings.constitutiveEvaluation;
+    diagnostics.constitutiveEvaluation =
+        settings.iteration.constitutiveEvaluation;
     diagnostics.porousCrossingCount = porousCrossings.size();
     const MacVelocityField originalVelocity =
         predictedVelocityMetersPerSecond;
@@ -464,7 +466,8 @@ PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
             MacVelocityField constitutiveVelocity =
                 predictedVelocityMetersPerSecond;
             moveToConstitutiveTime(
-                originalVelocity, settings.constitutiveEvaluation,
+                originalVelocity,
+                settings.iteration.constitutiveEvaluation,
                 constitutiveVelocity);
             setJumpLedgers(
                 grid, constitutiveVelocity, nullptr,
@@ -486,10 +489,11 @@ PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
     CellScalarField pressureWarmStart = originalPressure;
 
     for (std::size_t iteration = 0;
-         iteration < settings.maximumNonlinearIterations; ++iteration) {
+         iteration < settings.iteration.maximumNonlinearIterations;
+         ++iteration) {
         MacVelocityField sampledVelocity = iterateVelocity;
         moveToConstitutiveTime(
-            originalVelocity, settings.constitutiveEvaluation,
+            originalVelocity, settings.iteration.constitutiveEvaluation,
             sampledVelocity);
         const PorousPressureJumpField sampled(
             grid, sampledVelocity, porousCrossings);
@@ -513,7 +517,7 @@ PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
 
         MacVelocityField candidateConstitutiveVelocity = candidateVelocity;
         moveToConstitutiveTime(
-            originalVelocity, settings.constitutiveEvaluation,
+            originalVelocity, settings.iteration.constitutiveEvaluation,
             candidateConstitutiveVelocity);
         const PorousPressureJumpField endpoint(
             grid, candidateConstitutiveVelocity, porousCrossings);
@@ -583,11 +587,14 @@ PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
             && std::isfinite(diagnostics.totalPressureJumpWorkToFluidJoules)
             && isFinite(candidateVelocity) && isFinite(candidatePressure);
         const double velocityTolerance =
-            settings.absoluteNormalVelocityToleranceMetersPerSecond
-            + settings.relativeNormalVelocityTolerance * velocityScale;
+            settings.iteration
+                .absoluteNormalVelocityToleranceMetersPerSecond
+            + settings.iteration.relativeNormalVelocityTolerance
+                * velocityScale;
         const double jumpTolerance =
-            settings.absolutePressureJumpTolerancePascals
-            + settings.relativePressureJumpTolerance * jumpScale;
+            settings.iteration.absolutePressureJumpTolerancePascals
+            + settings.iteration.relativePressureJumpTolerance
+                * jumpScale;
         if (diagnostics.finite
             && maximumVelocityResidual <= velocityTolerance
             && maximumJumpResidual <= jumpTolerance) {
@@ -600,7 +607,8 @@ PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
             return diagnostics;
         }
         relaxVelocity(
-            candidateVelocity, settings.relaxation, iterateVelocity);
+            candidateVelocity, settings.iteration.relaxation,
+            iterateVelocity);
         pressureWarmStart = std::move(candidatePressure);
     }
     return diagnostics;

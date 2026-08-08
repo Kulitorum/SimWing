@@ -27,6 +27,10 @@ using simwing::fsi::fluid::PeriodicFlowStrangSubcyclingSettings;
 using simwing::fsi::fluid::PeriodicMacDiffusionSettings;
 using simwing::fsi::fluid::ProjectedMacAdvectionSspRk2Settings;
 using simwing::fsi::fluid::ProjectionSettings;
+using simwing::fsi::fluid::PorousConstitutiveEvaluation;
+using simwing::fsi::fluid::PorousGridFaceCrossing;
+using simwing::fsi::fluid::PorousIterationSettings;
+using simwing::fsi::fluid::PorousProjectionSettings;
 using simwing::fsi::fluid::SharpPressureJumpField;
 using simwing::fsi::fluid::UniformMacAdvectionSettings;
 using simwing::fsi::fluid::VariableMacAdvectionSettings;
@@ -40,6 +44,7 @@ using simwing::fsi::fluid::advectVelocityByUniformFlow;
 using simwing::fsi::fluid::diffuseVelocityExplicit;
 using simwing::fsi::fluid::diffuseVelocitySspRk2;
 using simwing::fsi::fluid::projectVelocity;
+using simwing::fsi::fluid::projectVelocityWithPorousInterfaces;
 
 int failures = 0;
 
@@ -1209,6 +1214,197 @@ void testStaticJumpsAcrossCompleteFlowPaths() {
           "sharp full flow: rejected topology mutates neither field");
 }
 
+std::vector<PorousGridFaceCrossing> composedPorousPlane(
+    const PeriodicCartesianGrid& grid) {
+    std::vector<PorousGridFaceCrossing> result;
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            result.push_back({
+                100, 1, 2, GridFaceAxis::X, 1, j, k,
+                0.35, 0.0, {10.0, 0.0}});
+        }
+    }
+    return result;
+}
+
+SharpPressureJumpField composedDrivingPlane(
+    const PeriodicCartesianGrid& grid) {
+    std::vector<GridFacePressureJump> result;
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            result.push_back({
+                200, 2, 1, GridFaceAxis::X, 3, j, k,
+                20.0, 0.5});
+        }
+    }
+    return SharpPressureJumpField(grid, std::move(result));
+}
+
+PorousIterationSettings composedPorousIteration() {
+    PorousIterationSettings result;
+    result.constitutiveEvaluation =
+        PorousConstitutiveEvaluation::Midpoint;
+    result.absoluteNormalVelocityToleranceMetersPerSecond = 1.0e-13;
+    result.relativeNormalVelocityTolerance = 1.0e-13;
+    result.absolutePressureJumpTolerancePascals = 1.0e-12;
+    result.relativePressureJumpTolerance = 1.0e-13;
+    result.relaxation = 0.5;
+    result.maximumNonlinearIterations = 200;
+    return result;
+}
+
+PeriodicFlowSettings composedPorousFlowSettings() {
+    PeriodicFlowSettings result;
+    result.densityKgPerCubicMeter = 1.0;
+    result.transportVelocityMetersPerSecond = {};
+    result.kinematicViscositySquareMetersPerSecond = 0.0;
+    result.timeStepSeconds = 0.1;
+    result.projectionAbsoluteResidualTolerance = 1.0e-12;
+    result.projectionRelativeResidualTolerance = 1.0e-13;
+    result.projectionMaximumIterations = 1000;
+    result.absoluteMomentumToleranceNewtonSeconds = 2.0e-10;
+    result.relativeMomentumTolerance = 1.0e-12;
+    result.absoluteEnergyToleranceJoules = 2.0e-10;
+    result.relativeEnergyTolerance = 1.0e-12;
+    return result;
+}
+
+void testPorousProjectionAcrossCompleteFlow() {
+    const PeriodicCartesianGrid grid(
+        {4, 3, 2}, {}, {4.0, 3.0, 2.0});
+    const auto porous = composedPorousPlane(grid);
+    const auto driving = composedDrivingPlane(grid);
+    const auto iteration = composedPorousIteration();
+    const auto flowSettings = composedPorousFlowSettings();
+    MacVelocityField velocity(grid);
+    CellScalarField pressure(grid);
+    const auto diagnostics = advancePeriodicFlow(
+        grid, velocity, pressure, porous, driving,
+        iteration, flowSettings);
+    MacVelocityField replayVelocity(grid);
+    CellScalarField replayPressure(grid);
+    const auto replay = advancePeriodicFlow(
+        grid, replayVelocity, replayPressure, porous, driving,
+        iteration, flowSettings);
+
+    constexpr double expectedVelocity = 4.0 / 9.0;
+    double maximumVelocityError = 0.0;
+    for (std::size_t face = 0; face < grid.cellCount(); ++face) {
+        maximumVelocityError = std::max({
+            maximumVelocityError,
+            std::abs(velocity.xFaces()[face] - expectedVelocity),
+            std::abs(velocity.yFaces()[face]),
+            std::abs(velocity.zFaces()[face]),
+        });
+    }
+    check(diagnostics.version
+              == simwing::fsi::fluid::periodicFlowStepVersion
+              && diagnostics.accepted
+              && diagnostics.failureStage
+                  == PeriodicFlowFailureStage::None
+              && diagnostics.porousProjection.accepted,
+          "porous full flow: all stages and the interface-aware ledger accept");
+    check(velocity == replayVelocity
+              && pressure == replayPressure
+              && diagnostics == replay,
+          "porous full flow: identical composed steps replay bit-for-bit");
+    check(maximumVelocityError < 2.0e-13,
+          "porous full flow: midpoint pressure stage reaches the analytic endpoint");
+    check(diagnostics.projection.pressureJumpFaceCount == 12
+              && diagnostics.porousProjection.samples.size() == 6,
+          "porous full flow: composed diagnostics retain all fixed and porous crossings");
+    check(diagnostics.momentumResidualNormNewtonSeconds < 2.0e-11,
+          "porous full flow: jump impulse closes aggregate momentum");
+    check(std::abs(diagnostics.totalEnergyLossJoules) < 2.0e-11,
+          "porous full flow: midpoint jump work closes aggregate kinetic energy");
+    check(std::abs(
+              diagnostics.pressureJumpImpulseOnFluidNewtonSeconds.x
+              - diagnostics.momentumAfterNewtonSeconds.x) < 2.0e-11,
+          "porous full flow: diagnosed jump impulse produces bulk momentum");
+    check(std::abs(
+              diagnostics.pressureJumpWorkToFluidJoules
+              - diagnostics.kineticEnergyAfterJoules) < 2.0e-11,
+          "porous full flow: diagnosed jump work produces bulk kinetic energy");
+
+    MacVelocityField directVelocity(grid);
+    CellScalarField directPressure(grid);
+    PorousProjectionSettings directSettings;
+    directSettings.iteration = iteration;
+    directSettings.projection.densityKgPerCubicMeter =
+        flowSettings.densityKgPerCubicMeter;
+    directSettings.projection.timeStepSeconds =
+        flowSettings.timeStepSeconds;
+    directSettings.projection.absoluteResidualTolerance =
+        flowSettings.projectionAbsoluteResidualTolerance;
+    directSettings.projection.relativeResidualTolerance =
+        flowSettings.projectionRelativeResidualTolerance;
+    directSettings.projection.maximumIterations =
+        flowSettings.projectionMaximumIterations;
+    const auto direct = projectVelocityWithPorousInterfaces(
+        grid, directVelocity, directPressure, porous, driving,
+        directSettings);
+    check(velocity == directVelocity
+              && pressure == directPressure
+              && diagnostics.porousProjection == direct,
+          "porous full flow: zero transport and viscosity compose the exact standalone pressure step");
+
+    MacVelocityField decayingVelocity(grid);
+    std::ranges::fill(decayingVelocity.xFaces(), 1.0);
+    CellScalarField decayingPressure(grid);
+    const auto decay = advancePeriodicFlow(
+        grid, decayingVelocity, decayingPressure,
+        porous, iteration, flowSettings);
+    check(decay.accepted,
+          "porous full flow: an unforced dissipative sheet passes the interface-aware ledger");
+    check(std::abs(decayingVelocity.xFaces().front() - 7.0 / 9.0)
+              < 2.0e-13,
+          "porous full flow: unforced midpoint drag reaches its analytic endpoint");
+    check(std::abs(decay.pressureJumpWorkToFluidJoules
+                   + decay.porousProjection
+                         .totalPorousDissipationJoules) < 2.0e-11,
+          "porous full flow: stationary porous pressure work equals negative dissipation");
+    check(std::abs(decay.totalEnergyLossJoules) < 2.0e-11,
+          "porous full flow: unforced midpoint decay closes its energy ledger");
+
+    MacVelocityField legacyVelocity(grid);
+    MacVelocityField emptyVelocity(grid);
+    CellScalarField legacyPressure(grid);
+    CellScalarField emptyPressure(grid);
+    const std::vector<PorousGridFaceCrossing> empty;
+    const auto legacy = advancePeriodicFlow(
+        grid, legacyVelocity, legacyPressure, flowSettings);
+    const auto withEmpty = advancePeriodicFlow(
+        grid, emptyVelocity, emptyPressure, empty,
+        iteration, flowSettings);
+    check(legacy == withEmpty
+              && legacyVelocity == emptyVelocity
+              && legacyPressure == emptyPressure,
+          "porous full flow: empty topology delegates bit-exactly to the original path");
+
+    MacVelocityField failedVelocity(grid);
+    CellScalarField failedPressure(grid, 3.0);
+    const auto originalFailedVelocity = failedVelocity;
+    const auto originalFailedPressure = failedPressure;
+    auto truncated = iteration;
+    truncated.maximumNonlinearIterations = 1;
+    truncated.absoluteNormalVelocityToleranceMetersPerSecond = 1.0e-30;
+    truncated.relativeNormalVelocityTolerance = 0.0;
+    truncated.absolutePressureJumpTolerancePascals = 1.0e-30;
+    truncated.relativePressureJumpTolerance = 0.0;
+    const auto failed = advancePeriodicFlow(
+        grid, failedVelocity, failedPressure, porous, driving,
+        truncated, flowSettings);
+    check(!failed.accepted
+              && failed.failureStage
+                  == PeriodicFlowFailureStage::Projection,
+          "porous full flow: exhausted nonlinear projection is reported at its stage");
+    check(failedVelocity == originalFailedVelocity
+              && failedPressure == originalFailedPressure,
+          "porous full flow: nonlinear failure rolls back the complete composed step");
+}
+
 } // namespace
 
 int main() {
@@ -1225,6 +1421,7 @@ int main() {
     testStageFailureRollback();
     testInvalidInputsAreTransactional();
     testStaticJumpsAcrossCompleteFlowPaths();
+    testPorousProjectionAcrossCompleteFlow();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing fluid evolution check(s) failed\n",
