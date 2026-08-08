@@ -114,8 +114,8 @@ checksummed, byte-bounded `advance`, `checkpoint`, and `stop` commands with
 correlated `ready`, `advanced`, `checkpointed`, `stopped`, and coded-error
 responses. Every response carries the absolute accepted step and simulated
 time. A shared Qt-free control session executes those decoded commands on the
-worker owner thread, with typed periodic-flow, open-piston, and porous-sheet
-adapters. Each
+worker owner thread, with typed periodic-flow, moving-porous-flow, open-piston,
+and porous-sheet adapters. Each
 publishes immutable accepted frames through an injected sink, delegates its
 own complete checkpoint codec, and makes stop terminal. `simwing-fsi
 --control-stdio` exposes that boundary for all three cases as self-framed binary

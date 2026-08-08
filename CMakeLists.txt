@@ -444,6 +444,18 @@ target_link_libraries(simwing_periodic_flow_control PUBLIC
     simwing_worker_control_session
 )
 
+add_library(simwing_moving_porous_flow_control STATIC
+    src/fsi/moving_porous_flow_control.cpp
+    src/fsi/moving_porous_flow_control.h
+)
+target_include_directories(simwing_moving_porous_flow_control PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_moving_porous_flow_control PUBLIC
+    simwing_moving_porous_flow_case
+    simwing_worker_control_session
+)
+
 add_library(simwing_fluid_structure_bridge STATIC
     src/fsi/face_resolved_bridge.cpp
     src/fsi/face_resolved_bridge.h
@@ -894,6 +906,12 @@ add_executable(simwing-periodic-flow-control-test
 target_link_libraries(simwing-periodic-flow-control-test
     PRIVATE simwing_periodic_flow_control)
 
+add_executable(simwing-moving-porous-flow-control-test
+    tests/simwing_moving_porous_flow_control_test.cpp
+)
+target_link_libraries(simwing-moving-porous-flow-control-test
+    PRIVATE simwing_moving_porous_flow_control)
+
 add_executable(simwing-open-piston-control-test
     tests/simwing_open_piston_control_test.cpp
 )
@@ -1184,6 +1202,7 @@ set_target_properties(
     simwing-worker-control-stream-test
     simwing-control-stdio-fixture
     simwing-periodic-flow-control-test
+    simwing-moving-porous-flow-control-test
     simwing-open-piston-control-test
     simwing-porous-sheet-control-test
     simwing-fluid-projection-test
@@ -1252,6 +1271,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-worker-control-stream-test
         simwing-control-stdio-fixture
         simwing-periodic-flow-control-test
+        simwing-moving-porous-flow-control-test
         simwing-open-piston-control-test
         simwing-porous-sheet-control-test
         simwing-fluid-projection-test
@@ -1418,6 +1438,8 @@ add_test(NAME simwing_worker_control_stream
     COMMAND simwing-worker-control-stream-test)
 add_test(NAME simwing_periodic_flow_control
     COMMAND simwing-periodic-flow-control-test)
+add_test(NAME simwing_moving_porous_flow_control
+    COMMAND simwing-moving-porous-flow-control-test)
 add_test(NAME simwing_open_piston_control
     COMMAND simwing-open-piston-control-test)
 add_test(NAME simwing_porous_sheet_control

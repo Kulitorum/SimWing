@@ -422,6 +422,7 @@ src/fsi/
     worker_control_stream.*  bounded self-framing binary stream adapter
     worker_control_session.* case-neutral safe-point command execution
     periodic_flow_control.* typed periodic worker control adapter
+    moving_porous_flow_control.* typed moving porous worker control adapter
     open_piston_control.*   typed open-piston worker control adapter
     porous_sheet_control.*  typed coupled porous-sheet control adapter
     diagnostics.*           conservation, residuals, events, profiling
@@ -517,8 +518,9 @@ nonzero request IDs, while ready/advanced/checkpointed/stopped/error responses
 always expose absolute accepted step and time. It deliberately chooses no
 named-pipe, socket, or scheduler transport. A shared Qt-free control session
 executes decoded messages synchronously on a worker owner thread. Typed
-periodic-flow, open-piston, and porous-sheet adapters bind numerical advance,
-absolute state, and their distinct complete checkpoint payloads. Each publishes
+periodic-flow, moving-porous-flow, open-piston, and porous-sheet adapters bind
+numerical advance, absolute state, and their distinct complete checkpoint
+payloads. Each publishes
 immutable
 accepted frames, delegates checkpoint persistence, and makes stop terminal
 without putting output or file policy in the numerical worker. A bounded
