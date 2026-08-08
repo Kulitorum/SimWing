@@ -1,5 +1,6 @@
 #include "softwing/canopy.h"
 #include "softwing/suspension.h"
+#include "softwing/suspension_checkpoint_persistence.h"
 
 #include <algorithm>
 #include <bit>
@@ -38,6 +39,52 @@ bool sameNode(const softwing::Node& first, const softwing::Node& second) {
            && sameVec(first.velocity, second.velocity)
            && sameVec(first.force, second.force)
            && sameDouble(first.inverseMass, second.inverseMass);
+}
+
+std::vector<std::uint8_t> serialized(
+    const softwing::SuspensionCheckpoint& checkpoint) {
+    std::vector<std::uint8_t> bytes;
+    softwing::SuspensionCheckpointPersistenceError error;
+    check(softwing::serializeSuspensionCheckpoint(
+              checkpoint, bytes, &error),
+          "persistent suspension checkpoint serializes");
+    return bytes;
+}
+
+std::uint64_t readU64(const std::vector<std::uint8_t>& bytes,
+                      const std::size_t offset) {
+    std::uint64_t result = 0;
+    for (std::size_t index = 0; index < 8; ++index) {
+        result |= static_cast<std::uint64_t>(bytes[offset + index])
+            << (8U * index);
+    }
+    return result;
+}
+
+void writeU64(std::vector<std::uint8_t>& bytes,
+              const std::size_t offset,
+              std::uint64_t value) {
+    for (std::size_t index = 0; index < 8; ++index) {
+        bytes[offset + index] = static_cast<std::uint8_t>(value & 0xffU);
+        value >>= 8U;
+    }
+}
+
+std::uint64_t wireChecksum(
+    const std::span<const std::uint8_t> bytes) noexcept {
+    std::uint64_t result = 14695981039346656037ULL;
+    for (const std::uint8_t value : bytes) {
+        result ^= value;
+        result *= 1099511628211ULL;
+    }
+    return result;
+}
+
+void refreshChecksum(std::vector<std::uint8_t>& bytes) {
+    const std::size_t size = static_cast<std::size_t>(readU64(bytes, 8));
+    writeU64(bytes, 16,
+             wireChecksum(std::span<const std::uint8_t>{bytes}
+                              .subspan(24, size)));
 }
 
 softwing::SuspensionDefinition makeDefinition(
@@ -308,11 +355,149 @@ void testRejectionAndIntegrity() {
           "restore leaves a no-active-substep solver-safe point");
 }
 
+void testPersistentRoundTripAndRejection() {
+    Rig source;
+    const softwing::StepSettings settings = stepSettings(source);
+    source.suspension.setControlTarget("brake", 0.75);
+    source.suspension.setControlTarget("weight-shift", -0.4);
+    source.suspension.setAppliedPayloadWrench(
+        {{3.0, -1.0, 2.0}, {0.2, -0.1, 0.05}});
+    advance(source, settings, 4);
+    const auto savedNodes = source.canopy.body.nodes();
+    const softwing::SuspensionCheckpoint saved =
+        source.suspension.checkpoint();
+    const auto bytes = serialized(saved);
+    check(serialized(saved) == bytes,
+          "persistent suspension encoding is byte deterministic");
+
+    Rig rebuilt;
+    softwing::SuspensionCheckpoint decoded;
+    softwing::SuspensionCheckpointPersistenceError error;
+    check(softwing::deserializeSuspensionCheckpoint(
+              bytes, rebuilt.suspension.checkpoint(), decoded, &error),
+          "persistent suspension checkpoint decodes on rebuilt topology");
+    check(serialized(decoded) == bytes,
+          "decoded suspension checkpoint re-encodes byte identically");
+    rebuilt.canopy.body.nodes() = savedNodes;
+    rebuilt.suspension.restore(decoded);
+
+    advance(source, settings, 3);
+    advance(rebuilt, stepSettings(rebuilt), 3);
+    check(source.suspension.checkpoint().stateFingerprint
+              == rebuilt.suspension.checkpoint().stateFingerprint,
+          "decoded suspension continuation is bit-identical");
+    for (std::size_t index = 0;
+         index < source.canopy.body.nodes().size(); ++index) {
+        check(sameNode(source.canopy.body.nodes()[index],
+                       rebuilt.canopy.body.nodes()[index]),
+              "decoded suspension preserves body coupling continuation");
+    }
+
+    Rig foreign(0.02);
+    softwing::SuspensionCheckpoint output =
+        rebuilt.suspension.checkpoint();
+    const auto preserved = serialized(output);
+    check(!softwing::deserializeSuspensionCheckpoint(
+              bytes, foreign.suspension.checkpoint(), output, &error)
+              && error.code
+                  == softwing::SuspensionCheckpointPersistenceErrorCode::
+                      TopologyMismatch
+              && serialized(output) == preserved,
+          "persistent suspension decode rejects foreign topology transactionally");
+
+    const auto reject = [&](std::vector<std::uint8_t> corrupt,
+                            const softwing::SuspensionCheckpointPersistenceErrorCode
+                                expected,
+                            const char* message,
+                            const softwing::SuspensionCheckpointPersistenceLimits&
+                                limits = {}) {
+        check(!softwing::deserializeSuspensionCheckpoint(
+                  corrupt, saved, output, &error, limits)
+                  && error.code == expected
+                  && serialized(output) == preserved,
+              message);
+    };
+
+    auto corrupt = bytes;
+    corrupt[0] ^= 0xffU;
+    reject(corrupt,
+           softwing::SuspensionCheckpointPersistenceErrorCode::InvalidMagic,
+           "persistent suspension rejects bad magic");
+    corrupt = bytes;
+    corrupt[4] = 2;
+    reject(corrupt,
+           softwing::SuspensionCheckpointPersistenceErrorCode::
+               UnsupportedVersion,
+           "persistent suspension rejects unsupported protocol versions");
+    corrupt = bytes;
+    corrupt[6] = 1;
+    reject(corrupt,
+           softwing::SuspensionCheckpointPersistenceErrorCode::InvalidData,
+           "persistent suspension rejects nonzero reserved bits");
+    corrupt = bytes;
+    corrupt.pop_back();
+    reject(corrupt,
+           softwing::SuspensionCheckpointPersistenceErrorCode::Truncated,
+           "persistent suspension rejects truncation transactionally");
+    corrupt = bytes;
+    corrupt.push_back(0);
+    reject(corrupt,
+           softwing::SuspensionCheckpointPersistenceErrorCode::TrailingData,
+           "persistent suspension rejects trailing data transactionally");
+    corrupt = bytes;
+    corrupt.back() ^= 1U;
+    reject(corrupt,
+           softwing::SuspensionCheckpointPersistenceErrorCode::ChecksumMismatch,
+           "persistent suspension detects payload corruption");
+
+    corrupt = bytes;
+    writeU64(corrupt, 56,
+             std::bit_cast<std::uint64_t>(
+                 std::numeric_limits<double>::quiet_NaN()));
+    refreshChecksum(corrupt);
+    reject(corrupt,
+           softwing::SuspensionCheckpointPersistenceErrorCode::InvalidData,
+           "persistent suspension rejects non-finite state after checksum");
+
+    // State header plus two 13-double rigid states precede the first vector
+    // count. A malicious count is rejected before any wire-sized allocation.
+    constexpr std::size_t hangPointCountOffset = 24 + 32 + 2 * 13 * 8;
+    corrupt = bytes;
+    writeU64(corrupt, hangPointCountOffset, 1'000'001);
+    refreshChecksum(corrupt);
+    reject(corrupt,
+           softwing::SuspensionCheckpointPersistenceErrorCode::LimitExceeded,
+           "persistent suspension bounds counts before allocation");
+
+    softwing::SuspensionCheckpointPersistenceLimits limits;
+    limits.maximumEncodedBytes = bytes.size() - 1;
+    reject(bytes,
+           softwing::SuspensionCheckpointPersistenceErrorCode::LimitExceeded,
+           "persistent suspension enforces the byte limit", limits);
+    limits = {};
+    limits.maximumRecords = 0;
+    reject(bytes,
+           softwing::SuspensionCheckpointPersistenceErrorCode::LimitExceeded,
+           "persistent suspension enforces the record limit", limits);
+
+    std::vector<std::uint8_t> callerBytes{1, 2, 3};
+    limits = {};
+    limits.maximumStringBytes = 2;
+    check(!softwing::serializeSuspensionCheckpoint(
+              saved, callerBytes, &error, limits)
+              && error.code
+                  == softwing::SuspensionCheckpointPersistenceErrorCode::
+                      LimitExceeded
+              && callerBytes == std::vector<std::uint8_t>({1, 2, 3}),
+          "failed suspension serialization preserves caller output");
+}
+
 } // namespace
 
 int main() {
     testReplayAndCompleteState();
     testRejectionAndIntegrity();
+    testPersistentRoundTripAndRejection();
     if (failures == 0) {
         std::printf("softwing suspension checkpoint tests passed\n");
     }

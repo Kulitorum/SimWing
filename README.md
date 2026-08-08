@@ -192,10 +192,12 @@ equivalent rebuilt worker resumes bit-for-bit, including immediately after
 both ordinary and periodic topology rebases. The contained accepted
 moving-interface fluid epoch now has a deterministic bounded/checksummed file
 codec that preserves fields, interface topology/kinematics, and complete
-projection diagnostics. The opaque SoftBody half also has a deterministic,
-bounded/checksummed codec that overlays committed mutable state onto an
-equivalent rebuilt topology without trusting wire topology. Enclosing
-Structure/suspension persistence and control execution for the full composite
+projection diagnostics. Both structural-core halves now have deterministic,
+bounded/checksummed codecs: the opaque SoftBody payload overlays committed
+mutable state onto an equivalent rebuilt topology without trusting wire
+topology, while the suspension payload preserves rigid-payload, line, control,
+ledger, identity, and diagnostic state behind its complete-state fingerprint.
+Enclosing Structure persistence and control execution for the full composite
 open-piston state remain future work. A
 real 3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,

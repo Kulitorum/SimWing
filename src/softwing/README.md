@@ -80,6 +80,13 @@ count; `workerThreads == 0` still selects the untouched serial sweep):
   redefine masses, connectivity, materials, or contact registration. Contact
   pair diagnostics are initialized with registration so even the pre-step
   checkpoint is complete and restorable.
+- `softwing/suspension_checkpoint_persistence.h` — the complementary bounded
+  codec for the public suspension/rigid-payload checkpoint. It preserves every
+  stable identity, control, multiplier, ledger, diagnostic, and UTF-8 text
+  field, verifies the canonical complete-state fingerprint, and requires an
+  equivalent checkpoint template on decode. The live `SuspensionSystem`
+  `restore()` remains the final physics-level validator and transactional
+  commit boundary.
 
 The generic membrane constraint-space damping field predates the Playground
 material mode. Nonzero values are stable for the small isolated coupons it was

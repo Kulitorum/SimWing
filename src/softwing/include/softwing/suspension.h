@@ -395,6 +395,11 @@ struct SuspensionCheckpoint {
     SuspensionDiagnostics committedDiagnostics;
 };
 
+// Canonical complete-state fingerprint used by restore validation and the
+// persistent checkpoint codec. It is an integrity key, not a security hash.
+[[nodiscard]] std::uint64_t suspensionCheckpointStateFingerprint(
+    const SuspensionCheckpoint& checkpoint);
+
 [[nodiscard]] const char* suspensionPhaseName(SuspensionPhase phase);
 [[nodiscard]] const char* suspensionSideName(SuspensionSide side);
 [[nodiscard]] const char* suspensionEndpointKindName(

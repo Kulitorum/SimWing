@@ -184,6 +184,7 @@ add_library(softwing_core STATIC
     src/softwing/soft_body.cpp
     src/softwing/soft_body_checkpoint_persistence.cpp
     src/softwing/suspension.cpp
+    src/softwing/suspension_checkpoint_persistence.cpp
 )
 target_include_directories(softwing_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/softwing/include"

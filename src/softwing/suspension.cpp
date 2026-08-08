@@ -483,6 +483,11 @@ double scaledRelative(double first, double second) {
 
 } // namespace
 
+std::uint64_t suspensionCheckpointStateFingerprint(
+    const SuspensionCheckpoint& checkpoint) {
+    return checkpointStateFingerprintOf(checkpoint);
+}
+
 SuspensionError::SuspensionError(SuspensionPhase phase,
                                  std::string entity,
                                  const std::string& message)
@@ -1743,7 +1748,7 @@ SuspensionCheckpoint SuspensionSystem::checkpoint() const {
     result.payloadDiagnostics = payloadDiagnostics_;
     result.diagnostics = diagnostics_;
     result.committedDiagnostics = committedDiagnostics_;
-    result.stateFingerprint = checkpointStateFingerprintOf(result);
+    result.stateFingerprint = suspensionCheckpointStateFingerprint(result);
     return result;
 }
 
@@ -2013,7 +2018,7 @@ void SuspensionSystem::restore(const SuspensionCheckpoint& checkpointValue) {
                        "checkpoint-committed-diagnostics");
 
     if (checkpointValue.stateFingerprint !=
-        checkpointStateFingerprintOf(checkpointValue)) {
+        suspensionCheckpointStateFingerprint(checkpointValue)) {
         fail(SuspensionPhase::Validation, "checkpoint-integrity",
              "suspension checkpoint state fingerprint does not match its "
              "contents");

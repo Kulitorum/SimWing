@@ -152,8 +152,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   exact model builder.
 - `flatparts`: structured part model, deterministic nester, PDF/DXF writers.
 - `softwing_core`: dependency-free XPBD/cloth/contact/pneumatics/suspension
-  core and topology-bound persistent SoftBody checkpoint codec under
-  `src/softwing`.
+  core and topology-bound persistent SoftBody and suspension checkpoint codecs
+  under `src/softwing`.
 - `lep_nurbs_model`: exact OCCT model builder and direct authoritative-capture
   to scene-v2 exporter, shared by the engine and focused exporter tests.
 - `leparagliding_engine_runtime`: translated calculation core and its path,
@@ -584,8 +584,14 @@ makes this a certified aerodynamic solver.
   mutable state through a deterministic, checksummed, byte-bounded
   little-endian envelope. Decode overlays only onto an equivalent live
   topology template, so wire data cannot redefine masses, connectivity,
-  materials, or contact registration. Suspension and Structure persistence
-  remain separate enclosing formats.
+  materials, or contact registration.
+  `softwing/suspension_checkpoint_persistence.h` independently preserves the
+  complete suspension/rigid-payload checkpoint, including stable identities,
+  controls, multipliers, ledgers, diagnostics, and bounded UTF-8 text. Decode
+  binds counts and identities to an equivalent checkpoint template, verifies
+  the complete state fingerprint, and leaves final semantic validation to the
+  live owner's transactional `restore()`. Structure persistence remains the
+  enclosing format.
 - `src/viewer/viewer_protocol.{h,cpp}` owns immutable sampled diagnostic frames
   and replayable traces. It uses nonzero 64-bit stable entity/region IDs,
   transactional decoding, configurable limits, and a 256 MiB default encoded
