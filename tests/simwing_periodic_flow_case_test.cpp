@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <vector>
@@ -42,6 +43,24 @@ std::vector<std::uint8_t> serialized(
     return bytes;
 }
 
+const viewer::ScalarField* scalarField(
+    const viewer::DiagnosticFrame& frame,
+    const char* name) {
+    const auto found = std::ranges::find_if(
+        frame.scalarFields,
+        [&](const viewer::ScalarField& field) { return field.name == name; });
+    return found == frame.scalarFields.end() ? nullptr : &*found;
+}
+
+const viewer::VectorField* vectorField(
+    const viewer::DiagnosticFrame& frame,
+    const char* name) {
+    const auto found = std::ranges::find_if(
+        frame.vectorFields,
+        [&](const viewer::VectorField& field) { return field.name == name; });
+    return found == frame.vectorFields.end() ? nullptr : &*found;
+}
+
 template<typename Callback>
 void expectRejected(Callback&& callback, const char* message) {
     bool rejected = false;
@@ -51,6 +70,90 @@ void expectRejected(Callback&& callback, const char* message) {
         rejected = true;
     }
     check(rejected, message);
+}
+
+void testAnalyticCellDiagnostics() {
+    fsi::PeriodicFlowCase simulation;
+    const viewer::PeriodicFluidCellFields fields =
+        viewer::buildPeriodicFluidCellFields(
+            simulation.grid(), simulation.velocity());
+    check(fields.velocityMetersPerSecond.size()
+              == simulation.grid().cellCount()
+              && fields.speedMetersPerSecond.size()
+                  == simulation.grid().cellCount()
+              && fields.divergencePerSecond.size()
+                  == simulation.grid().cellCount()
+              && fields.vorticityPerSecond.size()
+                  == simulation.grid().cellCount()
+              && fields.vorticityMagnitudePerSecond.size()
+                  == simulation.grid().cellCount(),
+          "periodic cell diagnostics publish one owning value per cell");
+
+    constexpr std::size_t i = 3;
+    constexpr std::size_t j = 5;
+    constexpr std::size_t k = 0;
+    const auto spacing = simulation.grid().cellSpacingMeters();
+    const auto center = simulation.grid().cellCenterMeters(i, j, k);
+    const std::size_t index = simulation.grid().cellIndex(i, j, k);
+    const double expectedX = 0.35
+        + std::cos(0.5 * spacing.x)
+            * std::sin(center.x) * std::cos(center.y);
+    const double expectedY = -0.2
+        - std::cos(0.5 * spacing.y)
+            * std::cos(center.x) * std::sin(center.y);
+    const double expectedVorticityZ = std::sin(center.x)
+        * std::sin(center.y)
+        * (std::cos(0.5 * spacing.y) * std::sin(spacing.x) / spacing.x
+           + std::cos(0.5 * spacing.x) * std::sin(spacing.y) / spacing.y);
+    checkNear(fields.velocityMetersPerSecond[index].x,
+              expectedX, 1.0e-15,
+              "periodic cell diagnostics average X MAC faces analytically");
+    checkNear(fields.velocityMetersPerSecond[index].y,
+              expectedY, 1.0e-15,
+              "periodic cell diagnostics average Y MAC faces analytically");
+    checkNear(fields.velocityMetersPerSecond[index].z,
+              0.0, 0.0,
+              "periodic cell diagnostics retain zero Z velocity");
+    checkNear(fields.vorticityPerSecond[index].x,
+              0.0, 0.0,
+              "periodic Taylor-Green vorticity has zero X component");
+    checkNear(fields.vorticityPerSecond[index].y,
+              0.0, 0.0,
+              "periodic Taylor-Green vorticity has zero Y component");
+    checkNear(fields.vorticityPerSecond[index].z,
+              expectedVorticityZ, 3.0e-15,
+              "periodic cell curl matches the discrete Taylor-Green oracle");
+    checkNear(fields.vorticityMagnitudePerSecond[index],
+              std::abs(expectedVorticityZ), 3.0e-15,
+              "periodic vorticity magnitude matches the vector field");
+    check(fields.maximumAbsoluteDivergencePerSecond < 2.0e-14
+              && fields.maximumVorticityPerSecond > 1.0,
+          "periodic diagnostic extrema retain solenoidal vortical structure");
+}
+
+void testCellDiagnosticsRejectInvalidInputs() {
+    fsi::PeriodicFlowCase simulation;
+    const fsi::fluid::PeriodicCartesianGrid otherGrid(
+        {4, 4, 2}, {}, {1.0, 1.0, 1.0});
+    const fsi::fluid::MacVelocityField wrongShape(otherGrid);
+    expectRejected(
+        [&] { static_cast<void>(viewer::buildPeriodicFluidCellFields(
+            simulation.grid(), wrongShape)); },
+        "periodic cell diagnostics reject a mismatched MAC field");
+
+    fsi::fluid::MacVelocityField nonFinite = simulation.velocity();
+    nonFinite.xFaces()[0] = std::numeric_limits<double>::infinity();
+    expectRejected(
+        [&] { static_cast<void>(viewer::buildPeriodicFluidCellFields(
+            simulation.grid(), nonFinite)); },
+        "periodic cell diagnostics reject a non-finite MAC field");
+
+    const fsi::fluid::MacVelocityField overflowing(
+        simulation.grid(), std::numeric_limits<double>::max());
+    expectRejected(
+        [&] { static_cast<void>(viewer::buildPeriodicFluidCellFields(
+            simulation.grid(), overflowing)); },
+        "periodic cell diagnostics reject non-finite derived values");
 }
 
 void testDeterministicAcceptedFrames() {
@@ -82,17 +185,22 @@ void testDeterministicAcceptedFrames() {
               && firstFrame.triangles.empty()
               && firstFrame.lines.empty(),
           "periodic fluid frame publishes one unconnected point per cell");
-    check(firstFrame.scalarFields.size() == 7
+    check(firstFrame.scalarFields.size() == 11
               && firstFrame.scalarFields[0].name == "pressure"
               && firstFrame.scalarFields[0].association
                   == viewer::FieldAssociation::Vertex
               && firstFrame.scalarFields[0].values.size()
                   == first.grid().cellCount()
-              && firstFrame.vectorFields.size() == 2
+              && firstFrame.scalarFields[2].name == "divergence"
+              && firstFrame.scalarFields[3].name == "vorticity magnitude"
+              && firstFrame.vectorFields.size() == 3
               && firstFrame.vectorFields[0].name == "velocity"
               && firstFrame.vectorFields[0].values.size()
+                  == first.grid().cellCount()
+              && firstFrame.vectorFields[1].name == "vorticity"
+              && firstFrame.vectorFields[1].values.size()
                   == first.grid().cellCount(),
-          "periodic fluid frame retains pressure, speed, velocity, and ledgers");
+          "periodic fluid frame retains scalar/vector flow diagnostics");
     check(std::ranges::any_of(
               firstFrame.scalarFields[0].values,
               [](const double pressure) { return pressure != 0.0; })
@@ -100,6 +208,49 @@ void testDeterministicAcceptedFrames() {
               && firstFrame.couplingResiduals.fluid
                   == first.diagnostics().finalDivergenceL2PerSecond,
           "periodic fluid frame comes from an accepted nontrivial pressure solve");
+
+    const viewer::ScalarField* divergence =
+        scalarField(firstFrame, "divergence");
+    const viewer::ScalarField* vorticityMagnitude =
+        scalarField(firstFrame, "vorticity magnitude");
+    const viewer::ScalarField* maximumDivergence =
+        scalarField(firstFrame, "divergence maximum absolute");
+    const viewer::ScalarField* maximumVorticity =
+        scalarField(firstFrame, "vorticity maximum");
+    const viewer::VectorField* vorticity =
+        vectorField(firstFrame, "vorticity");
+    fsi::fluid::CellScalarField expectedDivergence(first.grid());
+    fsi::fluid::computeDivergence(
+        first.grid(), first.velocity(), expectedDivergence);
+    check(divergence != nullptr
+              && std::ranges::equal(
+                  divergence->values, expectedDivergence.values())
+              && fsi::fluid::l2Norm(expectedDivergence)
+                  == first.diagnostics().finalDivergenceL2PerSecond,
+          "periodic frame divergence is the exact accepted MAC operator");
+    bool magnitudeMatches = vorticity != nullptr
+        && vorticityMagnitude != nullptr
+        && vorticity->values.size() == vorticityMagnitude->values.size();
+    if (magnitudeMatches) {
+        for (std::size_t index = 0;
+             index < vorticity->values.size(); ++index) {
+            const viewer::Vec3d value = vorticity->values[index];
+            magnitudeMatches = magnitudeMatches
+                && vorticityMagnitude->values[index]
+                    == std::hypot(value.x, value.y, value.z);
+        }
+    }
+    check(magnitudeMatches,
+          "periodic frame vorticity magnitude derives exactly from curl vectors");
+    const double expectedMaximumVorticity = vorticityMagnitude == nullptr
+        ? 0.0
+        : *std::ranges::max_element(vorticityMagnitude->values);
+    check(maximumDivergence != nullptr
+              && maximumDivergence->values[0]
+                  == fsi::fluid::maximumAbsoluteValue(expectedDivergence)
+              && maximumVorticity != nullptr
+              && maximumVorticity->values[0] == expectedMaximumVorticity,
+          "periodic frame publishes exact divergence/vorticity extrema");
     checkNear(firstFrame.conservation.fluidMassKilograms,
               first.stepSettings().flow.densityKgPerCubicMeter
                   * first.grid().cellVolumeCubicMeters()
@@ -174,6 +325,8 @@ void testCompletedTrace() {
 } // namespace
 
 int main() {
+    testAnalyticCellDiagnostics();
+    testCellDiagnosticsRejectInvalidInputs();
     testDeterministicAcceptedFrames();
     testFrameRejectsUnacceptedState();
     testCompletedTrace();

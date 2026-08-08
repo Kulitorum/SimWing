@@ -1,5 +1,6 @@
 #include "fluid_frame.h"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <utility>
@@ -11,6 +12,12 @@ Vec3d toViewer(const fsi::fluid::Vector3& value) noexcept {
     return {value.x, value.y, value.z};
 }
 
+bool isFinite(const Vec3d& value) noexcept {
+    return std::isfinite(value.x)
+        && std::isfinite(value.y)
+        && std::isfinite(value.z);
+}
+
 void addGlobalScalar(DiagnosticFrame& frame,
                      std::string name,
                      std::string unit,
@@ -20,7 +27,127 @@ void addGlobalScalar(DiagnosticFrame& frame,
         FieldAssociation::Global, {value}});
 }
 
+std::size_t previous(const std::size_t index,
+                     const std::size_t count) noexcept {
+    return index == 0 ? count - 1 : index - 1;
+}
+
+std::size_t next(const std::size_t index,
+                 const std::size_t count) noexcept {
+    return index + 1 == count ? 0 : index + 1;
+}
+
 } // namespace
+
+PeriodicFluidCellFields buildPeriodicFluidCellFields(
+    const fsi::fluid::PeriodicCartesianGrid& grid,
+    const fsi::fluid::MacVelocityField& velocityMetersPerSecond) {
+    if (!velocityMetersPerSecond.matches(grid)
+        || !fsi::fluid::isFinite(velocityMetersPerSecond)) {
+        throw std::invalid_argument(
+            "periodic fluid cell fields require a matching finite velocity");
+    }
+
+    PeriodicFluidCellFields result;
+    result.velocityMetersPerSecond.reserve(grid.cellCount());
+    result.speedMetersPerSecond.reserve(grid.cellCount());
+    result.vorticityPerSecond.reserve(grid.cellCount());
+    result.vorticityMagnitudePerSecond.reserve(grid.cellCount());
+    fsi::fluid::CellScalarField finiteVolumeDivergence(grid);
+    fsi::fluid::computeDivergence(
+        grid, velocityMetersPerSecond, finiteVolumeDivergence);
+    const auto divergenceValues = finiteVolumeDivergence.values();
+    if (!std::ranges::all_of(
+            divergenceValues,
+            [](const double value) { return std::isfinite(value); })) {
+        throw std::invalid_argument(
+            "periodic fluid divergence must be finite");
+    }
+    result.divergencePerSecond.assign(
+        divergenceValues.begin(), divergenceValues.end());
+    result.maximumAbsoluteDivergencePerSecond =
+        fsi::fluid::maximumAbsoluteValue(finiteVolumeDivergence);
+
+    const fsi::fluid::GridCellCounts counts = grid.cellCounts();
+    const auto xFaces = velocityMetersPerSecond.xFaces();
+    const auto yFaces = velocityMetersPerSecond.yFaces();
+    const auto zFaces = velocityMetersPerSecond.zFaces();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        const std::size_t nextK = next(k, counts.z);
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            const std::size_t nextJ = next(j, counts.y);
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                const std::size_t nextI = next(i, counts.x);
+                const std::size_t index = grid.cellIndex(i, j, k);
+                const Vec3d cellVelocity{
+                    0.5 * (xFaces[index]
+                           + xFaces[grid.cellIndex(nextI, j, k)]),
+                    0.5 * (yFaces[index]
+                           + yFaces[grid.cellIndex(i, nextJ, k)]),
+                    0.5 * (zFaces[index]
+                           + zFaces[grid.cellIndex(i, j, nextK)]),
+                };
+                const double speed = std::hypot(
+                    cellVelocity.x, cellVelocity.y, cellVelocity.z);
+                if (!isFinite(cellVelocity) || !std::isfinite(speed)) {
+                    throw std::invalid_argument(
+                        "periodic cell velocity diagnostics must be finite");
+                }
+                result.velocityMetersPerSecond.push_back(cellVelocity);
+                result.speedMetersPerSecond.push_back(speed);
+            }
+        }
+    }
+
+    const fsi::fluid::Vector3 spacing = grid.cellSpacingMeters();
+    const auto centeredVelocity = [&](const std::size_t i,
+                                      const std::size_t j,
+                                      const std::size_t k) -> const Vec3d& {
+        return result.velocityMetersPerSecond[grid.cellIndex(i, j, k)];
+    };
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        const std::size_t previousK = previous(k, counts.z);
+        const std::size_t nextK = next(k, counts.z);
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            const std::size_t previousJ = previous(j, counts.y);
+            const std::size_t nextJ = next(j, counts.y);
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                const std::size_t previousI = previous(i, counts.x);
+                const std::size_t nextI = next(i, counts.x);
+                const Vec3d curl{
+                    (centeredVelocity(i, nextJ, k).z
+                     - centeredVelocity(i, previousJ, k).z)
+                        / (2.0 * spacing.y)
+                        - (centeredVelocity(i, j, nextK).y
+                           - centeredVelocity(i, j, previousK).y)
+                            / (2.0 * spacing.z),
+                    (centeredVelocity(i, j, nextK).x
+                     - centeredVelocity(i, j, previousK).x)
+                        / (2.0 * spacing.z)
+                        - (centeredVelocity(nextI, j, k).z
+                           - centeredVelocity(previousI, j, k).z)
+                            / (2.0 * spacing.x),
+                    (centeredVelocity(nextI, j, k).y
+                     - centeredVelocity(previousI, j, k).y)
+                        / (2.0 * spacing.x)
+                        - (centeredVelocity(i, nextJ, k).x
+                           - centeredVelocity(i, previousJ, k).x)
+                            / (2.0 * spacing.y),
+                };
+                const double magnitude = std::hypot(curl.x, curl.y, curl.z);
+                if (!isFinite(curl) || !std::isfinite(magnitude)) {
+                    throw std::invalid_argument(
+                        "periodic vorticity diagnostics must be finite");
+                }
+                result.vorticityPerSecond.push_back(curl);
+                result.vorticityMagnitudePerSecond.push_back(magnitude);
+                result.maximumVorticityPerSecond = std::max(
+                    result.maximumVorticityPerSecond, magnitude);
+            }
+        }
+    }
+    return result;
+}
 
 DiagnosticFrame buildPeriodicFluidFrame(
     const fsi::fluid::PeriodicCartesianGrid& grid,
@@ -73,48 +200,44 @@ DiagnosticFrame buildPeriodicFluidFrame(
 
     ScalarField pressure{
         "pressure", "Pa", FieldAssociation::Vertex, {}};
+    PeriodicFluidCellFields cellFields = buildPeriodicFluidCellFields(
+        grid, velocityMetersPerSecond);
     ScalarField speed{
-        "speed", "m/s", FieldAssociation::Vertex, {}};
+        "speed", "m/s", FieldAssociation::Vertex,
+        std::move(cellFields.speedMetersPerSecond)};
+    ScalarField divergence{
+        "divergence", "1/s", FieldAssociation::Vertex,
+        std::move(cellFields.divergencePerSecond)};
+    ScalarField vorticityMagnitude{
+        "vorticity magnitude", "1/s", FieldAssociation::Vertex,
+        std::move(cellFields.vorticityMagnitudePerSecond)};
     VectorField velocity{
-        "velocity", "m/s", FieldAssociation::Vertex, {}};
+        "velocity", "m/s", FieldAssociation::Vertex,
+        std::move(cellFields.velocityMetersPerSecond)};
+    VectorField vorticity{
+        "vorticity", "1/s", FieldAssociation::Vertex,
+        std::move(cellFields.vorticityPerSecond)};
     frame.vertices.reserve(grid.cellCount());
     pressure.values.reserve(grid.cellCount());
-    speed.values.reserve(grid.cellCount());
-    velocity.values.reserve(grid.cellCount());
 
     const fsi::fluid::GridCellCounts counts = grid.cellCounts();
-    const auto xFaces = velocityMetersPerSecond.xFaces();
-    const auto yFaces = velocityMetersPerSecond.yFaces();
-    const auto zFaces = velocityMetersPerSecond.zFaces();
     const auto pressureValues = pressurePascals.values();
     for (std::size_t k = 0; k < counts.z; ++k) {
-        const std::size_t nextK = k + 1 == counts.z ? 0 : k + 1;
         for (std::size_t j = 0; j < counts.y; ++j) {
-            const std::size_t nextJ = j + 1 == counts.y ? 0 : j + 1;
             for (std::size_t i = 0; i < counts.x; ++i) {
-                const std::size_t nextI = i + 1 == counts.x ? 0 : i + 1;
                 const std::size_t index = grid.cellIndex(i, j, k);
-                const fsi::fluid::Vector3 cellVelocity{
-                    0.5 * (xFaces[index]
-                           + xFaces[grid.cellIndex(nextI, j, k)]),
-                    0.5 * (yFaces[index]
-                           + yFaces[grid.cellIndex(i, nextJ, k)]),
-                    0.5 * (zFaces[index]
-                           + zFaces[grid.cellIndex(i, j, nextK)]),
-                };
                 frame.vertices.push_back({
                     static_cast<std::uint64_t>(index) + 1,
                     toViewer(grid.cellCenterMeters(i, j, k)),
                 });
                 pressure.values.push_back(pressureValues[index]);
-                speed.values.push_back(std::hypot(
-                    cellVelocity.x, cellVelocity.y, cellVelocity.z));
-                velocity.values.push_back(toViewer(cellVelocity));
             }
         }
     }
     frame.scalarFields.push_back(std::move(pressure));
     frame.scalarFields.push_back(std::move(speed));
+    frame.scalarFields.push_back(std::move(divergence));
+    frame.scalarFields.push_back(std::move(vorticityMagnitude));
     addGlobalScalar(
         frame, "substeps", "1",
         static_cast<double>(diagnostics.plannedSubstepCount));
@@ -128,9 +251,16 @@ DiagnosticFrame buildPeriodicFluidFrame(
         frame, "divergence L2", "1/s",
         diagnostics.finalDivergenceL2PerSecond);
     addGlobalScalar(
+        frame, "divergence maximum absolute", "1/s",
+        cellFields.maximumAbsoluteDivergencePerSecond);
+    addGlobalScalar(
+        frame, "vorticity maximum", "1/s",
+        cellFields.maximumVorticityPerSecond);
+    addGlobalScalar(
         frame, "kinetic energy loss", "J",
         diagnostics.totalEnergyLossJoules);
     frame.vectorFields.push_back(std::move(velocity));
+    frame.vectorFields.push_back(std::move(vorticity));
     frame.vectorFields.push_back({
         "momentum residual", "N*s", FieldAssociation::Global,
         {toViewer(diagnostics.momentumResidualNewtonSeconds)}});

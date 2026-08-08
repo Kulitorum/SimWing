@@ -440,8 +440,10 @@ launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.
 The same worker can now select a smooth periodic Taylor-Green CFD case. Its
 owning adapter copies accepted cell pressure and averaged MAC velocity into
-stable cell-centre points, which the unchanged frame protocol carries to the
-viewer for scalar-coloured point rendering. A separate Qt-free geometry target
+stable cell-centre points. It also publishes the projection operator's exact
+finite-volume divergence and a diagnostic centred periodic curl of the sampled
+velocity. The unchanged frame protocol carries those fields to the viewer for
+scalar-coloured point rendering. A separate Qt-free geometry target
 turns selected vertex vectors into normalized arrows with a deterministic glyph
 budget, allowing pressure or speed colouring and velocity direction to remain
 visible together. This is inspectable verification flow, not a whole-wing CFD
@@ -734,8 +736,12 @@ to another exact equal-step schedule, and roll back without retry on projection
 failure or when the configured substep bound is exhausted. The
 periodic-flow worker additionally replays 12 accepted steps bit-for-bit across
 two independent instances. Each immutable frame owns exactly one stable point
-per cell plus pressure, speed, and velocity fields and remains byte-identical
-after the solver advances again. A completed five-frame trace must replay
+per cell plus pressure, speed, velocity, exact MAC divergence, and diagnostic
+vorticity fields and remains byte-identical after the solver advances again.
+The initial Taylor-Green cell sampling has an analytic face-average and
+discrete-curl oracle, with maximum divergence below `2e-14 1/s`; later accepted
+frames must reproduce the finite-volume divergence bit-for-bit and retain exact
+vorticity vector/magnitude agreement. A completed five-frame trace must replay
 consecutive accepted steps, and the headless CLI must write a completed trace
 without linking or launching Qt.
 The Qt-free viewer-geometry regression separately requires exact arrow shaft
@@ -825,8 +831,9 @@ Work:
 - implement arbitrary moving-interface/jump conditions, curved/changing
   paired grid-side correspondence, refinement, and persistent fluid-checkpoint
   serialization/control messages;
-- add rate-limited AMR, pressure, velocity, divergence, traction, and
-  pressure-jump viewer layers as each field becomes available;
+- extend the current cell-point pressure, velocity, divergence, and vorticity
+  diagnostics with rate-limited AMR blocks, slices, traction, and pressure-jump
+  layers as each field becomes available;
 - verify CPU first, then add GPU kernels behind identical numerical tests.
 
 Required canonical cases:
