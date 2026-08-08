@@ -118,13 +118,16 @@ worker owner thread, with typed periodic-flow, moving-porous-flow, open-piston,
 and porous-sheet adapters. Each
 publishes immutable accepted frames through an injected sink, delegates its
 own complete checkpoint codec, and makes stop terminal. `simwing-fsi
---control-stdio` exposes that boundary for all three cases as self-framed binary
+--control-stdio` exposes that boundary for all four cases as self-framed binary
 stdin/stdout messages. It launches no viewer,
 puts no human-readable text on protocol stdout, completes the trace before the
 stopped response, and uses `--checkpoint-out` as the checkpoint-command target.
 Supplying `--checkpoint-in` makes the initial Ready response expose the restored
 absolute step/time; the new trace starts with the next accepted frame rather
-than replaying earlier frames. The porous-sheet end-to-end control regression
+than replaying earlier frames. The moving-porous-flow regression advances
+through its second periodic wrap, persists step 101, proves exact step-102
+continuation in the original trace, and resumes with that one exact next frame.
+The porous-sheet end-to-end control regression
 checkpoints its rebased step 330 and verifies exact step-331 continuation in
 both the original and resumed traces, then drives the original worker to its
 pump-collision rejection and proves that only preceding accepted frames were

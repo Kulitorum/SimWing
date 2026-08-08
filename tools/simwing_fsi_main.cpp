@@ -1,6 +1,7 @@
 #include "canonical_case.h"
 #include "moving_porous_flow_case.h"
 #include "moving_porous_flow_checkpoint_persistence.h"
+#include "moving_porous_flow_control.h"
 #include "open_piston_case.h"
 #include "open_piston_checkpoint_persistence.h"
 #include "open_piston_control.h"
@@ -112,7 +113,8 @@ void printUsage(FILE* stream) {
         "--checkpoint-every\n"
         "autosaves at absolute accepted-step multiples and the final state. --steps\n"
         "counts additional intervals. --control-stdio instead exchanges bounded\n"
-        "binary porous-sheet, open-piston, or periodic-flow commands/responses\n"
+        "binary moving-porous-flow, porous-sheet, open-piston, or periodic-flow\n"
+        "commands/responses\n"
         "on stdin/stdout;\n"
         "it rejects\n"
         "--steps, --checkpoint-every, and viewer launch. Interactive runs launch\n"
@@ -301,9 +303,10 @@ bool parseOptions(int argc,
     if (options.controlStdio) {
         if (options.workerCase != WorkerCase::PeriodicFlow
             && options.workerCase != WorkerCase::OpenPiston
+            && options.workerCase != WorkerCase::MovingPorousFlow
             && options.workerCase != WorkerCase::PorousSheet) {
-            error = "--control-stdio requires --case open-piston, "
-                "porous-sheet, or periodic-flow";
+            error = "--control-stdio requires --case moving-porous-flow, "
+                "open-piston, porous-sheet, or periodic-flow";
             return false;
         }
         if (stepsRequested) {
@@ -784,9 +787,13 @@ int runWorkerControl(
         std::is_same_v<Simulation, simwing::fsi::PeriodicFlowCase>,
         simwing::fsi::PeriodicFlowControlHooks,
         std::conditional_t<
-            std::is_same_v<Simulation, simwing::fsi::OpenPistonCase>,
-            simwing::fsi::OpenPistonControlHooks,
-            simwing::fsi::PorousSheetControlHooks>>;
+            std::is_same_v<Simulation,
+                           simwing::fsi::MovingPorousFlowCase>,
+            simwing::fsi::MovingPorousFlowControlHooks,
+            std::conditional_t<
+                std::is_same_v<Simulation, simwing::fsi::OpenPistonCase>,
+                simwing::fsi::OpenPistonControlHooks,
+                simwing::fsi::PorousSheetControlHooks>>>;
     ControlHooks hooks;
     hooks.publishFrame = [&](const simwing::viewer::DiagnosticFrame& frame,
                              std::string& hookError) {
@@ -812,6 +819,11 @@ int runWorkerControl(
                 options.checkpointOutputPath, checkpoint, hookError);
         } else if constexpr (std::is_same_v<
                                  Simulation,
+                                 simwing::fsi::MovingPorousFlowCase>) {
+            return writeMovingPorousFlowCheckpoint(
+                options.checkpointOutputPath, checkpoint, hookError);
+        } else if constexpr (std::is_same_v<
+                                 Simulation,
                                  simwing::fsi::OpenPistonCase>) {
             return writeOpenPistonCheckpoint(
                 options.checkpointOutputPath, checkpoint, hookError);
@@ -827,9 +839,13 @@ int runWorkerControl(
         std::is_same_v<Simulation, simwing::fsi::PeriodicFlowCase>,
         simwing::fsi::PeriodicFlowControlSession,
         std::conditional_t<
-            std::is_same_v<Simulation, simwing::fsi::OpenPistonCase>,
-            simwing::fsi::OpenPistonControlSession,
-            simwing::fsi::PorousSheetControlSession>>;
+            std::is_same_v<Simulation,
+                           simwing::fsi::MovingPorousFlowCase>,
+            simwing::fsi::MovingPorousFlowControlSession,
+            std::conditional_t<
+                std::is_same_v<Simulation, simwing::fsi::OpenPistonCase>,
+                simwing::fsi::OpenPistonControlSession,
+                simwing::fsi::PorousSheetControlSession>>>;
     ControlSession session(
         simulation, std::move(hooks));
 
@@ -1024,6 +1040,14 @@ int main(int argc, char* argv[]) {
                 simwing::fsi::OpenPistonCase simulation;
                 if (restoredOpenPistonCheckpoint) {
                     simulation.restore(*restoredOpenPistonCheckpoint);
+                }
+                return runWorkerControl(options, simulation, output);
+            }
+            if (options.workerCase == WorkerCase::MovingPorousFlow) {
+                simwing::fsi::MovingPorousFlowCase simulation;
+                if (restoredMovingPorousFlowCheckpoint) {
+                    simulation.restore(
+                        *restoredMovingPorousFlowCheckpoint);
                 }
                 return runWorkerControl(options, simulation, output);
             }

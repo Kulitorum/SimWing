@@ -894,6 +894,7 @@ add_executable(simwing-control-stdio-fixture
     tests/simwing_control_stdio_fixture.cpp
 )
 target_link_libraries(simwing-control-stdio-fixture PRIVATE
+    simwing_moving_porous_flow_case
     simwing_open_piston_case
     simwing_periodic_flow_case
     simwing_porous_sheet_case
@@ -1069,6 +1070,7 @@ target_link_libraries(simwing-fsi PRIVATE
     simwing_canonical_case
     simwing_open_piston_control
     simwing_open_piston_case
+    simwing_moving_porous_flow_control
     simwing_moving_porous_flow_case
     simwing_periodic_flow_control
     simwing_periodic_flow_case
@@ -1572,6 +1574,26 @@ add_test(NAME simwing_fsi_control_stdio
         "-DRESUME_ERROR_FILE=${CMAKE_BINARY_DIR}/simwing-control-resume-stderr.txt"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunSimWingControlStdioTest.cmake")
 set_tests_properties(simwing_fsi_control_stdio PROPERTIES TIMEOUT 45)
+add_test(NAME simwing_fsi_moving_porous_flow_control_stdio
+    COMMAND ${CMAKE_COMMAND}
+        "-DSIMWING_FSI=$<TARGET_FILE:simwing-fsi>"
+        "-DCONTROL_FIXTURE=$<TARGET_FILE:simwing-control-stdio-fixture>"
+        "-DWORKER_CASE=moving-porous-flow"
+        "-DADVANCE_STEP_COUNT=101"
+        "-DVERIFY_MODE=verify-moving-porous"
+        "-DRESUME_VERIFY_MODE=verify-moving-porous-resume"
+        "-DCOMMAND_FILE=${CMAKE_BINARY_DIR}/simwing-moving-porous-control-commands.swcc"
+        "-DRESPONSE_FILE=${CMAKE_BINARY_DIR}/simwing-moving-porous-control-responses.swcr"
+        "-DCHECKPOINT_FILE=${CMAKE_BINARY_DIR}/simwing-moving-porous-control-checkpoint.swmf"
+        "-DTRACE_FILE=${CMAKE_BINARY_DIR}/simwing-moving-porous-control.swtrace"
+        "-DERROR_FILE=${CMAKE_BINARY_DIR}/simwing-moving-porous-control-stderr.txt"
+        "-DRESUME_COMMAND_FILE=${CMAKE_BINARY_DIR}/simwing-moving-porous-control-resume-commands.swcc"
+        "-DRESUME_RESPONSE_FILE=${CMAKE_BINARY_DIR}/simwing-moving-porous-control-resume-responses.swcr"
+        "-DRESUME_TRACE_FILE=${CMAKE_BINARY_DIR}/simwing-moving-porous-control-resume.swtrace"
+        "-DRESUME_ERROR_FILE=${CMAKE_BINARY_DIR}/simwing-moving-porous-control-resume-stderr.txt"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunSimWingControlStdioTest.cmake")
+set_tests_properties(simwing_fsi_moving_porous_flow_control_stdio PROPERTIES
+    TIMEOUT 45)
 add_test(NAME simwing_fsi_open_piston_control_stdio
     COMMAND ${CMAKE_COMMAND}
         "-DSIMWING_FSI=$<TARGET_FILE:simwing-fsi>"

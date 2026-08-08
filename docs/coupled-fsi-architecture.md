@@ -527,9 +527,12 @@ without putting output or file policy in the numerical worker. A bounded
 self-framing stream adapter now reads the
 envelope payload length without a host-native prefix and flushes every response.
 `simwing-fsi --control-stdio` binds that stream to binary stdin/stdout for
-all three adapters, suppresses viewer launch and textual stdout, and completes the
+all four adapters, suppresses viewer launch and textual stdout, and completes the
 trace before acknowledging stop. A restored worker reports its checkpoint's
 absolute step/time in Ready and writes only newly accepted frames to its trace.
+The moving porous regression crosses the second wrap, checkpoints step 101,
+verifies exact step-102 continuation, then restores and publishes only that
+same next accepted frame.
 The porous-sheet stdio regression advances through its first topology rebase,
 persists accepted step 330, reproduces step 331 in the original run, and emits
 that same single next frame after a restored Ready response. The original run
