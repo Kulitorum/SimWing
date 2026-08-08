@@ -736,8 +736,13 @@ solve around this primitive yet. The adjacent convergence decision is likewise
 worker-independent: displacement, velocity, and traction must each satisfy
 both explicit absolute and floor-stabilized relative budgets after the minimum
 iteration count. An unconverged maximum iteration is reported as exhaustion,
-not acceptance, so the future coordinator can restore both solvers and reduce
-the macro-step. The topology-bound macro-step surface computes the decision's
+not acceptance. A macro-step iteration owner composes the convergence decision,
+Aitken history, and current relaxed interface into one checkpointable algorithm
+state. Advance is transactional, convergence and exhaustion are terminal, and
+restore reproduces the exact next relaxation/decision. Fluid and Structure
+checkpoints deliberately remain solver-owned and must be composed beside this
+state by the future worker before a smaller-step retry. The topology-bound
+macro-step surface computes the decision's
 inputs from saved-baseline, previous, and current stable-ID kinematics plus two
 immutable nodal traction transfers. Maximum displacement and velocity updates
 are referenced to macro-step changes, making the reduction invariant to a
@@ -1297,8 +1302,8 @@ coupling. A matching global lift coefficient alone is insufficient.
 
 Work:
 
-- compose the checkpointable Aitken relaxation primitive into a complete
-  rollback-capable fluid/structure iteration, then add IQN-ILS;
+- compose the checkpointable iteration owner with fluid and Structure rollback
+  into a complete repeated solver loop, then add IQN-ILS;
 - add adaptive macro-step control and coupled residual budgets;
 - validate static inflation and steady deformed trim before maneuvers;
 - compare structural strain, pressure, cell shape, line loads, and pilot motion.

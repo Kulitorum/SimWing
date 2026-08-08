@@ -17,6 +17,8 @@ using simwing::fsi::AitkenInterfaceRelaxation;
 using simwing::fsi::AitkenRelaxationSettings;
 using simwing::fsi::CouplingConvergenceSettings;
 using simwing::fsi::CouplingResidualNorms;
+using simwing::fsi::StrongCouplingIteration;
+using simwing::fsi::StrongCouplingIterationStatus;
 using simwing::fsi::CouplingNodeKinematics;
 using simwing::fsi::CouplingSurfaceNodeDefinition;
 using simwing::fsi::CouplingSurfaceTriangleDefinition;
@@ -716,6 +718,166 @@ void testTopologyBoundCouplingResidualReduction() {
         "residual reduction: foreign structural definitions are rejected");
 }
 
+void testStrongCouplingIterationOwnershipAndReplay() {
+    constexpr std::uint64_t definitionFingerprint = 0x5c01'0001ULL;
+    AitkenRelaxationSettings relaxationSettings;
+    relaxationSettings.initialRelaxation = 0.5;
+    relaxationSettings.minimumRelaxation = 0.1;
+    relaxationSettings.maximumRelaxation = 2.0;
+    CouplingConvergenceSettings convergenceSettings;
+    convergenceSettings.minimumIterations = 2;
+    convergenceSettings.maximumIterations = 4;
+    convergenceSettings.absoluteDisplacementToleranceMetres = 0.0;
+    convergenceSettings.relativeDisplacementTolerance = 0.0;
+    convergenceSettings.absoluteVelocityToleranceMetersPerSecond = 0.0;
+    convergenceSettings.relativeVelocityTolerance = 0.0;
+    convergenceSettings.absoluteTractionToleranceNewtons = 0.0;
+    convergenceSettings.relativeTractionTolerance = 0.0;
+    const std::array<double, 1> initial{0.0};
+    StrongCouplingIteration iteration(
+        definitionFingerprint,
+        initial,
+        relaxationSettings,
+        convergenceSettings);
+
+    const CouplingResidualNorms firstResiduals{1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+    const std::array<double, 1> firstCandidate{1.0};
+    const auto first = iteration.advance(firstCandidate, firstResiduals);
+    check(first.status == StrongCouplingIterationStatus::Iterating
+              && first.relaxation.completedIterationCount == 1
+              && first.relaxation.relaxation == 0.5
+              && !first.convergence.converged
+              && iteration.currentInterface().size() == 1
+              && iteration.currentInterface().front() == 0.5,
+          "strong iteration: first fixed relaxation remains nonterminal");
+    const CouplingResidualNorms secondResiduals{
+        0.75, 2.0, 0.75, 2.0, 0.75, 2.0};
+    const std::array<double, 1> secondCandidate{1.25};
+    const auto second = iteration.advance(secondCandidate, secondResiduals);
+    check(second.status == StrongCouplingIterationStatus::Iterating
+              && second.relaxation.completedIterationCount == 2
+              && second.relaxation.relaxation == 2.0
+              && !second.convergence.converged
+              && iteration.currentInterface().front() == 2.0,
+          "strong iteration: Aitken reaches the fixed point before acceptance");
+    const auto saved = iteration.checkpoint();
+
+    const CouplingResidualNorms zeroResiduals{};
+    const std::array<double, 1> fixedPointCandidate{2.0};
+    const auto accepted = iteration.advance(
+        fixedPointCandidate, zeroResiduals);
+    const std::vector<double> acceptedInterface(
+        iteration.currentInterface().begin(),
+        iteration.currentInterface().end());
+    check(accepted.status == StrongCouplingIterationStatus::Converged
+              && accepted.relaxation.completedIterationCount == 3
+              && accepted.relaxation.relaxation == 2.0
+              && accepted.convergence.converged
+              && acceptedInterface == std::vector<double>{2.0},
+          "strong iteration: the solved fixed point reaches a converged terminal state");
+
+    iteration.restore(saved);
+    const auto replay = iteration.advance(
+        fixedPointCandidate, zeroResiduals);
+    check(replay == accepted
+              && iteration.currentInterface().size() == 1
+              && iteration.currentInterface().front() == 2.0,
+          "strong iteration: restored algorithm history replays exactly");
+    const auto terminal = iteration.checkpoint();
+    bool terminalRejected = false;
+    try {
+        static_cast<void>(iteration.advance(
+            fixedPointCandidate, zeroResiduals));
+    } catch (const std::logic_error&) {
+        terminalRejected = true;
+    }
+    check(terminalRejected && iteration.checkpoint() == terminal,
+          "strong iteration: convergence is terminal and immutable");
+
+    iteration.reset(initial);
+    check(iteration.status() == StrongCouplingIterationStatus::Iterating
+              && iteration.completedIterationCount() == 0
+              && iteration.currentInterface().front() == 0.0
+              && iteration.lastRelaxation()
+                  == simwing::fsi::AitkenRelaxationDiagnostics{}
+              && iteration.lastConvergence()
+                  == simwing::fsi::CouplingConvergenceDecision{},
+          "strong iteration: reset starts an exact fresh macro-step");
+}
+
+void testStrongCouplingIterationExhaustionAndTransactionality() {
+    constexpr std::uint64_t definitionFingerprint = 0x5c01'0002ULL;
+    CouplingConvergenceSettings convergenceSettings;
+    convergenceSettings.minimumIterations = 2;
+    convergenceSettings.maximumIterations = 2;
+    convergenceSettings.absoluteDisplacementToleranceMetres = 0.0;
+    convergenceSettings.relativeDisplacementTolerance = 0.0;
+    convergenceSettings.absoluteVelocityToleranceMetersPerSecond = 0.0;
+    convergenceSettings.relativeVelocityTolerance = 0.0;
+    convergenceSettings.absoluteTractionToleranceNewtons = 0.0;
+    convergenceSettings.relativeTractionTolerance = 0.0;
+    const std::array<double, 2> initial{0.0, 0.0};
+    StrongCouplingIteration iteration(
+        definitionFingerprint, initial, {}, convergenceSettings);
+    const CouplingResidualNorms residuals{1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+    const std::array<double, 2> firstCandidate{1.0, -1.0};
+    static_cast<void>(iteration.advance(firstCandidate, residuals));
+
+    const auto beforeFailure = iteration.checkpoint();
+    const std::array<double, 2> nonfiniteCandidate{
+        1.0, std::numeric_limits<double>::quiet_NaN()};
+    expectRejected(
+        [&] {
+            static_cast<void>(iteration.advance(
+                nonfiniteCandidate, residuals));
+        },
+        "strong iteration: invalid candidates are rejected");
+    auto invalidResiduals = residuals;
+    invalidResiduals.tractionNewtons = -1.0;
+    expectRejected(
+        [&] {
+            static_cast<void>(iteration.advance(
+                firstCandidate, invalidResiduals));
+        },
+        "strong iteration: invalid residuals are rejected");
+    check(iteration.checkpoint() == beforeFailure,
+          "strong iteration: failed advances preserve all algorithm state");
+
+    const std::array<double, 2> secondCandidate{0.75, -0.75};
+    const auto exhausted = iteration.advance(secondCandidate, residuals);
+    check(exhausted.status == StrongCouplingIterationStatus::Exhausted
+              && !exhausted.convergence.converged
+              && exhausted.convergence.iterationLimitReached
+              && iteration.status()
+                  == StrongCouplingIterationStatus::Exhausted,
+          "strong iteration: unconverged maximum iteration requests rollback");
+
+    const auto exhaustedCheckpoint = iteration.checkpoint();
+    auto corrupt = exhaustedCheckpoint;
+    corrupt.status = StrongCouplingIterationStatus::Converged;
+    expectRejected(
+        [&] { iteration.restore(corrupt); },
+        "strong iteration: inconsistent terminal checkpoint state is rejected");
+    corrupt = exhaustedCheckpoint;
+    ++corrupt.relaxation.interfaceDefinitionFingerprint;
+    expectRejected(
+        [&] { iteration.restore(corrupt); },
+        "strong iteration: foreign relaxation identity is rejected");
+    corrupt = exhaustedCheckpoint;
+    corrupt.lastRelaxation.residualL2 += 1.0;
+    expectRejected(
+        [&] { iteration.restore(corrupt); },
+        "strong iteration: edited relaxation diagnostics are rejected");
+    corrupt = exhaustedCheckpoint;
+    corrupt.currentInterface.front() =
+        std::numeric_limits<double>::quiet_NaN();
+    expectRejected(
+        [&] { iteration.restore(corrupt); },
+        "strong iteration: non-finite checkpoint interfaces are rejected");
+    check(iteration.checkpoint() == exhaustedCheckpoint,
+          "strong iteration: rejected restores preserve terminal state");
+}
+
 } // namespace
 
 int main() {
@@ -726,6 +888,8 @@ int main() {
     testAitkenVectorCheckpointAndTransactionalFailure();
     testCouplingConvergenceDecision();
     testTopologyBoundCouplingResidualReduction();
+    testStrongCouplingIterationOwnershipAndReplay();
+    testStrongCouplingIterationExhaustionAndTransactionality();
     if (failures != 0) {
         std::fprintf(stderr, "%d SimWing coupling check(s) failed\n", failures);
         return 1;

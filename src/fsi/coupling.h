@@ -11,6 +11,7 @@ namespace simwing::fsi {
 
 inline constexpr std::uint32_t interfaceImpulseExchangeVersion = 1;
 inline constexpr std::uint32_t aitkenRelaxationCheckpointVersion = 1;
+inline constexpr std::uint32_t strongCouplingIterationCheckpointVersion = 1;
 
 struct AitkenRelaxationSettings {
     double initialRelaxation = 0.5;
@@ -139,6 +140,72 @@ struct CouplingConvergenceDecision {
     std::uint64_t iteration,
     const CouplingResidualNorms& residuals,
     const CouplingConvergenceSettings& settings = {});
+
+enum class StrongCouplingIterationStatus : std::uint8_t {
+    Iterating = 1,
+    Converged = 2,
+    Exhausted = 3,
+};
+
+struct StrongCouplingIterationResult {
+    StrongCouplingIterationStatus status =
+        StrongCouplingIterationStatus::Iterating;
+    AitkenRelaxationDiagnostics relaxation;
+    CouplingConvergenceDecision convergence;
+
+    bool operator==(const StrongCouplingIterationResult&) const = default;
+};
+
+struct StrongCouplingIterationCheckpoint {
+    std::uint32_t version = strongCouplingIterationCheckpointVersion;
+    CouplingConvergenceSettings convergenceSettings;
+    AitkenRelaxationCheckpoint relaxation;
+    std::vector<double> currentInterface;
+    StrongCouplingIterationStatus status =
+        StrongCouplingIterationStatus::Iterating;
+    AitkenRelaxationDiagnostics lastRelaxation;
+    CouplingConvergenceDecision lastConvergence;
+
+    bool operator==(
+        const StrongCouplingIterationCheckpoint&) const = default;
+};
+
+// Owns one macro-step's relaxed interface iterate and terminal convergence
+// state. Solver checkpoints remain in their solver owners; this coordinator's
+// checkpoint composes the algorithm state they must save beside them. Advance
+// is transactional and terminal after convergence or budget exhaustion.
+class StrongCouplingIteration final {
+public:
+    StrongCouplingIteration(
+        std::uint64_t interfaceDefinitionFingerprint,
+        std::span<const double> initialInterface,
+        const AitkenRelaxationSettings& relaxationSettings = {},
+        const CouplingConvergenceSettings& convergenceSettings = {});
+
+    [[nodiscard]] std::span<const double> currentInterface() const noexcept;
+    [[nodiscard]] StrongCouplingIterationStatus status() const noexcept;
+    [[nodiscard]] std::uint64_t completedIterationCount() const noexcept;
+    [[nodiscard]] const AitkenRelaxationDiagnostics&
+    lastRelaxation() const noexcept;
+    [[nodiscard]] const CouplingConvergenceDecision&
+    lastConvergence() const noexcept;
+    [[nodiscard]] StrongCouplingIterationCheckpoint checkpoint() const;
+
+    [[nodiscard]] StrongCouplingIterationResult advance(
+        std::span<const double> unrelaxedCandidate,
+        const CouplingResidualNorms& residuals);
+    void restore(const StrongCouplingIterationCheckpoint& checkpoint);
+    void reset(std::span<const double> initialInterface);
+
+private:
+    CouplingConvergenceSettings convergenceSettings_;
+    AitkenInterfaceRelaxation relaxation_;
+    std::vector<double> currentInterface_;
+    StrongCouplingIterationStatus status_ =
+        StrongCouplingIterationStatus::Iterating;
+    AitkenRelaxationDiagnostics lastRelaxation_;
+    CouplingConvergenceDecision lastConvergence_;
+};
 
 struct CouplingNodeImpulse {
     std::uint64_t stableId = 0;

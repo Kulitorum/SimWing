@@ -294,8 +294,12 @@ rollback primitive for future repeated fluid/structure iterations, not yet a
 strong-coupled worker. A companion convergence decision requires displacement,
 velocity, and traction to each pass both an absolute tolerance and a
 floor-stabilized relative tolerance, enforces minimum/maximum iteration counts,
-and reports exhaustion separately so a future coordinator can roll back and
-reduce the macro-step. The macro-step surface now supplies those norms from
+and reports exhaustion separately. A macro-step iteration owner now composes
+that decision with the Aitken state and current relaxed vector. Its checkpoint
+replays the exact next update, failed advances/restores are transactional, and
+converged or exhausted states are terminal; solver checkpoints remain beside
+it for the future worker to restore before retrying a smaller macro-step. The
+macro-step surface supplies the residual norms from
 stable-ID-bound baseline/previous/current kinematics and consecutive nodal
 traction results. It uses maximum physical nodal updates, references motion to
 the saved macro-step baseline so coordinate and bulk-velocity shifts cancel,

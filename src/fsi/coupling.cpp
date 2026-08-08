@@ -145,6 +145,194 @@ CouplingConvergenceDecision evaluateCouplingConvergence(
     return decision;
 }
 
+StrongCouplingIteration::StrongCouplingIteration(
+    const std::uint64_t interfaceDefinitionFingerprint,
+    const std::span<const double> initialInterface,
+    const AitkenRelaxationSettings& relaxationSettings,
+    const CouplingConvergenceSettings& convergenceSettings)
+    : convergenceSettings_(convergenceSettings),
+      relaxation_(interfaceDefinitionFingerprint,
+                  initialInterface.size(),
+                  relaxationSettings),
+      currentInterface_(initialInterface.begin(), initialInterface.end()) {
+    if (!valid(convergenceSettings_) || !finite(currentInterface_)) {
+        throw std::invalid_argument(
+            "strong-coupling initial interface or convergence settings are invalid");
+    }
+}
+
+std::span<const double>
+StrongCouplingIteration::currentInterface() const noexcept {
+    return currentInterface_;
+}
+
+StrongCouplingIterationStatus
+StrongCouplingIteration::status() const noexcept {
+    return status_;
+}
+
+std::uint64_t
+StrongCouplingIteration::completedIterationCount() const noexcept {
+    return relaxation_.completedIterationCount();
+}
+
+const AitkenRelaxationDiagnostics&
+StrongCouplingIteration::lastRelaxation() const noexcept {
+    return lastRelaxation_;
+}
+
+const CouplingConvergenceDecision&
+StrongCouplingIteration::lastConvergence() const noexcept {
+    return lastConvergence_;
+}
+
+StrongCouplingIterationCheckpoint
+StrongCouplingIteration::checkpoint() const {
+    StrongCouplingIterationCheckpoint result;
+    result.convergenceSettings = convergenceSettings_;
+    result.relaxation = relaxation_.checkpoint();
+    result.currentInterface = currentInterface_;
+    result.status = status_;
+    result.lastRelaxation = lastRelaxation_;
+    result.lastConvergence = lastConvergence_;
+    return result;
+}
+
+StrongCouplingIterationResult StrongCouplingIteration::advance(
+    const std::span<const double> unrelaxedCandidate,
+    const CouplingResidualNorms& residuals) {
+    if (status_ != StrongCouplingIterationStatus::Iterating) {
+        throw std::logic_error(
+            "strong-coupling iteration is already terminal");
+    }
+    const std::uint64_t nextIteration =
+        relaxation_.completedIterationCount() + 1;
+    const CouplingConvergenceDecision convergence =
+        evaluateCouplingConvergence(
+            nextIteration, residuals, convergenceSettings_);
+    std::vector<double> nextInterface;
+    const AitkenRelaxationDiagnostics relaxation = relaxation_.relax(
+        currentInterface_, unrelaxedCandidate, nextInterface);
+
+    StrongCouplingIterationStatus nextStatus =
+        StrongCouplingIterationStatus::Iterating;
+    if (convergence.converged) {
+        nextStatus = StrongCouplingIterationStatus::Converged;
+    } else if (convergence.iterationLimitReached) {
+        nextStatus = StrongCouplingIterationStatus::Exhausted;
+    }
+    currentInterface_.swap(nextInterface);
+    status_ = nextStatus;
+    lastRelaxation_ = relaxation;
+    lastConvergence_ = convergence;
+    return {status_, lastRelaxation_, lastConvergence_};
+}
+
+void StrongCouplingIteration::restore(
+    const StrongCouplingIterationCheckpoint& checkpoint) {
+    if (checkpoint.version != strongCouplingIterationCheckpointVersion
+        || checkpoint.convergenceSettings != convergenceSettings_
+        || checkpoint.currentInterface.size() != currentInterface_.size()
+        || !finite(checkpoint.currentInterface)) {
+        throw std::invalid_argument(
+            "strong-coupling iteration checkpoint is incompatible or invalid");
+    }
+
+    const std::uint64_t iteration =
+        checkpoint.relaxation.completedIterationCount;
+    if (iteration == 0) {
+        if (checkpoint.status != StrongCouplingIterationStatus::Iterating
+            || checkpoint.lastRelaxation
+                != AitkenRelaxationDiagnostics{}
+            || checkpoint.lastConvergence
+                != CouplingConvergenceDecision{}) {
+            throw std::invalid_argument(
+                "initial strong-coupling checkpoint has committed diagnostics");
+        }
+    } else {
+        double storedResidualSquared = 0.0;
+        for (const double value : checkpoint.relaxation.previousResidual) {
+            storedResidualSquared += value * value;
+        }
+        const double storedResidualL2 = std::sqrt(storedResidualSquared);
+        const double storedChangeL2 = std::sqrt(
+            checkpoint.lastRelaxation.denominator);
+        const auto& relaxationSettings = relaxation_.settings();
+        if (!checkpoint.lastRelaxation.finite
+            || checkpoint.lastRelaxation.completedIterationCount
+                != iteration
+            || checkpoint.lastRelaxation.relaxation
+                != checkpoint.relaxation.relaxation
+            || !finiteNonnegative(
+                checkpoint.lastRelaxation.residualL2)
+            || !finiteNonnegative(
+                checkpoint.lastRelaxation.residualChangeL2)
+            || !finiteNonnegative(
+                checkpoint.lastRelaxation.denominator)
+            || !std::isfinite(storedResidualL2)
+            || checkpoint.lastRelaxation.residualL2 != storedResidualL2
+            || checkpoint.lastRelaxation.residualChangeL2
+                != storedChangeL2
+            || (iteration == 1
+                && (checkpoint.lastRelaxation.relaxation
+                        != relaxationSettings.initialRelaxation
+                    || checkpoint.lastRelaxation.denominator != 0.0
+                    || checkpoint.lastRelaxation.usedDynamicRelaxation
+                    || checkpoint.lastRelaxation.relaxationWasClipped))
+            || (!checkpoint.lastRelaxation.usedDynamicRelaxation
+                && checkpoint.lastRelaxation.relaxationWasClipped)
+            || (checkpoint.lastRelaxation.usedDynamicRelaxation
+                && !(checkpoint.lastRelaxation.denominator > 0.0))
+            || (checkpoint.lastRelaxation.relaxationWasClipped
+                && checkpoint.lastRelaxation.relaxation
+                    != relaxationSettings.minimumRelaxation
+                && checkpoint.lastRelaxation.relaxation
+                    != relaxationSettings.maximumRelaxation)) {
+            throw std::invalid_argument(
+                "strong-coupling checkpoint relaxation diagnostics are invalid");
+        }
+        const CouplingConvergenceDecision expected =
+            evaluateCouplingConvergence(
+                iteration,
+                checkpoint.lastConvergence.residuals,
+                convergenceSettings_);
+        const StrongCouplingIterationStatus expectedStatus =
+            expected.converged
+            ? StrongCouplingIterationStatus::Converged
+            : (expected.iterationLimitReached
+                ? StrongCouplingIterationStatus::Exhausted
+                : StrongCouplingIterationStatus::Iterating);
+        if (checkpoint.lastConvergence != expected
+            || checkpoint.status != expectedStatus) {
+            throw std::invalid_argument(
+                "strong-coupling checkpoint convergence state is invalid");
+        }
+    }
+
+    std::vector<double> restoredInterface = checkpoint.currentInterface;
+    relaxation_.restore(checkpoint.relaxation);
+    currentInterface_.swap(restoredInterface);
+    status_ = checkpoint.status;
+    lastRelaxation_ = checkpoint.lastRelaxation;
+    lastConvergence_ = checkpoint.lastConvergence;
+}
+
+void StrongCouplingIteration::reset(
+    const std::span<const double> initialInterface) {
+    if (initialInterface.size() != currentInterface_.size()
+        || !finite(initialInterface)) {
+        throw std::invalid_argument(
+            "strong-coupling reset interface is invalid");
+    }
+    std::vector<double> resetInterface(
+        initialInterface.begin(), initialInterface.end());
+    relaxation_.reset();
+    currentInterface_.swap(resetInterface);
+    status_ = StrongCouplingIterationStatus::Iterating;
+    lastRelaxation_ = {};
+    lastConvergence_ = {};
+}
+
 AitkenInterfaceRelaxation::AitkenInterfaceRelaxation(
     const std::uint64_t interfaceDefinitionFingerprint,
     const std::size_t valueCount,
