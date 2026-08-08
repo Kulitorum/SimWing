@@ -283,6 +283,102 @@ void testFrameRejectsUnacceptedState() {
         "periodic fluid frame rejects an unaccepted solver state");
 }
 
+void testCheckpointValidationAndReplay() {
+    fsi::PeriodicFlowCase initialWorker;
+    const auto initial = initialWorker.checkpoint();
+    const auto expectedFirst = initialWorker.advance();
+    initialWorker.restore(initial);
+    const auto restoredFirst = initialWorker.advance();
+    check(initial.version == fsi::periodicFlowCaseCheckpointVersion
+              && initial.caseDefinitionFingerprint
+                  == fsi::periodicFlowCaseDefinitionFingerprint
+              && initial.acceptedStepCount == 0
+              && initial.simulationTimeSeconds == 0.0
+              && serialized(expectedFirst) == serialized(restoredFirst),
+          "periodic checkpoint restores and replays the initial state");
+
+    fsi::PeriodicFlowCase simulation;
+    constexpr std::uint64_t savedSteps = 9;
+    for (std::uint64_t step = 0; step < savedSteps; ++step) {
+        static_cast<void>(simulation.advance());
+    }
+    const auto saved = simulation.checkpoint();
+    const auto savedVelocity = simulation.velocity();
+    const auto savedPressure = simulation.pressure();
+    const auto savedDiagnostics = simulation.diagnostics();
+    const auto expectedNext = simulation.advance();
+    for (std::uint64_t step = 0; step < 4; ++step) {
+        static_cast<void>(simulation.advance());
+    }
+    simulation.restore(saved);
+    check(saved.cellCounts == simulation.grid().cellCounts()
+              && saved.lowerMeters == simulation.grid().lowerMeters()
+              && saved.upperMeters == simulation.grid().upperMeters()
+              && saved.scalarSampleCount == simulation.grid().cellCount()
+              && saved.acceptedStepCount == savedSteps
+              && saved.simulationTimeSeconds
+                  == simulation.simulationTimeSeconds()
+              && simulation.velocity() == savedVelocity
+              && simulation.pressure() == savedPressure
+              && simulation.diagnostics() == savedDiagnostics,
+          "periodic checkpoint restores fields, diagnostics, step, and time");
+    const auto restoredNext = simulation.advance();
+    check(serialized(expectedNext) == serialized(restoredNext),
+          "periodic checkpoint continuation replays bit-for-bit");
+
+    fsi::PeriodicFlowCase rebuiltWorker;
+    rebuiltWorker.restore(saved);
+    const auto rebuiltNext = rebuiltWorker.advance();
+    check(serialized(expectedNext) == serialized(rebuiltNext),
+          "equivalent rebuilt periodic worker resumes bit-for-bit");
+
+    const auto beforeInvalidVelocity = simulation.velocity();
+    const auto beforeInvalidPressure = simulation.pressure();
+    const auto beforeInvalidDiagnostics = simulation.diagnostics();
+    const std::uint64_t beforeInvalidStep = simulation.acceptedStepCount();
+    const double beforeInvalidTime = simulation.simulationTimeSeconds();
+    auto wrongVersion = saved;
+    ++wrongVersion.version;
+    expectRejected(
+        [&] { simulation.restore(wrongVersion); },
+        "periodic checkpoint rejects an unsupported version");
+    auto wrongDefinition = saved;
+    ++wrongDefinition.caseDefinitionFingerprint;
+    expectRejected(
+        [&] { simulation.restore(wrongDefinition); },
+        "periodic checkpoint rejects a foreign case definition");
+    auto wrongStep = saved;
+    ++wrongStep.acceptedStepCount;
+    expectRejected(
+        [&] { simulation.restore(wrongStep); },
+        "periodic checkpoint rejects corrupted step metadata");
+    auto wrongTime = saved;
+    wrongTime.simulationTimeSeconds += 1.0;
+    expectRejected(
+        [&] { simulation.restore(wrongTime); },
+        "periodic checkpoint rejects corrupted time metadata");
+    auto wrongGrid = saved;
+    ++wrongGrid.cellCounts.x;
+    expectRejected(
+        [&] { simulation.restore(wrongGrid); },
+        "periodic checkpoint rejects corrupted grid metadata");
+    auto wrongSampleCount = saved;
+    ++wrongSampleCount.scalarSampleCount;
+    expectRejected(
+        [&] { simulation.restore(wrongSampleCount); },
+        "periodic checkpoint rejects corrupted sample metadata");
+    const fsi::PeriodicFlowCaseCheckpoint empty;
+    expectRejected(
+        [&] { simulation.restore(empty); },
+        "periodic checkpoint rejects a missing immutable payload");
+    check(simulation.velocity() == beforeInvalidVelocity
+              && simulation.pressure() == beforeInvalidPressure
+              && simulation.diagnostics() == beforeInvalidDiagnostics
+              && simulation.acceptedStepCount() == beforeInvalidStep
+              && simulation.simulationTimeSeconds() == beforeInvalidTime,
+          "rejected periodic checkpoint restores leave the worker untouched");
+}
+
 void testCompletedTrace() {
     fsi::PeriodicFlowCase simulation;
     std::stringstream trace(std::ios::in | std::ios::out | std::ios::binary);
@@ -329,6 +425,7 @@ int main() {
     testCellDiagnosticsRejectInvalidInputs();
     testDeterministicAcceptedFrames();
     testFrameRejectsUnacceptedState();
+    testCheckpointValidationAndReplay();
     testCompletedTrace();
     if (failures != 0) {
         std::fprintf(stderr,

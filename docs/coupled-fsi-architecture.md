@@ -445,9 +445,15 @@ finite-volume divergence and a diagnostic centred periodic curl of the sampled
 velocity. The unchanged frame protocol carries those fields to the viewer for
 scalar-coloured point rendering. A separate Qt-free geometry target
 turns selected vertex vectors into normalized arrows with a deterministic glyph
-budget, allowing pressure or speed colouring and velocity direction to remain
-visible together. This is inspectable verification flow, not a whole-wing CFD
-claim.
+budget, allowing scalar colouring and selected velocity or vorticity direction
+to remain visible together. This is inspectable verification flow, not a
+whole-wing CFD claim.
+Periodic worker advance now keeps the solver candidates private through frame
+validation and commits fields, diagnostics, step, and time together. Its
+versioned in-memory checkpoint binds those committed values to exact grid
+metadata and a case-definition fingerprint; initial-state, same-worker, and
+equivalent rebuilt-worker continuations replay bit-for-bit. Persistent files
+and checkpoint control messages remain separate future boundaries.
 The exact-model capture now exports validated scene-v2.1 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical
@@ -744,6 +750,10 @@ frames must reproduce the finite-volume divergence bit-for-bit and retain exact
 vorticity vector/magnitude agreement. A completed five-frame trace must replay
 consecutive accepted steps, and the headless CLI must write a completed trace
 without linking or launching Qt.
+The case checkpoint must restore the initial state and a later accepted state,
+then reproduce the next frame bit-for-bit in both the original and an equivalent
+rebuilt worker. Version, case fingerprint, grid, sample count, step, time, and
+payload presence are independently rejected before mutation.
 The Qt-free viewer-geometry regression separately requires exact arrow shaft
 direction and relative magnitude, one shaft plus two arrowhead segments per
 retained nonzero vector, dimensional automatic scaling, owning deterministic

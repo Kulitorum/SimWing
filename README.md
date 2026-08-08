@@ -95,6 +95,12 @@ Arrow construction is
 Qt-free, owning, deterministically bounded for large fields, and has no path
 back into solver data. This makes the verification flow inspectable without
 making it a cut-cell, canopy, or aerodynamic-truth case.
+The periodic worker advances candidates through frame validation before
+committing them. Its immutable in-memory checkpoint binds the exact grid and
+case definition to pressure, velocity, last accepted diagnostics, step, and
+time; the initial state and later accepted states resume bit-for-bit in the
+same or an equivalent rebuilt worker. Persistent checkpoint files and worker
+control messages remain future protocol work.
 Both the projected transport and Strang flow paths select donor-cell or limited
 monotonized-central reconstruction explicitly; donor-cell remains the default.
 The original single-stage transport and Euler/SSPRK2 viscosity modes compose

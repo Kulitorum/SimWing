@@ -1,8 +1,10 @@
 #include "periodic_flow_case.h"
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <stdexcept>
+#include <utility>
 
 namespace simwing::fsi {
 namespace {
@@ -56,7 +58,65 @@ fluid::PeriodicFlowStrangSubcyclingSettings makeStepSettings() {
     return result;
 }
 
+bool gridMetadataMatches(const fluid::PeriodicCartesianGrid& grid,
+                         const fluid::GridCellCounts cellCounts,
+                         const fluid::Vector3 lowerMeters,
+                         const fluid::Vector3 upperMeters) noexcept {
+    return grid.cellCounts() == cellCounts
+        && grid.lowerMeters() == lowerMeters
+        && grid.upperMeters() == upperMeters;
+}
+
+bool validCommittedState(
+    const std::uint64_t acceptedStepCount,
+    const double simulationTimeSeconds,
+    const fluid::PeriodicFlowStrangSubcyclingSettings& settings,
+    const fluid::PeriodicFlowStrangSubcyclingDiagnostics& diagnostics) {
+    const double expectedTime = static_cast<double>(acceptedStepCount)
+        * settings.flow.timeStepSeconds;
+    if (!std::isfinite(simulationTimeSeconds)
+        || simulationTimeSeconds < 0.0
+        || std::abs(simulationTimeSeconds - expectedTime)
+            > 1.0e-12 * std::max(1.0, std::abs(expectedTime))) {
+        return false;
+    }
+    if (acceptedStepCount == 0) {
+        return diagnostics
+            == fluid::PeriodicFlowStrangSubcyclingDiagnostics{};
+    }
+    return diagnostics.version == fluid::periodicFlowStrangSubcyclingVersion
+        && diagnostics.requestedIntervalSeconds
+            == settings.flow.timeStepSeconds
+        && std::isfinite(diagnostics.substepSeconds)
+        && diagnostics.substepSeconds > 0.0
+        && diagnostics.plannedSubstepCount > 0
+        && diagnostics.completedSubstepCount
+            == diagnostics.plannedSubstepCount
+        && diagnostics.substeps.size()
+            == diagnostics.plannedSubstepCount
+        && std::ranges::all_of(
+            diagnostics.substeps,
+            [](const auto& substep) {
+                return substep.finite && substep.accepted;
+            })
+        && diagnostics.failureStage
+            == fluid::PeriodicFlowStrangSubcyclingFailureStage::None
+        && diagnostics.finite
+        && diagnostics.accepted;
+}
+
 } // namespace
+
+struct PeriodicFlowCaseCheckpoint::Detail {
+    fluid::GridCellCounts cellCounts;
+    fluid::Vector3 lowerMeters;
+    fluid::Vector3 upperMeters;
+    fluid::MacVelocityField velocityMetersPerSecond;
+    fluid::CellScalarField pressurePascals;
+    fluid::PeriodicFlowStrangSubcyclingDiagnostics diagnostics;
+    std::uint64_t acceptedStepCount = 0;
+    double simulationTimeSeconds = 0.0;
+};
 
 PeriodicFlowCase::PeriodicFlowCase()
     : grid_(makeGrid()),
@@ -69,23 +129,109 @@ viewer::TraceHeader PeriodicFlowCase::traceHeader() const {
 }
 
 viewer::DiagnosticFrame PeriodicFlowCase::advance() {
-    diagnostics_ = fluid::advancePeriodicFlowStrangSspRk2Subcycled(
-        grid_, velocity_, pressure_, stepSettings_);
-    if (!diagnostics_.accepted) {
+    fluid::MacVelocityField candidateVelocity = velocity_;
+    fluid::CellScalarField candidatePressure = pressure_;
+    fluid::PeriodicFlowStrangSubcyclingDiagnostics candidateDiagnostics =
+        fluid::advancePeriodicFlowStrangSspRk2Subcycled(
+            grid_, candidateVelocity, candidatePressure, stepSettings_);
+    if (!candidateDiagnostics.accepted) {
         throw std::runtime_error(
             "periodic flow case rejected its requested outer interval");
     }
-    ++acceptedStepCount_;
-    simulationTimeSeconds_ += stepSettings_.flow.timeStepSeconds;
+    const std::uint64_t candidateStep = acceptedStepCount_ + 1;
+    const double candidateTime = simulationTimeSeconds_
+        + stepSettings_.flow.timeStepSeconds;
     viewer::PeriodicFluidFrameContext context;
     context.sceneChecksum = periodicFlowCaseChecksum;
     context.solverCommit = periodicFlowCaseSolverId;
-    context.step = acceptedStepCount_;
-    context.simulationTimeSeconds = simulationTimeSeconds_;
+    context.step = candidateStep;
+    context.simulationTimeSeconds = candidateTime;
     context.densityKgPerCubicMeter =
         stepSettings_.flow.densityKgPerCubicMeter;
-    return viewer::buildPeriodicFluidFrame(
-        grid_, velocity_, pressure_, diagnostics_, context);
+    viewer::DiagnosticFrame frame = viewer::buildPeriodicFluidFrame(
+        grid_, candidateVelocity, candidatePressure,
+        candidateDiagnostics, context);
+    velocity_ = std::move(candidateVelocity);
+    pressure_ = std::move(candidatePressure);
+    diagnostics_ = std::move(candidateDiagnostics);
+    acceptedStepCount_ = candidateStep;
+    simulationTimeSeconds_ = candidateTime;
+    return frame;
+}
+
+PeriodicFlowCaseCheckpoint PeriodicFlowCase::checkpoint() const {
+    if (!fluid::isFinite(velocity_) || !fluid::isFinite(pressure_)
+        || !validCommittedState(
+            acceptedStepCount_, simulationTimeSeconds_,
+            stepSettings_, diagnostics_)) {
+        throw std::logic_error(
+            "periodic flow case cannot checkpoint invalid committed state");
+    }
+
+    PeriodicFlowCaseCheckpoint result;
+    result.cellCounts = grid_.cellCounts();
+    result.lowerMeters = grid_.lowerMeters();
+    result.upperMeters = grid_.upperMeters();
+    result.scalarSampleCount = grid_.cellCount();
+    result.acceptedStepCount = acceptedStepCount_;
+    result.simulationTimeSeconds = simulationTimeSeconds_;
+    result.detail = std::make_shared<PeriodicFlowCaseCheckpoint::Detail>(
+        PeriodicFlowCaseCheckpoint::Detail{
+            result.cellCounts,
+            result.lowerMeters,
+            result.upperMeters,
+            velocity_,
+            pressure_,
+            diagnostics_,
+            acceptedStepCount_,
+            simulationTimeSeconds_,
+        });
+    return result;
+}
+
+void PeriodicFlowCase::restore(
+    const PeriodicFlowCaseCheckpoint& checkpointValue) {
+    if (checkpointValue.version != periodicFlowCaseCheckpointVersion
+        || checkpointValue.caseDefinitionFingerprint
+            != periodicFlowCaseDefinitionFingerprint
+        || !checkpointValue.detail
+        || checkpointValue.cellCounts != checkpointValue.detail->cellCounts
+        || checkpointValue.lowerMeters != checkpointValue.detail->lowerMeters
+        || checkpointValue.upperMeters != checkpointValue.detail->upperMeters
+        || checkpointValue.scalarSampleCount != grid_.cellCount()
+        || checkpointValue.acceptedStepCount
+            != checkpointValue.detail->acceptedStepCount
+        || checkpointValue.simulationTimeSeconds
+            != checkpointValue.detail->simulationTimeSeconds
+        || !gridMetadataMatches(
+            grid_, checkpointValue.cellCounts,
+            checkpointValue.lowerMeters, checkpointValue.upperMeters)
+        || !validCommittedState(
+            checkpointValue.detail->acceptedStepCount,
+            checkpointValue.detail->simulationTimeSeconds,
+            stepSettings_, checkpointValue.detail->diagnostics)) {
+        throw std::invalid_argument(
+            "periodic flow case checkpoint metadata is invalid");
+    }
+
+    fluid::MacVelocityField candidateVelocity =
+        checkpointValue.detail->velocityMetersPerSecond;
+    fluid::CellScalarField candidatePressure =
+        checkpointValue.detail->pressurePascals;
+    auto candidateDiagnostics = checkpointValue.detail->diagnostics;
+    if (!candidateVelocity.matches(grid_)
+        || !candidatePressure.matches(grid_)
+        || !fluid::isFinite(candidateVelocity)
+        || !fluid::isFinite(candidatePressure)) {
+        throw std::invalid_argument(
+            "periodic flow case checkpoint payload is invalid");
+    }
+
+    velocity_ = std::move(candidateVelocity);
+    pressure_ = std::move(candidatePressure);
+    diagnostics_ = std::move(candidateDiagnostics);
+    acceptedStepCount_ = checkpointValue.acceptedStepCount;
+    simulationTimeSeconds_ = checkpointValue.simulationTimeSeconds;
 }
 
 const fluid::PeriodicCartesianGrid& PeriodicFlowCase::grid() const noexcept {
