@@ -28,6 +28,7 @@ struct ProjectionDiagnostics {
     double kineticEnergyBeforeJoules = 0.0;
     double kineticEnergyAfterJoules = 0.0;
     double pressureMeanPascals = 0.0;
+    // Number of authored sharp crossings; several may share one grid face.
     std::size_t pressureJumpFaceCount = 0;
     double pressureJumpSourceCompatibilityPascalsPerSquareMeter = 0.0;
 
@@ -46,7 +47,7 @@ struct ProjectionDiagnostics {
 
 // Applies the same transactional projection with a prescribed sharp,
 // two-sided pressure discontinuity. Empty jump fields take the exact no-jump
-// path. The current jump representation permits one crossing per grid face.
+// path. Ordered multiple crossings on one face contribute their signed sum.
 [[nodiscard]] ProjectionDiagnostics projectVelocityWithPressureJumps(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& predictedVelocityMetersPerSecond,

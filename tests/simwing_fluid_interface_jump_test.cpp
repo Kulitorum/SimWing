@@ -149,11 +149,143 @@ void testValidationAndCanonicalization() {
     invalid = authored;
     invalid.push_back({30, 1, 2, GridFaceAxis::X, 1, 0, 0, 7.0});
     expectRejected(grid, invalid,
-                   "validation: multiple crossings on one face are explicit unsupported topology");
+                   "validation: coincident crossings on one face are ambiguous");
+    invalid = authored;
+    invalid[0].crossingFraction = 0.0;
+    expectRejected(grid, invalid,
+                   "validation: a crossing at a cell centre is rejected");
+    invalid = authored;
+    invalid[0].crossingFraction =
+        std::numeric_limits<double>::quiet_NaN();
+    expectRejected(grid, invalid,
+                   "validation: a non-finite crossing position is rejected");
+    invalid = authored;
+    invalid[1].crossingFraction = 0.25;
+    invalid.push_back({30, 3, 2, GridFaceAxis::X,
+                       1, 0, 0, -7.0, 0.75});
+    expectRejected(grid, invalid,
+                   "validation: multiple crossings require a continuous region chain");
+    invalid = {
+        {40, 1, 2, GridFaceAxis::X, 2, 0, 0,
+         std::numeric_limits<double>::max(), 0.25},
+        {50, 2, 3, GridFaceAxis::X, 2, 0, 0,
+         std::numeric_limits<double>::max(), 0.75},
+    };
+    expectRejected(grid, invalid,
+                   "validation: a non-finite aggregate face jump is rejected");
     invalid = authored;
     invalid.push_back({10, 3, 4, GridFaceAxis::X, 2, 0, 0, 1.0});
     expectRejected(grid, invalid,
                    "validation: one surface ID cannot alias different region pairs");
+}
+
+void testOrderedMultipleCrossings() {
+    const PeriodicCartesianGrid grid(
+        {4, 3, 2}, {}, {2.0, 3.0, 4.0});
+    const std::vector<GridFacePressureJump> authored = {
+        {30, 2, 3, GridFaceAxis::X, 2, 1, 0, -20.0, 0.75},
+        {20, 1, 2, GridFaceAxis::X, 2, 1, 0, 70.0, 0.25},
+    };
+    auto reversed = authored;
+    std::reverse(reversed.begin(), reversed.end());
+    const SharpPressureJumpField first(grid, authored);
+    const SharpPressureJumpField second(grid, reversed);
+    const auto faceIndex = grid.cellIndex(2, 1, 0);
+    check(first == second
+              && first.faceCount() == 2
+              && first.faces()[0].surfaceStableId == 20
+              && first.faces()[1].surfaceStableId == 30,
+          "multiple crossings: normal position canonicalizes authored order");
+    checkNear(first.xFaceJumpsPascals()[faceIndex], 50.0, 0.0,
+              "multiple crossings: dense stencil retains the signed "
+              "chain sum");
+
+    CellScalarField pressure(grid);
+    pressure.values()[faceIndex] = 50.0;
+    MacVelocityField gradient(grid);
+    computePressureGradientWithJumps(grid, pressure, first, gradient);
+    checkNear(gradient.xFaces()[faceIndex], 0.0, 0.0,
+              "multiple crossings: aggregate jump removes the local "
+              "pressure discontinuity");
+    CellScalarField source(grid);
+    computePressureJumpSource(grid, first, source);
+    const auto minusCell = grid.cellIndex(1, 1, 0);
+    checkNear(source.values()[minusCell], 200.0, 0.0,
+              "multiple crossings: minus cell receives the aggregate source");
+    checkNear(source.values()[faceIndex], -200.0, 0.0,
+              "multiple crossings: plus cell receives the aggregate source");
+
+    const SharpPressureJumpField foldedPocket(grid, {
+        {40, 1, 2, GridFaceAxis::X, 3, 2, 1, 70.0, 0.2},
+        {40, 2, 1, GridFaceAxis::X, 3, 2, 1, -70.0, 0.8},
+    });
+    const auto pocketFace = grid.cellIndex(3, 2, 1);
+    check(foldedPocket.faceCount() == 2
+              && foldedPocket.xFaceJumpsPascals()[pocketFace] == 0.0,
+          "multiple crossings: a closed subcell pocket retains both "
+          "surfaces and zero net stencil jump");
+    MacVelocityField pocketVelocity(grid);
+    const MacVelocityField zeroVelocity(grid);
+    CellScalarField pocketPressure(grid);
+    const auto pocketDiagnostics = projectVelocityWithPressureJumps(
+        grid, pocketVelocity, pocketPressure, foldedPocket,
+        strictSettings());
+    check(pocketDiagnostics.converged
+              && pocketDiagnostics.pressureJumpFaceCount == 2
+              && maximumAbsoluteValue(pocketPressure) == 0.0
+              && pocketVelocity == zeroVelocity,
+          "multiple crossings: a balanced folded pocket creates no "
+          "spurious pressure or flow");
+}
+
+void testMultipleCrossingStaticSlabProjection() {
+    const auto grid = testGrid();
+    constexpr double jumpPascals = 250.0;
+    std::vector<GridFacePressureJump> splitFaces;
+    const auto counts = grid.cellCounts();
+    splitFaces.reserve(4 * counts.y * counts.z);
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            splitFaces.push_back({
+                110, 1, 3, GridFaceAxis::X,
+                4, j, k, 100.0, 0.2});
+            splitFaces.push_back({
+                120, 3, 2, GridFaceAxis::X,
+                4, j, k, 150.0, 0.8});
+            splitFaces.push_back({
+                130, 2, 4, GridFaceAxis::X,
+                11, j, k, -150.0, 0.2});
+            splitFaces.push_back({
+                140, 4, 1, GridFaceAxis::X,
+                11, j, k, -100.0, 0.8});
+        }
+    }
+    const SharpPressureJumpField compact = staticSlabJumps(
+        grid, jumpPascals);
+    const SharpPressureJumpField split(grid, std::move(splitFaces));
+    MacVelocityField compactVelocity(grid);
+    MacVelocityField splitVelocity(grid);
+    CellScalarField compactPressure(grid);
+    CellScalarField splitPressure(grid);
+    const auto compactDiagnostics = projectVelocityWithPressureJumps(
+        grid, compactVelocity, compactPressure, compact,
+        strictSettings());
+    const auto splitDiagnostics = projectVelocityWithPressureJumps(
+        grid, splitVelocity, splitPressure, split,
+        strictSettings());
+    check(compactDiagnostics.converged && splitDiagnostics.converged
+              && splitDiagnostics.pressureJumpFaceCount
+                  == 4 * counts.y * counts.z,
+          "multiple crossings: split static-slab projection accepts every "
+          "authored crossing");
+    check(split.xFaceJumpsPascals()
+                  [grid.cellIndex(4, 0, 0)] == jumpPascals
+              && split.xFaceJumpsPascals()
+                     [grid.cellIndex(11, 0, 0)] == -jumpPascals
+              && compactVelocity == splitVelocity
+              && compactPressure == splitPressure,
+          "multiple crossings: split and compact region chains produce "
+          "bit-identical sharp projection state");
 }
 
 void testSharpGradientAndSourcePairing() {
@@ -429,6 +561,8 @@ void testEmptyEquivalenceMismatchAndRollback() {
 
 int main() {
     testValidationAndCanonicalization();
+    testOrderedMultipleCrossings();
+    testMultipleCrossingStaticSlabProjection();
     testSharpGradientAndSourcePairing();
     testAllAxisJumpStencilsAndPeriodicMinusCells();
     testStaticPressureJumpProjection();

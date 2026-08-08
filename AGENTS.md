@@ -191,8 +191,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   bending, junction, and cable assembly into `simwing_structure`.
 - `simwing_fluid`: Qt-free periodic staggered-grid field operators and
   transactional pressure projection verification kernel, including a
-  validated single-crossing sharp pressure-jump field and fixed-topology,
-  face-aligned moving-interface constraints. Its first open planar
+  validated ordered multi-crossing sharp pressure-jump field and
+  fixed-topology, face-aligned moving-interface constraints. Its first open planar
   control-volume operator closes partial-cell geometry, surface sweep, and
   resolved-opening transport, then transactionally rebases by one MAC face at
   an exact crossing. A separate bounded planar cut-surface operator places the
@@ -778,8 +778,10 @@ makes this a certified aerodynamic solver.
   calls the accepted-state checkpoint validator before committing its output.
 - `src/fsi/fluid/interface_jump.{h,cpp}` owns canonical grid-face crossings,
   signed two-region pressure jumps, the jump-corrected gradient, and its paired
-  Poisson source. It rejects multiple crossings on one face until the folded
-  interface representation exists.
+  Poisson source. Crossings on the same face-normal cell segment retain stable
+  surface identity, have distinct open-interval positions, and must form an
+  ordered continuous region chain. The dense stencil uses their deterministic
+  signed sum; this static pressure-jump subset is not moving folded topology.
 - `src/fsi/fluid/moving_interface.{h,cpp}` owns physically grid-bound MAC-face
   velocity constraints and their stable connected fluid regions. Its
   disconnected projection preserves one prior pressure mean per region,
@@ -802,8 +804,8 @@ makes this a certified aerodynamic solver.
   reference layer on the next positive-axis MAC plane while preserving stable
   IDs and chamber volume; it rejects skipped planes, changed regions, broken
   ledgers, and collision with the opening. General cut-cell pressure metrics,
-  nonplanar topology events, folded surfaces, and multiple crossings per face
-  remain future work.
+  nonplanar topology events, folded moving surfaces, and multiple crossings in
+  moving/cut-cell topology remain future work.
 - `src/fsi/fluid/planar_cut_surface.{h,cpp}` owns the bounded physical-plane
   pressure-reaction geometry for that control volume. It retains each canonical
   MAC tile as the Eulerian source, translates its application rectangle to the
@@ -892,6 +894,12 @@ paths that release CI deliberately excludes from its offscreen test command.
 | SimWing macro-step coupling | `simwing_coupling`; preserve strictly ordered local sample time, topology/duration binding, analytic moving-piston impulse and pressure-volume work, independent temporal ledger closure, momentum delivery through XPBD, deterministic replay, and pre-load checkpoint rollback on failure |
 | SimWing fluid/structure bridge and piston workers | `simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing_open_piston_case`, `simwing_fsi_piston_headless`, `simwing_fsi_open_piston_headless`, `simwing_fsi_open_piston_rebase_headless`, `simwing_fsi_open_piston_checkpoint_write`, `simwing_fsi_open_piston_checkpoint_resume`, `simwing_fsi_open_piston_checkpoint_verify`, `simwing_fsi_open_piston_rejects_foreign_checkpoint`; preserve the strict uniform subset, planar face-resolved nonuniform transfer, stable surface/geometry binding, complete nonoverlapping coverage, per-face and aggregate area/force/moment/power closure, rigid-normal X/Y/Z grid/physical-plane correspondence and velocity binding, analytic impulse delivery, explicit actuator-versus-complete-CFD reaction, bit-identical replay through periodic topology crossings and composite checkpoint restore, deterministic bounded/checksummed composite persistence, ordinary/rebased decode-reencode and next-frame equivalence, transactional magic/version/checksum/truncation/trailing/topology/limit rejection including recomputed-checksum diagnostic identity/geometry/acceptance corruption, atomic same-path additional-step resume from a rebase epoch, absolute autosave cadence, final-write deduplication, cross-format rejection before trace creation, open-piston structure/fluid/actuator/system momentum residual below `1e-8 N*s` and energy residual below `2e-9 J`, accepted-only frames, and Qt-free headless execution |
 | packaging/resources/CMake | configure from clean metadata, build Release, and run the full suite |
+
+For `simwing_fluid_interface_jump`, static sharp-jump balance includes ordered
+same-face crossings, distinct open-interval positions, continuous region-chain
+validation, deterministic signed aggregation, bit-identical split/compact slab
+projection, and zero spurious pressure/flow for a balanced folded subcell
+pocket. This does not close the moving folded-interface gate.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

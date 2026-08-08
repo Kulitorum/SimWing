@@ -528,7 +528,9 @@ composite transaction. Both the opaque SoftBody payload and the public
 suspension/rigid-payload checkpoint have bounded, checksummed deterministic
 codecs whose decode is bound to equivalent rebuilt topology and stable
 identities. The enclosing Structure format now composes both and validates via
-an equivalent rebuilt adapter; the open-piston file format remains open. The
+an equivalent rebuilt adapter. The bounded/checksummed open-piston format nests
+that Structure state with its accepted moving-interface fluid epoch and
+semantically revalidates every committed diagnostic ledger. The
 real 3.28 regression now reaches an accepted coupled
 structural step and replayable diagnostic trace with synthetic physical export
 settings. Manufacturing flat-pattern UVs, exact authored line-attachment
@@ -621,11 +623,14 @@ Regressions are bit-identical to their standalone uniform/nonlinear transport
 and Euler/SSPRK2 diffusion stages, retain every stage diagnostic, and reject at
 advection, diffusion, or projection without changing either input field. This
 is the first complete nonlinear evolution path; its single-stage transport and
-operator splitting remain first order. A canonical single-crossing
-grid-face field now retains stable surface IDs, two distinct fluid-region IDs,
-and the signed pressure discontinuity. Its paired sharp gradient and Poisson
-source preserve a static pressurized slab without smoothing the pressure or
-creating flow. A separate physically grid-bound face-aligned interface now
+operator splitting remain first order. A canonical ordered grid-face field now
+retains every stable surface ID, two-sided fluid-region transition, normal
+crossing position, and signed pressure discontinuity. Multiple crossings on
+one face-normal cell segment must form a continuous region chain; its paired
+sharp gradient and Poisson source use their deterministic signed sum. A split
+static slab is bit-identical to the compact jump, while a balanced folded
+subcell pocket creates no pressure or flow. A separate physically grid-bound
+face-aligned interface now
 removes constrained faces from the pressure graph, partitions cells into stable
 fluid regions, and holds prescribed normal MAC velocity exactly while solving
 one zero-mean pressure correction per region. The prior mean pressure in each
@@ -804,9 +809,11 @@ transactional. Accepted moving-interface state now also has a versioned,
 immutable checkpoint bound to exact grid geometry and a stable topology
 fingerprint, plus deterministic bounded persistent serialization of its exact
 fields, interface kinematics, topology, and nested projection diagnostics. It
-also owns a canonical single-crossing sharp pressure-jump
-field with explicit surface and two-sided region identity; duplicate crossings
-on one grid face are rejected rather than merged. The regression budgets are:
+also owns a canonical ordered sharp pressure-jump field with explicit
+surface, two-sided region identity, and normal crossing position. Multiple
+crossings on one grid face retain their individual metadata, require a
+continuous region chain, and contribute through one deterministic aggregate
+stencil jump. The regression budgets are:
 gradient/divergence adjoint error at or below `2e-14` in the canonical
 integral, Taylor-Green maximum divergence below `2e-14 1/s` with a
 bit-identical zero correction, discretely manufactured post-projection L2

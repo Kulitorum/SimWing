@@ -136,9 +136,13 @@ momentum/energy ledger all pass. Focused rollback cases fail each stage
 independently without changing either caller field. This remains a periodic
 verification kernel; general cut-cell evolution and whole-wing CFD are not yet
 implemented.
-A validated single-crossing sharp-interface
-field now preserves a prescribed two-sided static pressure jump without
-smearing or spurious flow, including across the periodic domain boundary.
+A validated ordered sharp-interface field now preserves prescribed two-sided
+static pressure jumps without smearing or spurious flow, including across the
+periodic domain boundary. Multiple crossings on one face-normal cell segment
+retain their stable surfaces and region sequence while the paired gradient and
+Poisson stencils use their deterministic signed sum. A split-region slab is
+bit-identical to its compact jump and a balanced folded subcell pocket creates
+no spurious pressure or flow.
 Face-aligned moving membranes can now partition stable fluid regions, impose
 an exact normal MAC velocity, and project each region transactionally while
 retaining its prior pressure gauge. A translating sealed-slab canonical closes
@@ -219,7 +223,8 @@ Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,
 general cut-cell pressure metrics, nonplanar topology events, multiple crossings
-per face, and AMR CFD remain open. These worker cases validate the pipeline;
+in moving/cut-cell topology, and AMR CFD remain open. These worker cases
+validate the pipeline;
 they are not yet wing CFD or aerodynamic truth.
 The inherited Playground is not used by these targets.
 

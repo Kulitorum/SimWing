@@ -14,15 +14,20 @@ enum class GridFaceAxis : std::uint8_t {
     Z = 2,
 };
 
-// One sharp crossing on a periodic MAC face. The indexed face separates the
-// previous cell in axis direction from the cell at (i,j,k). Region IDs and the
-// signed pressure jump follow that -axis to +axis traversal:
+// One sharp crossing along the cell-centre segment normal to a periodic MAC
+// face. The indexed face separates the previous cell in axis direction from
+// the cell at (i,j,k). crossingFraction is the open-interval position on that
+// -axis to +axis segment. Region IDs and the signed pressure jump follow the
+// same traversal:
 //
 //     pressureJumpPascals = p(plusRegion) - p(minusRegion)
 //
 // surfaceStableId identifies the oriented discrete-surface entity responsible
-// for the crossing. Multiple crossings on one grid face are deliberately
-// rejected by this first kernel rather than flattened into one jump.
+// for the crossing. Multiple crossings on one grid face remain individually
+// visible, are ordered by crossingFraction, and must form a continuous region
+// chain. The dense stencil stores their deterministic signed sum. The fraction
+// establishes topology order only; this first-order operator does not claim
+// subcell pressure interpolation or cut-cell geometry.
 struct GridFacePressureJump {
     std::uint64_t surfaceStableId = 0;
     std::uint64_t minusRegionStableId = 0;
@@ -32,14 +37,15 @@ struct GridFacePressureJump {
     std::size_t j = 0;
     std::size_t k = 0;
     double pressureJumpPascals = 0.0;
+    double crossingFraction = 0.5;
 
     bool operator==(const GridFacePressureJump&) const = default;
 };
 
 // Validated, immutable sharp-interface source data. Dense component arrays are
-// retained for the projection stencil while canonical face metadata preserves
-// stable surface and two-sided region identity for diagnostics and later
-// surface reconstruction.
+// retained for the projection stencil while canonical crossing metadata
+// preserves stable surface, two-sided region identity, and normal ordering for
+// diagnostics and later surface reconstruction.
 class SharpPressureJumpField final {
 public:
     SharpPressureJumpField(
