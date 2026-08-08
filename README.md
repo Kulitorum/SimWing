@@ -116,7 +116,11 @@ responses. Every response carries the absolute accepted step and simulated
 time. A Qt-free periodic-flow control session now executes those decoded
 commands on the worker owner thread: it publishes each immutable accepted frame
 through an injected sink, delegates checkpoint persistence, and makes stop
-terminal. Process I/O is still separate, so ordinary CLI behavior is unchanged.
+terminal. `simwing-fsi --case periodic-flow --control-stdio` exposes the same
+boundary as self-framed binary stdin/stdout messages. It launches no viewer,
+puts no human-readable text on protocol stdout, completes the trace before the
+stopped response, and uses `--checkpoint-out` as the checkpoint-command target.
+Ordinary step-driven CLI behavior is unchanged.
 Both the projected transport and Strang flow paths select donor-cell or limited
 monotonized-central reconstruction explicitly; donor-cell remains the default.
 The original single-stage transport and Euler/SSPRK2 viscosity modes compose
@@ -300,6 +304,9 @@ second is the unthrottled headless form for tests and scripted verification.
 The final two commands save and resume the exact accepted periodic-flow state;
 the resumed command advances 600 additional intervals and both autosave every
 60 absolute accepted steps.
+Programmatic controllers can replace `--steps` with `--control-stdio`; that
+mode requires binary protocol input and an explicit stop command, so it is not
+an interactive terminal interface.
 
 `windeployqt` and the OCCT runtime deployment run after the build, so the build
 output is directly runnable. The install target includes the required OCCT

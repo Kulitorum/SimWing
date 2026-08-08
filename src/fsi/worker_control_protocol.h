@@ -9,6 +9,8 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint16_t workerControlProtocolVersion = 1;
+inline constexpr std::size_t workerControlEnvelopeBytes = 20;
+inline constexpr std::size_t workerControlPayloadSizeOffset = 8;
 
 struct WorkerControlProtocolLimits {
     std::uint64_t maximumMessageBytes = 64ULL * 1024ULL;

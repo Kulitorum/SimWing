@@ -15,7 +15,6 @@ namespace {
 
 constexpr std::array<std::uint8_t, 4> commandMagic{'S', 'W', 'C', 'C'};
 constexpr std::array<std::uint8_t, 4> responseMagic{'S', 'W', 'C', 'R'};
-constexpr std::size_t envelopeBytes = 20;
 constexpr std::uint64_t fnvOffsetBasis = 14695981039346656037ULL;
 constexpr std::uint64_t fnvPrime = 1099511628211ULL;
 
@@ -202,7 +201,7 @@ bool serializeMessage(
     const WorkerControlProtocolLimits& limits,
     WritePayload&& writePayload) {
     bytes.clear();
-    if (limits.maximumMessageBytes < envelopeBytes
+    if (limits.maximumMessageBytes < workerControlEnvelopeBytes
         || limits.maximumMessageBytes
             > std::numeric_limits<std::size_t>::max()) {
         return fail(error, WorkerControlProtocolErrorCode::LimitExceeded,
@@ -213,7 +212,7 @@ bool serializeMessage(
         Writer payloadWriter(
             payload,
             static_cast<std::size_t>(limits.maximumMessageBytes)
-                - envelopeBytes);
+                - workerControlEnvelopeBytes);
         if (!writePayload(message, payloadWriter)) {
             return fail(
                 error,
@@ -222,7 +221,7 @@ bool serializeMessage(
                     : WorkerControlProtocolErrorCode::InvalidData,
                 "worker control payload cannot be serialized");
         }
-        bytes.reserve(envelopeBytes + payload.size());
+        bytes.reserve(workerControlEnvelopeBytes + payload.size());
         bytes.insert(bytes.end(), magic.begin(), magic.end());
         Writer envelope(bytes,
                         static_cast<std::size_t>(limits.maximumMessageBytes));
@@ -257,14 +256,14 @@ bool deserializeMessage(
     WorkerControlProtocolError* error,
     const WorkerControlProtocolLimits& limits,
     ReadPayload&& readPayload) {
-    if (limits.maximumMessageBytes < envelopeBytes
+    if (limits.maximumMessageBytes < workerControlEnvelopeBytes
         || limits.maximumMessageBytes
             > std::numeric_limits<std::size_t>::max()
         || bytes.size() > limits.maximumMessageBytes) {
         return fail(error, WorkerControlProtocolErrorCode::LimitExceeded,
                     "worker control message exceeds the byte limit");
     }
-    if (bytes.size() < envelopeBytes) {
+    if (bytes.size() < workerControlEnvelopeBytes) {
         return fail(error, WorkerControlProtocolErrorCode::Truncated,
                     "worker control envelope is truncated");
     }
@@ -294,7 +293,8 @@ bool deserializeMessage(
         return fail(error, WorkerControlProtocolErrorCode::InvalidData,
                     "worker control reserved bits are nonzero");
     }
-    const std::size_t availablePayload = bytes.size() - envelopeBytes;
+    const std::size_t availablePayload =
+        bytes.size() - workerControlEnvelopeBytes;
     if (payloadSize > availablePayload) {
         return fail(error, WorkerControlProtocolErrorCode::Truncated,
                     "worker control payload is truncated");
@@ -303,7 +303,8 @@ bool deserializeMessage(
         return fail(error, WorkerControlProtocolErrorCode::TrailingData,
                     "worker control message has trailing data");
     }
-    const auto payload = bytes.subspan(envelopeBytes, payloadSize);
+    const auto payload = bytes.subspan(
+        workerControlEnvelopeBytes, payloadSize);
     if (checksum(payload) != expectedChecksum) {
         return fail(error, WorkerControlProtocolErrorCode::ChecksumMismatch,
                     "worker control checksum does not match");

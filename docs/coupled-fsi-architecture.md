@@ -386,6 +386,7 @@ src/fsi/
     periodic_flow_case.*    visible periodic CFD verification worker
     periodic_flow_checkpoint.cpp bounded persistent worker restart codec
     worker_control_protocol.* transport-neutral safe-point messages
+    worker_control_stream.*  bounded self-framing binary stream adapter
     periodic_flow_control.* decoded periodic worker command execution
     diagnostics.*           conservation, residuals, events, profiling
     checkpoint.*            versioned restart state
@@ -428,6 +429,7 @@ Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
 `simwing_open_piston_case`, `simwing_fluid_frame`,
 `simwing_periodic_flow_case`, `simwing_worker_control_protocol`,
+`simwing_worker_control_stream`,
 `simwing_periodic_flow_control`, `simwing_viewer_geometry`, `simwing-fsi`,
 `simwing_viewer_protocol`,
 `simwing-viewer`, and focused test executables. Keep Qt out of the numerical
@@ -468,11 +470,15 @@ duplicate write. The first transport-neutral control envelope is also present:
 bounded versioned/checksummed `advance`, `checkpoint`, and `stop` commands use
 nonzero request IDs, while ready/advanced/checkpointed/stopped/error responses
 always expose absolute accepted step and time. It deliberately chooses no
-stdin, pipe, socket, or scheduler transport. A separate Qt-free periodic-flow
+named-pipe, socket, or scheduler transport. A separate Qt-free periodic-flow
 control session executes decoded messages synchronously on the worker owner
 thread. It publishes each immutable accepted frame, delegates checkpoint
 persistence, and makes stop terminal without putting output or file policy in
-the numerical worker.
+the numerical worker. A bounded self-framing stream adapter now reads the
+envelope payload length without a host-native prefix and flushes every response.
+`simwing-fsi --control-stdio` binds that stream to binary stdin/stdout for the
+periodic case, suppresses viewer launch and textual stdout, and completes the
+trace before acknowledging stop.
 The exact-model capture now exports validated scene-v2.1 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical
@@ -805,6 +811,11 @@ failure after acceptance reports that absolute committed step in a valid
 bounded error response and continuation starts there. Stop prevents later
 advance/checkpoint mutation, while a repeated stop is idempotent and receives
 a newly correlated response.
+The stdio integration sends advance-two, checkpoint, advance-one, and stop to a
+separate worker process. It requires an exact ready/advanced/checkpointed/
+advanced/stopped response stream with no trailing stdout, a completed
+three-frame trace, and a step-two checkpoint whose next frame is byte-identical
+to trace step three. Control mode is rejected for non-periodic cases.
 The Qt-free viewer-geometry regression separately requires exact arrow shaft
 direction and relative magnitude, one shaft plus two arrowhead segments per
 retained nonzero vector, dimensional automatic scaling, owning deterministic

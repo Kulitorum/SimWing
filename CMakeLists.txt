@@ -358,6 +358,17 @@ target_include_directories(simwing_worker_control_protocol PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
 )
 
+add_library(simwing_worker_control_stream STATIC
+    src/fsi/worker_control_stream.cpp
+    src/fsi/worker_control_stream.h
+)
+target_include_directories(simwing_worker_control_stream PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_worker_control_stream PUBLIC
+    simwing_worker_control_protocol
+)
+
 add_library(simwing_periodic_flow_control STATIC
     src/fsi/periodic_flow_control.cpp
     src/fsi/periodic_flow_control.h
@@ -713,6 +724,20 @@ add_executable(simwing-worker-control-protocol-test
 target_link_libraries(simwing-worker-control-protocol-test
     PRIVATE simwing_worker_control_protocol)
 
+add_executable(simwing-worker-control-stream-test
+    tests/simwing_worker_control_stream_test.cpp
+)
+target_link_libraries(simwing-worker-control-stream-test
+    PRIVATE simwing_worker_control_stream)
+
+add_executable(simwing-control-stdio-fixture
+    tests/simwing_control_stdio_fixture.cpp
+)
+target_link_libraries(simwing-control-stdio-fixture PRIVATE
+    simwing_periodic_flow_case
+    simwing_worker_control_stream
+)
+
 add_executable(simwing-periodic-flow-control-test
     tests/simwing_periodic_flow_control_test.cpp
 )
@@ -856,8 +881,10 @@ add_executable(simwing-fsi
 target_link_libraries(simwing-fsi PRIVATE
     simwing_canonical_case
     simwing_open_piston_case
+    simwing_periodic_flow_control
     simwing_periodic_flow_case
     simwing_piston_case
+    simwing_worker_control_stream
 )
 
 qt_add_executable(LEparagliding WIN32
@@ -972,6 +999,8 @@ set_target_properties(
     simwing-fsi-worker-test
     simwing-periodic-flow-case-test
     simwing-worker-control-protocol-test
+    simwing-worker-control-stream-test
+    simwing-control-stdio-fixture
     simwing-periodic-flow-control-test
     simwing-fluid-projection-test
     simwing-fluid-interface-jump-test
@@ -1029,6 +1058,8 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-fsi-worker-test
         simwing-periodic-flow-case-test
         simwing-worker-control-protocol-test
+        simwing-worker-control-stream-test
+        simwing-control-stdio-fixture
         simwing-periodic-flow-control-test
         simwing-fluid-projection-test
         simwing-fluid-interface-jump-test
@@ -1176,6 +1207,8 @@ add_test(NAME simwing_periodic_flow_case
     COMMAND simwing-periodic-flow-case-test)
 add_test(NAME simwing_worker_control_protocol
     COMMAND simwing-worker-control-protocol-test)
+add_test(NAME simwing_worker_control_stream
+    COMMAND simwing-worker-control-stream-test)
 add_test(NAME simwing_periodic_flow_control
     COMMAND simwing-periodic-flow-control-test)
 add_test(NAME simwing_fluid_projection COMMAND simwing-fluid-projection-test)
@@ -1218,6 +1251,21 @@ add_test(NAME simwing_fsi_periodic_flow_headless
         --steps 4
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-periodic-flow-headless.swtrace")
+add_test(NAME simwing_fsi_control_stdio
+    COMMAND ${CMAKE_COMMAND}
+        "-DSIMWING_FSI=$<TARGET_FILE:simwing-fsi>"
+        "-DCONTROL_FIXTURE=$<TARGET_FILE:simwing-control-stdio-fixture>"
+        "-DCOMMAND_FILE=${CMAKE_BINARY_DIR}/simwing-control-commands.swcc"
+        "-DRESPONSE_FILE=${CMAKE_BINARY_DIR}/simwing-control-responses.swcr"
+        "-DCHECKPOINT_FILE=${CMAKE_BINARY_DIR}/simwing-control-checkpoint.swpc"
+        "-DTRACE_FILE=${CMAKE_BINARY_DIR}/simwing-control.swtrace"
+        "-DERROR_FILE=${CMAKE_BINARY_DIR}/simwing-control-stderr.txt"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunSimWingControlStdioTest.cmake")
+set_tests_properties(simwing_fsi_control_stdio PROPERTIES TIMEOUT 45)
+add_test(NAME simwing_fsi_control_requires_periodic
+    COMMAND simwing-fsi --case structural --control-stdio --no-viewer)
+set_tests_properties(simwing_fsi_control_requires_periodic PROPERTIES
+    WILL_FAIL TRUE)
 add_test(NAME simwing_fsi_periodic_flow_checkpoint_write
     COMMAND simwing-fsi
         --case periodic-flow

@@ -1,8 +1,10 @@
 #include "canonical_case.h"
 #include "open_piston_case.h"
+#include "periodic_flow_control.h"
 #include "periodic_flow_case.h"
 #include "piston_case.h"
 #include "viewer_protocol.h"
+#include "worker_control_stream.h"
 
 #include <algorithm>
 #include <charconv>
@@ -11,6 +13,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <limits>
 #include <optional>
 #include <string>
@@ -18,9 +21,12 @@
 #include <system_error>
 #include <thread>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -54,6 +60,7 @@ struct Options {
     std::filesystem::path checkpointOutputPath;
     std::uint64_t checkpointEvery = 0;
     bool viewer = true;
+    bool controlStdio = false;
     bool help = false;
     WorkerCase workerCase = WorkerCase::Structural;
 };
@@ -67,6 +74,7 @@ void printUsage(FILE* stream) {
         "                   [--checkpoint-in PATH]\n"
         "                   [--checkpoint-out PATH]\n"
         "                   [--checkpoint-every N]\n"
+        "                   [--control-stdio]\n"
         "                   [--viewer|--no-viewer]\n"
         "\n"
         "Runs a canonical Qt-free numerical case and writes a completed diagnostic\n"
@@ -79,8 +87,11 @@ void printUsage(FILE* stream) {
         "canonical and publishes cell-centred pressure/velocity points. Its optional\n"
         "checkpoint paths restore/save exact accepted state; --checkpoint-every\n"
         "autosaves at absolute accepted-step multiples and the final state. --steps\n"
-        "counts additional intervals. Interactive runs launch the sibling viewer\n"
-        "with --follow; --no-viewer is unthrottled for tests and CI.\n");
+        "counts additional intervals. --control-stdio instead exchanges bounded\n"
+        "binary periodic-flow commands/responses on stdin/stdout; it rejects\n"
+        "--steps, --checkpoint-every, and viewer launch. Interactive runs launch\n"
+        "the sibling viewer with --follow; --no-viewer is unthrottled for tests\n"
+        "and CI.\n");
 }
 
 bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
@@ -119,6 +130,7 @@ bool parseOptions(int argc,
                   std::string& error) {
     bool viewerRequested = false;
     bool noViewerRequested = false;
+    bool stepsRequested = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         if (argument == "--help" || argument == "-h") {
@@ -129,6 +141,8 @@ bool parseOptions(int argc,
         } else if (argument == "--no-viewer") {
             noViewerRequested = true;
             options.viewer = false;
+        } else if (argument == "--control-stdio") {
+            options.controlStdio = true;
         } else if (argument == "--case") {
             if (++index >= argc
                 || !parseWorkerCase(argv[index], options.workerCase)) {
@@ -143,12 +157,14 @@ bool parseOptions(int argc,
                 return false;
             }
         } else if (argument == "--steps") {
+            stepsRequested = true;
             if (++index >= argc
                 || !parseUnsigned(argv[index], options.steps)) {
                 error = "--steps requires an unsigned integer";
                 return false;
             }
         } else if (argument.starts_with("--steps=")) {
+            stepsRequested = true;
             if (!parseUnsigned(argument.substr(8), options.steps)) {
                 error = "--steps requires an unsigned integer";
                 return false;
@@ -229,6 +245,25 @@ bool parseOptions(int argc,
         && options.checkpointOutputPath.empty()) {
         error = "--checkpoint-every requires --checkpoint-out";
         return false;
+    }
+    if (options.controlStdio) {
+        if (options.workerCase != WorkerCase::PeriodicFlow) {
+            error = "--control-stdio requires --case periodic-flow";
+            return false;
+        }
+        if (stepsRequested) {
+            error = "--control-stdio does not accept --steps";
+            return false;
+        }
+        if (options.checkpointEvery != 0) {
+            error = "--control-stdio does not accept --checkpoint-every";
+            return false;
+        }
+        if (viewerRequested) {
+            error = "--control-stdio does not launch the viewer";
+            return false;
+        }
+        options.viewer = false;
     }
     return true;
 }
@@ -513,6 +548,173 @@ bool writePeriodicFlowCheckpoint(
     return true;
 }
 
+bool configureBinaryControlStdio(std::string& error) {
+#ifdef _WIN32
+    if (_setmode(_fileno(stdin), _O_BINARY) == -1) {
+        error = "cannot switch control stdin to binary mode";
+        return false;
+    }
+    if (_setmode(_fileno(stdout), _O_BINARY) == -1) {
+        error = "cannot switch control stdout to binary mode";
+        return false;
+    }
+#else
+    (void)error;
+#endif
+    return true;
+}
+
+int runPeriodicFlowControl(
+    const Options& options,
+    simwing::fsi::PeriodicFlowCase& simulation,
+    std::ofstream& traceOutput) {
+    std::string setupError;
+    if (!configureBinaryControlStdio(setupError)) {
+        std::fprintf(stderr, "%s\n", setupError.c_str());
+        return 1;
+    }
+
+    simwing::viewer::TraceWriter traceWriter(traceOutput);
+    if (!traceWriter.writeHeader(simulation.traceHeader())
+        || !flushTrace(traceOutput, setupError)) {
+        if (setupError.empty()) {
+            setupError = traceWriter.error().message;
+        }
+        std::fprintf(stderr, "trace header failed: %s\n",
+                     setupError.c_str());
+        return 1;
+    }
+
+    bool traceFinished = false;
+    const auto finishTrace = [&](std::string& finishError) {
+        if (traceFinished) {
+            return true;
+        }
+        if (!traceWriter.finish()
+            || !flushTrace(traceOutput, finishError)) {
+            if (finishError.empty()) {
+                finishError = traceWriter.error().message;
+            }
+            return false;
+        }
+        traceFinished = true;
+        return true;
+    };
+
+    simwing::fsi::PeriodicFlowControlHooks hooks;
+    hooks.publishFrame = [&](const simwing::viewer::DiagnosticFrame& frame,
+                             std::string& hookError) {
+        if (!traceWriter.writeFrame(frame)
+            || !flushTrace(traceOutput, hookError)) {
+            if (hookError.empty()) {
+                hookError = traceWriter.error().message;
+            }
+            return false;
+        }
+        return true;
+    };
+    hooks.writeCheckpoint = [&](
+                                const simwing::fsi::PeriodicFlowCaseCheckpoint&
+                                    checkpoint,
+                                std::string& hookError) {
+        if (options.checkpointOutputPath.empty()) {
+            hookError = "--checkpoint-out is not configured";
+            return false;
+        }
+        return writePeriodicFlowCheckpoint(
+            options.checkpointOutputPath, checkpoint, hookError);
+    };
+    simwing::fsi::PeriodicFlowControlSession session(
+        simulation, std::move(hooks));
+
+    simwing::fsi::WorkerControlStreamError streamError;
+    if (!simwing::fsi::writeWorkerControlResponse(
+            std::cout, session.readyResponse(), &streamError)) {
+        std::string finishError;
+        (void)finishTrace(finishError);
+        std::fprintf(stderr, "control response failed: %s\n",
+                     streamError.message.c_str());
+        return 1;
+    }
+
+    for (;;) {
+        simwing::fsi::WorkerControlCommand command;
+        const simwing::fsi::WorkerControlStreamResult readResult =
+            simwing::fsi::readWorkerControlCommand(
+                std::cin, command, &streamError);
+        if (readResult
+            == simwing::fsi::WorkerControlStreamResult::EndOfStream) {
+            std::string finishError;
+            if (!finishTrace(finishError)) {
+                std::fprintf(stderr, "trace completion failed: %s\n",
+                             finishError.c_str());
+            }
+            std::fprintf(
+                stderr,
+                "control stream ended before an explicit stop command\n");
+            return 1;
+        }
+        if (readResult == simwing::fsi::WorkerControlStreamResult::Error) {
+            std::string finishError;
+            if (!finishTrace(finishError)) {
+                std::fprintf(stderr, "trace completion failed: %s\n",
+                             finishError.c_str());
+            }
+            std::fprintf(stderr, "control command failed: %s\n",
+                         streamError.message.c_str());
+            return 2;
+        }
+
+        simwing::fsi::WorkerControlResponse response;
+        simwing::fsi::WorkerControlProtocolError protocolError;
+        if (!session.execute(command, response, &protocolError)) {
+            std::string finishError;
+            if (!finishTrace(finishError)) {
+                std::fprintf(stderr, "trace completion failed: %s\n",
+                             finishError.c_str());
+            }
+            std::fprintf(stderr, "control command is invalid: %s\n",
+                         protocolError.message.c_str());
+            return 2;
+        }
+
+        int terminalResult = 0;
+        if (response.kind
+            == simwing::fsi::WorkerControlResponseKind::Stopped) {
+            std::string finishError;
+            if (!finishTrace(finishError)) {
+                response.kind =
+                    simwing::fsi::WorkerControlResponseKind::Error;
+                response.failureCode =
+                    simwing::fsi::WorkerControlFailureCode::InternalFailure;
+                response.errorMessage = "trace completion failed";
+                if (!finishError.empty()) {
+                    response.errorMessage += ": " + finishError;
+                }
+                const std::size_t limit =
+                    simwing::fsi::WorkerControlProtocolLimits{}
+                        .maximumErrorMessageBytes;
+                if (response.errorMessage.size() > limit) {
+                    response.errorMessage.resize(limit);
+                }
+                terminalResult = 1;
+            }
+        }
+
+        if (!simwing::fsi::writeWorkerControlResponse(
+                std::cout, response, &streamError)) {
+            std::string finishError;
+            (void)finishTrace(finishError);
+            std::fprintf(stderr, "control response failed: %s\n",
+                         streamError.message.c_str());
+            return 1;
+        }
+        if (session.stopped()) {
+            return terminalResult;
+        }
+    }
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -577,6 +779,14 @@ int main(int argc, char* argv[]) {
             std::fprintf(stderr, "cannot open trace for writing: %s\n",
                          options.tracePath.string().c_str());
             return 1;
+        }
+
+        if (options.controlStdio) {
+            simwing::fsi::PeriodicFlowCase simulation;
+            if (restoredPeriodicFlowCheckpoint) {
+                simulation.restore(*restoredPeriodicFlowCheckpoint);
+            }
+            return runPeriodicFlowControl(options, simulation, output);
         }
 
         const auto run = [&](auto& simulation) -> int {
