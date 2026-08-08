@@ -756,8 +756,11 @@ retry count, and convergence, retry, and terminal failure remain distinct.
 A one-macro-step owner now enforces that ordering: it accepts only a fresh
 iteration state, privately retains the composite baseline, and combines the
 three-owner restore with retry activation. Replaying an attempt therefore
-starts from identical Structure, fluid, and relaxation state. The repeated
-solver loop remains future worker work.
+starts from identical Structure, fluid, and relaxation state. Repeating a
+fixed-point iteration within that attempt uses a separate transactional
+solver-only checkpoint: Structure and fluid return to the same macro-step
+baseline while the advanced relaxed interface and Aitken history are retained.
+The repeated solver loop remains future worker work.
 The topology-bound
 macro-step surface computes the decision's
 inputs from saved-baseline, previous, and current stable-ID kinematics plus two

@@ -297,12 +297,42 @@ void StrongCouplingRollbackState::restore(
     iteration_ = std::move(restoredIteration);
 }
 
+StrongCouplingSolverCheckpoint
+StrongCouplingRollbackState::solverCheckpoint() const {
+    StrongCouplingSolverCheckpoint result;
+    result.interfaceDefinitionFingerprint =
+        interfaceDefinitionFingerprint_;
+    result.structure = structure_.checkpoint();
+    result.fluid = checkpointFluid(grid_, fluidState_);
+    return result;
+}
+
+void StrongCouplingRollbackState::restoreSolvers(
+    const StrongCouplingSolverCheckpoint& checkpointValue) {
+    if (checkpointValue.version != strongCouplingSolverCheckpointVersion
+        || checkpointValue.interfaceDefinitionFingerprint
+            != interfaceDefinitionFingerprint_) {
+        throw std::invalid_argument(
+            "strong-coupling solver checkpoint identity is invalid");
+    }
+
+    Structure restoredStructure(structure_.definition());
+    restoredStructure.restore(checkpointValue.structure);
+    fluid::MovingInterfaceFluidState restoredFluid =
+        fluid::restoreMovingInterfaceFluidState(
+            grid_, checkpointValue.fluid);
+
+    structure_ = std::move(restoredStructure);
+    fluidState_ = std::move(restoredFluid);
+}
+
 StrongCouplingMacroStepState::StrongCouplingMacroStepState(
     StrongCouplingRollbackState state,
     const double initialTimeStepSeconds,
     const CouplingMacroStepRetrySettings& retrySettings)
     : state_(std::move(state)),
       baseline_(state_.checkpoint()),
+      solverBaseline_(state_.solverCheckpoint()),
       retry_(
           state_.interfaceDefinitionFingerprint(),
           initialTimeStepSeconds,
@@ -333,6 +363,17 @@ StrongCouplingMacroStepState::decision() const noexcept {
 CouplingMacroStepRetryDecision
 StrongCouplingMacroStepState::reportTerminalIteration() {
     return retry_.reportIteration(state_.iteration().status());
+}
+
+void StrongCouplingMacroStepState::restoreSolversForNextIteration() {
+    if (retry_.status() != CouplingMacroStepRetryStatus::Attempting
+        || state_.iteration().status()
+            != StrongCouplingIterationStatus::Iterating
+        || state_.iteration().completedIterationCount() == 0) {
+        throw std::logic_error(
+            "strong-coupling macro-step has no advanced next iteration");
+    }
+    state_.restoreSolvers(solverBaseline_);
 }
 
 CouplingMacroStepRetryDecision

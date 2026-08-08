@@ -8,6 +8,7 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t strongCouplingRollbackCheckpointVersion = 1;
+inline constexpr std::uint32_t strongCouplingSolverCheckpointVersion = 1;
 inline constexpr std::uint32_t couplingMacroStepRetryCheckpointVersion = 1;
 inline constexpr std::uint32_t maximumCouplingMacroStepRetries = 64;
 
@@ -94,6 +95,13 @@ struct StrongCouplingRollbackCheckpoint {
     StrongCouplingIterationCheckpoint iteration;
 };
 
+struct StrongCouplingSolverCheckpoint {
+    std::uint32_t version = strongCouplingSolverCheckpointVersion;
+    std::uint64_t interfaceDefinitionFingerprint = 0;
+    StructureCheckpoint structure;
+    fluid::MovingInterfaceFluidCheckpoint fluid;
+};
+
 // Composite owner for the three states that must return to one macro-step
 // baseline together: Structure, one accepted moving-interface fluid epoch,
 // and the strong-iteration algorithm. Restore validates and allocates complete
@@ -128,6 +136,8 @@ public:
 
     [[nodiscard]] StrongCouplingRollbackCheckpoint checkpoint() const;
     void restore(const StrongCouplingRollbackCheckpoint& checkpoint);
+    [[nodiscard]] StrongCouplingSolverCheckpoint solverCheckpoint() const;
+    void restoreSolvers(const StrongCouplingSolverCheckpoint& checkpoint);
 
 private:
     std::uint64_t interfaceDefinitionFingerprint_ = 0;
@@ -163,11 +173,13 @@ public:
     [[nodiscard]] CouplingMacroStepRetryDecision decision() const noexcept;
 
     [[nodiscard]] CouplingMacroStepRetryDecision reportTerminalIteration();
+    void restoreSolversForNextIteration();
     [[nodiscard]] CouplingMacroStepRetryDecision restoreAndBeginRetry();
 
 private:
     StrongCouplingRollbackState state_;
     StrongCouplingRollbackCheckpoint baseline_;
+    StrongCouplingSolverCheckpoint solverBaseline_;
     CouplingMacroStepRetry retry_;
 };
 

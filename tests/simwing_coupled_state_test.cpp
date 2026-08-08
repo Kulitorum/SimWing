@@ -264,6 +264,55 @@ void testCompositeRestoreIsTransactional() {
           "rollback: iteration rejection preserves every owner");
 }
 
+void testSolverOnlyRollbackPreservesIteration() {
+    constexpr std::uint64_t fingerprint = 0x5c02'0003ULL;
+    const auto grid = fluidGrid();
+    StrongCouplingRollbackState state(
+        fingerprint,
+        Structure(structureDefinition()),
+        grid,
+        acceptedFluidState(grid),
+        strongIteration(fingerprint));
+    const auto baseline = state.solverCheckpoint();
+    mutate(state);
+    const auto advancedIteration = state.iteration().checkpoint();
+    const auto mutatedSolvers = state.solverCheckpoint();
+
+    state.restoreSolvers(baseline);
+    const auto restored = state.solverCheckpoint();
+    check(sameStructureState(restored.structure, baseline.structure)
+              && sameFluidCheckpoint(restored.fluid, baseline.fluid)
+              && state.iteration().checkpoint() == advancedIteration,
+          "solver rollback: physical owners rewind while Aitken state remains");
+
+    auto corrupt = baseline;
+    ++corrupt.interfaceDefinitionFingerprint;
+    expectRejected(
+        [&] { state.restoreSolvers(corrupt); },
+        "solver rollback: foreign identity is rejected");
+    corrupt = baseline;
+    ++corrupt.structure.definitionFingerprint;
+    expectRejected(
+        [&] { state.restoreSolvers(corrupt); },
+        "solver rollback: foreign Structure state is rejected");
+    corrupt = baseline;
+    ++corrupt.fluid.topologyFingerprint;
+    expectRejected(
+        [&] { state.restoreSolvers(corrupt); },
+        "solver rollback: foreign fluid topology is rejected");
+    const auto afterRejections = state.solverCheckpoint();
+    check(sameStructureState(
+              afterRejections.structure, baseline.structure)
+              && sameFluidCheckpoint(
+                  afterRejections.fluid, baseline.fluid)
+              && state.iteration().checkpoint() == advancedIteration,
+          "solver rollback: rejected replacements preserve every live owner");
+
+    state.restoreSolvers(mutatedSolvers);
+    check(state.iteration().checkpoint() == advancedIteration,
+          "solver rollback: alternate valid physical epochs never alter iteration");
+}
+
 void testMacroStepRetryPolicyAndReplay() {
     constexpr std::uint64_t fingerprint = 0x5c03'0001ULL;
     CouplingMacroStepRetrySettings settings;
@@ -516,15 +565,52 @@ void testMacroStepStateAcceptanceAndFreshBaseline() {
         "macro-step: a partially advanced iteration is not a baseline");
 }
 
+void testMacroStepStateRewindsSolversBetweenIterations() {
+    constexpr std::uint64_t fingerprint = 0x5c04'0003ULL;
+    const auto grid = fluidGrid();
+    StrongCouplingRollbackState state(
+        fingerprint,
+        Structure(structureDefinition()),
+        grid,
+        acceptedFluidState(grid),
+        strongIteration(fingerprint));
+    StrongCouplingMacroStepState macroStep(std::move(state), 0.08);
+    const auto baseline = macroStep.rollbackState().solverCheckpoint();
+
+    bool earlyRejected = false;
+    try {
+        macroStep.restoreSolversForNextIteration();
+    } catch (const std::logic_error&) {
+        earlyRejected = true;
+    }
+    check(earlyRejected,
+          "macro-step iteration: an unadvanced baseline cannot be rewound");
+
+    mutate(macroStep.rollbackState());
+    const auto advancedIteration =
+        macroStep.rollbackState().iteration().checkpoint();
+    macroStep.restoreSolversForNextIteration();
+    const auto restored = macroStep.rollbackState().solverCheckpoint();
+    check(sameStructureState(restored.structure, baseline.structure)
+              && sameFluidCheckpoint(restored.fluid, baseline.fluid)
+              && macroStep.rollbackState().iteration().checkpoint()
+                  == advancedIteration
+              && macroStep.decision().status
+                  == CouplingMacroStepRetryStatus::Attempting,
+          "macro-step iteration: next solve starts at the physical baseline with advanced Aitken state");
+}
+
 } // namespace
 
 int main() {
     testCompositeRollbackAndReplay();
     testCompositeRestoreIsTransactional();
+    testSolverOnlyRollbackPreservesIteration();
     testMacroStepRetryPolicyAndReplay();
     testMacroStepRetryValidationIsTransactional();
     testMacroStepStateRestoresBeforeRetry();
     testMacroStepStateAcceptanceAndFreshBaseline();
+    testMacroStepStateRewindsSolversBetweenIterations();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d strong-coupling rollback check(s) failed\n",

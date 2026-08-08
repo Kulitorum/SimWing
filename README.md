@@ -310,8 +310,10 @@ definition-bound checkpoint reproduces the exact pending or terminal decision.
 A one-macro-step state owner composes that policy with the real three-owner
 rollback boundary. It accepts only a fresh iteration baseline and exposes one
 restore-and-begin operation, ensuring a reduced attempt cannot start from the
-discarded Structure, fluid, or Aitken state. The repeated fluid/Structure solve
-still remains to be wired. The
+discarded Structure, fluid, or Aitken state. Within an active attempt it also
+owns a solver-only checkpoint: Structure and fluid rewind before the next
+fixed-point solve while the advanced Aitken iterate remains intact. The
+repeated fluid/Structure solve still remains to be wired. The
 macro-step surface supplies the residual norms from
 stable-ID-bound baseline/previous/current kinematics and consecutive nodal
 traction results. It uses maximum physical nodal updates, references motion to
