@@ -374,6 +374,18 @@ target_link_libraries(simwing_worker_control_stream PUBLIC
     simwing_worker_control_protocol
 )
 
+add_library(simwing_worker_control_session STATIC
+    src/fsi/worker_control_session.cpp
+    src/fsi/worker_control_session.h
+)
+target_include_directories(simwing_worker_control_session PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_worker_control_session PUBLIC
+    simwing_viewer_protocol
+    simwing_worker_control_protocol
+)
+
 add_library(simwing_periodic_flow_control STATIC
     src/fsi/periodic_flow_control.cpp
     src/fsi/periodic_flow_control.h
@@ -383,7 +395,7 @@ target_include_directories(simwing_periodic_flow_control PUBLIC
 )
 target_link_libraries(simwing_periodic_flow_control PUBLIC
     simwing_periodic_flow_case
-    simwing_worker_control_protocol
+    simwing_worker_control_session
 )
 
 add_library(simwing_fluid_structure_bridge STATIC
@@ -426,6 +438,18 @@ target_link_libraries(simwing_open_piston_case PUBLIC
     simwing_coupling
     simwing_fluid_structure_bridge
     simwing_structure_frame
+)
+
+add_library(simwing_open_piston_control STATIC
+    src/fsi/open_piston_control.cpp
+    src/fsi/open_piston_control.h
+)
+target_include_directories(simwing_open_piston_control PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_open_piston_control PUBLIC
+    simwing_open_piston_case
+    simwing_worker_control_session
 )
 
 # The Playground's wing: mesh parsing, refinement, SoftBody assembly and the
@@ -747,6 +771,7 @@ add_executable(simwing-control-stdio-fixture
     tests/simwing_control_stdio_fixture.cpp
 )
 target_link_libraries(simwing-control-stdio-fixture PRIVATE
+    simwing_open_piston_case
     simwing_periodic_flow_case
     simwing_worker_control_stream
 )
@@ -756,6 +781,12 @@ add_executable(simwing-periodic-flow-control-test
 )
 target_link_libraries(simwing-periodic-flow-control-test
     PRIVATE simwing_periodic_flow_control)
+
+add_executable(simwing-open-piston-control-test
+    tests/simwing_open_piston_control_test.cpp
+)
+target_link_libraries(simwing-open-piston-control-test
+    PRIVATE simwing_open_piston_control)
 
 add_executable(simwing-fluid-projection-test
     tests/simwing_fluid_projection_test.cpp
@@ -893,6 +924,7 @@ add_executable(simwing-fsi
 )
 target_link_libraries(simwing-fsi PRIVATE
     simwing_canonical_case
+    simwing_open_piston_control
     simwing_open_piston_case
     simwing_periodic_flow_control
     simwing_periodic_flow_case
@@ -1016,6 +1048,7 @@ set_target_properties(
     simwing-worker-control-stream-test
     simwing-control-stdio-fixture
     simwing-periodic-flow-control-test
+    simwing-open-piston-control-test
     simwing-fluid-projection-test
     simwing-fluid-interface-jump-test
     simwing-fluid-moving-interface-test
@@ -1076,6 +1109,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-worker-control-stream-test
         simwing-control-stdio-fixture
         simwing-periodic-flow-control-test
+        simwing-open-piston-control-test
         simwing-fluid-projection-test
         simwing-fluid-interface-jump-test
         simwing-fluid-moving-interface-test
@@ -1228,6 +1262,8 @@ add_test(NAME simwing_worker_control_stream
     COMMAND simwing-worker-control-stream-test)
 add_test(NAME simwing_periodic_flow_control
     COMMAND simwing-periodic-flow-control-test)
+add_test(NAME simwing_open_piston_control
+    COMMAND simwing-open-piston-control-test)
 add_test(NAME simwing_fluid_projection COMMAND simwing-fluid-projection-test)
 add_test(NAME simwing_fluid_interface_jump
     COMMAND simwing-fluid-interface-jump-test)
@@ -1272,6 +1308,9 @@ add_test(NAME simwing_fsi_control_stdio
     COMMAND ${CMAKE_COMMAND}
         "-DSIMWING_FSI=$<TARGET_FILE:simwing-fsi>"
         "-DCONTROL_FIXTURE=$<TARGET_FILE:simwing-control-stdio-fixture>"
+        "-DWORKER_CASE=periodic-flow"
+        "-DVERIFY_MODE=verify"
+        "-DRESUME_VERIFY_MODE=verify-resume"
         "-DCOMMAND_FILE=${CMAKE_BINARY_DIR}/simwing-control-commands.swcc"
         "-DRESPONSE_FILE=${CMAKE_BINARY_DIR}/simwing-control-responses.swcr"
         "-DCHECKPOINT_FILE=${CMAKE_BINARY_DIR}/simwing-control-checkpoint.swpc"
@@ -1283,9 +1322,28 @@ add_test(NAME simwing_fsi_control_stdio
         "-DRESUME_ERROR_FILE=${CMAKE_BINARY_DIR}/simwing-control-resume-stderr.txt"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunSimWingControlStdioTest.cmake")
 set_tests_properties(simwing_fsi_control_stdio PROPERTIES TIMEOUT 45)
-add_test(NAME simwing_fsi_control_requires_periodic
+add_test(NAME simwing_fsi_open_piston_control_stdio
+    COMMAND ${CMAKE_COMMAND}
+        "-DSIMWING_FSI=$<TARGET_FILE:simwing-fsi>"
+        "-DCONTROL_FIXTURE=$<TARGET_FILE:simwing-control-stdio-fixture>"
+        "-DWORKER_CASE=open-piston"
+        "-DVERIFY_MODE=verify-open"
+        "-DRESUME_VERIFY_MODE=verify-open-resume"
+        "-DCOMMAND_FILE=${CMAKE_BINARY_DIR}/simwing-open-control-commands.swcc"
+        "-DRESPONSE_FILE=${CMAKE_BINARY_DIR}/simwing-open-control-responses.swcr"
+        "-DCHECKPOINT_FILE=${CMAKE_BINARY_DIR}/simwing-open-control-checkpoint.swop"
+        "-DTRACE_FILE=${CMAKE_BINARY_DIR}/simwing-open-control.swtrace"
+        "-DERROR_FILE=${CMAKE_BINARY_DIR}/simwing-open-control-stderr.txt"
+        "-DRESUME_COMMAND_FILE=${CMAKE_BINARY_DIR}/simwing-open-control-resume-commands.swcc"
+        "-DRESUME_RESPONSE_FILE=${CMAKE_BINARY_DIR}/simwing-open-control-resume-responses.swcr"
+        "-DRESUME_TRACE_FILE=${CMAKE_BINARY_DIR}/simwing-open-control-resume.swtrace"
+        "-DRESUME_ERROR_FILE=${CMAKE_BINARY_DIR}/simwing-open-control-resume-stderr.txt"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunSimWingControlStdioTest.cmake")
+set_tests_properties(simwing_fsi_open_piston_control_stdio PROPERTIES
+    TIMEOUT 45)
+add_test(NAME simwing_fsi_control_rejects_unsupported_case
     COMMAND simwing-fsi --case structural --control-stdio --no-viewer)
-set_tests_properties(simwing_fsi_control_requires_periodic PROPERTIES
+set_tests_properties(simwing_fsi_control_rejects_unsupported_case PROPERTIES
     WILL_FAIL TRUE)
 add_test(NAME simwing_fsi_periodic_flow_checkpoint_write
     COMMAND simwing-fsi

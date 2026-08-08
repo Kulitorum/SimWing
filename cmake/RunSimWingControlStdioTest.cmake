@@ -1,6 +1,9 @@
 foreach(required
         SIMWING_FSI
         CONTROL_FIXTURE
+        WORKER_CASE
+        VERIFY_MODE
+        RESUME_VERIFY_MODE
         COMMAND_FILE
         RESPONSE_FILE
         CHECKPOINT_FILE
@@ -41,7 +44,7 @@ endif()
 
 execute_process(
     COMMAND "${SIMWING_FSI}"
-        --case periodic-flow
+        --case "${WORKER_CASE}"
         --control-stdio
         --steps 1
         --no-viewer
@@ -58,7 +61,7 @@ endif()
 
 execute_process(
     COMMAND "${SIMWING_FSI}"
-        --case periodic-flow
+        --case "${WORKER_CASE}"
         --control-stdio
         --trace "${TRACE_FILE}"
         --checkpoint-out "${CHECKPOINT_FILE}"
@@ -75,7 +78,7 @@ if(NOT worker_result EQUAL 0)
 endif()
 
 execute_process(
-    COMMAND "${CONTROL_FIXTURE}" verify
+    COMMAND "${CONTROL_FIXTURE}" "${VERIFY_MODE}"
         "${RESPONSE_FILE}"
         "${CHECKPOINT_FILE}"
         "${TRACE_FILE}"
@@ -106,7 +109,7 @@ endif()
 
 execute_process(
     COMMAND "${SIMWING_FSI}"
-        --case periodic-flow
+        --case "${WORKER_CASE}"
         --control-stdio
         --checkpoint-in "${CHECKPOINT_FILE}"
         --trace "${RESUME_TRACE_FILE}"
@@ -124,7 +127,7 @@ if(NOT resume_worker_result EQUAL 0)
 endif()
 
 execute_process(
-    COMMAND "${CONTROL_FIXTURE}" verify-resume
+    COMMAND "${CONTROL_FIXTURE}" "${RESUME_VERIFY_MODE}"
         "${RESUME_RESPONSE_FILE}"
         "${CHECKPOINT_FILE}"
         "${RESUME_TRACE_FILE}"

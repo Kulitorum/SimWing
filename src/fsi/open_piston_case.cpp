@@ -936,6 +936,10 @@ std::uint64_t OpenPistonCase::acceptedStepCount() const noexcept {
     return structure_.acceptedStepCount();
 }
 
+double OpenPistonCase::simulationTimeSeconds() const noexcept {
+    return structure_.simulationTimeSeconds();
+}
+
 const Structure& OpenPistonCase::structure() const noexcept {
     return structure_;
 }

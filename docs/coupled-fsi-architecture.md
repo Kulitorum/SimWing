@@ -414,7 +414,9 @@ src/fsi/
     periodic_flow_checkpoint.cpp bounded persistent worker restart codec
     worker_control_protocol.* transport-neutral safe-point messages
     worker_control_stream.*  bounded self-framing binary stream adapter
-    periodic_flow_control.* decoded periodic worker command execution
+    worker_control_session.* case-neutral safe-point command execution
+    periodic_flow_control.* typed periodic worker control adapter
+    open_piston_control.*   typed open-piston worker control adapter
     diagnostics.*           conservation, residuals, events, profiling
     checkpoint.*            versioned restart state
     scenarios.*             tunnel, glide, inflation, collapse definitions
@@ -457,7 +459,8 @@ Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_open_piston_case`, `simwing_fluid_frame`,
 `simwing_periodic_flow_case`, `simwing_worker_control_protocol`,
 `simwing_worker_control_stream`,
-`simwing_periodic_flow_control`, `simwing_viewer_geometry`, `simwing-fsi`,
+`simwing_worker_control_session`, `simwing_periodic_flow_control`,
+`simwing_open_piston_control`, `simwing_viewer_geometry`, `simwing-fsi`,
 `simwing_viewer_protocol`,
 `simwing-viewer`, and focused test executables. Keep Qt out of the numerical
 targets; only the viewer/UI targets link it. Backend interfaces must not be so
@@ -498,14 +501,16 @@ write. The first transport-neutral control envelope is also present:
 bounded versioned/checksummed `advance`, `checkpoint`, and `stop` commands use
 nonzero request IDs, while ready/advanced/checkpointed/stopped/error responses
 always expose absolute accepted step and time. It deliberately chooses no
-named-pipe, socket, or scheduler transport. A separate Qt-free periodic-flow
-control session executes decoded messages synchronously on the worker owner
-thread. It publishes each immutable accepted frame, delegates checkpoint
-persistence, and makes stop terminal without putting output or file policy in
-the numerical worker. A bounded self-framing stream adapter now reads the
+named-pipe, socket, or scheduler transport. A shared Qt-free control session
+executes decoded messages synchronously on a worker owner thread. Typed
+periodic-flow and open-piston adapters bind numerical advance, absolute state,
+and their distinct complete checkpoint payloads. Each publishes immutable
+accepted frames, delegates checkpoint persistence, and makes stop terminal
+without putting output or file policy in the numerical worker. A bounded
+self-framing stream adapter now reads the
 envelope payload length without a host-native prefix and flushes every response.
-`simwing-fsi --control-stdio` binds that stream to binary stdin/stdout for the
-periodic case, suppresses viewer launch and textual stdout, and completes the
+`simwing-fsi --control-stdio` binds that stream to binary stdin/stdout for
+either adapter, suppresses viewer launch and textual stdout, and completes the
 trace before acknowledging stop. A restored worker reports its checkpoint's
 absolute step/time in Ready and writes only newly accepted frames to its trace.
 The exact-model capture now exports validated scene-v2.1 skins, authored open
@@ -737,7 +742,8 @@ ordinary continuation and the first steps after both a normal and periodic
 plane rebase replay bit-for-bit in the same or an equivalent rebuilt worker.
 The worker CLI restores this composite before creating its trace and exposes
 atomic same-file output, absolute accepted-step autosave, and final-save
-deduplication. It is not yet attached to the control protocol.
+deduplication. Its typed control adapter also delegates the same composite at
+safe points through the shared transport-neutral command executor.
 
 ### Phase 0 — Establish the remake boundary
 
@@ -865,14 +871,17 @@ failure after acceptance reports that absolute committed step in a valid
 bounded error response and continuation starts there. Stop prevents later
 advance/checkpoint mutation, while a repeated stop is idempotent and receives
 a newly correlated response.
-The stdio integration sends advance-two, checkpoint, advance-one, and stop to a
-separate worker process. It requires an exact ready/advanced/checkpointed/
+The periodic and open-piston stdio integrations each send advance-two,
+checkpoint, advance-one, and stop to a separate worker process. They require
+an exact ready/advanced/checkpointed/
 advanced/stopped response stream with no trailing stdout, a completed
 three-frame trace, and a step-two checkpoint whose next frame is byte-identical
 to trace step three. A second process restores that checkpoint, reports Ready at
 step two, advances once, and produces a completed one-frame trace whose step
-three is byte-identical to independent replay. Control mode is rejected for
-non-periodic cases.
+three is byte-identical to independent replay. The in-process open-piston
+adapter additionally advances through the first topology rebase in one command,
+delegates that composite checkpoint, and reproduces the next frame exactly.
+Control mode is rejected for structural and sealed-piston cases.
 The Qt-free viewer-geometry regression separately requires exact arrow shaft
 direction and relative magnitude, one shaft plus two arrowhead segments per
 retained nonzero vector, dimensional automatic scaling, owning deterministic
@@ -958,8 +967,8 @@ Work:
 - in parallel conceptually, use IBAMR or OpenFOAM/preCICE as an external
   reference for selected canonical cases, not as a required GUI dependency;
 - implement arbitrary moving-interface/jump conditions, curved/changing
-  paired grid-side correspondence, refinement, open-piston checkpoint control
-  integration, and broader control messages;
+  paired grid-side correspondence, refinement, and broader case-specific
+  control messages;
 - extend the current cell-point pressure, velocity, divergence, and vorticity
   diagnostics with rate-limited AMR blocks, slices, traction, and pressure-jump
   layers as each field becomes available;
@@ -992,8 +1001,8 @@ Its accepted fluid and structural state can also resume bit-identically from a
 composite persistent checkpoint before or after a topology rebase.
 General interpolated cut-cell pressure metrics, curved or transversely deforming
 correspondence, nonplanar or opening topology events, sealed deforming chambers,
-checkpoint control integration, and a complete coupled energy ledger for
-those general cases remain open, so the
+a complete coupled energy ledger for those general cases, and richer
+case-specific control messages remain open, so the
 full Phase 2 piston gate is not yet closed.
 
 Gate: observed convergence is consistent with the intended order away from

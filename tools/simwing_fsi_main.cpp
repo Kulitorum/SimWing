@@ -1,6 +1,7 @@
 #include "canonical_case.h"
 #include "open_piston_case.h"
 #include "open_piston_checkpoint_persistence.h"
+#include "open_piston_control.h"
 #include "periodic_flow_control.h"
 #include "periodic_flow_case.h"
 #include "piston_case.h"
@@ -91,7 +92,8 @@ void printUsage(FILE* stream) {
         "--checkpoint-every\n"
         "autosaves at absolute accepted-step multiples and the final state. --steps\n"
         "counts additional intervals. --control-stdio instead exchanges bounded\n"
-        "binary periodic-flow commands/responses on stdin/stdout; it rejects\n"
+        "binary open-piston or periodic-flow commands/responses on stdin/stdout;\n"
+        "it rejects\n"
         "--steps, --checkpoint-every, and viewer launch. Interactive runs launch\n"
         "the sibling viewer with --follow; --no-viewer is unthrottled for tests\n"
         "and CI.\n");
@@ -251,8 +253,10 @@ bool parseOptions(int argc,
         return false;
     }
     if (options.controlStdio) {
-        if (options.workerCase != WorkerCase::PeriodicFlow) {
-            error = "--control-stdio requires --case periodic-flow";
+        if (options.workerCase != WorkerCase::PeriodicFlow
+            && options.workerCase != WorkerCase::OpenPiston) {
+            error = "--control-stdio requires --case open-piston or "
+                "periodic-flow";
             return false;
         }
         if (stepsRequested) {
@@ -620,9 +624,10 @@ bool configureBinaryControlStdio(std::string& error) {
     return true;
 }
 
-int runPeriodicFlowControl(
+template<typename Simulation>
+int runWorkerControl(
     const Options& options,
-    simwing::fsi::PeriodicFlowCase& simulation,
+    Simulation& simulation,
     std::ofstream& traceOutput) {
     std::string setupError;
     if (!configureBinaryControlStdio(setupError)) {
@@ -657,7 +662,11 @@ int runPeriodicFlowControl(
         return true;
     };
 
-    simwing::fsi::PeriodicFlowControlHooks hooks;
+    using ControlHooks = std::conditional_t<
+        std::is_same_v<Simulation, simwing::fsi::PeriodicFlowCase>,
+        simwing::fsi::PeriodicFlowControlHooks,
+        simwing::fsi::OpenPistonControlHooks>;
+    ControlHooks hooks;
     hooks.publishFrame = [&](const simwing::viewer::DiagnosticFrame& frame,
                              std::string& hookError) {
         if (!traceWriter.writeFrame(frame)
@@ -669,18 +678,27 @@ int runPeriodicFlowControl(
         }
         return true;
     };
-    hooks.writeCheckpoint = [&](
-                                const simwing::fsi::PeriodicFlowCaseCheckpoint&
-                                    checkpoint,
+    hooks.writeCheckpoint = [&](const auto& checkpoint,
                                 std::string& hookError) {
         if (options.checkpointOutputPath.empty()) {
             hookError = "--checkpoint-out is not configured";
             return false;
         }
-        return writePeriodicFlowCheckpoint(
-            options.checkpointOutputPath, checkpoint, hookError);
+        if constexpr (std::is_same_v<
+                          Simulation,
+                          simwing::fsi::PeriodicFlowCase>) {
+            return writePeriodicFlowCheckpoint(
+                options.checkpointOutputPath, checkpoint, hookError);
+        } else {
+            return writeOpenPistonCheckpoint(
+                options.checkpointOutputPath, checkpoint, hookError);
+        }
     };
-    simwing::fsi::PeriodicFlowControlSession session(
+    using ControlSession = std::conditional_t<
+        std::is_same_v<Simulation, simwing::fsi::PeriodicFlowCase>,
+        simwing::fsi::PeriodicFlowControlSession,
+        simwing::fsi::OpenPistonControlSession>;
+    ControlSession session(
         simulation, std::move(hooks));
 
     simwing::fsi::WorkerControlStreamError streamError;
@@ -848,11 +866,18 @@ int main(int argc, char* argv[]) {
         }
 
         if (options.controlStdio) {
-            simwing::fsi::PeriodicFlowCase simulation;
-            if (restoredPeriodicFlowCheckpoint) {
-                simulation.restore(*restoredPeriodicFlowCheckpoint);
+            if (options.workerCase == WorkerCase::PeriodicFlow) {
+                simwing::fsi::PeriodicFlowCase simulation;
+                if (restoredPeriodicFlowCheckpoint) {
+                    simulation.restore(*restoredPeriodicFlowCheckpoint);
+                }
+                return runWorkerControl(options, simulation, output);
             }
-            return runPeriodicFlowControl(options, simulation, output);
+            simwing::fsi::OpenPistonCase simulation;
+            if (restoredOpenPistonCheckpoint) {
+                simulation.restore(*restoredOpenPistonCheckpoint);
+            }
+            return runWorkerControl(options, simulation, output);
         }
 
         const auto run = [&](auto& simulation) -> int {

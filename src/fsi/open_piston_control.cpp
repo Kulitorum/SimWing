@@ -1,4 +1,4 @@
-#include "periodic_flow_control.h"
+#include "open_piston_control.h"
 
 #include <utility>
 
@@ -6,8 +6,8 @@ namespace simwing::fsi {
 namespace {
 
 WorkerControlSessionHooks makeSessionHooks(
-    PeriodicFlowCase& simulation,
-    PeriodicFlowControlHooks hooks) {
+    OpenPistonCase& simulation,
+    OpenPistonControlHooks hooks) {
     WorkerControlSessionHooks result;
     result.advance = [&simulation] { return simulation.advance(); };
     result.publishFrame = std::move(hooks.publishFrame);
@@ -30,9 +30,9 @@ WorkerControlSessionHooks makeSessionHooks(
 
 } // namespace
 
-PeriodicFlowControlSession::PeriodicFlowControlSession(
-    PeriodicFlowCase& simulation,
-    PeriodicFlowControlHooks hooks)
+OpenPistonControlSession::OpenPistonControlSession(
+    OpenPistonCase& simulation,
+    OpenPistonControlHooks hooks)
     : WorkerControlSession(makeSessionHooks(
           simulation, std::move(hooks))) {}
 
