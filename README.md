@@ -295,7 +295,11 @@ strong-coupled worker. A companion convergence decision requires displacement,
 velocity, and traction to each pass both an absolute tolerance and a
 floor-stabilized relative tolerance, enforces minimum/maximum iteration counts,
 and reports exhaustion separately so a future coordinator can roll back and
-reduce the macro-step. Alongside the strict
+reduce the macro-step. The macro-step surface now supplies those norms from
+stable-ID-bound baseline/previous/current kinematics and consecutive nodal
+traction results. It uses maximum physical nodal updates, references motion to
+the saved macro-step baseline so coordinate and bulk-velocity shifts cancel,
+and rejects foreign topology before reduction. Alongside the strict
 uniform fluid-to-structure subset, a planar face-resolved bridge clips canonical
 MAC tiles against structural triangles and conservatively maps nonuniform face
 traction while closing per-face and aggregate area, force, moment, and power

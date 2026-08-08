@@ -212,6 +212,18 @@ public:
         std::span<const double> sampleOffsetsSeconds,
         std::span<const ConservativeTransferResult> samples) const;
 
+    // Reduces three topology-bound interface iterates and two corresponding
+    // traction transfers into origin- and Galilean-invariant maximum nodal
+    // residuals. Displacement/velocity references are measured as changes
+    // from the saved macro-step baseline; traction references use physical
+    // nodal-force magnitudes.
+    [[nodiscard]] CouplingResidualNorms measureResiduals(
+        std::span<const CouplingNodeKinematics> baselineKinematics,
+        std::span<const CouplingNodeKinematics> previousKinematics,
+        std::span<const CouplingNodeKinematics> currentKinematics,
+        const ConservativeTransferResult& previousTraction,
+        const ConservativeTransferResult& currentTraction) const;
+
     // Validates the complete exchange before mutation. On any structural-step
     // failure, the exact checkpoint from before load application is restored.
     [[nodiscard]] StructureDiagnostics advanceStructure(

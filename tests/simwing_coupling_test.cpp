@@ -646,6 +646,76 @@ void testCouplingConvergenceDecision() {
         "convergence: inconsistent iteration limits are rejected");
 }
 
+void testTopologyBoundCouplingResidualReduction() {
+    PistonFixture fixture;
+    auto baseline = pistonKinematics(
+        fixture.transfer, fixture.structure, 0.0);
+    auto previous = baseline;
+    auto current = baseline;
+    for (std::size_t index = 0; index < baseline.size(); ++index) {
+        previous[index].positionMeters.x += 0.01;
+        current[index].positionMeters.x += 0.012;
+        previous[index].velocityMetersPerSecond.y += 0.1;
+        current[index].velocityMetersPerSecond.y += 0.12;
+    }
+    ConservativeTransferSettings transferSettings;
+    const auto previousTraction = fixture.transfer.evaluate(
+        previous, pistonTractions(fixture.transfer, 0.0), transferSettings);
+    const auto currentTraction = fixture.transfer.evaluate(
+        current, pistonTractions(fixture.transfer, 0.2), transferSettings);
+    const auto residuals = fixture.coupling.measureResiduals(
+        baseline, previous, current, previousTraction, currentTraction);
+    checkNear(residuals.displacementMetres, 0.002, 3.0e-16,
+              "residual reduction: maximum iterate displacement is physical");
+    checkNear(residuals.displacementReferenceMetres, 0.012, 3.0e-16,
+              "residual reduction: displacement reference uses macro-step motion");
+    checkNear(residuals.velocityMetersPerSecond, 0.02, 3.0e-16,
+              "residual reduction: maximum velocity update is physical");
+    checkNear(residuals.velocityReferenceMetersPerSecond, 0.12, 3.0e-16,
+              "residual reduction: velocity reference uses macro-step change");
+    checkNear(residuals.tractionNewtons, 20.0, 1.0e-13,
+              "residual reduction: shared node owns the maximum force update");
+    checkNear(residuals.tractionReferenceNewtons, 220.0, 2.0e-13,
+              "residual reduction: force reference uses the physical nodal load");
+
+    for (std::size_t index = 0; index < baseline.size(); ++index) {
+        baseline[index].positionMeters.z += 8.0;
+        previous[index].positionMeters.z += 8.0;
+        current[index].positionMeters.z += 8.0;
+        baseline[index].velocityMetersPerSecond.z -= 4.0;
+        previous[index].velocityMetersPerSecond.z -= 4.0;
+        current[index].velocityMetersPerSecond.z -= 4.0;
+    }
+    const auto shifted = fixture.coupling.measureResiduals(
+        baseline, previous, current, previousTraction, currentTraction);
+    check(shifted == residuals,
+          "residual reduction: rigid origin and bulk velocity shifts cancel exactly");
+
+    auto invalidKinematics = current;
+    ++invalidKinematics.front().stableId;
+    expectRejected(
+        [&] {
+            static_cast<void>(fixture.coupling.measureResiduals(
+                baseline, previous, invalidKinematics,
+                previousTraction, currentTraction));
+        },
+        "residual reduction: edited stable-ID order is rejected");
+
+    Structure otherStructure(pistonDefinition(0.25));
+    ConservativeSurfaceTransfer otherSurface(
+        otherStructure, pistonNodes(), pistonTriangles());
+    const auto foreignTraction = otherSurface.evaluate(
+        pistonKinematics(otherSurface, otherStructure, 0.2),
+        pistonTractions(otherSurface, 0.2), transferSettings);
+    expectRejected(
+        [&] {
+            static_cast<void>(fixture.coupling.measureResiduals(
+                baseline, previous, current,
+                previousTraction, foreignTraction));
+        },
+        "residual reduction: foreign structural definitions are rejected");
+}
+
 } // namespace
 
 int main() {
@@ -655,6 +725,7 @@ int main() {
     testAitkenLinearFixedPointAndBounds();
     testAitkenVectorCheckpointAndTransactionalFailure();
     testCouplingConvergenceDecision();
+    testTopologyBoundCouplingResidualReduction();
     if (failures != 0) {
         std::fprintf(stderr, "%d SimWing coupling check(s) failed\n", failures);
         return 1;

@@ -737,7 +737,13 @@ worker-independent: displacement, velocity, and traction must each satisfy
 both explicit absolute and floor-stabilized relative budgets after the minimum
 iteration count. An unconverged maximum iteration is reported as exhaustion,
 not acceptance, so the future coordinator can restore both solvers and reduce
-the macro-step. The first stable-ID fluid-to-structure bridge is present for the exact
+the macro-step. The topology-bound macro-step surface computes the decision's
+inputs from saved-baseline, previous, and current stable-ID kinematics plus two
+immutable nodal traction transfers. Maximum displacement and velocity updates
+are referenced to macro-step changes, making the reduction invariant to a
+world-origin shift or added bulk velocity; traction uses physical nodal-force
+magnitudes. Foreign order, topology, Structure, or non-finite data are rejected
+before a norm is returned. The first stable-ID fluid-to-structure bridge is present for the exact
 uniform subset of those operators. It accepts one canonical face-aligned fluid
 surface, requires its facewise pressure-traction deviation to meet an explicit
 budget, reconstructs one uniform world-space traction, and then requires

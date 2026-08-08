@@ -499,6 +499,107 @@ TimeIntegratedTransferResult ConservativeMacroStepCoupling::integrate(
     return result;
 }
 
+CouplingResidualNorms ConservativeMacroStepCoupling::measureResiduals(
+    const std::span<const CouplingNodeKinematics> baselineKinematics,
+    const std::span<const CouplingNodeKinematics> previousKinematics,
+    const std::span<const CouplingNodeKinematics> currentKinematics,
+    const ConservativeTransferResult& previousTraction,
+    const ConservativeTransferResult& currentTraction) const {
+    const auto previousLoads = previousTraction.nodeLoads();
+    const auto currentLoads = currentTraction.nodeLoads();
+    if (baselineKinematics.size() != nodes_.size()
+        || previousKinematics.size() != nodes_.size()
+        || currentKinematics.size() != nodes_.size()
+        || previousLoads.size() != nodes_.size()
+        || currentLoads.size() != nodes_.size()
+        || previousTraction.surfaceFingerprint() != surfaceFingerprint_
+        || currentTraction.surfaceFingerprint() != surfaceFingerprint_
+        || previousTraction.targetDefinitionFingerprint()
+            != targetDefinitionFingerprint_
+        || currentTraction.targetDefinitionFingerprint()
+            != targetDefinitionFingerprint_
+        || !previousTraction.diagnostics().finite
+        || !currentTraction.diagnostics().finite) {
+        throw std::invalid_argument(
+            "coupling residual inputs do not belong to this interface");
+    }
+
+    CouplingResidualNorms result;
+    for (std::size_t index = 0; index < nodes_.size(); ++index) {
+        const auto& node = nodes_[index];
+        const auto& baseline = baselineKinematics[index];
+        const auto& previous = previousKinematics[index];
+        const auto& current = currentKinematics[index];
+        const auto& previousLoad = previousLoads[index];
+        const auto& currentLoad = currentLoads[index];
+        if (baseline.stableId != node.stableId
+            || previous.stableId != node.stableId
+            || current.stableId != node.stableId
+            || previousLoad.stableId != node.stableId
+            || currentLoad.stableId != node.stableId
+            || previousLoad.structureNode != node.structureNode
+            || currentLoad.structureNode != node.structureNode
+            || !finite(baseline.positionMeters)
+            || !finite(previous.positionMeters)
+            || !finite(current.positionMeters)
+            || !finite(baseline.velocityMetersPerSecond)
+            || !finite(previous.velocityMetersPerSecond)
+            || !finite(current.velocityMetersPerSecond)
+            || !finite(previousLoad.forceNewtons)
+            || !finite(currentLoad.forceNewtons)) {
+            throw std::invalid_argument(
+                "coupling residual inputs have invalid nodal bindings");
+        }
+
+        result.displacementMetres = std::max(
+            result.displacementMetres,
+            norm(subtract(
+                current.positionMeters, previous.positionMeters)));
+        result.displacementReferenceMetres = std::max({
+            result.displacementReferenceMetres,
+            norm(subtract(
+                previous.positionMeters, baseline.positionMeters)),
+            norm(subtract(
+                current.positionMeters, baseline.positionMeters)),
+        });
+        result.velocityMetersPerSecond = std::max(
+            result.velocityMetersPerSecond,
+            norm(subtract(
+                current.velocityMetersPerSecond,
+                previous.velocityMetersPerSecond)));
+        result.velocityReferenceMetersPerSecond = std::max({
+            result.velocityReferenceMetersPerSecond,
+            norm(subtract(
+                previous.velocityMetersPerSecond,
+                baseline.velocityMetersPerSecond)),
+            norm(subtract(
+                current.velocityMetersPerSecond,
+                baseline.velocityMetersPerSecond)),
+        });
+        result.tractionNewtons = std::max(
+            result.tractionNewtons,
+            norm(subtract(
+                currentLoad.forceNewtons, previousLoad.forceNewtons)));
+        result.tractionReferenceNewtons = std::max({
+            result.tractionReferenceNewtons,
+            norm(previousLoad.forceNewtons),
+            norm(currentLoad.forceNewtons),
+        });
+    }
+
+    if (!finiteNonnegative(result.displacementMetres)
+        || !finiteNonnegative(result.displacementReferenceMetres)
+        || !finiteNonnegative(result.velocityMetersPerSecond)
+        || !finiteNonnegative(
+            result.velocityReferenceMetersPerSecond)
+        || !finiteNonnegative(result.tractionNewtons)
+        || !finiteNonnegative(result.tractionReferenceNewtons)) {
+        throw std::overflow_error(
+            "coupling residual reduction produced non-finite norms");
+    }
+    return result;
+}
+
 StructureDiagnostics ConservativeMacroStepCoupling::advanceStructure(
     Structure& target,
     const TimeIntegratedTransferResult& transfer,
