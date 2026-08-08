@@ -989,7 +989,9 @@ replays the initial, ordinary, and second-wrap epochs bit-identically; rejected
 restore is transactional. The bounded/checksummed `SWMF` persistence format
 stores all fluid fields and sharp crossings explicitly and regenerates the
 accepted diagnostic through bounded canonical replay before publication. CLI
-checkpoint flags and coupled structure remain open.
+checkpoint flags provide additional-step resume, absolute accepted-step
+autosave cadence, final-write deduplication, and atomic same-path replacement.
+Coupled structure remains open.
 A pressure-driven uniform-plug companion uses the exact nonlinear implicit
 midpoint to close pressure impulse and the
 driving-work/porous-dissipation/kinetic-energy identity on every step. Its

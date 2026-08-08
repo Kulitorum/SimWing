@@ -224,8 +224,9 @@ jumps and diagnostics, sheet kinematics, and unwrapped topology epoch, with
 bit-identical replay at the initial state and through the second wrap. A
 bounded/checksummed `SWMF` codec stores fluid fields and sharp crossings and
 regenerates the accepted diagnostics only after bounded canonical replay
-matches every stored value. CLI checkpoint flags and coupled structure remain
-open.
+matches every stored value. The headless checkpoint flags provide additional-
+step resume, absolute-step autosave cadence, final-write deduplication, and
+atomic same-path replacement. Coupled structure remains open.
 The nonlinear porous iteration can also use the disconnected moving-interface
 projector as its inner solve. A translating two-region slab retains exact wall
 velocities while endpoint or midpoint porous slip closes on unconstrained
@@ -469,6 +470,8 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case pressure-jump --steps 4 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case porous-flow --steps 120 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case moving-porous-flow --steps 101 --no-viewer
+.\build\bin\Release\simwing-fsi.exe --case moving-porous-flow --steps 101 --no-viewer --checkpoint-out moving-porous-flow.swmf --checkpoint-every 50
+.\build\bin\Release\simwing-fsi.exe --case moving-porous-flow --checkpoint-in moving-porous-flow.swmf --steps 4 --no-viewer --checkpoint-out moving-porous-flow.swmf --checkpoint-every 2
 .\build\bin\Release\simwing-fsi.exe --case porous-sheet --steps 120 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case porous-sheet --steps 330 --no-viewer --checkpoint-out porous-sheet.swps --checkpoint-every 165
 .\build\bin\Release\simwing-fsi.exe --case porous-sheet --checkpoint-in porous-sheet.swps --steps 30 --checkpoint-out porous-sheet.swps --checkpoint-every 30
