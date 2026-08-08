@@ -243,7 +243,12 @@ plane moves and the Eulerian grid plane rebases, provided transverse geometry
 remains fixed and fluid/structural normal velocities agree. The
 `simwing-fsi --case piston` harness crosses that
 face-resolved bridge, temporal coupling, XPBD acceptance, and replayable viewer
-frames with visible deterministic motion. The third
+frames with visible deterministic motion. The
+`simwing-fsi --case porous-sheet` harness drives fluid through a translating
+linear-resistance sheet, transfers only the sheet reaction to XPBD, and closes
+the pump impulse/work, porous dissipation, and fluid/structure kinetic-energy
+ledgers before publishing a frame. It is a fixed-topology midpoint oracle and
+stops before the sheet leaves its current MAC segment. The
 `simwing-fsi --case open-piston` harness drives a `6000 kg` plate at
 `0.05 m/s`, exposes the resisting CFD pressure separately from its actuator,
 and publishes accepted partial-cell and geometric-conservation ledgers. Before
@@ -401,6 +406,7 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case open-piston --checkpoint-in open-piston.swop --steps 600 --checkpoint-out open-piston.swop --checkpoint-every 600
 .\build\bin\Release\simwing-fsi.exe --case pressure-jump --steps 4 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case porous-flow --steps 120 --no-viewer
+.\build\bin\Release\simwing-fsi.exe --case porous-sheet --steps 120 --no-viewer
 ```
 
 The first SimWing command launches the standalone trace viewer by default. The

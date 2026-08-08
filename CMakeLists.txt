@@ -453,6 +453,19 @@ target_link_libraries(simwing_piston_case PUBLIC
     simwing_structure_frame
 )
 
+add_library(simwing_porous_sheet_case STATIC
+    src/fsi/porous_sheet_case.cpp
+    src/fsi/porous_sheet_case.h
+)
+target_include_directories(simwing_porous_sheet_case PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_porous_sheet_case PUBLIC
+    simwing_coupling
+    simwing_fluid_structure_bridge
+    simwing_structure_frame
+)
+
 add_library(simwing_open_piston_case STATIC
     src/fsi/open_piston_case.cpp
     src/fsi/open_piston_case.h
@@ -920,6 +933,13 @@ target_link_libraries(simwing-piston-case-test PRIVATE
     simwing_piston_case
 )
 
+add_executable(simwing-porous-sheet-case-test
+    tests/simwing_porous_sheet_case_test.cpp
+)
+target_link_libraries(simwing-porous-sheet-case-test PRIVATE
+    simwing_porous_sheet_case
+)
+
 add_executable(simwing-open-piston-case-test
     tests/simwing_open_piston_case_test.cpp
 )
@@ -982,6 +1002,7 @@ target_link_libraries(simwing-fsi PRIVATE
     simwing_periodic_flow_case
     simwing_piston_case
     simwing_porous_flow_case
+    simwing_porous_sheet_case
     simwing_pressure_jump_case
     simwing_worker_control_stream
 )
@@ -1360,6 +1381,8 @@ add_test(NAME simwing_coupling COMMAND simwing-coupling-test)
 add_test(NAME simwing_fluid_structure_bridge
     COMMAND simwing-fluid-structure-bridge-test)
 add_test(NAME simwing_piston_case COMMAND simwing-piston-case-test)
+add_test(NAME simwing_porous_sheet_case
+    COMMAND simwing-porous-sheet-case-test)
 add_test(NAME simwing_open_piston_case COMMAND simwing-open-piston-case-test)
 add_test(NAME simwing_fsi_help COMMAND simwing-fsi --help)
 add_test(NAME simwing_fsi_piston_headless
@@ -1368,6 +1391,14 @@ add_test(NAME simwing_fsi_piston_headless
         --steps 4
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-piston-headless.swtrace")
+add_test(NAME simwing_fsi_porous_sheet_headless
+    COMMAND simwing-fsi
+        --case porous-sheet
+        --steps 120
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-porous-sheet-headless.swtrace")
+set_tests_properties(simwing_fsi_porous_sheet_headless PROPERTIES
+    PASS_REGULAR_EXPRESSION "completed 120 step\\(s\\)")
 add_test(NAME simwing_fsi_periodic_flow_headless
     COMMAND simwing-fsi
         --case periodic-flow

@@ -6,6 +6,7 @@
 #include "periodic_flow_case.h"
 #include "piston_case.h"
 #include "porous_flow_case.h"
+#include "porous_sheet_case.h"
 #include "pressure_jump_case.h"
 #include "viewer_protocol.h"
 #include "worker_control_stream.h"
@@ -57,6 +58,7 @@ enum class WorkerCase {
     OpenPiston,
     PeriodicFlow,
     PorousFlow,
+    PorousSheet,
     PressureJump,
 };
 
@@ -75,7 +77,7 @@ struct Options {
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: simwing-fsi [--case structural|piston|open-piston|periodic-flow|porous-flow|pressure-jump]\n"
+        "Usage: simwing-fsi [--case structural|piston|open-piston|periodic-flow|porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
         "                   [--checkpoint-in PATH]\n"
@@ -94,6 +96,8 @@ void printUsage(FILE* stream) {
         "canonical and publishes cell-centred pressure/velocity points.\n"
         "'porous-flow' advances a pressure-driven Darcy-Forchheimer plug and\n"
         "publishes its porous and periodic gauge-closure planes.\n"
+        "'porous-sheet' couples a translating Darcy sheet to XPBD while a\n"
+        "periodic pump drives fluid through it inside one topology epoch.\n"
         "'pressure-jump' repeatedly verifies a static split-region slab and\n"
         "publishes each ordered sharp-interface layer. Open-piston\n"
         "and periodic-flow checkpoint paths restore/save exact accepted state;\n"
@@ -126,6 +130,10 @@ bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
     }
     if (text == "porous-flow") {
         workerCase = WorkerCase::PorousFlow;
+        return true;
+    }
+    if (text == "porous-sheet") {
+        workerCase = WorkerCase::PorousSheet;
         return true;
     }
     if (text == "pressure-jump") {
@@ -168,14 +176,16 @@ bool parseOptions(int argc,
             if (++index >= argc
                 || !parseWorkerCase(argv[index], options.workerCase)) {
                 error = "--case requires 'structural', 'piston', "
-                    "'open-piston', 'periodic-flow', 'porous-flow', or "
+                    "'open-piston', 'periodic-flow', 'porous-flow', "
+                    "'porous-sheet', or "
                     "'pressure-jump'";
                 return false;
             }
         } else if (argument.starts_with("--case=")) {
             if (!parseWorkerCase(argument.substr(7), options.workerCase)) {
                 error = "--case requires 'structural', 'piston', "
-                    "'open-piston', 'periodic-flow', 'porous-flow', or "
+                    "'open-piston', 'periodic-flow', 'porous-flow', "
+                    "'porous-sheet', or "
                     "'pressure-jump'";
                 return false;
             }
@@ -1154,6 +1164,10 @@ int main(int argc, char* argv[]) {
         }
         if (options.workerCase == WorkerCase::PorousFlow) {
             simwing::fsi::PorousFlowCase simulation;
+            return run(simulation);
+        }
+        if (options.workerCase == WorkerCase::PorousSheet) {
+            simwing::fsi::CoupledPorousSheetCase simulation;
             return run(simulation);
         }
         simwing::fsi::CanonicalStructuralCase simulation;

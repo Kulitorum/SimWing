@@ -410,6 +410,7 @@ src/fsi/
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     piston_case.*           sealed fixed-topology worker canonical
+    porous_sheet_case.*     coupled midpoint porous-sheet oracle
     open_piston_case.*      driven open-control-volume worker canonical
     open_piston_checkpoint_persistence.* bounded composite restart codec
     periodic_flow_case.*    visible periodic CFD verification worker
@@ -463,7 +464,7 @@ tools/
 Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
-`simwing_open_piston_case`, `simwing_fluid_frame`,
+`simwing_porous_sheet_case`, `simwing_open_piston_case`, `simwing_fluid_frame`,
 `simwing_periodic_flow_case`, `simwing_pressure_jump_case`,
 `simwing_porous_flow_case`,
 `simwing_worker_control_protocol`,
@@ -960,7 +961,15 @@ periodic gauge-closure planes in owning frames; the physical driving rise stays
 separate in the impulse/work ledger. The case converges to the analytic
 `1.74165739 m/s`, `250 Pa` steady state. This closes a one-degree-of-freedom
 second-order porous-flow oracle; general moving porous/cut-cell topology remains
-open.
+open. A separate `--case porous-sheet` canonical now couples the nonuniform
+midpoint projection directly to the planar stable-ID sheet-reaction bridge and
+XPBD. Its analytic linear-resistance midpoint relation independently closes
+fluid and sheet momentum against prescribed pump impulse, and closes their
+kinetic-energy changes plus porous dissipation against pump work on every
+accepted step. The immutable trace shows the translated two-sided sheet and
+keeps pressure jump, sheet impulse, pump work, and porous loss separate. It is
+fixed-topology by construction and rejects the sheet at its current MAC-segment
+boundary; it is not a moving cut-cell remap or a general strong-coupling solve.
 The case checkpoint must restore the initial state and a later accepted state,
 then reproduce the next frame bit-for-bit in both the original and an equivalent
 rebuilt worker. Version, case fingerprint, grid, sample count, step, time, and
@@ -1128,6 +1137,12 @@ topology rebases including periodic wrap. Its analytic structure/fluid/actuator
 momentum and kinetic-energy ledger is now complete for this driven planar case.
 Its accepted fluid and structural state can also resume bit-identically from a
 composite persistent checkpoint before or after a topology rebase.
+The coupled porous-sheet oracle now also exercises the accepted
+fluid-to-structure boundary end to end: a periodic pump drives midpoint flow,
+the porous adapter excludes that pump from material traction, the bridge maps
+only the sheet reaction, and XPBD receives the same impulse and work. Its
+one-segment translation is intentionally a smaller gate than moving porous
+topology.
 General interpolated cut-cell pressure metrics, curved or transversely deforming
 correspondence, nonplanar or opening topology events, sealed deforming chambers,
 a complete coupled energy ledger for those general cases, and richer
