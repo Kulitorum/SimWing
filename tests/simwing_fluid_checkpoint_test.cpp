@@ -1,10 +1,12 @@
 #include "fluid/checkpoint.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -16,13 +18,21 @@ using simwing::fsi::fluid::GridFaceMovingInterface;
 using simwing::fsi::fluid::MacVelocityField;
 using simwing::fsi::fluid::MovingInterfaceProjectionSettings;
 using simwing::fsi::fluid::MovingInterfaceFluidCheckpoint;
+using simwing::fsi::fluid::MovingPorousFluidCheckpoint;
+using simwing::fsi::fluid::MovingPorousProjectionSettings;
+using simwing::fsi::fluid::PorousConstitutiveEvaluation;
+using simwing::fsi::fluid::PorousGridFaceCrossing;
 using simwing::fsi::fluid::MovingInterfaceFluidCheckpointError;
 using simwing::fsi::fluid::MovingInterfaceFluidCheckpointErrorCode;
 using simwing::fsi::fluid::MovingInterfaceFluidCheckpointLimits;
 using simwing::fsi::fluid::PeriodicCartesianGrid;
+using simwing::fsi::fluid::SharpPressureJumpField;
 using simwing::fsi::fluid::checkpointMovingInterfaceFluidState;
+using simwing::fsi::fluid::checkpointMovingPorousFluidState;
 using simwing::fsi::fluid::projectVelocityWithMovingInterfaces;
+using simwing::fsi::fluid::projectVelocityWithMovingAndPorousInterfaces;
 using simwing::fsi::fluid::restoreMovingInterfaceFluidState;
+using simwing::fsi::fluid::restoreMovingPorousFluidState;
 
 int failures = 0;
 
@@ -121,6 +131,76 @@ MovingInterfaceProjectionSettings projectionSettings() {
     return settings;
 }
 
+PeriodicCartesianGrid movingPorousGrid() {
+    return PeriodicCartesianGrid({8, 2, 3}, {}, {4.0, 2.0, 3.0});
+}
+
+FaceAlignedMovingInterface movingPorousInterfaces(
+    const PeriodicCartesianGrid& grid) {
+    std::vector<GridFaceMovingInterface> faces;
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            faces.push_back({
+                100, 1, 2, GridFaceAxis::X, 2, j, k, 0.25});
+            faces.push_back({
+                200, 2, 1, GridFaceAxis::X, 6, j, k, 0.25});
+        }
+    }
+    return FaceAlignedMovingInterface(grid, std::move(faces));
+}
+
+std::vector<PorousGridFaceCrossing> movingPorousCrossings(
+    const PeriodicCartesianGrid& grid,
+    const std::size_t plane = 3,
+    const double surfaceVelocityMetersPerSecond = 0.1,
+    const double linearResistance = 10.0) {
+    std::vector<PorousGridFaceCrossing> crossings;
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            crossings.push_back({
+                300, 10, 11, GridFaceAxis::X, plane, j, k,
+                0.4, surfaceVelocityMetersPerSecond,
+                {linearResistance, 0.0}});
+        }
+    }
+    return crossings;
+}
+
+SharpPressureJumpField movingPorousBalance(
+    const PeriodicCartesianGrid& grid,
+    const double pressureJumpPascals) {
+    std::vector<simwing::fsi::fluid::GridFacePressureJump> faces;
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            faces.push_back({
+                400, 11, 10, GridFaceAxis::X, 5, j, k,
+                pressureJumpPascals, 0.6});
+        }
+    }
+    return SharpPressureJumpField(grid, std::move(faces));
+}
+
+MovingPorousProjectionSettings movingPorousSettings(
+    const PorousConstitutiveEvaluation evaluation) {
+    MovingPorousProjectionSettings settings;
+    settings.movingProjection = projectionSettings();
+    settings.movingProjection.projection.timeStepSeconds = 0.4;
+    settings.movingProjection
+        .absoluteRegionVolumeRateToleranceCubicMetersPerSecond = 1.0e-12;
+    settings.iteration.constitutiveEvaluation = evaluation;
+    settings.iteration.absoluteNormalVelocityToleranceMetersPerSecond =
+        1.0e-12;
+    settings.iteration.relativeNormalVelocityTolerance = 1.0e-12;
+    settings.iteration.absolutePressureJumpTolerancePascals = 1.0e-11;
+    settings.iteration.relativePressureJumpTolerance = 1.0e-12;
+    settings.iteration.relaxation = 0.5;
+    settings.iteration.maximumNonlinearIterations = 100;
+    return settings;
+}
+
 void testAcceptedStateRoundTrip() {
     const auto grid = makeGrid();
     const auto interfaces = makeInterfaces(grid, 3, 0.125);
@@ -205,6 +285,196 @@ void testTopologyEpochBinding() {
         sameTopologyDifferentSpeed, fasterDiagnostics);
     check(faster.topologyFingerprint == first.topologyFingerprint,
           "checkpoint: prescribed speed changes state without changing topology identity");
+}
+
+void testMovingPorousAcceptedStateRoundTrip() {
+    const auto grid = movingPorousGrid();
+    const auto interfaces = movingPorousInterfaces(grid);
+    const auto porous = movingPorousCrossings(grid);
+    for (const auto evaluation : {
+             PorousConstitutiveEvaluation::Endpoint,
+             PorousConstitutiveEvaluation::Midpoint}) {
+        const auto prescribed = movingPorousBalance(
+            grid, evaluation == PorousConstitutiveEvaluation::Endpoint
+                ? 1.5 : 0.25);
+        const auto settings = movingPorousSettings(evaluation);
+        MacVelocityField predicted(grid);
+        MacVelocityField velocity = predicted;
+        CellScalarField pressure(grid);
+        const auto diagnostics =
+            projectVelocityWithMovingAndPorousInterfaces(
+                grid, velocity, pressure, interfaces,
+                porous, prescribed, settings);
+        const auto checkpoint = checkpointMovingPorousFluidState(
+            grid, predicted, velocity, pressure, interfaces,
+            porous, prescribed, diagnostics);
+        const auto restored = restoreMovingPorousFluidState(
+            grid, checkpoint);
+        const auto replayed = restoreMovingPorousFluidState(
+            grid, checkpoint);
+
+        check(checkpoint.version
+                  == simwing::fsi::fluid::movingPorousFluidCheckpointVersion
+                  && checkpoint.cellCounts == grid.cellCounts()
+                  && checkpoint.lowerMeters == grid.lowerMeters()
+                  && checkpoint.upperMeters == grid.upperMeters()
+                  && checkpoint.scalarSampleCount == grid.cellCount()
+                  && checkpoint.topologyFingerprint != 0,
+              "moving porous checkpoint: public epoch metadata are explicit");
+        check(restored.predictedVelocityMetersPerSecond == predicted
+                  && restored.velocityMetersPerSecond == velocity
+                  && restored.pressurePascals == pressure
+                  && restored.interfaces == interfaces
+                  && restored.porousCrossings == porous
+                  && restored.prescribedPressureJumps == prescribed
+                  && restored.diagnostics == diagnostics,
+              "moving porous checkpoint: accepted endpoint/midpoint state restores bit-for-bit");
+        check(replayed.predictedVelocityMetersPerSecond
+                      == restored.predictedVelocityMetersPerSecond
+                  && replayed.velocityMetersPerSecond
+                      == restored.velocityMetersPerSecond
+                  && replayed.pressurePascals == restored.pressurePascals
+                  && replayed.porousCrossings == restored.porousCrossings
+                  && replayed.diagnostics == restored.diagnostics,
+              "moving porous checkpoint: repeated restore replays bit-for-bit");
+
+        predicted.xFaces().front() += 10.0;
+        velocity.xFaces().front() += 20.0;
+        pressure.values().front() += 30.0;
+        const auto immutable = restoreMovingPorousFluidState(
+            grid, checkpoint);
+        check(immutable.predictedVelocityMetersPerSecond
+                      == restored.predictedVelocityMetersPerSecond
+                  && immutable.velocityMetersPerSecond
+                      == restored.velocityMetersPerSecond
+                  && immutable.pressurePascals == restored.pressurePascals,
+              "moving porous checkpoint: immutable payload does not alias source fields");
+    }
+}
+
+void testMovingPorousTopologyBinding() {
+    const auto grid = movingPorousGrid();
+    const auto interfaces = movingPorousInterfaces(grid);
+    const auto settings = movingPorousSettings(
+        PorousConstitutiveEvaluation::Endpoint);
+    const auto capture = [&](const std::vector<PorousGridFaceCrossing>& porous,
+                             const SharpPressureJumpField& prescribed) {
+        MacVelocityField predicted(grid);
+        MacVelocityField velocity = predicted;
+        CellScalarField pressure(grid);
+        const auto diagnostics =
+            projectVelocityWithMovingAndPorousInterfaces(
+                grid, velocity, pressure, interfaces,
+                porous, prescribed, settings);
+        return checkpointMovingPorousFluidState(
+            grid, predicted, velocity, pressure, interfaces,
+            porous, prescribed, diagnostics);
+    };
+
+    const auto porous = movingPorousCrossings(grid);
+    const auto baseline = capture(
+        porous, movingPorousBalance(grid, 1.5));
+    auto reversed = porous;
+    std::reverse(reversed.begin(), reversed.end());
+    const auto reversedCheckpoint = capture(
+        reversed, movingPorousBalance(grid, 1.5));
+    check(baseline.topologyFingerprint
+                  == reversedCheckpoint.topologyFingerprint
+              && restoreMovingPorousFluidState(grid, baseline)
+                      .porousCrossings
+                  == restoreMovingPorousFluidState(
+                      grid, reversedCheckpoint).porousCrossings,
+          "moving porous checkpoint: authored order canonicalizes to one epoch");
+
+    const auto moved = capture(
+        movingPorousCrossings(grid, 4),
+        movingPorousBalance(grid, 1.5));
+    check(moved.topologyFingerprint != baseline.topologyFingerprint,
+          "moving porous checkpoint: a changed porous face starts a new topology epoch");
+
+    const auto changedState = capture(
+        movingPorousCrossings(grid, 3, 0.05, 20.0),
+        movingPorousBalance(grid, 4.0));
+    check(changedState.topologyFingerprint == baseline.topologyFingerprint,
+          "moving porous checkpoint: material, velocity, and jump values do not change topology identity");
+}
+
+void testMovingPorousStrictValidation() {
+    const auto grid = movingPorousGrid();
+    const auto interfaces = movingPorousInterfaces(grid);
+    const auto porous = movingPorousCrossings(grid);
+    const auto prescribed = movingPorousBalance(grid, 0.25);
+    const auto settings = movingPorousSettings(
+        PorousConstitutiveEvaluation::Midpoint);
+    MacVelocityField predicted(grid);
+    MacVelocityField velocity = predicted;
+    CellScalarField pressure(grid);
+    const auto diagnostics = projectVelocityWithMovingAndPorousInterfaces(
+        grid, velocity, pressure, interfaces,
+        porous, prescribed, settings);
+    const auto checkpoint = checkpointMovingPorousFluidState(
+        grid, predicted, velocity, pressure, interfaces,
+        porous, prescribed, diagnostics);
+
+    auto wrongVersion = checkpoint;
+    ++wrongVersion.version;
+    expectRejected(
+        [&] { static_cast<void>(restoreMovingPorousFluidState(
+            grid, wrongVersion)); },
+        "moving porous checkpoint validation: unsupported version is rejected");
+    auto wrongFingerprint = checkpoint;
+    ++wrongFingerprint.topologyFingerprint;
+    expectRejected(
+        [&] { static_cast<void>(restoreMovingPorousFluidState(
+            grid, wrongFingerprint)); },
+        "moving porous checkpoint validation: corrupted topology fingerprint is rejected");
+
+    auto failed = diagnostics;
+    failed.accepted = false;
+    expectRejected(
+        [&] { static_cast<void>(checkpointMovingPorousFluidState(
+            grid, predicted, velocity, pressure, interfaces,
+            porous, prescribed, failed)); },
+        "moving porous checkpoint validation: rejected outer solve cannot be captured");
+    auto mismatchedProjection = diagnostics;
+    ++mismatchedProjection.porous.projection.pressureJumpFaceCount;
+    expectRejected(
+        [&] { static_cast<void>(checkpointMovingPorousFluidState(
+            grid, predicted, velocity, pressure, interfaces,
+            porous, prescribed, mismatchedProjection)); },
+        "moving porous checkpoint validation: nested projections must match exactly");
+    auto corruptedSample = diagnostics;
+    corruptedSample.porous.samples.front()
+        .relativeNormalVelocityMetersPerSecond += 0.01;
+    expectRejected(
+        [&] { static_cast<void>(checkpointMovingPorousFluidState(
+            grid, predicted, velocity, pressure, interfaces,
+            porous, prescribed, corruptedSample)); },
+        "moving porous checkpoint validation: samples must match the calibrated law");
+
+    auto wrongProvenance = predicted;
+    wrongProvenance.xFaces()[grid.cellIndex(5, 0, 0)] += 0.1;
+    expectRejected(
+        [&] { static_cast<void>(checkpointMovingPorousFluidState(
+            grid, wrongProvenance, velocity, pressure, interfaces,
+            porous, prescribed, diagnostics)); },
+        "moving porous checkpoint validation: midpoint source power binds predicted velocity");
+    auto changedResistance = porous;
+    changedResistance.front().resistance.linearPascalSecondsPerMeter += 1.0;
+    expectRejected(
+        [&] { static_cast<void>(checkpointMovingPorousFluidState(
+            grid, predicted, velocity, pressure, interfaces,
+            changedResistance, prescribed, diagnostics)); },
+        "moving porous checkpoint validation: material definitions bind diagnostic samples");
+
+    auto nonfinitePredicted = predicted;
+    nonfinitePredicted.zFaces().front() =
+        std::numeric_limits<double>::quiet_NaN();
+    expectRejected(
+        [&] { static_cast<void>(checkpointMovingPorousFluidState(
+            grid, nonfinitePredicted, velocity, pressure, interfaces,
+            porous, prescribed, diagnostics)); },
+        "moving porous checkpoint validation: non-finite provenance cannot be captured");
 }
 
 void testPersistentRoundTrip() {
@@ -459,6 +729,9 @@ void testStrictValidation() {
 int main() {
     testAcceptedStateRoundTrip();
     testTopologyEpochBinding();
+    testMovingPorousAcceptedStateRoundTrip();
+    testMovingPorousTopologyBinding();
+    testMovingPorousStrictValidation();
     testPersistentRoundTrip();
     testPersistentCorruptionAndLimits();
     testStrictValidation();

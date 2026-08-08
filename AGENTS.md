@@ -203,10 +203,14 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   projection's face-resolved complete constraint reaction on the congruent
   physical plane, can resample that macro-step-average reaction at endpoint
   kinematics, and closes area, force, moment, power, and periodic-image ledgers.
-  Its in-memory checkpoint captures accepted pressure, velocity, interface
-  topology, and diagnostics behind an immutable, grid/fingerprint-bound payload.
-  A deterministic bounded/checksummed little-endian codec persists that exact
-  field, interface-kinematics/topology, and nested-diagnostic state.
+  Its in-memory checkpoints capture accepted moving-only pressure, velocity,
+  interface topology, and diagnostics, and separately capture accepted
+  moving/porous state including the predicted-field provenance required to
+  reconstruct midpoint samples, canonical resistance definitions, prescribed
+  jumps, and complete nested diagnostics. Both are immutable and bound to exact
+  grid/topology fingerprints. A deterministic bounded/checksummed little-endian
+  codec currently persists the moving-only field, interface-kinematics/topology,
+  and nested-diagnostic state; moving/porous persistence remains separate work.
   Its viscosity operators are a bounded explicit periodic MAC Euler oracle and
   a two-stage SSPRK2 path, both with the sharp
   `nu*dt*sum(1/h^2) <= 0.5` per-stage stability contract, exact zero/uniform

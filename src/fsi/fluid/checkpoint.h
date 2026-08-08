@@ -1,6 +1,6 @@
 #pragma once
 
-#include "fluid/moving_interface.h"
+#include "fluid/porous_interface.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -12,6 +12,7 @@
 namespace simwing::fsi::fluid {
 
 inline constexpr std::uint32_t movingInterfaceFluidCheckpointVersion = 1;
+inline constexpr std::uint32_t movingPorousFluidCheckpointVersion = 1;
 inline constexpr std::uint16_t
     movingInterfaceFluidCheckpointProtocolVersion = 1;
 
@@ -51,6 +52,19 @@ struct MovingInterfaceFluidState {
     MovingInterfaceProjectionDiagnostics diagnostics;
 };
 
+struct MovingPorousFluidState {
+    // Predicted field supplied to the nonlinear projection. It is retained as
+    // diagnostic provenance so midpoint constitutive samples and prescribed
+    // jump power can be reconstructed exactly after persistence.
+    MacVelocityField predictedVelocityMetersPerSecond;
+    MacVelocityField velocityMetersPerSecond;
+    CellScalarField pressurePascals;
+    FaceAlignedMovingInterface interfaces;
+    std::vector<PorousGridFaceCrossing> porousCrossings;
+    SharpPressureJumpField prescribedPressureJumps;
+    MovingPorousProjectionDiagnostics diagnostics;
+};
+
 // In-memory committed state for one fixed moving-interface topology epoch.
 // The public metadata is suitable for orchestration and persistence adapters;
 // the immutable private payload prevents a caller from changing fields without
@@ -77,6 +91,37 @@ private:
     restoreMovingInterfaceFluidState(
         const PeriodicCartesianGrid&,
         const MovingInterfaceFluidCheckpoint&);
+
+    struct Detail;
+    std::shared_ptr<const Detail> detail;
+};
+
+// In-memory committed state for one coupled moving/porous topology epoch.
+// Porous definitions are stored in canonical crossing order. The topology
+// fingerprint includes moving, porous, and prescribed-jump geometry and stable
+// identities, while prescribed velocities, resistance coefficients, and jump
+// values remain mutable state within that fixed topology.
+struct MovingPorousFluidCheckpoint {
+    std::uint32_t version = movingPorousFluidCheckpointVersion;
+    GridCellCounts cellCounts;
+    Vector3 lowerMeters;
+    Vector3 upperMeters;
+    std::size_t scalarSampleCount = 0;
+    std::uint64_t topologyFingerprint = 0;
+
+private:
+    friend MovingPorousFluidCheckpoint checkpointMovingPorousFluidState(
+        const PeriodicCartesianGrid&,
+        const MacVelocityField&,
+        const MacVelocityField&,
+        const CellScalarField&,
+        const FaceAlignedMovingInterface&,
+        const std::vector<PorousGridFaceCrossing>&,
+        const SharpPressureJumpField&,
+        const MovingPorousProjectionDiagnostics&);
+    friend MovingPorousFluidState restoreMovingPorousFluidState(
+        const PeriodicCartesianGrid&,
+        const MovingPorousFluidCheckpoint&);
 
     struct Detail;
     std::shared_ptr<const Detail> detail;
@@ -115,5 +160,23 @@ checkpointMovingInterfaceFluidState(
 restoreMovingInterfaceFluidState(
     const PeriodicCartesianGrid& grid,
     const MovingInterfaceFluidCheckpoint& checkpoint);
+
+// Captures only a completely accepted moving/porous solve. Validation binds
+// the constitutive samples to the calibrated resistance law at their declared
+// endpoint or midpoint time, and binds the nested projection diagnostics to
+// the committed moving-interface state.
+[[nodiscard]] MovingPorousFluidCheckpoint checkpointMovingPorousFluidState(
+    const PeriodicCartesianGrid& grid,
+    const MacVelocityField& predictedVelocityMetersPerSecond,
+    const MacVelocityField& velocityMetersPerSecond,
+    const CellScalarField& pressurePascals,
+    const FaceAlignedMovingInterface& interfaces,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField& prescribedPressureJumps,
+    const MovingPorousProjectionDiagnostics& diagnostics);
+
+[[nodiscard]] MovingPorousFluidState restoreMovingPorousFluidState(
+    const PeriodicCartesianGrid& grid,
+    const MovingPorousFluidCheckpoint& checkpoint);
 
 } // namespace simwing::fsi::fluid

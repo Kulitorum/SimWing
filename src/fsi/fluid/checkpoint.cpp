@@ -7,6 +7,7 @@
 #include <limits>
 #include <map>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -134,6 +135,86 @@ std::uint64_t topologyFingerprint(
     }
     for (const std::uint64_t stableId : interfaces.cellRegionStableIds()) {
         hashValue(hash, stableId);
+    }
+    return hash;
+}
+
+std::uint8_t axisOrdinal(const GridFaceAxis axis) {
+    switch (axis) {
+    case GridFaceAxis::X:
+        return 0;
+    case GridFaceAxis::Y:
+        return 1;
+    case GridFaceAxis::Z:
+        return 2;
+    }
+    throw std::invalid_argument("fluid checkpoint has an invalid face axis");
+}
+
+auto porousCrossingKey(const PorousGridFaceCrossing& crossing) {
+    return std::tuple{
+        axisOrdinal(crossing.axis),
+        crossing.k, crossing.j, crossing.i,
+        crossing.crossingFraction,
+        crossing.surfaceStableId,
+        crossing.minusRegionStableId,
+        crossing.plusRegionStableId};
+}
+
+std::vector<PorousGridFaceCrossing> canonicalPorousCrossings(
+    std::vector<PorousGridFaceCrossing> crossings) {
+    std::ranges::sort(
+        crossings,
+        [](const auto& first, const auto& second) {
+            return porousCrossingKey(first) < porousCrossingKey(second);
+        });
+    return crossings;
+}
+
+void hashCrossingTopology(
+    std::uint64_t& hash,
+    const PorousGridFaceCrossing& crossing) noexcept {
+    hashValue(hash, crossing.surfaceStableId);
+    hashValue(hash, crossing.minusRegionStableId);
+    hashValue(hash, crossing.plusRegionStableId);
+    hashValue(hash, static_cast<std::uint64_t>(crossing.axis));
+    hashValue(hash, static_cast<std::uint64_t>(crossing.i));
+    hashValue(hash, static_cast<std::uint64_t>(crossing.j));
+    hashValue(hash, static_cast<std::uint64_t>(crossing.k));
+    hashValue(hash, crossing.crossingFraction);
+}
+
+void hashCrossingTopology(
+    std::uint64_t& hash,
+    const GridFacePressureJump& crossing) noexcept {
+    hashValue(hash, crossing.surfaceStableId);
+    hashValue(hash, crossing.minusRegionStableId);
+    hashValue(hash, crossing.plusRegionStableId);
+    hashValue(hash, static_cast<std::uint64_t>(crossing.axis));
+    hashValue(hash, static_cast<std::uint64_t>(crossing.i));
+    hashValue(hash, static_cast<std::uint64_t>(crossing.j));
+    hashValue(hash, static_cast<std::uint64_t>(crossing.k));
+    hashValue(hash, crossing.crossingFraction);
+}
+
+std::uint64_t topologyFingerprint(
+    const PeriodicCartesianGrid& grid,
+    const FaceAlignedMovingInterface& interfaces,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField& prescribedPressureJumps) {
+    std::uint64_t hash = fnvOffset;
+    hashValue(hash, static_cast<std::uint64_t>(
+        movingPorousFluidCheckpointVersion));
+    hashValue(hash, topologyFingerprint(grid, interfaces));
+    const auto canonical = canonicalPorousCrossings(porousCrossings);
+    hashValue(hash, static_cast<std::uint64_t>(canonical.size()));
+    for (const auto& crossing : canonical) {
+        hashCrossingTopology(hash, crossing);
+    }
+    hashValue(hash, static_cast<std::uint64_t>(
+        prescribedPressureJumps.faceCount()));
+    for (const auto& crossing : prescribedPressureJumps.faces()) {
+        hashCrossingTopology(hash, crossing);
     }
     return hash;
 }
@@ -368,6 +449,221 @@ bool diagnosticsMatch(
                 totalConstraintReactionWork);
 }
 
+double faceArea(const PeriodicCartesianGrid& grid,
+                const GridFaceAxis axis) {
+    const Vector3 spacing = grid.cellSpacingMeters();
+    switch (axis) {
+    case GridFaceAxis::X:
+        return spacing.y * spacing.z;
+    case GridFaceAxis::Y:
+        return spacing.x * spacing.z;
+    case GridFaceAxis::Z:
+        return spacing.x * spacing.y;
+    }
+    throw std::invalid_argument("fluid checkpoint has an invalid face axis");
+}
+
+double faceNormalVelocity(
+    const PeriodicCartesianGrid& grid,
+    const MacVelocityField& velocity,
+    const GridFacePressureJump& crossing) {
+    const std::size_t index = grid.cellIndex(
+        crossing.i, crossing.j, crossing.k);
+    switch (crossing.axis) {
+    case GridFaceAxis::X:
+        return velocity.xFaces()[index];
+    case GridFaceAxis::Y:
+        return velocity.yFaces()[index];
+    case GridFaceAxis::Z:
+        return velocity.zFaces()[index];
+    }
+    throw std::invalid_argument("fluid checkpoint has an invalid face axis");
+}
+
+MacVelocityField constitutiveVelocity(
+    const PeriodicCartesianGrid& grid,
+    const MacVelocityField& predictedVelocityMetersPerSecond,
+    const MacVelocityField& velocityMetersPerSecond,
+    const PorousConstitutiveEvaluation evaluation) {
+    MacVelocityField result = velocityMetersPerSecond;
+    switch (evaluation) {
+    case PorousConstitutiveEvaluation::Endpoint:
+        return result;
+    case PorousConstitutiveEvaluation::Midpoint:
+        break;
+    default:
+        throw std::invalid_argument(
+            "fluid checkpoint has an invalid porous constitutive time");
+    }
+    for (std::size_t index = 0; index < grid.cellCount(); ++index) {
+        result.xFaces()[index] = 0.5
+            * (predictedVelocityMetersPerSecond.xFaces()[index]
+               + result.xFaces()[index]);
+        result.yFaces()[index] = 0.5
+            * (predictedVelocityMetersPerSecond.yFaces()[index]
+               + result.yFaces()[index]);
+        result.zFaces()[index] = 0.5
+            * (predictedVelocityMetersPerSecond.zFaces()[index]
+               + result.zFaces()[index]);
+    }
+    return result;
+}
+
+bool porousLedgerTimeScaleMatches(
+    const PorousProjectionDiagnostics& diagnostics) noexcept {
+    double timeStepSeconds = 0.0;
+    bool hasTimeStep = false;
+    const auto matchPair = [&](const double integrated,
+                               const double rate) {
+        if (std::abs(rate) <= 1.0e-14) {
+            return near(integrated, 0.0);
+        }
+        const double candidate = integrated / rate;
+        if (!std::isfinite(candidate) || !(candidate > 0.0)) {
+            return false;
+        }
+        if (!hasTimeStep) {
+            timeStepSeconds = candidate;
+            hasTimeStep = true;
+            return true;
+        }
+        return near(candidate, timeStepSeconds);
+    };
+    return matchPair(
+               diagnostics
+                   .totalPressureJumpImpulseOnFluidNewtonSeconds.x,
+               diagnostics.totalPressureJumpForceOnFluidNewtons.x)
+        && matchPair(
+               diagnostics
+                   .totalPressureJumpImpulseOnFluidNewtonSeconds.y,
+               diagnostics.totalPressureJumpForceOnFluidNewtons.y)
+        && matchPair(
+               diagnostics
+                   .totalPressureJumpImpulseOnFluidNewtonSeconds.z,
+               diagnostics.totalPressureJumpForceOnFluidNewtons.z)
+        && matchPair(
+               diagnostics.totalPressureJumpWorkToFluidJoules,
+               diagnostics.totalPressureJumpPowerToFluidWatts)
+        && matchPair(
+               diagnostics.totalPorousDissipationJoules,
+               diagnostics.totalDissipationWatts);
+}
+
+bool porousDiagnosticsMatch(
+    const PeriodicCartesianGrid& grid,
+    const MacVelocityField& predictedVelocityMetersPerSecond,
+    const MacVelocityField& velocityMetersPerSecond,
+    const FaceAlignedMovingInterface& interfaces,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField& prescribedPressureJumps,
+    const MovingPorousProjectionDiagnostics& diagnostics) {
+    if (!diagnostics.accepted || !diagnostics.finite
+        || !diagnostics.porous.accepted || !diagnostics.porous.finite
+        || !diagnostics.movingInterface.finite
+        || diagnostics.porous.projection
+            != diagnostics.movingInterface.projection
+        || diagnostics.porous.porousCrossingCount
+            != porousCrossings.size()
+        || diagnostics.porous.samples.size() != porousCrossings.size()
+        || (porousCrossings.empty()
+                ? diagnostics.porous.nonlinearIterationCount != 0
+                : diagnostics.porous.nonlinearIterationCount == 0)
+        || !std::isfinite(
+            diagnostics.porous
+                .initialMaximumNormalVelocityResidualMetersPerSecond)
+        || diagnostics.porous
+                .initialMaximumNormalVelocityResidualMetersPerSecond < 0.0
+        || !std::isfinite(
+            diagnostics.porous
+                .finalMaximumNormalVelocityResidualMetersPerSecond)
+        || diagnostics.porous
+                .finalMaximumNormalVelocityResidualMetersPerSecond < 0.0
+        || !std::isfinite(
+            diagnostics.porous.finalMaximumPressureJumpResidualPascals)
+        || diagnostics.porous.finalMaximumPressureJumpResidualPascals < 0.0
+        || !finite(
+            diagnostics.porous.totalPressureJumpForceOnFluidNewtons)
+        || !finite(
+            diagnostics.porous
+                .totalPressureJumpImpulseOnFluidNewtonSeconds)
+        || !std::isfinite(diagnostics.porous.totalDissipationWatts)
+        || !std::isfinite(
+            diagnostics.porous.totalPorousDissipationJoules)
+        || !std::isfinite(
+            diagnostics.porous.totalPressureJumpPowerToFluidWatts)
+        || !std::isfinite(
+            diagnostics.porous.totalPressureJumpWorkToFluidJoules)
+        || !porousLedgerTimeScaleMatches(diagnostics.porous)) {
+        return false;
+    }
+
+    const MacVelocityField sampledVelocity = constitutiveVelocity(
+        grid, predictedVelocityMetersPerSecond,
+        velocityMetersPerSecond,
+        diagnostics.porous.constitutiveEvaluation);
+    const PorousPressureJumpField expectedPorous(
+        grid, sampledVelocity, porousCrossings);
+    if (!std::ranges::equal(
+            expectedPorous.samples(), diagnostics.porous.samples)
+        || !near(expectedPorous.totalDissipationWatts(),
+                 diagnostics.porous.totalDissipationWatts)) {
+        return false;
+    }
+
+    std::vector<GridFacePressureJump> combinedFaces(
+        expectedPorous.pressureJumps().faces().begin(),
+        expectedPorous.pressureJumps().faces().end());
+    combinedFaces.insert(
+        combinedFaces.end(),
+        prescribedPressureJumps.faces().begin(),
+        prescribedPressureJumps.faces().end());
+    const SharpPressureJumpField combined(
+        grid, std::move(combinedFaces));
+    if (diagnostics.porous.projection.pressureJumpFaceCount
+        != combined.faceCount()) {
+        return false;
+    }
+
+    std::vector<bool> constrainedFaces(3 * grid.cellCount(), false);
+    for (const auto& face : interfaces.faces()) {
+        const std::size_t offset = static_cast<std::size_t>(
+            axisOrdinal(face.axis)) * grid.cellCount();
+        constrainedFaces[offset + grid.cellIndex(
+            face.i, face.j, face.k)] = true;
+    }
+    Vector3 force;
+    double power = 0.0;
+    for (const auto& crossing : combined.faces()) {
+        const std::size_t offset = static_cast<std::size_t>(
+            axisOrdinal(crossing.axis)) * grid.cellCount();
+        if (constrainedFaces[offset + grid.cellIndex(
+                crossing.i, crossing.j, crossing.k)]) {
+            return false;
+        }
+        const double axialForce = crossing.pressureJumpPascals
+            * faceArea(grid, crossing.axis);
+        power += axialForce * faceNormalVelocity(
+            grid, sampledVelocity, crossing);
+        switch (crossing.axis) {
+        case GridFaceAxis::X:
+            force.x += axialForce;
+            break;
+        case GridFaceAxis::Y:
+            force.y += axialForce;
+            break;
+        case GridFaceAxis::Z:
+            force.z += axialForce;
+            break;
+        }
+    }
+    return near(
+               diagnostics.porous.totalPressureJumpForceOnFluidNewtons,
+               force)
+        && near(
+               diagnostics.porous.totalPressureJumpPowerToFluidWatts,
+               power);
+}
+
 void validateAcceptedState(
     const PeriodicCartesianGrid& grid,
     const MacVelocityField& velocityMetersPerSecond,
@@ -389,6 +685,38 @@ void validateAcceptedState(
     }
 }
 
+void validateAcceptedPorousState(
+    const PeriodicCartesianGrid& grid,
+    const MacVelocityField& predictedVelocityMetersPerSecond,
+    const MacVelocityField& velocityMetersPerSecond,
+    const CellScalarField& pressurePascals,
+    const FaceAlignedMovingInterface& interfaces,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField& prescribedPressureJumps,
+    const MovingPorousProjectionDiagnostics& diagnostics) {
+    if (!predictedVelocityMetersPerSecond.matches(grid)
+        || !velocityMetersPerSecond.matches(grid)
+        || !pressurePascals.matches(grid)
+        || !interfaces.matches(grid)
+        || !prescribedPressureJumps.matches(grid)) {
+        throw std::invalid_argument(
+            "moving porous checkpoint state does not match its grid");
+    }
+    if (!isFinite(predictedVelocityMetersPerSecond)
+        || !isFinite(velocityMetersPerSecond)
+        || !isFinite(pressurePascals)
+        || !diagnosticsMatch(
+            grid, velocityMetersPerSecond,
+            interfaces, diagnostics.movingInterface)
+        || !porousDiagnosticsMatch(
+            grid, predictedVelocityMetersPerSecond,
+            velocityMetersPerSecond, interfaces,
+            porousCrossings, prescribedPressureJumps, diagnostics)) {
+        throw std::invalid_argument(
+            "moving porous checkpoint requires accepted finite coupled state");
+    }
+}
+
 } // namespace
 
 struct MovingInterfaceFluidCheckpoint::Detail {
@@ -399,6 +727,20 @@ struct MovingInterfaceFluidCheckpoint::Detail {
     CellScalarField pressurePascals;
     FaceAlignedMovingInterface interfaces;
     MovingInterfaceProjectionDiagnostics diagnostics;
+    std::uint64_t topologyFingerprint = 0;
+};
+
+struct MovingPorousFluidCheckpoint::Detail {
+    GridCellCounts cellCounts;
+    Vector3 lowerMeters;
+    Vector3 upperMeters;
+    MacVelocityField predictedVelocityMetersPerSecond;
+    MacVelocityField velocityMetersPerSecond;
+    CellScalarField pressurePascals;
+    FaceAlignedMovingInterface interfaces;
+    std::vector<PorousGridFaceCrossing> porousCrossings;
+    SharpPressureJumpField prescribedPressureJumps;
+    MovingPorousProjectionDiagnostics diagnostics;
     std::uint64_t topologyFingerprint = 0;
 };
 
@@ -462,6 +804,91 @@ MovingInterfaceFluidState restoreMovingInterfaceFluidState(
         checkpoint.detail->velocityMetersPerSecond,
         checkpoint.detail->pressurePascals,
         checkpoint.detail->interfaces,
+        checkpoint.detail->diagnostics,
+    };
+}
+
+MovingPorousFluidCheckpoint checkpointMovingPorousFluidState(
+    const PeriodicCartesianGrid& grid,
+    const MacVelocityField& predictedVelocityMetersPerSecond,
+    const MacVelocityField& velocityMetersPerSecond,
+    const CellScalarField& pressurePascals,
+    const FaceAlignedMovingInterface& interfaces,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField& prescribedPressureJumps,
+    const MovingPorousProjectionDiagnostics& diagnostics) {
+    validateAcceptedPorousState(
+        grid, predictedVelocityMetersPerSecond,
+        velocityMetersPerSecond, pressurePascals,
+        interfaces, porousCrossings,
+        prescribedPressureJumps, diagnostics);
+
+    MovingPorousFluidCheckpoint result;
+    result.cellCounts = grid.cellCounts();
+    result.lowerMeters = grid.lowerMeters();
+    result.upperMeters = grid.upperMeters();
+    result.scalarSampleCount = grid.cellCount();
+    const auto canonicalCrossings = canonicalPorousCrossings(
+        porousCrossings);
+    result.topologyFingerprint = topologyFingerprint(
+        grid, interfaces, canonicalCrossings,
+        prescribedPressureJumps);
+    auto detail = std::make_shared<MovingPorousFluidCheckpoint::Detail>(
+        MovingPorousFluidCheckpoint::Detail{
+            result.cellCounts,
+            result.lowerMeters,
+            result.upperMeters,
+            predictedVelocityMetersPerSecond,
+            velocityMetersPerSecond,
+            pressurePascals,
+            interfaces,
+            canonicalCrossings,
+            prescribedPressureJumps,
+            diagnostics,
+            result.topologyFingerprint,
+        });
+    result.detail = std::move(detail);
+    return result;
+}
+
+MovingPorousFluidState restoreMovingPorousFluidState(
+    const PeriodicCartesianGrid& grid,
+    const MovingPorousFluidCheckpoint& checkpoint) {
+    if (checkpoint.version != movingPorousFluidCheckpointVersion
+        || !checkpoint.detail
+        || checkpoint.scalarSampleCount != grid.cellCount()
+        || !gridMetadataMatches(
+            grid, checkpoint.cellCounts,
+            checkpoint.lowerMeters, checkpoint.upperMeters)
+        || checkpoint.cellCounts != checkpoint.detail->cellCounts
+        || checkpoint.lowerMeters != checkpoint.detail->lowerMeters
+        || checkpoint.upperMeters != checkpoint.detail->upperMeters
+        || checkpoint.topologyFingerprint
+            != checkpoint.detail->topologyFingerprint
+        || checkpoint.topologyFingerprint
+            != topologyFingerprint(
+                grid, checkpoint.detail->interfaces,
+                checkpoint.detail->porousCrossings,
+                checkpoint.detail->prescribedPressureJumps)) {
+        throw std::invalid_argument(
+            "moving porous checkpoint version, grid, or topology binding is invalid");
+    }
+    validateAcceptedPorousState(
+        grid,
+        checkpoint.detail->predictedVelocityMetersPerSecond,
+        checkpoint.detail->velocityMetersPerSecond,
+        checkpoint.detail->pressurePascals,
+        checkpoint.detail->interfaces,
+        checkpoint.detail->porousCrossings,
+        checkpoint.detail->prescribedPressureJumps,
+        checkpoint.detail->diagnostics);
+    return {
+        checkpoint.detail->predictedVelocityMetersPerSecond,
+        checkpoint.detail->velocityMetersPerSecond,
+        checkpoint.detail->pressurePascals,
+        checkpoint.detail->interfaces,
+        checkpoint.detail->porousCrossings,
+        checkpoint.detail->prescribedPressureJumps,
         checkpoint.detail->diagnostics,
     };
 }

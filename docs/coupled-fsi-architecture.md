@@ -849,7 +849,14 @@ normal, and reconstructed diagnostic pressure. A static headless worker makes
   matches summed tile flux to swept chamber volume and independently sampled
   GCL transport while retaining the final moving reaction. Unaccepted wrappers
   and mismatched nested projection diagnostics are rejected before either
-  downstream ledger is exposed.
+  downstream ledger is exposed. Accepted moving/porous state now also has an
+  immutable in-memory checkpoint with a combined moving, porous, and prescribed
+  jump topology fingerprint. It canonicalizes porous definitions and retains
+  the pre-projection velocity needed to reconstruct endpoint or midpoint
+  constitutive samples and prescribed-source power exactly. Capture and restore
+  revalidate the calibrated law, combined crossing ownership, nested moving
+  projection, jump/dissipation ledgers, and committed fields. Its bounded
+  persistent encoding remains open.
   The regression budgets are:
 gradient/divergence adjoint error at or below `2e-14` in the canonical
 integral, Taylor-Green maximum divergence below `2e-14 1/s` with a
