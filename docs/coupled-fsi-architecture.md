@@ -964,7 +964,14 @@ that three-operator composition, sums both jump impulse/work ledgers, keeps
 porous dissipation separate, rolls back earlier operators after a later failure,
 and observes second-order temporal refinement for the driven uniform canonical.
 Empty topology delegates to the original bulk path without changing its fields
-or nested diagnostics. Moving cut-cell topology remains open.
+or nested diagnostics. A stage-resolved planar overload accepts complete sheet
+definitions at the two porous half-step midpoints. It validates immutable
+stable identity, region orientation, and resistance before assembly, then
+requires the second physical sample to retain or advance exactly one topology
+segment from the first. The positive-wrap regression crosses wrapped face
+`3 -> 0` and signed image `0 -> 1` inside one symmetric macro-step; diagnostics
+own both unwrapped epochs, while metadata and solver failure remain
+transactional. General moving cut-cell topology remains open.
 A pressure-driven uniform-plug companion uses the exact nonlinear implicit
 midpoint to close pressure impulse and the
 driving-work/porous-dissipation/kinetic-energy identity on every step. Its

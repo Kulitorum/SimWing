@@ -2,6 +2,7 @@
 
 #include "fluid/advection.h"
 #include "fluid/diffusion.h"
+#include "fluid/planar_porous_sheet.h"
 #include "fluid/porous_interface.h"
 #include "fluid/projection.h"
 #include "fluid/projected_advection.h"
@@ -15,6 +16,8 @@ namespace simwing::fsi::fluid {
 inline constexpr std::uint32_t periodicFlowStepVersion = 4;
 inline constexpr std::uint32_t periodicFlowStrangSspRk2Version = 1;
 inline constexpr std::uint32_t porousPeriodicFlowStrangSspRk2Version = 1;
+inline constexpr std::uint32_t
+    movingPlanarPorousFlowStrangSspRk2Version = 1;
 inline constexpr std::uint32_t periodicFlowStrangSubcyclingVersion = 1;
 inline constexpr std::size_t periodicFlowStrangMaximumSubsteps = 4096;
 
@@ -273,6 +276,56 @@ advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
     const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField& prescribedPressureJumps,
+    const PorousIterationSettings& porousIteration,
+    const PeriodicFlowStrangSspRk2Settings& settings = {});
+
+// Immutable sheet samples at the midpoints of the first and second porous
+// half steps (outer times t+dt/4 and t+3dt/4). They must describe the same
+// authored material surface; the second topology may retain or advance one
+// adjacent periodic segment from the first.
+struct MovingPlanarPorousSheetStrangStages {
+    PlanarPorousSheetDefinition firstHalf;
+    PlanarPorousSheetDefinition secondHalf;
+
+    bool operator==(
+        const MovingPlanarPorousSheetStrangStages&) const = default;
+};
+
+struct MovingPlanarPorousFlowStrangSspRk2Diagnostics {
+    std::uint32_t version =
+        movingPlanarPorousFlowStrangSspRk2Version;
+    PlanarPorousSheetDefinition firstHalfSheet;
+    PlanarPorousSheetDefinition secondHalfSheet;
+    PorousPeriodicFlowStrangSspRk2Diagnostics flow;
+    bool finite = true;
+    bool accepted = false;
+
+    bool operator==(
+        const MovingPlanarPorousFlowStrangSspRk2Diagnostics&) const = default;
+};
+
+// Stage-resolved symmetric porous/bulk/porous flow for one complete moving
+// planar sheet. Both definitions are validated and fully tiled before any
+// field candidate is advanced. Identity, regions, resistance, and topology
+// continuity are immutable across the macro step; accepted diagnostics retain
+// both complete unwrapped topology epochs. This is an adjacent planar porous
+// source transition, not a general cut-cell remap.
+[[nodiscard]] MovingPlanarPorousFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const MovingPlanarPorousSheetStrangStages& sheetStages,
+    const PorousIterationSettings& porousIteration,
+    const PeriodicFlowStrangSspRk2Settings& settings = {});
+
+[[nodiscard]] MovingPlanarPorousFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const MovingPlanarPorousSheetStrangStages& sheetStages,
     const SharpPressureJumpField& prescribedPressureJumps,
     const PorousIterationSettings& porousIteration,
     const PeriodicFlowStrangSspRk2Settings& settings = {});

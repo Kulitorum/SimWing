@@ -201,6 +201,14 @@ composition, rolls back all prior operators on a later failure, and observes
 second-order temporal refinement for the uniform driven canonical. Empty
 topology delegates to the original bulk Strang path without changing its
 fields or nested diagnostics.
+A stage-resolved planar overload now samples one immutable sheet definition at
+each porous half-step midpoint. The two stages must keep stable identity,
+oriented regions, and resistance, while the pure topology selector permits the
+second sample to retain or move by one adjacent segment. A wrapped `3 -> 0`,
+image `0 -> 1` regression retains both complete unwrapped epochs, and invalid
+identity, placement, skipped topology, or a later numerical failure commits
+neither field. This advances moving planar porous sources through the complete
+symmetric flow step; it does not claim a cut-cell remap.
 The nonlinear porous iteration can also use the disconnected moving-interface
 projector as its inner solve. A translating two-region slab retains exact wall
 velocities while endpoint or midpoint porous slip closes on unconstrained

@@ -16,6 +16,7 @@ using simwing::fsi::fluid::CellScalarField;
 using simwing::fsi::fluid::GridFaceAxis;
 using simwing::fsi::fluid::GridFacePressureJump;
 using simwing::fsi::fluid::MacVelocityField;
+using simwing::fsi::fluid::MovingPlanarPorousSheetStrangStages;
 using simwing::fsi::fluid::PeriodicCartesianGrid;
 using simwing::fsi::fluid::PeriodicFlowAdvectionMode;
 using simwing::fsi::fluid::PeriodicFlowDiffusionMode;
@@ -33,6 +34,7 @@ using simwing::fsi::fluid::PorousGridFaceCrossing;
 using simwing::fsi::fluid::PorousIterationSettings;
 using simwing::fsi::fluid::PorousPeriodicFlowStrangFailureStage;
 using simwing::fsi::fluid::PorousProjectionSettings;
+using simwing::fsi::fluid::PlanarPorousSheetDefinition;
 using simwing::fsi::fluid::SharpPressureJumpField;
 using simwing::fsi::fluid::UniformMacAdvectionSettings;
 using simwing::fsi::fluid::VariableMacAdvectionSettings;
@@ -40,6 +42,8 @@ using simwing::fsi::fluid::VariableMacReconstruction;
 using simwing::fsi::fluid::advancePeriodicFlow;
 using simwing::fsi::fluid::advancePeriodicFlowStrangSspRk2;
 using simwing::fsi::fluid::advancePeriodicFlowStrangSspRk2Subcycled;
+using simwing::fsi::fluid::
+    advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet;
 using simwing::fsi::fluid::
     advancePeriodicFlowStrangSspRk2WithPorousInterfaces;
 using simwing::fsi::fluid::advectVelocityProjectedSspRk2;
@@ -1616,6 +1620,164 @@ void testPorousStrangSymmetricComposition() {
           "porous Strang: later bulk failure rolls back the prior interface update");
 }
 
+void testMovingPlanarPorousStrangStages() {
+    const PeriodicCartesianGrid grid(
+        {4, 3, 2}, {}, {4.0, 3.0, 2.0});
+    const auto iteration = composedPorousIteration();
+    const auto flowSettings = composedPorousStrangSettings();
+    const auto driving = composedDrivingPlane(grid);
+    const PlanarPorousSheetDefinition fixedSheet{
+        100,
+        1,
+        2,
+        {
+            simwing::fsi::fluid::movingPorousFaceTopologyVersion,
+            GridFaceAxis::X,
+            1,
+            0,
+        },
+        0.85,
+        0.0,
+        {10.0, 0.0},
+    };
+    const MovingPlanarPorousSheetStrangStages fixedStages{
+        fixedSheet, fixedSheet};
+    MacVelocityField movingFixedVelocity(grid);
+    CellScalarField movingFixedPressure(grid);
+    const auto movingFixed =
+        advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+            grid, movingFixedVelocity, movingFixedPressure,
+            fixedStages, driving, iteration, flowSettings);
+    MacVelocityField legacyVelocity(grid);
+    CellScalarField legacyPressure(grid);
+    const auto fixedCrossings =
+        simwing::fsi::fluid::makePlanarPorousSheetCrossings(
+            grid, fixedSheet);
+    const auto legacy =
+        advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
+            grid, legacyVelocity, legacyPressure,
+            fixedCrossings, driving, iteration, flowSettings);
+    check(movingFixed.accepted && movingFixed.finite
+              && movingFixed.flow == legacy
+              && movingFixedVelocity == legacyVelocity
+              && movingFixedPressure == legacyPressure,
+          "moving porous Strang: retained topology delegates exactly to the fixed path");
+    MacVelocityField unforcedVelocity(grid);
+    std::ranges::fill(unforcedVelocity.xFaces(), 1.0);
+    CellScalarField unforcedPressure(grid);
+    const auto unforced =
+        advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+            grid, unforcedVelocity, unforcedPressure,
+            fixedStages, iteration, flowSettings);
+    check(unforced.accepted
+              && unforced.flow.porousDissipationJoules > 0.0,
+          "moving porous Strang: unforced overload retains dissipative sheet flow");
+
+    PlanarPorousSheetDefinition first = fixedSheet;
+    first.topology.faceCoordinate = 3;
+    first.physicalPlaneCoordinateMeters = 3.49;
+    first.surfaceNormalVelocityMetersPerSecond = 0.4;
+    PlanarPorousSheetDefinition second = first;
+    second.topology.faceCoordinate = 0;
+    second.topology.periodicImage = 1;
+    second.physicalPlaneCoordinateMeters = 3.51;
+    const MovingPlanarPorousSheetStrangStages wrappedStages{
+        first, second};
+    MacVelocityField wrappedVelocity(grid);
+    CellScalarField wrappedPressure(grid);
+    const auto wrapped =
+        advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+            grid, wrappedVelocity, wrappedPressure,
+            wrappedStages, driving, iteration, flowSettings);
+    MacVelocityField replayVelocity(grid);
+    CellScalarField replayPressure(grid);
+    const auto replay =
+        advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+            grid, replayVelocity, replayPressure,
+            wrappedStages, driving, iteration, flowSettings);
+    check(wrapped.version
+                  == simwing::fsi::fluid::
+                      movingPlanarPorousFlowStrangSspRk2Version
+              && wrapped.accepted && wrapped.finite
+              && wrapped == replay
+              && wrappedVelocity == replayVelocity
+              && wrappedPressure == replayPressure
+              && wrapped.firstHalfSheet == first
+              && wrapped.secondHalfSheet == second
+              && wrapped.flow.firstHalfPorous.samples.size() == 6
+              && wrapped.flow.secondHalfPorous.samples.size() == 6,
+          "moving porous Strang: wrapped stage epochs advance deterministically");
+    if (!wrapped.flow.firstHalfPorous.samples.empty()
+        && !wrapped.flow.secondHalfPorous.samples.empty()) {
+        const auto& firstSample =
+            wrapped.flow.firstHalfPorous.samples.front().pressureJump;
+        const auto& secondSample =
+            wrapped.flow.secondHalfPorous.samples.front().pressureJump;
+        check(firstSample.axis == GridFaceAxis::X
+                  && firstSample.i == 3
+                  && std::abs(firstSample.crossingFraction - 0.99)
+                      < 1.0e-15
+                  && secondSample.axis == GridFaceAxis::X
+                  && secondSample.i == 0
+                  && std::abs(secondSample.crossingFraction - 0.01)
+                      < 1.0e-15,
+              "moving porous Strang: each half step owns its distinct wrapped crossing plane");
+    }
+
+    MacVelocityField rejectedVelocity(grid);
+    CellScalarField rejectedPressure(grid, 3.0);
+    const auto originalVelocity = rejectedVelocity;
+    const auto originalPressure = rejectedPressure;
+    auto invalidStages = wrappedStages;
+    invalidStages.secondHalf.topology.periodicImage = 0;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+                    grid, rejectedVelocity, rejectedPressure,
+                    invalidStages, driving, iteration, flowSettings));
+        },
+        "moving porous Strang: inconsistent wrapped epochs are rejected");
+    invalidStages = wrappedStages;
+    ++invalidStages.secondHalf.surfaceStableId;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+                    grid, rejectedVelocity, rejectedPressure,
+                    invalidStages, driving, iteration, flowSettings));
+        },
+        "moving porous Strang: stage identity changes are rejected");
+    invalidStages = wrappedStages;
+    invalidStages.secondHalf.topology.faceCoordinate = 1;
+    invalidStages.secondHalf.physicalPlaneCoordinateMeters = 4.51;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+                    grid, rejectedVelocity, rejectedPressure,
+                    invalidStages, driving, iteration, flowSettings));
+        },
+        "moving porous Strang: skipped topology segments are rejected");
+    check(rejectedVelocity == originalVelocity
+              && rejectedPressure == originalPressure,
+          "moving porous Strang: metadata rejection mutates neither field");
+
+    auto unstableFlow = flowSettings;
+    unstableFlow.kinematicViscositySquareMetersPerSecond = 100.0;
+    const auto failed =
+        advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+            grid, rejectedVelocity, rejectedPressure,
+            wrappedStages, driving, iteration, unstableFlow);
+    check(!failed.accepted
+              && failed.flow.firstHalfPorous.accepted
+              && failed.flow.failureStage
+                  == PorousPeriodicFlowStrangFailureStage::BulkFlow
+              && rejectedVelocity == originalVelocity
+              && rejectedPressure == originalPressure,
+          "moving porous Strang: later solver failure rolls back both fields");
+}
+
 void testPorousStrangSecondOrderTemporalRefinement() {
     const PeriodicCartesianGrid grid(
         {4, 3, 2}, {}, {4.0, 3.0, 2.0});
@@ -1672,6 +1834,7 @@ int main() {
     testStaticJumpsAcrossCompleteFlowPaths();
     testPorousProjectionAcrossCompleteFlow();
     testPorousStrangSymmetricComposition();
+    testMovingPlanarPorousStrangStages();
     testPorousStrangSecondOrderTemporalRefinement();
     if (failures != 0) {
         std::fprintf(stderr,

@@ -308,7 +308,8 @@ advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
-    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const std::vector<PorousGridFaceCrossing>& firstHalfPorousCrossings,
+    const std::vector<PorousGridFaceCrossing>& secondHalfPorousCrossings,
     const SharpPressureJumpField* prescribedPressureJumps,
     const PorousIterationSettings& porousIteration,
     const PeriodicFlowStrangSspRk2Settings& settings);
@@ -909,7 +910,8 @@ advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
-    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const std::vector<PorousGridFaceCrossing>& firstHalfPorousCrossings,
+    const std::vector<PorousGridFaceCrossing>& secondHalfPorousCrossings,
     const SharpPressureJumpField* prescribedPressureJumps,
     const PorousIterationSettings& porousIteration,
     const PeriodicFlowStrangSspRk2Settings& settings) {
@@ -927,7 +929,8 @@ advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
     }
 
     PorousPeriodicFlowStrangSspRk2Diagnostics diagnostics;
-    if (porousCrossings.empty()
+    if (firstHalfPorousCrossings.empty()
+        && secondHalfPorousCrossings.empty()
         && (prescribedPressureJumps == nullptr
             || prescribedPressureJumps->empty())) {
         diagnostics.bulkFlow = advancePeriodicFlowStrangSspRk2(
@@ -997,10 +1000,10 @@ advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
     diagnostics.firstHalfPorous = prescribedPressureJumps == nullptr
         ? projectVelocityWithPorousInterfaces(
             grid, candidateVelocity, candidatePressure,
-            porousCrossings, halfPorousSettings)
+            firstHalfPorousCrossings, halfPorousSettings)
         : projectVelocityWithPorousInterfaces(
             grid, candidateVelocity, candidatePressure,
-            porousCrossings, *prescribedPressureJumps,
+            firstHalfPorousCrossings, *prescribedPressureJumps,
             halfPorousSettings);
     if (!diagnostics.firstHalfPorous.accepted) {
         diagnostics.failureStage =
@@ -1022,10 +1025,10 @@ advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
     diagnostics.secondHalfPorous = prescribedPressureJumps == nullptr
         ? projectVelocityWithPorousInterfaces(
             grid, candidateVelocity, candidatePressure,
-            porousCrossings, halfPorousSettings)
+            secondHalfPorousCrossings, halfPorousSettings)
         : projectVelocityWithPorousInterfaces(
             grid, candidateVelocity, candidatePressure,
-            porousCrossings, *prescribedPressureJumps,
+            secondHalfPorousCrossings, *prescribedPressureJumps,
             halfPorousSettings);
     if (!diagnostics.secondHalfPorous.accepted) {
         diagnostics.failureStage =
@@ -1123,6 +1126,62 @@ advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
     return diagnostics;
 }
 
+MovingPlanarPorousFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheetImpl(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const MovingPlanarPorousSheetStrangStages& sheetStages,
+    const SharpPressureJumpField* prescribedPressureJumps,
+    const PorousIterationSettings& porousIteration,
+    const PeriodicFlowStrangSspRk2Settings& settings) {
+    const auto& first = sheetStages.firstHalf;
+    const auto& second = sheetStages.secondHalf;
+    if (first.surfaceStableId != second.surfaceStableId
+        || first.minusRegionStableId != second.minusRegionStableId
+        || first.plusRegionStableId != second.plusRegionStableId
+        || first.resistance != second.resistance) {
+        throw std::invalid_argument(
+            "moving planar porous Strang stages change immutable sheet identity or material");
+    }
+    std::vector<PorousGridFaceCrossing> firstCrossings;
+    std::vector<PorousGridFaceCrossing> secondCrossings;
+    try {
+        firstCrossings = makePlanarPorousSheetCrossings(
+            grid, first);
+        secondCrossings = makePlanarPorousSheetCrossings(
+            grid, second);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument(
+            "moving planar porous Strang stage placement is outside its topology");
+    }
+    MovingPorousTopologySelection transition;
+    try {
+        transition = selectMovingPorousTopology(
+            grid, first.topology,
+            second.physicalPlaneCoordinateMeters);
+    } catch (const std::runtime_error&) {
+        throw std::invalid_argument(
+            "moving planar porous Strang stages skip a topology segment");
+    }
+    if (transition.topology != second.topology) {
+        throw std::invalid_argument(
+            "moving planar porous Strang stages have discontinuous topology");
+    }
+
+    MovingPlanarPorousFlowStrangSspRk2Diagnostics diagnostics;
+    diagnostics.firstHalfSheet = first;
+    diagnostics.secondHalfSheet = second;
+    diagnostics.flow =
+        advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
+            grid, velocityMetersPerSecond, pressurePascals,
+            firstCrossings, secondCrossings,
+            prescribedPressureJumps, porousIteration, settings);
+    diagnostics.finite = diagnostics.flow.finite;
+    diagnostics.accepted = diagnostics.flow.accepted;
+    return diagnostics;
+}
+
 } // namespace
 
 PorousPeriodicFlowStrangSspRk2Diagnostics
@@ -1135,7 +1194,8 @@ advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
     const PeriodicFlowStrangSspRk2Settings& settings) {
     return advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
         grid, velocityMetersPerSecond, pressurePascals,
-        porousCrossings, nullptr, porousIteration, settings);
+        porousCrossings, porousCrossings,
+        nullptr, porousIteration, settings);
 }
 
 PorousPeriodicFlowStrangSspRk2Diagnostics
@@ -1149,8 +1209,39 @@ advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
     const PeriodicFlowStrangSspRk2Settings& settings) {
     return advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
         grid, velocityMetersPerSecond, pressurePascals,
-        porousCrossings, &prescribedPressureJumps,
+        porousCrossings, porousCrossings,
+        &prescribedPressureJumps,
         porousIteration, settings);
+}
+
+MovingPlanarPorousFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const MovingPlanarPorousSheetStrangStages& sheetStages,
+    const PorousIterationSettings& porousIteration,
+    const PeriodicFlowStrangSspRk2Settings& settings) {
+    return
+        advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheetImpl(
+            grid, velocityMetersPerSecond, pressurePascals,
+            sheetStages, nullptr, porousIteration, settings);
+}
+
+MovingPlanarPorousFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const MovingPlanarPorousSheetStrangStages& sheetStages,
+    const SharpPressureJumpField& prescribedPressureJumps,
+    const PorousIterationSettings& porousIteration,
+    const PeriodicFlowStrangSspRk2Settings& settings) {
+    return
+        advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheetImpl(
+            grid, velocityMetersPerSecond, pressurePascals,
+            sheetStages, &prescribedPressureJumps,
+            porousIteration, settings);
 }
 
 PeriodicFlowStrangSubcyclingDiagnostics
