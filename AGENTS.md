@@ -207,7 +207,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   coupling canonical that supplies a real moving-interface/transfer/XPBD
   callback to `simwing_coupled_state`. `--case strong-piston` publishes its
   accepted immutable diagnostic frames without control mode. Its bounded
-  persistence codec exists, but CLI checkpoint flags are not connected yet.
+  persistence codec is routed through the batch checkpoint flags with atomic
+  same-file replacement.
 - `simwing_porous_sheet_case`: Qt-free midpoint oracle coupling a
   pressure-driven porous sheet to XPBD. It closes fluid/sheet/pump momentum,
   pump work, porous dissipation, and kinetic-energy ledgers before publishing
@@ -755,7 +756,8 @@ makes this a certified aerodynamic solver.
   closure before no-throw commit, and replays the exact next result/frame.
   `strong_piston_checkpoint_persistence.*` wraps those accepted nested codecs
   in the deterministic checksummed `SWSPCKP1` envelope; it never stores an
-  in-progress iteration or rejected attempt.
+  in-progress iteration or rejected attempt. The batch CLI accepts the normal
+  checkpoint flags for this case; standard-I/O control remains unsupported.
 - `src/fsi/porous_sheet_case.{h,cpp}` is selected with `--case porous-sheet`.
   Its analytic linear-resistance midpoint relation drives the same accepted
   nonuniform porous projection, sheet-reaction bridge, temporal transfer, and

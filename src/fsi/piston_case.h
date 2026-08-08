@@ -129,6 +129,7 @@ public:
     [[nodiscard]] viewer::DiagnosticFrame advance();
     [[nodiscard]] StrongCoupledPistonCheckpoint checkpoint() const;
     void restore(const StrongCoupledPistonCheckpoint& checkpoint);
+    [[nodiscard]] std::uint64_t acceptedStepCount() const noexcept;
 
     [[nodiscard]] const Structure& structure() const noexcept;
     [[nodiscard]] const StructureStepSettings& stepSettings() const noexcept;

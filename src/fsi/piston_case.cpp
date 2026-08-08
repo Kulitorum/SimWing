@@ -820,6 +820,11 @@ void StrongCoupledPistonWorkerCase::restore(
     diagnostics_ = {};
 }
 
+std::uint64_t
+StrongCoupledPistonWorkerCase::acceptedStepCount() const noexcept {
+    return simulation_.structure().acceptedStepCount();
+}
+
 const Structure&
 StrongCoupledPistonWorkerCase::structure() const noexcept {
     return simulation_.structure();

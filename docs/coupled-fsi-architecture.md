@@ -820,7 +820,9 @@ rejected-attempt state remain deliberately outside that accepted restart
 boundary. The deterministic bounded `SWSPCKP1` envelope nests the existing
 Structure and moving-interface fluid codecs, revalidates their coupled
 canonical owner, and enforces outer checksum plus nested byte limits before
-transactional decode. Persistent CLI routing remains future work. The
+transactional decode. The headless batch worker routes that accepted boundary
+through atomic `--checkpoint-in`/`--checkpoint-out` replacement and absolute
+`--checkpoint-every` autosaves. The
 `--case open-piston` worker adds the nonseparating connected-fluid projection,
 partial-cell geometry, resolved-opening GCL ledger, an explicit plate actuator,
 and a separately reported resisting CFD load. Its pressure reaction now crosses

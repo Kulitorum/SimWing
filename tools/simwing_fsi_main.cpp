@@ -13,6 +13,7 @@
 #include "porous_sheet_checkpoint_persistence.h"
 #include "porous_sheet_control.h"
 #include "pressure_jump_case.h"
+#include "strong_piston_checkpoint_persistence.h"
 #include "viewer_protocol.h"
 #include "worker_control_stream.h"
 
@@ -110,7 +111,7 @@ void printUsage(FILE* stream) {
         "periodic pump drives fluid through it across one MAC-face rebase.\n"
         "'pressure-jump' repeatedly verifies a static split-region slab and\n"
         "publishes each ordered sharp-interface layer. Moving-porous-flow,\n"
-        "porous-sheet, open-piston, and periodic-flow checkpoint paths\n"
+        "strong-piston, porous-sheet, open-piston, and periodic-flow checkpoint paths\n"
         "restore/save exact accepted state;\n"
         "--checkpoint-every\n"
         "autosaves at absolute accepted-step multiples and the final state. --steps\n"
@@ -294,11 +295,13 @@ bool parseOptions(int argc,
     if ((!options.checkpointInputPath.empty()
          || !options.checkpointOutputPath.empty())
         && options.workerCase != WorkerCase::PeriodicFlow
+        && options.workerCase != WorkerCase::StrongPiston
         && options.workerCase != WorkerCase::OpenPiston
         && options.workerCase != WorkerCase::MovingPorousFlow
         && options.workerCase != WorkerCase::PorousSheet) {
-        error = "checkpoint paths require --case moving-porous-flow, "
-            "open-piston, porous-sheet, or periodic-flow";
+        error = "checkpoint paths require --case strong-piston, "
+            "moving-porous-flow, open-piston, porous-sheet, or "
+            "periodic-flow";
         return false;
     }
     if (options.checkpointEvery != 0
@@ -700,6 +703,39 @@ bool writeOpenPistonCheckpoint(
     return atomicallyWriteCheckpointBytes(path, bytes, error);
 }
 
+bool readStrongPistonCheckpoint(
+    const std::filesystem::path& path,
+    simwing::fsi::StrongCoupledPistonCheckpoint& checkpoint,
+    std::string& error) {
+    const simwing::fsi::StrongPistonCheckpointPersistenceLimits limits;
+    std::vector<std::uint8_t> bytes;
+    if (!readCheckpointBytes(
+            path, limits.maximumEncodedBytes, bytes, error)) {
+        return false;
+    }
+    simwing::fsi::StrongPistonCheckpointPersistenceError protocolError;
+    if (!simwing::fsi::deserializeStrongPistonCheckpoint(
+            bytes, checkpoint, &protocolError, limits)) {
+        error = protocolError.message;
+        return false;
+    }
+    return true;
+}
+
+bool writeStrongPistonCheckpoint(
+    const std::filesystem::path& path,
+    const simwing::fsi::StrongCoupledPistonCheckpoint& checkpoint,
+    std::string& error) {
+    std::vector<std::uint8_t> bytes;
+    simwing::fsi::StrongPistonCheckpointPersistenceError protocolError;
+    if (!simwing::fsi::serializeStrongPistonCheckpoint(
+            checkpoint, bytes, &protocolError)) {
+        error = protocolError.message;
+        return false;
+    }
+    return atomicallyWriteCheckpointBytes(path, bytes, error);
+}
+
 bool readPorousSheetCheckpoint(
     const std::filesystem::path& path,
     simwing::fsi::CoupledPorousSheetCheckpoint& checkpoint,
@@ -991,6 +1027,8 @@ int main(int argc, char* argv[]) {
             restoredPeriodicFlowCheckpoint;
         std::optional<simwing::fsi::OpenPistonCaseCheckpoint>
             restoredOpenPistonCheckpoint;
+        std::optional<simwing::fsi::StrongCoupledPistonCheckpoint>
+            restoredStrongPistonCheckpoint;
         std::optional<simwing::fsi::MovingPorousFlowCaseCheckpoint>
             restoredMovingPorousFlowCheckpoint;
         std::optional<simwing::fsi::CoupledPorousSheetCheckpoint>
@@ -1007,6 +1045,11 @@ int main(int argc, char* argv[]) {
                 restored = readOpenPistonCheckpoint(
                     options.checkpointInputPath,
                     *restoredOpenPistonCheckpoint, error);
+            } else if (options.workerCase == WorkerCase::StrongPiston) {
+                restoredStrongPistonCheckpoint.emplace();
+                restored = readStrongPistonCheckpoint(
+                    options.checkpointInputPath,
+                    *restoredStrongPistonCheckpoint, error);
             } else if (options.workerCase
                        == WorkerCase::MovingPorousFlow) {
                 restoredMovingPorousFlowCheckpoint.emplace();
@@ -1139,7 +1182,9 @@ int main(int argc, char* argv[]) {
                     std::is_same_v<Simulation,
                                    simwing::fsi::PeriodicFlowCase>
                     || std::is_same_v<Simulation,
-                                      simwing::fsi::OpenPistonCase>
+                                       simwing::fsi::OpenPistonCase>
+                    || std::is_same_v<Simulation,
+                                      simwing::fsi::StrongCoupledPistonWorkerCase>
                     || std::is_same_v<Simulation,
                                       simwing::fsi::MovingPorousFlowCase>
                     || std::is_same_v<Simulation,
@@ -1158,6 +1203,12 @@ int main(int argc, char* argv[]) {
                                                      Simulation,
                                                      simwing::fsi::OpenPistonCase>) {
                                 return writeOpenPistonCheckpoint(
+                                    options.checkpointOutputPath,
+                                    simulation.checkpoint(), error);
+                            } else if constexpr (std::is_same_v<
+                                                     Simulation,
+                                                     simwing::fsi::StrongCoupledPistonWorkerCase>) {
+                                return writeStrongPistonCheckpoint(
                                     options.checkpointOutputPath,
                                     simulation.checkpoint(), error);
                             } else if constexpr (std::is_same_v<
@@ -1208,7 +1259,9 @@ int main(int argc, char* argv[]) {
                 std::is_same_v<Simulation,
                                simwing::fsi::PeriodicFlowCase>
                 || std::is_same_v<Simulation,
-                                  simwing::fsi::OpenPistonCase>
+                                   simwing::fsi::OpenPistonCase>
+                || std::is_same_v<Simulation,
+                                  simwing::fsi::StrongCoupledPistonWorkerCase>
                 || std::is_same_v<Simulation,
                                   simwing::fsi::MovingPorousFlowCase>
                 || std::is_same_v<Simulation,
@@ -1227,6 +1280,12 @@ int main(int argc, char* argv[]) {
                                                  Simulation,
                                                  simwing::fsi::OpenPistonCase>) {
                             return writeOpenPistonCheckpoint(
+                                options.checkpointOutputPath,
+                                simulation.checkpoint(), error);
+                        } else if constexpr (std::is_same_v<
+                                                 Simulation,
+                                                 simwing::fsi::StrongCoupledPistonWorkerCase>) {
+                            return writeStrongPistonCheckpoint(
                                 options.checkpointOutputPath,
                                 simulation.checkpoint(), error);
                         } else if constexpr (std::is_same_v<
@@ -1278,6 +1337,7 @@ int main(int argc, char* argv[]) {
                         "t=%.9g s, speed=%.9g m/s, coupling-iterations=%llu, "
                         "solver-runs=%llu, retries=%u, velocity-closure=%.3g m/s, "
                         "added-mass=%.9g kg, analytic-residual=%.3g m/s, "
+                        "checkpoint-writes=%llu, "
                         "trace=%s\n",
                         static_cast<unsigned long long>(
                             checkpoint.acceptedStepCount),
@@ -1292,6 +1352,8 @@ int main(int argc, char* argv[]) {
                         coupled.velocityClosureMetersPerSecond,
                         coupled.measuredDiscreteAddedMassKilograms,
                         coupled.analyticSpeedResidualMetersPerSecond,
+                        static_cast<unsigned long long>(
+                            checkpointWriteCount),
                         options.tracePath.string().c_str());
                 } else if constexpr (std::is_same_v<
                                   Simulation,
@@ -1436,6 +1498,9 @@ int main(int argc, char* argv[]) {
         }
         if (options.workerCase == WorkerCase::StrongPiston) {
             simwing::fsi::StrongCoupledPistonWorkerCase simulation;
+            if (restoredStrongPistonCheckpoint) {
+                simulation.restore(*restoredStrongPistonCheckpoint);
+            }
             return run(simulation);
         }
         if (options.workerCase == WorkerCase::OpenPiston) {

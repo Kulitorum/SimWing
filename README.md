@@ -352,8 +352,9 @@ accepted boundary now has a deterministic bounded `SWSPCKP1` envelope that
 nests the existing Structure and moving-interface fluid codecs. It validates a
 fresh canonical owner before encode/decode, checks an outer checksum and nested
 length limits, rejects corrupt/truncated/trailing data without changing output,
-and resumes the next coupled step exactly. CLI checkpoint flags are not wired
-to this case yet.
+and resumes the next coupled step exactly. The headless `--checkpoint-in`,
+`--checkpoint-out`, and absolute `--checkpoint-every` workflow now routes this
+accepted boundary through atomic same-file replacement.
 The
 `simwing-fsi --case porous-sheet` harness drives fluid through a translating
 linear-resistance sheet, transfers only the sheet reaction to XPBD, and closes
@@ -529,6 +530,8 @@ Run:
 ```powershell
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\simwing-fsi.exe --case strong-piston --steps 120 --no-viewer
+.\build\bin\Release\simwing-fsi.exe --case strong-piston --steps 120 --no-viewer --checkpoint-out strong-piston.swsp --checkpoint-every 60
+.\build\bin\Release\simwing-fsi.exe --case strong-piston --checkpoint-in strong-piston.swsp --steps 60 --no-viewer --checkpoint-out strong-piston.swsp --checkpoint-every 60
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600 --no-viewer --checkpoint-out periodic-flow.swpc --checkpoint-every 60

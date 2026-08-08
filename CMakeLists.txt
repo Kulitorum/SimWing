@@ -1511,6 +1511,51 @@ add_test(NAME simwing_fsi_strong_piston_headless
         --trace "${CMAKE_BINARY_DIR}/simwing-strong-piston-headless.swtrace")
 set_tests_properties(simwing_fsi_strong_piston_headless PROPERTIES
     PASS_REGULAR_EXPRESSION "completed 8 strong-piston step\\(s\\)")
+add_test(NAME simwing_fsi_strong_piston_checkpoint_write
+    COMMAND simwing-fsi
+        --case strong-piston
+        --steps 8
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-strong-piston-checkpoint-write.swtrace"
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-strong-piston.swsp"
+        --checkpoint-every 4)
+set_tests_properties(simwing_fsi_strong_piston_checkpoint_write PROPERTIES
+    PASS_REGULAR_EXPRESSION
+        "completed 8 strong-piston step\\(s\\).*checkpoint-writes=2")
+add_test(NAME simwing_fsi_strong_piston_checkpoint_resume
+    COMMAND simwing-fsi
+        --case strong-piston
+        --steps 3
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-strong-piston-checkpoint-resume.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-strong-piston.swsp"
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-strong-piston.swsp"
+        --checkpoint-every 2)
+set_tests_properties(simwing_fsi_strong_piston_checkpoint_resume PROPERTIES
+    DEPENDS simwing_fsi_strong_piston_checkpoint_write
+    PASS_REGULAR_EXPRESSION
+        "completed 11 strong-piston step\\(s\\).*checkpoint-writes=2")
+add_test(NAME simwing_fsi_strong_piston_checkpoint_verify
+    COMMAND simwing-fsi
+        --case strong-piston
+        --steps 0
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-strong-piston-checkpoint-verify.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-strong-piston.swsp")
+set_tests_properties(simwing_fsi_strong_piston_checkpoint_verify PROPERTIES
+    DEPENDS simwing_fsi_strong_piston_checkpoint_resume
+    PASS_REGULAR_EXPRESSION "completed 11 strong-piston step\\(s\\)")
+add_test(NAME simwing_fsi_strong_piston_rejects_foreign_checkpoint
+    COMMAND simwing-fsi
+        --case strong-piston
+        --steps 0
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-strong-piston-foreign.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-periodic-flow.swpc")
+set_tests_properties(simwing_fsi_strong_piston_rejects_foreign_checkpoint
+    PROPERTIES
+        DEPENDS simwing_fsi_periodic_flow_checkpoint_verify
+        WILL_FAIL TRUE)
 add_test(NAME simwing_fsi_porous_sheet_headless
     COMMAND simwing-fsi
         --case porous-sheet
