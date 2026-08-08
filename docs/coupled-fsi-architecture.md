@@ -884,16 +884,19 @@ signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
 dissipation, and its exact monotone inverse is stable across the pure-linear,
 pure-quadratic, and combined fits. A periodic prescribed-flux plane with an
 explicit balancing pressure source preserves a `195 Pa` porous loss without
-changing its uniform velocity. A bounded transactional endpoint Picard solve
-now closes nonuniform porous flux and jump against the full periodic projection.
-It reprojects the original predicted field on every iterate, permits separately
-prescribed pressure-source jumps, requires both normal-velocity and constitutive
-jump residuals, retains endpoint tile samples/dissipation, and rolls back both
-fields if its bound is exhausted. The uniform linear canonical reaches the
-analytic `0.4 m/s` endpoint under a `20 Pa` drive, while the nonlinear,
-orientation-reversed, moving-sheet-relative, and heterogeneous-tile cases
-remain deterministic and divergence-free. This is a first-order fixed-grid
-endpoint coupling, not moving cut-cell topology or a second-order coupled step.
+changing its uniform velocity. A bounded transactional Picard solve now closes
+nonuniform porous flux and jump against the full periodic projection at either
+the endpoint or temporal midpoint. It reprojects the original predicted field
+on every iterate, permits separately prescribed pressure-source jumps, requires
+both normal-velocity and constitutive jump residuals, retains tile samples and
+dissipation at the selected constitutive time, and rolls back both fields if its
+bound is exhausted. The uniform endpoint canonical reaches the analytic
+`0.4 m/s` under a `20 Pa` drive, while the nonlinear, orientation-reversed,
+moving-sheet-relative, and heterogeneous-tile cases remain deterministic and
+divergence-free. Midpoint mode closes pressure work minus porous dissipation to
+the kinetic-energy change and reproduces the exact nonlinear scalar plug oracle.
+This is not moving cut-cell topology, and midpoint pressure coupling is not yet
+composed into a complete second-order general flow step.
 A pressure-driven uniform-plug companion uses the exact nonlinear implicit
 midpoint to close pressure impulse and the
 driving-work/porous-dissipation/kinetic-energy identity on every step. Its
@@ -1048,8 +1051,8 @@ Required canonical cases:
 - Taylor-Green vortex and manufactured divergence/pressure solutions;
 - channel/flat-plate flow and a static pressure jump across a membrane;
 - flow through a calibrated porous sheet (the prescribed-flux constitutive,
-  transactional fixed-grid endpoint iteration, and pressure-driven
-  uniform-plug subsets are complete; second-order moving-grid coupling
+  transactional fixed-grid endpoint/midpoint iteration, and pressure-driven
+  uniform-plug subsets are complete; full-flow second-order moving-grid coupling
   remains);
 - moving piston/membrane with analytic volume and work balance;
 - flexible flag and a thin shell with one interface per cell;

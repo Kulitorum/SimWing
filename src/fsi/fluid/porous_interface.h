@@ -85,8 +85,15 @@ private:
     double totalDissipationWatts_ = 0.0;
 };
 
+enum class PorousConstitutiveEvaluation : std::uint8_t {
+    Endpoint = 0,
+    Midpoint = 1,
+};
+
 struct PorousProjectionSettings {
     ProjectionSettings projection;
+    PorousConstitutiveEvaluation constitutiveEvaluation =
+        PorousConstitutiveEvaluation::Endpoint;
     double absoluteNormalVelocityToleranceMetersPerSecond = 1.0e-10;
     double relativeNormalVelocityTolerance = 1.0e-8;
     double absolutePressureJumpTolerancePascals = 1.0e-8;
@@ -100,6 +107,8 @@ struct PorousProjectionSettings {
 struct PorousProjectionDiagnostics {
     bool accepted = false;
     bool finite = true;
+    PorousConstitutiveEvaluation constitutiveEvaluation =
+        PorousConstitutiveEvaluation::Endpoint;
     std::size_t nonlinearIterationCount = 0;
     std::size_t porousCrossingCount = 0;
     double initialMaximumNormalVelocityResidualMetersPerSecond = 0.0;
@@ -107,20 +116,24 @@ struct PorousProjectionDiagnostics {
     double finalMaximumPressureJumpResidualPascals = 0.0;
     double totalDissipationWatts = 0.0;
     ProjectionDiagnostics projection;
+    // Samples at constitutiveEvaluation; midpoint mode therefore deliberately
+    // reports midpoint fluid/slip velocity rather than the committed endpoint.
     std::vector<PorousGridFaceSample> samples;
 
     bool operator==(const PorousProjectionDiagnostics&) const = default;
 };
 
-// Transactionally closes the endpoint Darcy-Forchheimer law with the periodic
-// sharp projection. Each nonlinear iterate resamples the porous jump from a
-// relaxed finite MAC field, then projects the original predicted velocity; the
-// accepted endpoint must satisfy independent normal-velocity and jump residual
+// Transactionally closes the Darcy-Forchheimer law with the periodic sharp
+// projection. Each nonlinear iterate resamples the porous jump from either its
+// relaxed endpoint field or the midpoint between the original prediction and
+// that endpoint, then reprojects the original predicted velocity. The authored
+// surfaceNormalVelocity is understood at the selected constitutive time. An
+// accepted result must satisfy independent normal-velocity and jump residual
 // tolerances. Optional prescribed jumps represent separately owned pressure
 // sources or other static interfaces and participate in every trial. Failure
-// commits neither velocity nor pressure. This first fixed-grid Picard boundary
+// commits neither velocity nor pressure. This fixed-grid Picard boundary
 // supports nonuniform porous tiles and prescribed sheet-normal velocity, but it
-// is not yet moving cut-cell topology or a second-order coupled time integrator.
+// is not yet moving cut-cell topology or a complete coupled flow integrator.
 [[nodiscard]] PorousProjectionDiagnostics projectVelocityWithPorousInterfaces(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& predictedVelocityMetersPerSecond,

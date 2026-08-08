@@ -85,6 +85,14 @@ double faceArea(const PeriodicCartesianGrid& grid,
 }
 
 void validateProjectionSettings(const PorousProjectionSettings& settings) {
+    switch (settings.constitutiveEvaluation) {
+    case PorousConstitutiveEvaluation::Endpoint:
+    case PorousConstitutiveEvaluation::Midpoint:
+        break;
+    default:
+        throw std::invalid_argument(
+            "porous projection constitutive time is invalid");
+    }
     if (!std::isfinite(
             settings.absoluteNormalVelocityToleranceMetersPerSecond)
         || settings.absoluteNormalVelocityToleranceMetersPerSecond < 0.0
@@ -146,6 +154,27 @@ void relaxVelocity(const MacVelocityField& candidate,
         iterate.zFaces()[face] =
             retained * iterate.zFaces()[face]
             + relaxation * candidate.zFaces()[face];
+    }
+}
+
+void moveToConstitutiveTime(
+    const MacVelocityField& original,
+    const PorousConstitutiveEvaluation evaluation,
+    MacVelocityField& endpointOrEvaluation) {
+    if (evaluation == PorousConstitutiveEvaluation::Endpoint) {
+        return;
+    }
+    for (std::size_t face = 0;
+         face < endpointOrEvaluation.xFaces().size(); ++face) {
+        endpointOrEvaluation.xFaces()[face] = 0.5
+            * (original.xFaces()[face]
+               + endpointOrEvaluation.xFaces()[face]);
+        endpointOrEvaluation.yFaces()[face] = 0.5
+            * (original.yFaces()[face]
+               + endpointOrEvaluation.yFaces()[face]);
+        endpointOrEvaluation.zFaces()[face] = 0.5
+            * (original.zFaces()[face]
+               + endpointOrEvaluation.zFaces()[face]);
     }
 }
 
@@ -343,6 +372,7 @@ PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
     }
 
     PorousProjectionDiagnostics diagnostics;
+    diagnostics.constitutiveEvaluation = settings.constitutiveEvaluation;
     diagnostics.porousCrossingCount = porousCrossings.size();
     if (porousCrossings.empty()) {
         if (prescribedPressureJumps == nullptr
@@ -369,8 +399,12 @@ PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
 
     for (std::size_t iteration = 0;
          iteration < settings.maximumNonlinearIterations; ++iteration) {
+        MacVelocityField sampledVelocity = iterateVelocity;
+        moveToConstitutiveTime(
+            originalVelocity, settings.constitutiveEvaluation,
+            sampledVelocity);
         const PorousPressureJumpField sampled(
-            grid, iterateVelocity, porousCrossings);
+            grid, sampledVelocity, porousCrossings);
         const SharpPressureJumpField pressureJumps = combinedPressureJumps(
             grid, sampled, prescribedPressureJumps);
         MacVelocityField candidateVelocity = originalVelocity;
@@ -387,8 +421,12 @@ PorousProjectionDiagnostics projectVelocityWithPorousInterfacesImpl(
             return diagnostics;
         }
 
+        MacVelocityField candidateConstitutiveVelocity = candidateVelocity;
+        moveToConstitutiveTime(
+            originalVelocity, settings.constitutiveEvaluation,
+            candidateConstitutiveVelocity);
         const PorousPressureJumpField endpoint(
-            grid, candidateVelocity, porousCrossings);
+            grid, candidateConstitutiveVelocity, porousCrossings);
         const auto sampledFaces = sampled.samples();
         const auto endpointFaces = endpoint.samples();
         double maximumVelocityResidual = 0.0;

@@ -169,20 +169,23 @@ relative to a fabric tile into the same signed sharp-jump representation. Its
 exact monotone inverse, canonical X/Y/Z MAC sampling, tile volume flux, and
 nonnegative pressure dissipation are tested. A periodic prescribed-flux plane
 with an explicit balancing pressure source retains its analytic `195 Pa` loss
-without spurious velocity. A transactional endpoint Picard solve now closes
-that constitutive law against the full periodic sharp projection, including
-separately prescribed pressure-source jumps, moving-sheet-relative velocity,
-and heterogeneous tile resistance. Its uniform Darcy canonical accelerates to
-the analytic `0.4 m/s` endpoint under `20 Pa`, closes `9.6 W` of porous loss,
-and rejects an exhausted nonlinear solve without changing either field.
+without spurious velocity. A transactional Picard solve now closes that
+constitutive law against the full periodic sharp projection at either the
+endpoint or temporal midpoint, including separately prescribed pressure-source
+jumps, moving-sheet-relative velocity, and heterogeneous tile resistance. Its
+uniform endpoint Darcy canonical accelerates to the analytic `0.4 m/s` under
+`20 Pa` and closes `9.6 W` of porous loss. Midpoint mode exactly closes the
+grid pressure-work/porous-loss/kinetic-energy identity and matches the scalar
+nonlinear plug oracle. Exhausting the nonlinear solve changes neither field.
 A pressure-driven companion advances a uniform fluid plug with an
 implicit-midpoint nonlinear solve; every step independently closes pressure
 impulse, driving work, porous dissipation, and kinetic energy.
 Its viewable worker converges to the analytic `1.74165739 m/s` speed and `250 Pa`
 loss while carrying its endpoint interfaces through both pressure stages of a
 complete Strang/SSPRK2 step. The grid iteration is first-order endpoint
-coupling; moving cut-cell topology and a second-order general coupled time step
-remain future work.
+coupling by default and exposes a verified midpoint pressure impulse; moving
+cut-cell topology and its composition into a complete second-order general flow
+step remain future work.
 Face-aligned moving membranes can now partition stable fluid regions, impose
 an exact normal MAC velocity, and project each region transactionally while
 retaining its prior pressure gauge. A translating sealed-slab canonical closes

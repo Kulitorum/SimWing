@@ -353,6 +353,84 @@ void testImplicitGridPressureFluxCoupling() {
               expectedNonlinearVelocity, 2.0e-12,
               "coupled porous: nonlinear endpoint flow matches the analytic root");
 
+    auto midpointSettings = coupledSettings();
+    midpointSettings.constitutiveEvaluation =
+        PorousConstitutiveEvaluation::Midpoint;
+    MacVelocityField midpointVelocity(grid);
+    CellScalarField midpointPressure(grid);
+    const auto midpoint = projectVelocityWithPorousInterfaces(
+        grid, midpointVelocity, midpointPressure, porous, driving,
+        midpointSettings);
+    constexpr double expectedMidpointEndpointVelocity = 4.0 / 9.0;
+    constexpr double expectedMidpointVelocity = 2.0 / 9.0;
+    double maximumMidpointEndpointError = 0.0;
+    for (std::size_t face = 0; face < grid.cellCount(); ++face) {
+        maximumMidpointEndpointError = std::max({
+            maximumMidpointEndpointError,
+            std::abs(midpointVelocity.xFaces()[face]
+                     - expectedMidpointEndpointVelocity),
+            std::abs(midpointVelocity.yFaces()[face]),
+            std::abs(midpointVelocity.zFaces()[face]),
+        });
+    }
+    check(midpoint.accepted
+              && midpoint.constitutiveEvaluation
+                  == PorousConstitutiveEvaluation::Midpoint,
+          "coupled porous: midpoint constitutive iteration converges");
+    check(maximumMidpointEndpointError < 2.0e-12,
+          "coupled porous: midpoint pressure impulse reaches its analytic endpoint");
+    checkNear(midpoint.samples.front()
+                  .fluidNormalVelocityMetersPerSecond,
+              expectedMidpointVelocity, 2.0e-12,
+              "coupled porous: midpoint diagnostics sample the temporal midpoint");
+    checkNear(midpoint.samples.front()
+                  .pressureJump.pressureJumpPascals,
+              -10.0 * expectedMidpointVelocity, 2.0e-11,
+              "coupled porous: midpoint Darcy loss uses midpoint slip");
+    constexpr double fluidMassKilograms = 24.0;
+    const double kineticEnergyChange = 0.5 * fluidMassKilograms
+        * expectedMidpointEndpointVelocity
+        * expectedMidpointEndpointVelocity;
+    const double drivingWork = 20.0 * 6.0
+        * expectedMidpointVelocity * 0.1;
+    const double porousDissipation =
+        midpoint.totalDissipationWatts * 0.1;
+    checkNear(kineticEnergyChange,
+              drivingWork - porousDissipation, 4.0e-12,
+              "coupled porous: midpoint grid work closes kinetic energy and porous loss");
+
+    auto oraclePorous = porous;
+    for (auto& crossing : oraclePorous) {
+        crossing.resistance = {100.0, 25.0};
+    }
+    auto oracleGridSettings = midpointSettings;
+    oracleGridSettings.projection.densityKgPerCubicMeter = 1.2;
+    oracleGridSettings.projection.timeStepSeconds = 1.0 / 60.0;
+    MacVelocityField oracleGridVelocity(grid);
+    CellScalarField oracleGridPressure(grid);
+    const auto oracleGrid = projectVelocityWithPorousInterfaces(
+        grid, oracleGridVelocity, oracleGridPressure, oraclePorous,
+        coupledDrivingPlane(grid, 250.0), oracleGridSettings);
+    PorousPlugFlowSettings oraclePlugSettings;
+    oraclePlugSettings.resistance = {100.0, 25.0};
+    oraclePlugSettings.densityKgPerCubicMeter = 1.2;
+    oraclePlugSettings.flowLengthMeters = 4.0;
+    oraclePlugSettings.crossSectionAreaSquareMeters = 6.0;
+    oraclePlugSettings.drivingPressureRisePascals = 250.0;
+    oraclePlugSettings.timeStepSeconds = 1.0 / 60.0;
+    double oraclePlugVelocity = 0.0;
+    const auto oraclePlug = advancePorousPlugFlow(
+        oraclePlugVelocity, oraclePlugSettings);
+    check(oracleGrid.accepted && oraclePlug.accepted,
+          "coupled porous: grid and scalar midpoint oracles both accept");
+    checkNear(oracleGridVelocity.xFaces().front(),
+              oraclePlugVelocity, 2.0e-12,
+              "coupled porous: grid midpoint endpoint matches the scalar oracle");
+    checkNear(-oracleGrid.samples.front()
+                   .pressureJump.pressureJumpPascals,
+              oraclePlug.midpointPressureDropPascals, 2.0e-10,
+              "coupled porous: grid midpoint loss matches the scalar oracle");
+
     const PeriodicCartesianGrid heterogeneousGrid(
         {4, 2, 2}, {}, {4.0, 2.0, 2.0});
     const std::vector<PorousGridFaceCrossing> heterogeneousPorous = {
@@ -454,6 +532,17 @@ void testCoupledPorousDelegationValidationAndRollback() {
     check(failedVelocity == originalVelocity
               && failedPressure == originalPressure,
           "coupled porous: invalid settings are rejected before mutation");
+
+    invalid = settings;
+    invalid.constitutiveEvaluation =
+        static_cast<PorousConstitutiveEvaluation>(99);
+    expectInvalid(
+        [&] {
+            static_cast<void>(projectVelocityWithPorousInterfaces(
+                grid, failedVelocity, failedPressure,
+                coupledPorousPlane(grid), invalid));
+        },
+        "coupled porous: an unknown constitutive time is rejected");
 
     const PeriodicCartesianGrid foreignGrid(
         {5, 3, 2}, {}, {5.0, 3.0, 2.0});
