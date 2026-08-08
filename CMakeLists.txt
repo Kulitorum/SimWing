@@ -339,6 +339,18 @@ target_include_directories(simwing_fluid PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
 )
 
+add_library(simwing_coupled_state STATIC
+    src/fsi/coupled_state.cpp
+    src/fsi/coupled_state.h
+)
+target_include_directories(simwing_coupled_state PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_coupled_state PUBLIC
+    simwing_coupling
+    simwing_fluid
+)
+
 add_library(simwing_fluid_frame STATIC
     src/viewer/fluid_frame.cpp
     src/viewer/fluid_frame.h
@@ -990,6 +1002,12 @@ add_executable(simwing-coupling-test
 )
 target_link_libraries(simwing-coupling-test PRIVATE simwing_coupling)
 
+add_executable(simwing-coupled-state-test
+    tests/simwing_coupled_state_test.cpp
+)
+target_link_libraries(simwing-coupled-state-test PRIVATE
+    simwing_coupled_state)
+
 add_executable(simwing-fluid-structure-bridge-test
     tests/simwing_fluid_structure_bridge_test.cpp
 )
@@ -1469,6 +1487,7 @@ add_test(NAME simwing_fluid_evolution
     COMMAND simwing-fluid-evolution-test)
 add_test(NAME simwing_transfer COMMAND simwing-transfer-test)
 add_test(NAME simwing_coupling COMMAND simwing-coupling-test)
+add_test(NAME simwing_coupled_state COMMAND simwing-coupled-state-test)
 add_test(NAME simwing_fluid_structure_bridge
     COMMAND simwing-fluid-structure-bridge-test)
 add_test(NAME simwing_piston_case COMMAND simwing-piston-case-test)

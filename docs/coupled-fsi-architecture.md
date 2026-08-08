@@ -409,6 +409,7 @@ src/fsi/
     structure.*             adapter around softwing_core
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
+    coupled_state.*         composite Structure/fluid/iteration rollback owner
     piston_case.*           sealed fixed-topology worker canonical
     porous_sheet_case.*     coupled midpoint porous-sheet oracle
     porous_sheet_checkpoint_persistence.* bounded composite restart codec
@@ -467,6 +468,7 @@ tools/
 
 Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
+`simwing_coupled_state`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
 `simwing_porous_sheet_case`, `simwing_open_piston_case`, `simwing_fluid_frame`,
 `simwing_periodic_flow_case`, `simwing_pressure_jump_case`,
@@ -741,7 +743,13 @@ Aitken history, and current relaxed interface into one checkpointable algorithm
 state. Advance is transactional, convergence and exhaustion are terminal, and
 restore reproduces the exact next relaxation/decision. Fluid and Structure
 checkpoints deliberately remain solver-owned and must be composed beside this
-state by the future worker before a smaller-step retry. The topology-bound
+state. The first composite owner now does that for one real Structure and one
+accepted moving-interface fluid epoch: it preconstructs and validates complete
+replacement owners, then atomically commits Structure, fluid, and algorithm
+state through no-throw moves. Foreign/corrupt members leave all live owners
+unchanged, while a valid restore reproduces the next mutation exactly. The
+repeated solver loop and macro-step reduction policy remain future worker work.
+The topology-bound
 macro-step surface computes the decision's
 inputs from saved-baseline, previous, and current stable-ID kinematics plus two
 immutable nodal traction transfers. Maximum displacement and velocity updates

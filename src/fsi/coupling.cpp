@@ -161,6 +161,21 @@ StrongCouplingIteration::StrongCouplingIteration(
     }
 }
 
+std::uint64_t StrongCouplingIteration::
+interfaceDefinitionFingerprint() const noexcept {
+    return relaxation_.interfaceDefinitionFingerprint();
+}
+
+const AitkenRelaxationSettings&
+StrongCouplingIteration::relaxationSettings() const noexcept {
+    return relaxation_.settings();
+}
+
+const CouplingConvergenceSettings&
+StrongCouplingIteration::convergenceSettings() const noexcept {
+    return convergenceSettings_;
+}
+
 std::span<const double>
 StrongCouplingIteration::currentInterface() const noexcept {
     return currentInterface_;

@@ -298,7 +298,12 @@ and reports exhaustion separately. A macro-step iteration owner now composes
 that decision with the Aitken state and current relaxed vector. Its checkpoint
 replays the exact next update, failed advances/restores are transactional, and
 converged or exhausted states are terminal; solver checkpoints remain beside
-it for the future worker to restore before retrying a smaller macro-step. The
+it. A separate composite rollback owner now binds that algorithm checkpoint to
+one real `Structure` checkpoint and one accepted moving-interface fluid epoch.
+It prebuilds and validates all three replacements, then commits them through
+no-throw moves, so a foreign or corrupt member changes none of the owners and a
+valid restore replays the exact next mutation. This is the retry state boundary;
+the repeated fluid/Structure solve still remains to be wired. The
 macro-step surface supplies the residual norms from
 stable-ID-bound baseline/previous/current kinematics and consecutive nodal
 traction results. It uses maximum physical nodal updates, references motion to

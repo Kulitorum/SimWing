@@ -182,6 +182,18 @@ public:
         const AitkenRelaxationSettings& relaxationSettings = {},
         const CouplingConvergenceSettings& convergenceSettings = {});
 
+    StrongCouplingIteration(const StrongCouplingIteration&) = delete;
+    StrongCouplingIteration& operator=(const StrongCouplingIteration&) = delete;
+    StrongCouplingIteration(StrongCouplingIteration&&) noexcept = default;
+    StrongCouplingIteration& operator=(
+        StrongCouplingIteration&&) noexcept = default;
+
+    [[nodiscard]] std::uint64_t
+    interfaceDefinitionFingerprint() const noexcept;
+    [[nodiscard]] const AitkenRelaxationSettings&
+    relaxationSettings() const noexcept;
+    [[nodiscard]] const CouplingConvergenceSettings&
+    convergenceSettings() const noexcept;
     [[nodiscard]] std::span<const double> currentInterface() const noexcept;
     [[nodiscard]] StrongCouplingIterationStatus status() const noexcept;
     [[nodiscard]] std::uint64_t completedIterationCount() const noexcept;
