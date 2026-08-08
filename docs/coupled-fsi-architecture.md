@@ -439,6 +439,7 @@ src/fsi/
         scene_surface_intersection.* exact triangle/cell narrow phase
         scene_surface_clipping.* barycentric per-cell surface polygons
         scene_surface_ownership.* unique internal cell/face area owners
+        scene_surface_crossings.* paired oriented internal-face segments
         geometry.*          exact surface and region reconstruction
         advection.*         bounded donor/limited-MC MAC transport
         projected_advection.* projected nonlinear SSPRK2 transport
@@ -519,9 +520,12 @@ separate ownership stage pairs it into one canonical internal MAC face with
 authored side regions and winding sign. Unique cell and face owners then become
 stable barycentric quadrature points carrying authored physical identity into
 the existing conservative load transfer; shared-plane area is integrated once
-and no traction is invented at this boundary. It rejects unresolved
-periodic-domain boundary area. Volume fractions, general face crossings, and
-region reconstruction remain open. A canonical Qt-free
+and no traction is invented at this boundary. Ordinary owned polygons also
+yield exact boundary segments: adjacent-cell copies pair into stable transverse
+face crossings with an in-face negative-to-positive direction; unpaired edges
+remain contact and coplanar triangle area remains under face ownership. It
+rejects unresolved periodic-domain boundary area and grid-edge-aligned crossing
+ambiguity. Volume fractions and region reconstruction remain open. A canonical Qt-free
 structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.

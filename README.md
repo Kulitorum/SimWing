@@ -457,8 +457,12 @@ remain diagnostic. Those unique owners now become stable barycentric
 quadrature points which retain the authored material, sheet, role, and both
 fluid regions and feed ordered traction through the conservative Structure
 transfer without integrating shared-plane area twice. This boundary does not
-invent traction. Unpaired periodic-domain boundary area is rejected. Cut-cell
-volume fractions, general face crossings, and region reconstruction remain open.
+invent traction. Ordinary clipped polygons also expose their exact boundary
+segments: matching copies from adjacent cells become one stable transverse
+face crossing with an in-face authored-side direction, while unpaired edges
+remain contact and coplanar area remains separately face-owned. Unpaired
+periodic-domain boundary area and grid-edge crossing ambiguity are rejected.
+Cut-cell volume fractions and fluid-region reconstruction remain open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

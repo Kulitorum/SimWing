@@ -291,6 +291,8 @@ add_library(simwing_scene_fluid_geometry STATIC
     src/fsi/fluid/scene_surface_clipping.h
     src/fsi/fluid/scene_surface_ownership.cpp
     src/fsi/fluid/scene_surface_ownership.h
+    src/fsi/fluid/scene_surface_crossings.cpp
+    src/fsi/fluid/scene_surface_crossings.h
 )
 target_include_directories(simwing_scene_fluid_geometry PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
@@ -927,6 +929,12 @@ add_executable(simwing-scene-surface-ownership-test
 target_link_libraries(simwing-scene-surface-ownership-test
     PRIVATE simwing_scene_fluid_geometry)
 
+add_executable(simwing-scene-surface-crossings-test
+    tests/simwing_scene_surface_crossings_test.cpp
+)
+target_link_libraries(simwing-scene-surface-crossings-test
+    PRIVATE simwing_scene_fluid_geometry)
+
 add_executable(simwing-scene-fluid-quadrature-test
     tests/simwing_scene_fluid_quadrature_test.cpp
 )
@@ -1330,6 +1338,7 @@ set_target_properties(
     simwing-scene-surface-intersection-test
     simwing-scene-surface-clipping-test
     simwing-scene-surface-ownership-test
+    simwing-scene-surface-crossings-test
     simwing-scene-fluid-quadrature-test
     simwing-viewer-protocol-test
     simwing-vector-glyphs-test
@@ -1407,6 +1416,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-scene-surface-intersection-test
         simwing-scene-surface-clipping-test
         simwing-scene-surface-ownership-test
+        simwing-scene-surface-crossings-test
         simwing-scene-fluid-quadrature-test
         simwing-viewer-protocol-test
         simwing-vector-glyphs-test
@@ -1579,6 +1589,8 @@ add_test(NAME simwing_scene_surface_clipping
     COMMAND simwing-scene-surface-clipping-test)
 add_test(NAME simwing_scene_surface_ownership
     COMMAND simwing-scene-surface-ownership-test)
+add_test(NAME simwing_scene_surface_crossings
+    COMMAND simwing-scene-surface-crossings-test)
 add_test(NAME simwing_scene_fluid_quadrature
     COMMAND simwing-scene-fluid-quadrature-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
