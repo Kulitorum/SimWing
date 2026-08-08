@@ -205,10 +205,13 @@ disagreement. The full composite open-piston checkpoint now also has a
 deterministic bounded/checksummed codec. It nests those Structure and fluid
 payloads with the partial-cell/rebase epoch and every committed transfer and
 conservation ledger, validates through an equivalent rebuilt worker, and
-resumes ordinary or freshly rebased arithmetic bit-for-bit. The open-piston
+recomputes the canonical diagnostic identities, geometry, acceptance state,
+and cross-ledger force/work relationships before restore. It resumes ordinary
+or freshly rebased arithmetic bit-for-bit. The open-piston
 worker accepts the same `--checkpoint-in`, `--checkpoint-out`, and absolute
 `--checkpoint-every` file workflow as periodic flow, including atomic same-file
-resume. Control-protocol execution for this worker remains future work. A
+resume. Its typed checkpoint adapter also supports the binary standard-I/O
+control protocol without launching the viewer. A
 real 3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,
 checkpoint replay, and completed trace using synthetic physical settings.

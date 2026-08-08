@@ -2,6 +2,7 @@
 #include "open_piston_checkpoint_persistence.h"
 #include "viewer_protocol.h"
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -657,6 +658,50 @@ void testCompositeCheckpointValidationAndReplay() {
     reject(corrupt,
            fsi::OpenPistonCheckpointPersistenceErrorCode::InvalidData,
            "persistent checkpoint rejects inconsistent epoch metadata");
+
+    const std::size_t structureSize = static_cast<std::size_t>(
+        readU64(savedBytes, 80));
+    const std::size_t fluidLengthOffset = 88 + structureSize;
+    const std::size_t fluidSize = static_cast<std::size_t>(
+        readU64(savedBytes, fluidLengthOffset));
+    const std::size_t diagnosticOffset =
+        fluidLengthOffset + 8 + fluidSize;
+    constexpr std::size_t controlVolumeRecordBytes = 183;
+    constexpr std::size_t rebaseRecordBytes = 79;
+
+    corrupt = savedBytes;
+    writeU64(corrupt, diagnosticOffset + 4,
+             301);
+    refreshCheckpointChecksum(corrupt);
+    reject(corrupt,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::InvalidData,
+           "persistent checkpoint rejects a recomputed-checksum diagnostic identity");
+    corrupt = savedBytes;
+    corrupt[diagnosticOffset + controlVolumeRecordBytes - 1] = 0;
+    refreshCheckpointChecksum(corrupt);
+    reject(corrupt,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::InvalidData,
+           "persistent checkpoint rejects a recomputed-checksum acceptance ledger");
+    corrupt = savedBytes;
+    corrupt[diagnosticOffset + controlVolumeRecordBytes
+            + rebaseRecordBytes - 1] = 1;
+    refreshCheckpointChecksum(corrupt);
+    reject(corrupt,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::InvalidData,
+           "persistent checkpoint rejects a stale accepted rebase ledger");
+    corrupt = savedBytes;
+    const std::size_t cutSurfacePhysicalPlaneOffset =
+        diagnosticOffset + controlVolumeRecordBytes
+        + rebaseRecordBytes + 81;
+    const double physicalPlane = std::bit_cast<double>(
+        readU64(corrupt, cutSurfacePhysicalPlaneOffset));
+    writeU64(corrupt, cutSurfacePhysicalPlaneOffset,
+             std::bit_cast<std::uint64_t>(physicalPlane + 0.25));
+    refreshCheckpointChecksum(corrupt);
+    reject(corrupt,
+           fsi::OpenPistonCheckpointPersistenceErrorCode::InvalidData,
+           "persistent checkpoint rejects recomputed-checksum diagnostic geometry");
+
     corrupt = savedBytes;
     writeU64(corrupt, 80,
              fsi::OpenPistonCheckpointPersistenceLimits{}

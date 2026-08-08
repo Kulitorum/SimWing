@@ -496,6 +496,478 @@ void appendFields(
         {conservation.systemEnergyResidualJoules}});
 }
 
+bool closeValue(const double first,
+                const double second,
+                const double absoluteTolerance = 1.0e-10,
+                const double relativeTolerance = 1.0e-11) {
+    return std::isfinite(first) && std::isfinite(second)
+        && std::abs(first - second)
+            <= absoluteTolerance
+                + relativeTolerance
+                    * std::max(std::abs(first), std::abs(second));
+}
+
+bool closeVector(const StructureVector3& first,
+                 const StructureVector3& second,
+                 const double tolerance = 1.0e-9) {
+    return closeValue(first.x, second.x, tolerance)
+        && closeValue(first.y, second.y, tolerance)
+        && closeValue(first.z, second.z, tolerance);
+}
+
+bool closeVector(const fluid::Vector3& first,
+                 const fluid::Vector3& second,
+                 const double tolerance = 1.0e-9) {
+    return closeValue(first.x, second.x, tolerance)
+        && closeValue(first.y, second.y, tolerance)
+        && closeValue(first.z, second.z, tolerance);
+}
+
+const char* invalidStoredOpenPistonDiagnostics(
+    const OpenPistonCaseCheckpoint& checkpoint,
+    const OpenPistonCaseCheckpoint::Detail& detail) {
+    // These ledgers are restart state, not trusted commentary. Reconstruct
+    // their canonical relationships before allowing restore to publish them.
+    if (checkpoint.acceptedStepCount == 0) {
+        const bool valid = checkpoint.topologyRebaseCount == 0
+            && checkpoint.movingPlaneCoordinate == 6
+            && checkpoint.surfaceOffsetMeters == 0.0
+            && detail.controlVolumeDiagnostics
+                == fluid::PlanarControlVolumeDiagnostics{}
+            && detail.lastRebaseDiagnostics
+                == fluid::PlanarControlVolumeRebaseDiagnostics{}
+            && detail.cutSurfaceDiagnostics
+                == fluid::PlanarCutSurfacePressureDiagnostics{}
+            && detail.bridgeDiagnostics
+                == PlanarFaceResolvedBridgeDiagnostics{}
+            && detail.conservationDiagnostics
+                == OpenPistonConservationDiagnostics{}
+            && detail.lastRebaseVelocityResidualMetersPerSecond == 0.0;
+        return valid ? nullptr : "initial diagnostic state";
+    }
+
+    constexpr std::uint64_t stepsPerCell = 1200;
+    constexpr double cellSpacingMeters = 0.5;
+    constexpr double initialGridPlaneMeters = 3.0;
+    constexpr double initialReferenceVolumeCubicMeters = 12.0;
+    constexpr double crossSectionAreaSquareMeters = 6.0;
+    constexpr std::size_t faceCount = 6;
+    const double timeStepSeconds = makeStepSettings().timeStepSeconds;
+    const double stepTranslationMeters =
+        coastSpeedMetersPerSecond * timeStepSeconds;
+    const std::uint64_t expectedRebaseCount =
+        checkpoint.acceptedStepCount / stepsPerCell;
+    const std::uint64_t stepsInEpoch =
+        checkpoint.acceptedStepCount % stepsPerCell;
+    const bool crossingCheckpoint = stepsInEpoch == 0;
+    const double expectedStoredOffset =
+        static_cast<double>(stepsInEpoch) * stepTranslationMeters;
+    if (checkpoint.topologyRebaseCount != expectedRebaseCount
+        || !closeValue(checkpoint.surfaceOffsetMeters,
+                       expectedStoredOffset, 2.0e-12)) {
+        return "worker epoch state";
+    }
+
+    const std::uint64_t diagnosticEpoch = checkpoint.topologyRebaseCount
+        - (crossingCheckpoint ? 1 : 0);
+    const std::size_t diagnosticPlane = static_cast<std::size_t>(
+        (6 + diagnosticEpoch) % 8);
+    const double gridPlaneMeters =
+        static_cast<double>(diagnosticPlane) * cellSpacingMeters;
+    const double physicalPlaneMeters = initialGridPlaneMeters
+        + static_cast<double>(checkpoint.topologyRebaseCount)
+            * cellSpacingMeters
+        + checkpoint.surfaceOffsetMeters;
+    const double endOffsetMeters = crossingCheckpoint
+        ? cellSpacingMeters : checkpoint.surfaceOffsetMeters;
+    const double startOffsetMeters =
+        endOffsetMeters - stepTranslationMeters;
+    const double referenceVolumeCubicMeters =
+        initialReferenceVolumeCubicMeters
+        + static_cast<double>(diagnosticEpoch)
+            * crossSectionAreaSquareMeters * cellSpacingMeters;
+
+    const auto& control = detail.controlVolumeDiagnostics;
+    if (control.version != fluid::planarMovingControlVolumeVersion
+        || control.movingSurfaceStableId != pistonSurfaceStableId
+        || control.fluidRegionStableId != connectedFluidRegionStableId
+        || control.axis != fluid::GridFaceAxis::X
+        || control.movingPlaneCoordinate != diagnosticPlane
+        || control.openingPlaneCoordinate != 2
+        || control.movingSurfaceFaceCount != faceCount
+        || control.openingFaceCount != faceCount
+        || !control.finite || !control.accepted
+        || !closeValue(control.crossSectionAreaSquareMeters,
+                       crossSectionAreaSquareMeters)
+        || !closeValue(control.referenceVolumeCubicMeters,
+                       referenceVolumeCubicMeters)
+        || !closeValue(control.startCutCellVolumeCubicMeters,
+                       crossSectionAreaSquareMeters * startOffsetMeters)
+        || !closeValue(control.endCutCellVolumeCubicMeters,
+                       crossSectionAreaSquareMeters * endOffsetMeters)
+        || !closeValue(control.startCutCellVolumeFraction,
+                       startOffsetMeters / cellSpacingMeters)
+        || !closeValue(control.endCutCellVolumeFraction,
+                       endOffsetMeters / cellSpacingMeters)
+        || !closeValue(control.startVolumeCubicMeters,
+                       referenceVolumeCubicMeters
+                           + crossSectionAreaSquareMeters
+                               * startOffsetMeters)
+        || !closeValue(control.endVolumeCubicMeters,
+                       referenceVolumeCubicMeters
+                           + crossSectionAreaSquareMeters
+                               * endOffsetMeters)
+        || !closeValue(control.geometryVolumeChangeCubicMeters,
+                       crossSectionAreaSquareMeters
+                           * stepTranslationMeters)
+        || !closeValue(control.surfaceSweptVolumeCubicMeters,
+                       control.geometryVolumeChangeCubicMeters)
+        || !closeValue(control.openingTransportVolumeCubicMeters,
+                       control.geometryVolumeChangeCubicMeters)
+        || !std::isfinite(control.surfaceGeometryResidualCubicMeters)
+        || std::abs(control.surfaceGeometryResidualCubicMeters) > 1.0e-11
+        || !std::isfinite(control.continuityResidualCubicMeters)
+        || std::abs(control.continuityResidualCubicMeters) > 1.0e-11
+        || !std::isfinite(
+            control.maximumSurfaceVelocityErrorMetersPerSecond)
+        || control.maximumSurfaceVelocityErrorMetersPerSecond < 0.0
+        || control.maximumSurfaceVelocityErrorMetersPerSecond > 1.0e-11
+        || !closeValue(control.rectangularSurfacePressureWorkJoules,
+                       control.surfacePressurePowerWatts
+                           * timeStepSeconds, 1.0e-9)) {
+        return "moving control-volume ledger";
+    }
+
+    const auto& rebase = detail.lastRebaseDiagnostics;
+    if (checkpoint.topologyRebaseCount == 0) {
+        if (rebase != fluid::PlanarControlVolumeRebaseDiagnostics{}
+            || detail.lastRebaseVelocityResidualMetersPerSecond != 0.0) {
+            return "initial topology-rebase ledger";
+        }
+    } else {
+        const std::size_t previousPlane = static_cast<std::size_t>(
+            (6 + checkpoint.topologyRebaseCount - 1) % 8);
+        const double rebasedVolume = initialReferenceVolumeCubicMeters
+            + static_cast<double>(checkpoint.topologyRebaseCount)
+                * crossSectionAreaSquareMeters * cellSpacingMeters;
+        if (rebase.version != fluid::planarControlVolumeRebaseVersion
+            || rebase.movingSurfaceStableId != pistonSurfaceStableId
+            || rebase.fluidRegionStableId != connectedFluidRegionStableId
+            || rebase.axis != fluid::GridFaceAxis::X
+            || rebase.previousMovingPlaneCoordinate != previousPlane
+            || rebase.rebasedMovingPlaneCoordinate
+                != checkpoint.movingPlaneCoordinate
+            || rebase.openingPlaneCoordinate != 2
+            || !rebase.finite || !rebase.accepted
+            || !closeValue(rebase.completedCellOffsetMeters,
+                           cellSpacingMeters)
+            || !closeValue(rebase.previousTerminalVolumeCubicMeters,
+                           rebasedVolume)
+            || !closeValue(rebase.rebasedReferenceVolumeCubicMeters,
+                           rebasedVolume)
+            || !std::isfinite(
+                rebase.volumeContinuityResidualCubicMeters)
+            || std::abs(rebase.volumeContinuityResidualCubicMeters)
+                > 1.0e-11
+            || detail.lastRebaseVelocityResidualMetersPerSecond < 0.0
+            || detail.lastRebaseVelocityResidualMetersPerSecond
+                > rebaseVelocityToleranceMetersPerSecond) {
+            return "topology-rebase ledger";
+        }
+    }
+
+    const auto& cut = detail.cutSurfaceDiagnostics;
+    if (cut.version != fluid::planarCutSurfacePressureVersion
+        || cut.sourceInterfaceVersion
+            != fluid::faceAlignedMovingInterfaceVersion
+        || cut.surfaceStableId != pistonSurfaceStableId
+        || cut.fluidRegionStableId != connectedFluidRegionStableId
+        || cut.axis != fluid::GridFaceAxis::X
+        || cut.movingPlaneCoordinate != diagnosticPlane
+        || cut.faceCount != faceCount || cut.faces.size() != faceCount
+        || cut.kinematicsResampled || !cut.finite || !cut.accepted
+        || !closeVector(cut.momentReferenceMeters, {})
+        || !closeValue(cut.surfaceOffsetMeters, endOffsetMeters)
+        || !closeValue(cut.gridPlaneCoordinateMeters, gridPlaneMeters)
+        || !closeValue(cut.physicalPlaneCoordinateMeters,
+                       physicalPlaneMeters)
+        || !std::isfinite(cut.periodicPositionResidualMeters)
+        || cut.periodicPositionResidualMeters < 0.0
+        || cut.periodicPositionResidualMeters > 1.0e-11
+        || !closeValue(cut.normalVelocityMetersPerSecond,
+                       coastSpeedMetersPerSecond)
+        || !std::isfinite(
+            cut.maximumNormalVelocitySpreadMetersPerSecond)
+        || cut.maximumNormalVelocitySpreadMetersPerSecond < 0.0
+        || cut.maximumNormalVelocitySpreadMetersPerSecond > 1.0e-11
+        || !closeValue(
+            cut.reactionSourcePhysicalPlaneCoordinateMeters,
+            physicalPlaneMeters)
+        || !closeValue(
+            cut.reactionSourceNormalVelocityMetersPerSecond,
+            coastSpeedMetersPerSecond)) {
+        return "cut-surface header";
+    }
+
+    fluid::Vector3 faceForce;
+    fluid::Vector3 faceMoment;
+    double faceArea = 0.0;
+    double facePower = 0.0;
+    std::array<bool, faceCount> seenFaces{};
+    for (const auto& face : cut.faces) {
+        if (face.surfaceStableId != pistonSurfaceStableId
+            || face.minusRegionStableId != connectedFluidRegionStableId
+            || face.plusRegionStableId != connectedFluidRegionStableId
+            || face.axis != fluid::GridFaceAxis::X
+            || face.i != diagnosticPlane || face.j >= 2 || face.k >= 3) {
+            return "cut-surface face topology";
+        }
+        const std::size_t faceIndex = face.k * 2 + face.j;
+        if (seenFaces[faceIndex]) return "duplicate cut-surface face";
+        seenFaces[faceIndex] = true;
+        const fluid::Vector3 expectedGridLower{
+            gridPlaneMeters, static_cast<double>(face.j),
+            static_cast<double>(face.k)};
+        const fluid::Vector3 expectedGridUpper{
+            gridPlaneMeters, static_cast<double>(face.j + 1),
+            static_cast<double>(face.k + 1)};
+        const fluid::Vector3 expectedPhysicalLower{
+            physicalPlaneMeters, expectedGridLower.y,
+            expectedGridLower.z};
+        const fluid::Vector3 expectedPhysicalUpper{
+            physicalPlaneMeters, expectedGridUpper.y,
+            expectedGridUpper.z};
+        const fluid::Vector3 expectedForce{
+            face.pressureTractionPascals.x * face.areaSquareMeters,
+            face.pressureTractionPascals.y * face.areaSquareMeters,
+            face.pressureTractionPascals.z * face.areaSquareMeters};
+        if (!closeVector(face.gridLowerCornerMeters, expectedGridLower)
+            || !closeVector(face.gridUpperCornerMeters, expectedGridUpper)
+            || !closeVector(face.physicalLowerCornerMeters,
+                            expectedPhysicalLower)
+            || !closeVector(face.physicalUpperCornerMeters,
+                            expectedPhysicalUpper)
+            || !closeValue(face.areaSquareMeters, 1.0)
+            || !closeValue(face.normalVelocityMetersPerSecond,
+                           coastSpeedMetersPerSecond)
+            || !closeValue(face.pressureTractionPascals.y, 0.0)
+            || !closeValue(face.pressureTractionPascals.z, 0.0)
+            || !closeVector(face.pressureForceNewtons, expectedForce)
+            || !closeValue(face.pressurePowerWatts,
+                           face.pressureForceNewtons.x
+                               * coastSpeedMetersPerSecond, 1.0e-9)) {
+            return "cut-surface face geometry or traction";
+        }
+        faceArea += face.areaSquareMeters;
+        faceForce.x += face.pressureForceNewtons.x;
+        faceForce.y += face.pressureForceNewtons.y;
+        faceForce.z += face.pressureForceNewtons.z;
+        facePower += face.pressurePowerWatts;
+        const double centerY = static_cast<double>(face.j) + 0.5;
+        const double centerZ = static_cast<double>(face.k) + 0.5;
+        faceMoment.x += centerY * face.pressureForceNewtons.z
+            - centerZ * face.pressureForceNewtons.y;
+        faceMoment.y += centerZ * face.pressureForceNewtons.x
+            - physicalPlaneMeters * face.pressureForceNewtons.z;
+        faceMoment.z += physicalPlaneMeters * face.pressureForceNewtons.y
+            - centerY * face.pressureForceNewtons.x;
+    }
+    if (!std::ranges::all_of(seenFaces, [](const bool seen) { return seen; })
+        || !closeValue(cut.areaSquareMeters, faceArea)
+        || !closeValue(cut.sourceAreaSquareMeters, faceArea)
+        || !closeValue(cut.areaResidualSquareMeters,
+                       cut.areaSquareMeters - cut.sourceAreaSquareMeters)
+        || !closeVector(cut.pressureForceNewtons, faceForce)
+        || !closeVector(cut.sourcePressureForceNewtons, faceForce)
+        || !closeVector(cut.forceResidualNewtons,
+                        {cut.pressureForceNewtons.x
+                             - cut.sourcePressureForceNewtons.x,
+                         cut.pressureForceNewtons.y
+                             - cut.sourcePressureForceNewtons.y,
+                         cut.pressureForceNewtons.z
+                             - cut.sourcePressureForceNewtons.z})
+        || !closeValue(cut.forceResidualNormNewtons,
+                       std::sqrt(
+                           cut.forceResidualNewtons.x
+                               * cut.forceResidualNewtons.x
+                           + cut.forceResidualNewtons.y
+                               * cut.forceResidualNewtons.y
+                           + cut.forceResidualNewtons.z
+                               * cut.forceResidualNewtons.z))
+        || !closeVector(cut.pressureMomentNewtonMeters, faceMoment)
+        || !closeValue(cut.pressurePowerWatts, facePower)
+        || !closeValue(cut.sourcePressurePowerWatts, facePower)
+        || !closeValue(cut.powerResidualWatts,
+                       cut.pressurePowerWatts
+                           - cut.sourcePressurePowerWatts)
+        || !closeValue(control.surfacePressurePowerWatts,
+                       cut.pressurePowerWatts, 1.0e-9)) {
+        return "cut-surface aggregate ledger";
+    }
+
+    const auto& bridge = detail.bridgeDiagnostics;
+    const auto bridgeSettings = movingBridgeSettings();
+    const double bridgeAreaTolerance =
+        bridgeSettings.absoluteAreaToleranceSquareMeters
+        + bridgeSettings.relativeAreaTolerance * std::max(
+            std::abs(bridge.fluidAreaSquareMeters),
+            std::abs(bridge.referenceStructureAreaSquareMeters));
+    const double bridgeForceTolerance =
+        bridgeSettings.absoluteForceToleranceNewtons
+        + bridgeSettings.relativeForceTolerance * std::max(
+            length(bridge.fluidPressureForceNewtons),
+            length(bridge.structureSurfaceForceNewtons));
+    const double bridgeMomentTolerance =
+        bridgeSettings.absoluteMomentToleranceNewtonMeters
+        + bridgeSettings.relativeMomentTolerance * std::max(
+            length(bridge.fluidPressureMomentNewtonMeters),
+            length(bridge.structureSurfaceMomentNewtonMeters));
+    const double bridgePowerTolerance =
+        bridgeSettings.absolutePowerToleranceWatts
+        + bridgeSettings.relativePowerTolerance * std::max(
+            std::abs(bridge.fluidPressurePowerWatts),
+            std::abs(bridge.structureSurfacePowerWatts));
+    if (bridge.version != planarFaceResolvedBridgeVersion
+        || bridge.fluidSurfaceStableId != pistonSurfaceStableId
+        || bridge.fluidFaceCount != faceCount
+        || bridge.structureTriangleCount != 2
+        || bridge.overlapPatchCount != 10
+        || bridge.correspondenceMode
+            != PlanarFaceCorrespondenceMode::RigidNormalTranslation
+        || !bridge.finite
+        || !closeValue(bridge.fluidAreaSquareMeters,
+                       crossSectionAreaSquareMeters)
+        || !closeValue(bridge.referenceStructureAreaSquareMeters,
+                       crossSectionAreaSquareMeters)
+        || !closeValue(bridge.areaResidualSquareMeters,
+                       bridge.referenceStructureAreaSquareMeters
+                           - bridge.fluidAreaSquareMeters)
+        || std::abs(bridge.areaResidualSquareMeters)
+            > bridgeAreaTolerance
+        || !closeVector(bridge.fluidPressureForceNewtons,
+                       {cut.pressureForceNewtons.x,
+                        cut.pressureForceNewtons.y,
+                        cut.pressureForceNewtons.z})
+        || !closeVector(bridge.forceResidualNewtons,
+                       subtract(bridge.structureSurfaceForceNewtons,
+                                bridge.fluidPressureForceNewtons))
+        || !closeValue(bridge.forceResidualNormNewtons,
+                       length(bridge.forceResidualNewtons))
+        || bridge.forceResidualNormNewtons > bridgeForceTolerance
+        || !closeVector(bridge.fluidPressureMomentNewtonMeters,
+                       {cut.pressureMomentNewtonMeters.x,
+                        cut.pressureMomentNewtonMeters.y,
+                        cut.pressureMomentNewtonMeters.z})
+        || !closeVector(bridge.momentResidualNewtonMeters,
+                       subtract(bridge.structureSurfaceMomentNewtonMeters,
+                                bridge.fluidPressureMomentNewtonMeters))
+        || !closeValue(bridge.momentResidualNormNewtonMeters,
+                       length(bridge.momentResidualNewtonMeters))
+        || bridge.momentResidualNormNewtonMeters > bridgeMomentTolerance
+        || !closeValue(bridge.fluidPressurePowerWatts,
+                       cut.pressurePowerWatts, 1.0e-9)
+        || !closeValue(bridge.powerResidualWatts,
+                       bridge.structureSurfacePowerWatts
+                           - bridge.fluidPressurePowerWatts, 1.0e-9)
+        || std::abs(bridge.powerResidualWatts) > bridgePowerTolerance
+        || !std::isfinite(bridge.maximumFacePowerResidualWatts)
+        || bridge.maximumFacePowerResidualWatts < 0.0
+        || bridge.maximumFacePowerResidualWatts > bridgePowerTolerance
+        || !closeValue(bridge.gridPlaneCoordinateMeters, gridPlaneMeters)
+        || !closeValue(bridge.physicalPlaneCoordinateMeters,
+                       physicalPlaneMeters)
+        || !closeValue(bridge.normalTranslationFromReferenceMeters,
+                       physicalPlaneMeters - initialGridPlaneMeters)
+        || !std::isfinite(bridge.maximumRigidPositionResidualMeters)
+        || bridge.maximumRigidPositionResidualMeters < 0.0
+        || bridge.maximumRigidPositionResidualMeters > 1.0e-10
+        || !std::isfinite(
+            bridge.maximumRigidVelocityResidualMetersPerSecond)
+        || bridge.maximumRigidVelocityResidualMetersPerSecond < 0.0
+        || bridge.maximumRigidVelocityResidualMetersPerSecond > 1.0e-10) {
+        return "structure-fluid bridge ledger";
+    }
+
+    const auto& conservation = detail.conservationDiagnostics;
+    const double startSpeed = checkpoint.acceptedStepCount == 1
+        ? 0.0 : coastSpeedMetersPerSecond;
+    const StructureVector3 expectedPressureImpulse{
+        cut.pressureForceNewtons.x * timeStepSeconds,
+        cut.pressureForceNewtons.y * timeStepSeconds,
+        cut.pressureForceNewtons.z * timeStepSeconds};
+    const StructureVector3 expectedStructureMomentum{
+        structuralMassKilograms
+            * (coastSpeedMetersPerSecond - startSpeed), 0.0, 0.0};
+    const StructureVector3 expectedFluidMomentum =
+        scale(expectedPressureImpulse, -1.0);
+    const StructureVector3 expectedActuatorImpulse = subtract(
+        expectedStructureMomentum, expectedPressureImpulse);
+    const double averageSpeed =
+        0.5 * (startSpeed + coastSpeedMetersPerSecond);
+    const double expectedPressureWork =
+        cut.pressureForceNewtons.x * averageSpeed * timeStepSeconds;
+    const double expectedActuatorWork =
+        expectedActuatorImpulse.x * averageSpeed;
+    const double expectedStructureEnergy = 0.5
+        * structuralMassKilograms
+        * (coastSpeedMetersPerSecond * coastSpeedMetersPerSecond
+           - startSpeed * startSpeed);
+    const double expectedFluidEnergy = -expectedPressureWork;
+    if (conservation.version != openPistonConservationVersion
+        || !conservation.finite || !conservation.accepted
+        || !closeVector(conservation.structureMomentumChangeNewtonSeconds,
+                       expectedStructureMomentum, 1.0e-8)
+        || !closeVector(conservation.fluidMomentumChangeNewtonSeconds,
+                       expectedFluidMomentum, 1.0e-8)
+        || !closeVector(
+            conservation.pressureImpulseToStructureNewtonSeconds,
+            expectedPressureImpulse, 1.0e-8)
+        || !closeVector(conservation.actuatorImpulseNewtonSeconds,
+                       expectedActuatorImpulse, 1.0e-8)
+        || !closeVector(conservation.structureMomentumResidualNewtonSeconds,
+                       subtract(expectedStructureMomentum,
+                                add(expectedPressureImpulse,
+                                    expectedActuatorImpulse)), 1.0e-8)
+        || !closeValue(
+            conservation.structureMomentumResidualNormNewtonSeconds,
+            length(conservation.structureMomentumResidualNewtonSeconds),
+            1.0e-8)
+        || !closeVector(conservation.fluidMomentumResidualNewtonSeconds,
+                       add(expectedFluidMomentum,
+                           expectedPressureImpulse), 1.0e-8)
+        || !closeValue(
+            conservation.fluidMomentumResidualNormNewtonSeconds,
+            length(conservation.fluidMomentumResidualNewtonSeconds),
+            1.0e-8)
+        || !closeVector(conservation.systemMomentumResidualNewtonSeconds,
+                       subtract(add(expectedStructureMomentum,
+                                    expectedFluidMomentum),
+                                expectedActuatorImpulse), 1.0e-8)
+        || !closeValue(
+            conservation.systemMomentumResidualNormNewtonSeconds,
+            length(conservation.systemMomentumResidualNewtonSeconds),
+            1.0e-8)
+        || !closeValue(conservation.structureKineticEnergyChangeJoules,
+                       expectedStructureEnergy, 2.0e-9)
+        || !closeValue(conservation.fluidKineticEnergyChangeJoules,
+                       expectedFluidEnergy, 2.0e-9)
+        || !closeValue(conservation.pressureWorkToStructureJoules,
+                       expectedPressureWork, 2.0e-9)
+        || !closeValue(conservation.actuatorWorkJoules,
+                       expectedActuatorWork, 2.0e-9)
+        || !closeValue(conservation.structureEnergyResidualJoules,
+                       expectedStructureEnergy - expectedPressureWork
+                           - expectedActuatorWork, 2.0e-9)
+        || !closeValue(conservation.fluidEnergyResidualJoules,
+                       expectedFluidEnergy + expectedPressureWork, 2.0e-9)
+        || !closeValue(conservation.systemEnergyResidualJoules,
+                       expectedStructureEnergy + expectedFluidEnergy
+                           - expectedActuatorWork, 2.0e-9)) {
+        return "coupled conservation ledger";
+    }
+    return nullptr;
+}
+
 } // namespace
 
 OpenPistonCase::OpenPistonCase()
@@ -903,6 +1375,12 @@ void OpenPistonCase::restore(
         || !structureMatchesEpoch || !interfacesMatchEpoch) {
         throw std::invalid_argument(
             "open piston checkpoint does not match its topology epoch");
+    }
+    if (const char* diagnosticError = invalidStoredOpenPistonDiagnostics(
+            checkpointValue, *checkpointValue.detail)) {
+        throw std::invalid_argument(
+            std::string("open piston checkpoint diagnostics are inconsistent: ")
+                + diagnosticError);
     }
 
     auto controlDiagnostics =

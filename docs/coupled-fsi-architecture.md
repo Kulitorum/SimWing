@@ -259,9 +259,11 @@ with their public duplicate before publishing output. The enclosing
 `OpenPistonCaseCheckpoint` codec then nests this Structure envelope with the
 accepted moving-interface fluid envelope, partial-cell/rebase epoch, and all
 control-volume, cut-surface, transfer, and conservation ledgers. It is likewise
-deterministic, bounded, checksummed, and transactional, and validates the
-decoded composition through an equivalent rebuilt open-piston worker before
-publishing it.
+deterministic, bounded, checksummed, and transactional. The rebuilt open-piston
+worker is the final semantic validator: it reconstructs the canonical topology
+epoch, stable identities, geometry, acceptance state, face aggregates, bridge
+balances, and analytic conservation relationships before publishing the
+decoded composition.
 
 Material calibration is not optional. Replace prototype fallback constants with
 identified parameter sets, while keeping an explicitly named synthetic material
@@ -857,7 +859,9 @@ therefore persisting the first accepted topology rebase. It restores that file,
 advances three additional steps, atomically replaces the same path at step 1202
 and final step 1203, and decodes the result in a zero-step worker. A periodic
 checkpoint presented to the open-piston worker is rejected before trace
-creation.
+creation. Persistence tests also recompute the outer checksum after changing
+diagnostic stable identities, acceptance flags, stale rebase state, or physical
+cut-plane geometry; semantic restore must reject each payload transactionally.
 The separate control-protocol regression requires byte-identical repeat and
 decode/re-encode results for all three command and five response kinds. It
 rejects cross-decoding, zero request IDs, zero/oversized advances, misplaced
