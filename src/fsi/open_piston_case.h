@@ -100,6 +100,7 @@ public:
     [[nodiscard]] viewer::DiagnosticFrame advance();
     [[nodiscard]] OpenPistonCaseCheckpoint checkpoint() const;
     void restore(const OpenPistonCaseCheckpoint& checkpoint);
+    [[nodiscard]] std::uint64_t acceptedStepCount() const noexcept;
 
     [[nodiscard]] const Structure& structure() const noexcept;
     [[nodiscard]] const StructureStepSettings& stepSettings() const noexcept;

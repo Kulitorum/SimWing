@@ -531,6 +531,7 @@ void testCompositeCheckpointValidationAndReplay() {
               && saved.caseDefinitionFingerprint
                   == fsi::openPistonCaseDefinitionFingerprint
               && saved.acceptedStepCount == savedSteps
+              && piston.acceptedStepCount() == savedSteps
               && saved.topologyRebaseCount == 0
               && saved.movingPlaneCoordinate == 6
               && saved.surfaceOffsetMeters == piston.surfaceOffsetMeters(),

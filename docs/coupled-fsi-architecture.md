@@ -490,10 +490,11 @@ little-endian file codec now preserves every MAC component, pressure sample,
 nested diagnostic, step, and time behind a versioned, byte-bounded, checksummed
 envelope. Decode is transactional and reuses the worker restore validator.
 `simwing-fsi --checkpoint-in/--checkpoint-out` exposes additional-step resume
-for this case only, with atomic output replacement. `--checkpoint-every N`
-runs at accepted-step safe points using absolute step multiples, preserving its
-cadence across restarts; the final accepted state is always saved without a
-duplicate write. The first transport-neutral control envelope is also present:
+for both periodic-flow and open-piston workers, with codec-specific validation
+and a shared atomic output-replacement path. `--checkpoint-every N` runs at
+accepted-step safe points using absolute step multiples, preserving cadence
+across restarts; the final accepted state is always saved without a duplicate
+write. The first transport-neutral control envelope is also present:
 bounded versioned/checksummed `advance`, `checkpoint`, and `stop` commands use
 nonzero request IDs, while ready/advanced/checkpointed/stopped/error responses
 always expose absolute accepted step and time. It deliberately chooses no
@@ -734,8 +735,9 @@ diagnostic ledger, then validates the decoded composition through an equivalent
 rebuilt worker before publishing it. An
 ordinary continuation and the first steps after both a normal and periodic
 plane rebase replay bit-for-bit in the same or an equivalent rebuilt worker.
-This composite open-piston state is a persistent transactional numerical
-boundary, but is not yet attached to the worker CLI or control protocol.
+The worker CLI restores this composite before creating its trace and exposes
+atomic same-file output, absolute accepted-step autosave, and final-save
+deduplication. It is not yet attached to the control protocol.
 
 ### Phase 0 — Establish the remake boundary
 
@@ -844,6 +846,12 @@ without launching Qt. With interval two, the four-step run writes at steps two
 and four, while the resumed run writes at absolute step six and final step
 seven; each reports exactly two writes. Interval mode without an output path is
 rejected before a worker or trace is created.
+The open-piston CLI counterpart checkpoints at absolute steps 600 and 1200,
+therefore persisting the first accepted topology rebase. It restores that file,
+advances three additional steps, atomically replaces the same path at step 1202
+and final step 1203, and decodes the result in a zero-step worker. A periodic
+checkpoint presented to the open-piston worker is rejected before trace
+creation.
 The separate control-protocol regression requires byte-identical repeat and
 decode/re-encode results for all three command and five response kinds. It
 rejects cross-decoding, zero request IDs, zero/oversized advances, misplaced
@@ -950,8 +958,8 @@ Work:
 - in parallel conceptually, use IBAMR or OpenFOAM/preCICE as an external
   reference for selected canonical cases, not as a required GUI dependency;
 - implement arbitrary moving-interface/jump conditions, curved/changing
-  paired grid-side correspondence, refinement, open-piston checkpoint CLI and
-  control integration, and broader control messages;
+  paired grid-side correspondence, refinement, open-piston checkpoint control
+  integration, and broader control messages;
 - extend the current cell-point pressure, velocity, divergence, and vorticity
   diagnostics with rate-limited AMR blocks, slices, traction, and pressure-jump
   layers as each field becomes available;
@@ -984,7 +992,7 @@ Its accepted fluid and structural state can also resume bit-identically from a
 composite persistent checkpoint before or after a topology rebase.
 General interpolated cut-cell pressure metrics, curved or transversely deforming
 correspondence, nonplanar or opening topology events, sealed deforming chambers,
-checkpoint CLI/control integration, and a complete coupled energy ledger for
+checkpoint control integration, and a complete coupled energy ledger for
 those general cases remain open, so the
 full Phase 2 piston gate is not yet closed.
 

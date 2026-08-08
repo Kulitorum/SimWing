@@ -1,5 +1,6 @@
 #include "canonical_case.h"
 #include "open_piston_case.h"
+#include "open_piston_checkpoint_persistence.h"
 #include "periodic_flow_control.h"
 #include "periodic_flow_case.h"
 #include "piston_case.h"
@@ -16,6 +17,7 @@
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -84,8 +86,9 @@ void printUsage(FILE* stream) {
         "an independently closed opening-flux GCL ledger, and exact one-face\n"
         "topology rebasing; consuming its resolved opening is rejected.\n"
         "'periodic-flow' advances the bounded Strang/SSPRK2 Taylor-Green CFD\n"
-        "canonical and publishes cell-centred pressure/velocity points. Its optional\n"
-        "checkpoint paths restore/save exact accepted state; --checkpoint-every\n"
+        "canonical and publishes cell-centred pressure/velocity points. Open-piston\n"
+        "and periodic-flow checkpoint paths restore/save exact accepted state;\n"
+        "--checkpoint-every\n"
         "autosaves at absolute accepted-step multiples and the final state. --steps\n"
         "counts additional intervals. --control-stdio instead exchanges bounded\n"
         "binary periodic-flow commands/responses on stdin/stdout; it rejects\n"
@@ -237,8 +240,9 @@ bool parseOptions(int argc,
     }
     if ((!options.checkpointInputPath.empty()
          || !options.checkpointOutputPath.empty())
-        && options.workerCase != WorkerCase::PeriodicFlow) {
-        error = "checkpoint paths require --case periodic-flow";
+        && options.workerCase != WorkerCase::PeriodicFlow
+        && options.workerCase != WorkerCase::OpenPiston) {
+        error = "checkpoint paths require --case open-piston or periodic-flow";
         return false;
     }
     if (options.checkpointEvery != 0
@@ -444,35 +448,104 @@ std::filesystem::path checkpointTemporaryPath(
     return temporary;
 }
 
+bool readCheckpointBytes(const std::filesystem::path& path,
+                         const std::uint64_t maximumBytes,
+                         std::vector<std::uint8_t>& bytes,
+                         std::string& error) {
+    std::error_code fileError;
+    const std::uintmax_t size = std::filesystem::file_size(path, fileError);
+    if (fileError) {
+        error = "cannot inspect checkpoint: " + path.string();
+        return false;
+    }
+    if (size > maximumBytes
+        || size > std::numeric_limits<std::size_t>::max()) {
+        error = "checkpoint exceeds the byte limit";
+        return false;
+    }
+    std::vector<std::uint8_t> candidate(static_cast<std::size_t>(size));
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        error = "cannot open checkpoint: " + path.string();
+        return false;
+    }
+    if (!candidate.empty()) {
+        input.read(
+            reinterpret_cast<char*>(candidate.data()),
+            static_cast<std::streamsize>(candidate.size()));
+    }
+    if (!input || input.peek() != std::char_traits<char>::eof()) {
+        error = "failed to read complete checkpoint";
+        return false;
+    }
+    bytes = std::move(candidate);
+    return true;
+}
+
+bool atomicallyWriteCheckpointBytes(
+    const std::filesystem::path& path,
+    const std::span<const std::uint8_t> bytes,
+    std::string& error) {
+    const std::filesystem::path temporary = checkpointTemporaryPath(path);
+    std::error_code temporaryError;
+    if (std::filesystem::exists(temporary, temporaryError)
+        || temporaryError) {
+        error = "refusing to overwrite temporary checkpoint path: "
+            + temporary.string();
+        return false;
+    }
+    {
+        std::ofstream output(
+            temporary, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            error = "cannot open temporary checkpoint for writing: "
+                + temporary.string();
+            return false;
+        }
+        output.write(
+            reinterpret_cast<const char*>(bytes.data()),
+            static_cast<std::streamsize>(bytes.size()));
+        output.flush();
+        if (!output) {
+            error = "failed to write complete checkpoint";
+            output.close();
+            std::error_code removeError;
+            std::filesystem::remove(temporary, removeError);
+            return false;
+        }
+    }
+
+#ifdef _WIN32
+    if (!MoveFileExW(
+            temporary.c_str(), path.c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        error = "cannot atomically replace checkpoint, error "
+            + std::to_string(GetLastError());
+        std::error_code removeError;
+        std::filesystem::remove(temporary, removeError);
+        return false;
+    }
+#else
+    std::error_code renameError;
+    std::filesystem::rename(temporary, path, renameError);
+    if (renameError) {
+        error = "cannot atomically replace checkpoint: "
+            + renameError.message();
+        std::error_code removeError;
+        std::filesystem::remove(temporary, removeError);
+        return false;
+    }
+#endif
+    return true;
+}
+
 bool readPeriodicFlowCheckpoint(
     const std::filesystem::path& path,
     simwing::fsi::PeriodicFlowCaseCheckpoint& checkpoint,
     std::string& error) {
     const simwing::fsi::PeriodicFlowCaseCheckpointLimits limits;
-    std::error_code fileError;
-    const std::uintmax_t size = std::filesystem::file_size(path, fileError);
-    if (fileError) {
-        error = "cannot inspect periodic-flow checkpoint: " + path.string();
-        return false;
-    }
-    if (size > limits.maximumBytes
-        || size > std::numeric_limits<std::size_t>::max()) {
-        error = "periodic-flow checkpoint exceeds the byte limit";
-        return false;
-    }
-    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        error = "cannot open periodic-flow checkpoint: " + path.string();
-        return false;
-    }
-    if (!bytes.empty()) {
-        input.read(
-            reinterpret_cast<char*>(bytes.data()),
-            static_cast<std::streamsize>(bytes.size()));
-    }
-    if (!input || input.peek() != std::char_traits<char>::eof()) {
-        error = "failed to read complete periodic-flow checkpoint";
+    std::vector<std::uint8_t> bytes;
+    if (!readCheckpointBytes(path, limits.maximumBytes, bytes, error)) {
         return false;
     }
     simwing::fsi::PeriodicFlowCaseCheckpointError protocolError;
@@ -495,57 +568,40 @@ bool writePeriodicFlowCheckpoint(
         error = protocolError.message;
         return false;
     }
-    const std::filesystem::path temporary = checkpointTemporaryPath(path);
-    std::error_code temporaryError;
-    if (std::filesystem::exists(temporary, temporaryError)
-        || temporaryError) {
-        error = "refusing to overwrite temporary checkpoint path: "
-            + temporary.string();
-        return false;
-    }
-    {
-        std::ofstream output(
-            temporary, std::ios::binary | std::ios::trunc);
-        if (!output) {
-            error = "cannot open temporary checkpoint for writing: "
-                + temporary.string();
-            return false;
-        }
-        output.write(
-            reinterpret_cast<const char*>(bytes.data()),
-            static_cast<std::streamsize>(bytes.size()));
-        output.flush();
-        if (!output) {
-            error = "failed to write complete periodic-flow checkpoint";
-            output.close();
-            std::error_code removeError;
-            std::filesystem::remove(temporary, removeError);
-            return false;
-        }
-    }
+    return atomicallyWriteCheckpointBytes(path, bytes, error);
+}
 
-#ifdef _WIN32
-    if (!MoveFileExW(
-            temporary.c_str(), path.c_str(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        error = "cannot atomically replace periodic-flow checkpoint, error "
-            + std::to_string(GetLastError());
-        std::error_code removeError;
-        std::filesystem::remove(temporary, removeError);
+bool readOpenPistonCheckpoint(
+    const std::filesystem::path& path,
+    simwing::fsi::OpenPistonCaseCheckpoint& checkpoint,
+    std::string& error) {
+    const simwing::fsi::OpenPistonCheckpointPersistenceLimits limits;
+    std::vector<std::uint8_t> bytes;
+    if (!readCheckpointBytes(
+            path, limits.maximumEncodedBytes, bytes, error)) {
         return false;
     }
-#else
-    std::error_code renameError;
-    std::filesystem::rename(temporary, path, renameError);
-    if (renameError) {
-        error = "cannot atomically replace periodic-flow checkpoint: "
-            + renameError.message();
-        std::error_code removeError;
-        std::filesystem::remove(temporary, removeError);
+    simwing::fsi::OpenPistonCheckpointPersistenceError protocolError;
+    if (!simwing::fsi::deserializeOpenPistonCheckpoint(
+            bytes, checkpoint, &protocolError, limits)) {
+        error = protocolError.message;
         return false;
     }
-#endif
     return true;
+}
+
+bool writeOpenPistonCheckpoint(
+    const std::filesystem::path& path,
+    const simwing::fsi::OpenPistonCaseCheckpoint& checkpoint,
+    std::string& error) {
+    std::vector<std::uint8_t> bytes;
+    simwing::fsi::OpenPistonCheckpointPersistenceError protocolError;
+    if (!simwing::fsi::serializeOpenPistonCheckpoint(
+            checkpoint, bytes, &protocolError)) {
+        error = protocolError.message;
+        return false;
+    }
+    return atomicallyWriteCheckpointBytes(path, bytes, error);
 }
 
 bool configureBinaryControlStdio(std::string& error) {
@@ -761,12 +817,22 @@ int main(int argc, char* argv[]) {
 
         std::optional<simwing::fsi::PeriodicFlowCaseCheckpoint>
             restoredPeriodicFlowCheckpoint;
+        std::optional<simwing::fsi::OpenPistonCaseCheckpoint>
+            restoredOpenPistonCheckpoint;
         if (!options.checkpointInputPath.empty()) {
-            restoredPeriodicFlowCheckpoint.emplace();
-            if (!readPeriodicFlowCheckpoint(
+            bool restored = false;
+            if (options.workerCase == WorkerCase::PeriodicFlow) {
+                restoredPeriodicFlowCheckpoint.emplace();
+                restored = readPeriodicFlowCheckpoint(
                     options.checkpointInputPath,
-                    *restoredPeriodicFlowCheckpoint,
-                    error)) {
+                    *restoredPeriodicFlowCheckpoint, error);
+            } else {
+                restoredOpenPistonCheckpoint.emplace();
+                restored = readOpenPistonCheckpoint(
+                    options.checkpointInputPath,
+                    *restoredOpenPistonCheckpoint, error);
+            }
+            if (!restored) {
                 std::fprintf(stderr, "checkpoint restore failed: %s\n",
                              error.c_str());
                 return 1;
@@ -836,16 +902,30 @@ int main(int argc, char* argv[]) {
                                  error.c_str());
                     return 1;
                 }
-                if constexpr (std::is_same_v<
-                                  std::remove_cvref_t<decltype(simulation)>,
-                                  simwing::fsi::PeriodicFlowCase>) {
+                using Simulation =
+                    std::remove_cvref_t<decltype(simulation)>;
+                if constexpr (
+                    std::is_same_v<Simulation,
+                                   simwing::fsi::PeriodicFlowCase>
+                    || std::is_same_v<Simulation,
+                                      simwing::fsi::OpenPistonCase>) {
                     if (options.checkpointEvery != 0
                         && simulation.acceptedStepCount()
                                % options.checkpointEvery == 0) {
-                        if (!writePeriodicFlowCheckpoint(
-                                options.checkpointOutputPath,
-                                simulation.checkpoint(),
-                                error)) {
+                        const bool saved = [&] {
+                            if constexpr (std::is_same_v<
+                                              Simulation,
+                                              simwing::fsi::PeriodicFlowCase>) {
+                                return writePeriodicFlowCheckpoint(
+                                    options.checkpointOutputPath,
+                                    simulation.checkpoint(), error);
+                            } else {
+                                return writeOpenPistonCheckpoint(
+                                    options.checkpointOutputPath,
+                                    simulation.checkpoint(), error);
+                            }
+                        }();
+                        if (!saved) {
                             std::fprintf(
                                 stderr,
                                 "checkpoint autosave failed: %s\n",
@@ -874,16 +954,30 @@ int main(int argc, char* argv[]) {
                 return 1;
             }
 
-            if constexpr (std::is_same_v<
-                              std::remove_cvref_t<decltype(simulation)>,
-                              simwing::fsi::PeriodicFlowCase>) {
+            using Simulation =
+                std::remove_cvref_t<decltype(simulation)>;
+            if constexpr (
+                std::is_same_v<Simulation,
+                               simwing::fsi::PeriodicFlowCase>
+                || std::is_same_v<Simulation,
+                                  simwing::fsi::OpenPistonCase>) {
                 if (!options.checkpointOutputPath.empty()
                     && lastCheckpointStep
                         != simulation.acceptedStepCount()) {
-                    if (!writePeriodicFlowCheckpoint(
-                            options.checkpointOutputPath,
-                            simulation.checkpoint(),
-                            error)) {
+                    const bool saved = [&] {
+                        if constexpr (std::is_same_v<
+                                          Simulation,
+                                          simwing::fsi::PeriodicFlowCase>) {
+                            return writePeriodicFlowCheckpoint(
+                                options.checkpointOutputPath,
+                                simulation.checkpoint(), error);
+                        } else {
+                            return writeOpenPistonCheckpoint(
+                                options.checkpointOutputPath,
+                                simulation.checkpoint(), error);
+                        }
+                    }();
+                    if (!saved) {
                         std::fprintf(stderr, "checkpoint save failed: %s\n",
                                      error.c_str());
                         return 1;
@@ -910,17 +1004,37 @@ int main(int argc, char* argv[]) {
                 }
                 const simwing::fsi::StructureDiagnostics diagnostics =
                     simulation.structure().diagnostics();
-                std::printf(
-                    "simwing-fsi completed %llu step(s), t=%.9g s, "
-                    "bounds=[%.6g %.6g %.6g]-[%.6g %.6g %.6g] m, "
-                    "max-strain=%.6g, trace=%s\n",
-                    static_cast<unsigned long long>(
-                        checkpoint.acceptedStepCount),
-                    checkpoint.simulationTimeSeconds,
-                    minimum.x, minimum.y, minimum.z,
-                    maximum.x, maximum.y, maximum.z,
-                    diagnostics.maximumAbsoluteMembraneStrain,
-                    options.tracePath.string().c_str());
+                if constexpr (std::is_same_v<
+                                  Simulation,
+                                  simwing::fsi::OpenPistonCase>) {
+                    std::printf(
+                        "simwing-fsi completed %llu open-piston step(s), "
+                        "t=%.9g s, "
+                        "bounds=[%.6g %.6g %.6g]-[%.6g %.6g %.6g] m, "
+                        "max-strain=%.6g, checkpoint-writes=%llu, "
+                        "trace=%s\n",
+                        static_cast<unsigned long long>(
+                            checkpoint.acceptedStepCount),
+                        checkpoint.simulationTimeSeconds,
+                        minimum.x, minimum.y, minimum.z,
+                        maximum.x, maximum.y, maximum.z,
+                        diagnostics.maximumAbsoluteMembraneStrain,
+                        static_cast<unsigned long long>(
+                            checkpointWriteCount),
+                        options.tracePath.string().c_str());
+                } else {
+                    std::printf(
+                        "simwing-fsi completed %llu step(s), t=%.9g s, "
+                        "bounds=[%.6g %.6g %.6g]-[%.6g %.6g %.6g] m, "
+                        "max-strain=%.6g, trace=%s\n",
+                        static_cast<unsigned long long>(
+                            checkpoint.acceptedStepCount),
+                        checkpoint.simulationTimeSeconds,
+                        minimum.x, minimum.y, minimum.z,
+                        maximum.x, maximum.y, maximum.z,
+                        diagnostics.maximumAbsoluteMembraneStrain,
+                        options.tracePath.string().c_str());
+                }
             } else {
                 const auto& diagnostics = simulation.diagnostics();
                 std::printf(
@@ -947,6 +1061,9 @@ int main(int argc, char* argv[]) {
         }
         if (options.workerCase == WorkerCase::OpenPiston) {
             simwing::fsi::OpenPistonCase simulation;
+            if (restoredOpenPistonCheckpoint) {
+                simulation.restore(*restoredOpenPistonCheckpoint);
+            }
             return run(simulation);
         }
         if (options.workerCase == WorkerCase::PeriodicFlow) {

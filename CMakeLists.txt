@@ -1347,6 +1347,49 @@ add_test(NAME simwing_fsi_open_piston_rebase_headless
         --steps 2401
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-open-piston-rebase-headless.swtrace")
+add_test(NAME simwing_fsi_open_piston_checkpoint_write
+    COMMAND simwing-fsi
+        --case open-piston
+        --steps 1200
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-open-piston-checkpoint-write.swtrace"
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-open-piston.swop"
+        --checkpoint-every 600)
+set_tests_properties(simwing_fsi_open_piston_checkpoint_write PROPERTIES
+    PASS_REGULAR_EXPRESSION "completed 1200 open-piston step\\(s\\).*checkpoint-writes=2")
+add_test(NAME simwing_fsi_open_piston_checkpoint_resume
+    COMMAND simwing-fsi
+        --case open-piston
+        --steps 3
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-open-piston-checkpoint-resume.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-open-piston.swop"
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-open-piston.swop"
+        --checkpoint-every 2)
+set_tests_properties(simwing_fsi_open_piston_checkpoint_resume PROPERTIES
+    DEPENDS simwing_fsi_open_piston_checkpoint_write
+    PASS_REGULAR_EXPRESSION "completed 1203 open-piston step\\(s\\).*checkpoint-writes=2")
+add_test(NAME simwing_fsi_open_piston_checkpoint_verify
+    COMMAND simwing-fsi
+        --case open-piston
+        --steps 0
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-open-piston-checkpoint-verify.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-open-piston.swop")
+set_tests_properties(simwing_fsi_open_piston_checkpoint_verify PROPERTIES
+    DEPENDS simwing_fsi_open_piston_checkpoint_resume
+    PASS_REGULAR_EXPRESSION "completed 1203 open-piston step\\(s\\)")
+add_test(NAME simwing_fsi_open_piston_rejects_foreign_checkpoint
+    COMMAND simwing-fsi
+        --case open-piston
+        --steps 0
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-open-piston-foreign.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-periodic-flow.swpc")
+set_tests_properties(simwing_fsi_open_piston_rejects_foreign_checkpoint
+    PROPERTIES
+        DEPENDS simwing_fsi_periodic_flow_checkpoint_verify
+        WILL_FAIL TRUE)
 add_test(NAME simwing_viewer_help COMMAND simwing-viewer --help)
 if(NOT WIN32)
     set_tests_properties(simwing_viewer_help PROPERTIES

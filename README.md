@@ -204,8 +204,10 @@ disagreement. The full composite open-piston checkpoint now also has a
 deterministic bounded/checksummed codec. It nests those Structure and fluid
 payloads with the partial-cell/rebase epoch and every committed transfer and
 conservation ledger, validates through an equivalent rebuilt worker, and
-resumes ordinary or freshly rebased arithmetic bit-for-bit. CLI persistence
-and control execution for this worker remain future work. A
+resumes ordinary or freshly rebased arithmetic bit-for-bit. The open-piston
+worker accepts the same `--checkpoint-in`, `--checkpoint-out`, and absolute
+`--checkpoint-every` file workflow as periodic flow, including atomic same-file
+resume. Control-protocol execution for this worker remains future work. A
 real 3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,
 checkpoint replay, and completed trace using synthetic physical settings.
@@ -315,16 +317,18 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600 --no-viewer --checkpoint-out periodic-flow.swpc --checkpoint-every 60
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --checkpoint-in periodic-flow.swpc --steps 600 --checkpoint-out periodic-flow.swpc --checkpoint-every 60
+.\build\bin\Release\simwing-fsi.exe --case open-piston --steps 1200 --no-viewer --checkpoint-out open-piston.swop --checkpoint-every 600
+.\build\bin\Release\simwing-fsi.exe --case open-piston --checkpoint-in open-piston.swop --steps 600 --checkpoint-out open-piston.swop --checkpoint-every 600
 ```
 
 The first SimWing command launches the standalone trace viewer by default. The
 second is the unthrottled headless form for tests and scripted verification.
-The final two commands save and resume the exact accepted periodic-flow state;
-the resumed command advances 600 additional intervals and both autosave every
-60 absolute accepted steps.
-Programmatic controllers can replace `--steps` with `--control-stdio`; that
-mode requires binary protocol input and an explicit stop command, so it is not
-an interactive terminal interface.
+The checkpoint commands save and resume exact accepted worker state. Resumed
+steps are additional, autosave cadence uses absolute accepted-step multiples,
+and input/output may name the same atomically replaced file.
+For periodic flow, programmatic controllers can replace `--steps` with
+`--control-stdio`; that mode requires binary protocol input and an explicit
+stop command, so it is not an interactive terminal interface.
 
 `windeployqt` and the OCCT runtime deployment run after the build, so the build
 output is directly runnable. The install target includes the required OCCT

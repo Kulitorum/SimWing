@@ -932,6 +932,10 @@ void OpenPistonCase::restore(
     topologyRebaseCount_ = checkpointValue.topologyRebaseCount;
 }
 
+std::uint64_t OpenPistonCase::acceptedStepCount() const noexcept {
+    return structure_.acceptedStepCount();
+}
+
 const Structure& OpenPistonCase::structure() const noexcept {
     return structure_;
 }

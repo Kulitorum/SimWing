@@ -185,7 +185,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   connected-fluid projection, partial-cell control-volume geometry, opening
   transport, exact planar topology rebasing, CFD reaction, XPBD acceptance,
   composite structure/fluid checkpoint replay, deterministic bounded
-  persistent restart encoding, and immutable viewer frames.
+  persistent restart encoding exposed through the headless checkpoint flags,
+  and immutable viewer frames.
 - `simwing_scene_structure`: deterministic scene-v2 membrane, per-sheet
   bending, junction, and cable assembly into `simwing_structure`.
 - `simwing_fluid`: Qt-free periodic staggered-grid field operators and
@@ -624,6 +625,10 @@ makes this a certified aerodynamic solver.
   first end-to-end worker slice. The case is an analytic structural harness,
   not aerodynamic truth; it writes only accepted steps and launches the
   sibling viewer by default. `--no-viewer` must remain Qt-free and unthrottled.
+  `--checkpoint-in`, `--checkpoint-out`, and `--checkpoint-every` are supported
+  by periodic-flow and open-piston workers; both restore before trace creation,
+  advance additional steps, autosave only accepted absolute-step multiples,
+  and atomically replace the final file without duplicating the last write.
   Periodic `--control-stdio` is also Qt-free: stdin accepts only bounded binary
   commands, stdout contains only flushed binary responses, diagnostics stay on
   stderr, and the trace is completed before a successful stopped response.
@@ -656,7 +661,10 @@ makes this a certified aerodynamic solver.
   `open_piston_checkpoint_persistence.{h,cpp}` stores that complete composite
   in a deterministic, checksummed, byte-bounded envelope, validates both
   nested solver payloads and all diagnostic ledgers through a rebuilt worker,
-  and preserves the caller's prior output on any failed decode.
+  and preserves the caller's prior output on any failed decode. The worker CLI
+  restores it before opening the trace and uses the shared atomic output path,
+  absolute autosave cadence, final-save deduplication, and additional-step
+  resume semantics.
 - `src/fsi/periodic_flow_case.{h,cpp}` and
   `src/fsi/periodic_flow_checkpoint.cpp` are selected with
   `--case periodic-flow`. It advances a Galilean-shifted Taylor-Green field on
@@ -671,8 +679,9 @@ makes this a certified aerodynamic solver.
   by atomic replacement. Periodic autosave occurs only after accepted frame
   publication, uses absolute accepted-step multiples so cadence survives
   restart, skips a duplicate final write, and reports its write count;
-  checkpoint flags are rejected for other cases and interval mode requires an
-  output path.
+  checkpoint flags are also supported by open-piston but rejected for the
+  structural and sealed-piston cases, and interval mode requires an output
+  path.
 - `src/fsi/worker_control_protocol.{h,cpp}` owns the first
   transport-independent safe-point message contract. Command and response
   envelopes have distinct magic, one protocol version, a bounded payload
@@ -853,7 +862,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 70 configured tests on Windows. The Fortran-reference test is
+There are 75 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 
@@ -874,7 +883,7 @@ paths that release CI deliberately excludes from its offscreen test command.
 | SimWing worker control | `simwing_worker_control_protocol`, `simwing_worker_control_stream`, `simwing_periodic_flow_control`, `simwing_fsi_control_stdio`, `simwing_fsi_control_requires_periodic`; preserve distinct command/response magic, versioned bounded little-endian envelopes, checksums, nonzero request correlation outside the ready response, positive bounded advances, exact absolute step/time responses, produced-frame counts only on advance, bounded coded error text only on error, byte-deterministic round trips, cross-type rejection, transactional corruption/truncation/trailing-data/limit failures, self-framing without a host prefix, pre-allocation stream bounds, clean EOF only between envelopes, per-message flush, accepted-frame publication at individual safe points, exact checkpoint delegation, visible absolute state after output failure, no solver mutation on checkpoint/protocol failure, terminal stop, idempotent repeated stop, binary-only protocol stdout, explicit-stop trace completion, no viewer launch, exact end-to-end response sequence, three accepted trace frames, step-two checkpoint replay into trace step three, restored Ready absolute state, and a resumed trace containing only the exact next accepted frame |
 | SimWing conservative transfer | `simwing_transfer`; preserve stable topology/Structure binding, analytic uniform and barycentric-quadrature area/force/moment, rigid translation/rotation power, independent ledger closure, additive nodal load application, and rejection before mutation for foreign results/structures |
 | SimWing macro-step coupling | `simwing_coupling`; preserve strictly ordered local sample time, topology/duration binding, analytic moving-piston impulse and pressure-volume work, independent temporal ledger closure, momentum delivery through XPBD, deterministic replay, and pre-load checkpoint rollback on failure |
-| SimWing fluid/structure bridge and piston workers | `simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing_open_piston_case`, `simwing_fsi_piston_headless`, `simwing_fsi_open_piston_headless`, `simwing_fsi_open_piston_rebase_headless`; preserve the strict uniform subset, planar face-resolved nonuniform transfer, stable surface/geometry binding, complete nonoverlapping coverage, per-face and aggregate area/force/moment/power closure, rigid-normal X/Y/Z grid/physical-plane correspondence and velocity binding, analytic impulse delivery, explicit actuator-versus-complete-CFD reaction, bit-identical replay through periodic topology crossings and composite checkpoint restore, deterministic bounded/checksummed composite persistence, ordinary/rebased decode-reencode and next-frame equivalence, transactional magic/version/checksum/truncation/trailing/topology/limit rejection, open-piston structure/fluid/actuator/system momentum residual below `1e-8 N*s` and energy residual below `2e-9 J`, accepted-only frames, and Qt-free headless execution |
+| SimWing fluid/structure bridge and piston workers | `simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing_open_piston_case`, `simwing_fsi_piston_headless`, `simwing_fsi_open_piston_headless`, `simwing_fsi_open_piston_rebase_headless`, `simwing_fsi_open_piston_checkpoint_write`, `simwing_fsi_open_piston_checkpoint_resume`, `simwing_fsi_open_piston_checkpoint_verify`, `simwing_fsi_open_piston_rejects_foreign_checkpoint`; preserve the strict uniform subset, planar face-resolved nonuniform transfer, stable surface/geometry binding, complete nonoverlapping coverage, per-face and aggregate area/force/moment/power closure, rigid-normal X/Y/Z grid/physical-plane correspondence and velocity binding, analytic impulse delivery, explicit actuator-versus-complete-CFD reaction, bit-identical replay through periodic topology crossings and composite checkpoint restore, deterministic bounded/checksummed composite persistence, ordinary/rebased decode-reencode and next-frame equivalence, transactional magic/version/checksum/truncation/trailing/topology/limit rejection, atomic same-path additional-step resume from a rebase epoch, absolute autosave cadence, final-write deduplication, cross-format rejection before trace creation, open-piston structure/fluid/actuator/system momentum residual below `1e-8 N*s` and energy residual below `2e-9 J`, accepted-only frames, and Qt-free headless execution |
 | packaging/resources/CMake | configure from clean metadata, build Release, and run the full suite |
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
