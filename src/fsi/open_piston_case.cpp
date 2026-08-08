@@ -116,6 +116,29 @@ fluid::MovingInterfaceProjectionSettings projectionSettings(
     return settings;
 }
 
+fluid::MovingInterfaceProjectionDiagnostics initializeFluid(
+    const fluid::PeriodicCartesianGrid& grid,
+    fluid::MacVelocityField& velocity,
+    fluid::CellScalarField& pressure,
+    const double timeStepSeconds) {
+    const auto interfaces = makeInterfaces(grid, 0.0);
+    const auto diagnostics = fluid::projectVelocityWithMovingInterfaces(
+        grid, velocity, pressure, interfaces,
+        projectionSettings(timeStepSeconds));
+    if (!diagnostics.projection.converged || !diagnostics.finite) {
+        throw std::runtime_error(
+            "open piston failed to initialize its accepted fluid state");
+    }
+    return diagnostics;
+}
+
+PlanarFaceResolvedBridgeSettings movingBridgeSettings() {
+    PlanarFaceResolvedBridgeSettings settings;
+    settings.correspondenceMode =
+        PlanarFaceCorrespondenceMode::RigidNormalTranslation;
+    return settings;
+}
+
 std::vector<CouplingNodeKinematics> predictedKinematics(
     const ConservativeSurfaceTransfer& transfer,
     const Structure& structure,
@@ -198,7 +221,7 @@ void appendFields(
     viewer::DiagnosticFrame& frame,
     const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
     const fluid::PlanarControlVolumeDiagnostics& controlDiagnostics,
-    const UniformFluidStructureBridgeDiagnostics& bridgeDiagnostics,
+    const PlanarFaceResolvedBridgeDiagnostics& bridgeDiagnostics,
     const TimeIntegratedTransferDiagnostics& integratedDiagnostics,
     const double actuatorImpulseNewtonSeconds,
     const std::uint64_t topologyRebaseCount,
@@ -207,8 +230,10 @@ void appendFields(
     frame.scalarFields.push_back({
         "interface.pressure_traction", "Pa",
         viewer::FieldAssociation::Triangle,
-        {bridgeDiagnostics.uniformPressureTractionPascals.x,
-         bridgeDiagnostics.uniformPressureTractionPascals.x}});
+        {bridgeDiagnostics.fluidPressureForceNewtons.x
+             / bridgeDiagnostics.fluidAreaSquareMeters,
+         bridgeDiagnostics.fluidPressureForceNewtons.x
+             / bridgeDiagnostics.fluidAreaSquareMeters}});
     frame.scalarFields.push_back({
         "fluid.chamber_volume", "m^3", viewer::FieldAssociation::Global,
         {controlDiagnostics.endVolumeCubicMeters}});
@@ -249,6 +274,27 @@ void appendFields(
         "fluid.rebase_velocity_residual", "m/s",
         viewer::FieldAssociation::Global,
         {rebaseVelocityResidualMetersPerSecond}});
+    frame.scalarFields.push_back({
+        "interface.grid_plane", "m",
+        viewer::FieldAssociation::Global,
+        {bridgeDiagnostics.gridPlaneCoordinateMeters}});
+    frame.scalarFields.push_back({
+        "interface.physical_plane", "m",
+        viewer::FieldAssociation::Global,
+        {bridgeDiagnostics.physicalPlaneCoordinateMeters}});
+    frame.scalarFields.push_back({
+        "interface.normal_translation", "m",
+        viewer::FieldAssociation::Global,
+        {bridgeDiagnostics.normalTranslationFromReferenceMeters}});
+    frame.scalarFields.push_back({
+        "interface.correspondence_residual", "m",
+        viewer::FieldAssociation::Global,
+        {bridgeDiagnostics.maximumRigidPositionResidualMeters}});
+    frame.scalarFields.push_back({
+        "interface.correspondence_velocity_residual", "m/s",
+        viewer::FieldAssociation::Global,
+        {bridgeDiagnostics
+             .maximumRigidVelocityResidualMetersPerSecond}});
 }
 
 } // namespace
@@ -257,24 +303,18 @@ OpenPistonCase::OpenPistonCase()
     : grid_(makeGrid()),
       fluidVelocity_(grid_),
       fluidPressure_(grid_),
+      fluidDiagnostics_(initializeFluid(
+          grid_, fluidVelocity_, fluidPressure_,
+          makeStepSettings().timeStepSeconds)),
       structure_(makeDefinition()),
       bridge_(structure_, pistonSurfaceStableId,
-              makeCouplingNodes(), makeCouplingTriangles()),
+              makeCouplingNodes(), makeCouplingTriangles(),
+              fluidDiagnostics_.faces, movingBridgeSettings()),
       coupling_(bridge_.transfer()),
       frameMapping_(structure_, makeFrameMapping()),
       stepSettings_(makeStepSettings()),
       controlVolume_(grid_, makeInterfaces(grid_, 0.0),
-                     pistonSurfaceStableId, 2) {
-    const auto interfaces = makeInterfaces(grid_, 0.0);
-    fluidDiagnostics_ = fluid::projectVelocityWithMovingInterfaces(
-        grid_, fluidVelocity_, fluidPressure_, interfaces,
-        projectionSettings(stepSettings_.timeStepSeconds));
-    if (!fluidDiagnostics_.projection.converged
-        || !fluidDiagnostics_.finite) {
-        throw std::runtime_error(
-            "open piston failed to initialize its accepted fluid state");
-    }
-}
+                     pistonSurfaceStableId, 2) {}
 
 viewer::TraceHeader OpenPistonCase::traceHeader() const {
     return {openPistonCaseChecksum, openPistonCaseSolverId};
@@ -294,6 +334,10 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
             "open piston no longer has rigid translational velocity");
     }
     const double endSpeed = coastSpeedMetersPerSecond;
+    const double startPhysicalPlaneMeters =
+        beforeStates.front().positionMeters.x;
+    const double endPhysicalPlaneMeters =
+        startPhysicalPlaneMeters + endSpeed * timeStep;
     const double rawEndOffset =
         surfaceOffsetMeters_ + endSpeed * timeStep;
     const double cellSpacing =
@@ -372,10 +416,11 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
         structure_);
     const auto endKinematics = predictedKinematics(
         bridge_.transfer(), structure_, endSpeed, timeStep);
-    const auto startTransfer = bridge_.evaluate(
-        fluidDiagnostics_, startKinematics);
-    const auto endTransfer = bridge_.evaluate(
-        endFluid, endKinematics);
+    const auto startTransfer = bridge_.evaluateMovingPlane(
+        fluidDiagnostics_, startKinematics,
+        startPhysicalPlaneMeters);
+    const auto endTransfer = bridge_.evaluateMovingPlane(
+        endFluid, endKinematics, endPhysicalPlaneMeters);
     const std::array<double, 2> offsets{0.0, timeStep};
     const std::array samples{
         startTransfer.transferResult(), endTransfer.transferResult()};
@@ -478,6 +523,7 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
     fluidPressure_ = std::move(candidatePressure);
     fluidDiagnostics_ = acceptedFluid;
     controlVolumeDiagnostics_ = controlDiagnostics;
+    bridgeDiagnostics_ = bridgeDiagnostics;
     if (rebase.has_value()) {
         controlVolume_ = std::move(rebase->controlVolume);
         lastRebaseDiagnostics_ = rebase->diagnostics;
@@ -507,6 +553,11 @@ OpenPistonCase::controlVolumeDiagnostics() const noexcept {
 const fluid::PlanarControlVolumeRebaseDiagnostics&
 OpenPistonCase::lastRebaseDiagnostics() const noexcept {
     return lastRebaseDiagnostics_;
+}
+
+const PlanarFaceResolvedBridgeDiagnostics&
+OpenPistonCase::bridgeDiagnostics() const noexcept {
+    return bridgeDiagnostics_;
 }
 
 double OpenPistonCase::surfaceOffsetMeters() const noexcept {

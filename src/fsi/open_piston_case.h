@@ -1,8 +1,8 @@
 #pragma once
 
 #include "coupling.h"
+#include "face_resolved_bridge.h"
 #include "fluid/moving_control_volume.h"
-#include "fluid_structure_bridge.h"
 #include "structure_frame.h"
 #include "viewer_protocol.h"
 
@@ -12,9 +12,9 @@
 namespace simwing::fsi {
 
 inline constexpr char openPistonCaseChecksum[] =
-    "sha256:simwing-open-control-volume-piston-case-v2";
+    "sha256:simwing-open-control-volume-piston-case-v3";
 inline constexpr char openPistonCaseSolverId[] =
-    "simwing-fsi-open-control-volume-piston-worker-v2";
+    "simwing-fsi-open-control-volume-piston-worker-v3";
 
 // Visible verification harness for an accelerating planar piston in one
 // connected periodic fluid region. A complete moving sheet is nonseparating:
@@ -25,6 +25,8 @@ inline constexpr char openPistonCaseSolverId[] =
 // ledgers on every accepted step. At an exact MAC-face crossing it validates
 // volume continuity, remaps the constraint by one face without a material
 // velocity jump, and commits the new topology only with the complete frame.
+// The pressure transfer retains face-resolved material patches while requiring
+// the structural plate to match the unwrapped physical cut-surface plane.
 class OpenPistonCase final {
 public:
     OpenPistonCase();
@@ -43,6 +45,8 @@ public:
     controlVolumeDiagnostics() const noexcept;
     [[nodiscard]] const fluid::PlanarControlVolumeRebaseDiagnostics&
     lastRebaseDiagnostics() const noexcept;
+    [[nodiscard]] const PlanarFaceResolvedBridgeDiagnostics&
+    bridgeDiagnostics() const noexcept;
     [[nodiscard]] double surfaceOffsetMeters() const noexcept;
     [[nodiscard]] std::size_t movingPlaneCoordinate() const noexcept;
     [[nodiscard]] std::uint64_t topologyRebaseCount() const noexcept;
@@ -55,13 +59,14 @@ private:
     fluid::CellScalarField fluidPressure_;
     fluid::MovingInterfaceProjectionDiagnostics fluidDiagnostics_;
     Structure structure_;
-    UniformFluidStructureBridge bridge_;
+    PlanarFaceResolvedFluidStructureBridge bridge_;
     ConservativeMacroStepCoupling coupling_;
     viewer::StructureFrameMapping frameMapping_;
     StructureStepSettings stepSettings_;
     fluid::PlanarMovingControlVolume controlVolume_;
     fluid::PlanarControlVolumeDiagnostics controlVolumeDiagnostics_;
     fluid::PlanarControlVolumeRebaseDiagnostics lastRebaseDiagnostics_;
+    PlanarFaceResolvedBridgeDiagnostics bridgeDiagnostics_;
     double surfaceOffsetMeters_ = 0.0;
     double lastRebaseVelocityResidualMetersPerSecond_ = 0.0;
     std::uint64_t topologyRebaseCount_ = 0;

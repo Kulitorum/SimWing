@@ -6,18 +6,28 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t planarFaceResolvedBridgeVersion = 1;
+inline constexpr std::uint32_t planarFaceResolvedBridgeVersion = 2;
+
+enum class PlanarFaceCorrespondenceMode : std::uint8_t {
+    FixedMaterial = 0,
+    RigidNormalTranslation = 1,
+};
 
 struct PlanarFaceResolvedBridgeSettings {
     ConservativeTransferSettings transfer;
+    PlanarFaceCorrespondenceMode correspondenceMode =
+        PlanarFaceCorrespondenceMode::FixedMaterial;
     double geometryToleranceMeters = 1.0e-12;
+    double absoluteVelocityToleranceMetersPerSecond = 1.0e-11;
+    double relativeVelocityTolerance = 1.0e-11;
     double minimumNormalAlignment = 1.0 - 1.0e-12;
-    double minimumOverlapAreaSquareMeters = 1.0e-16;
+    double minimumOverlapAreaSquareMeters = 1.0e-14;
     double absoluteAreaToleranceSquareMeters = 1.0e-11;
     double relativeAreaTolerance = 1.0e-11;
     double absoluteForceToleranceNewtons = 1.0e-10;
@@ -49,6 +59,13 @@ struct PlanarFaceResolvedBridgeDiagnostics {
     double structureSurfacePowerWatts = 0.0;
     double powerResidualWatts = 0.0;
     double maximumFacePowerResidualWatts = 0.0;
+    PlanarFaceCorrespondenceMode correspondenceMode =
+        PlanarFaceCorrespondenceMode::FixedMaterial;
+    double gridPlaneCoordinateMeters = 0.0;
+    double physicalPlaneCoordinateMeters = 0.0;
+    double normalTranslationFromReferenceMeters = 0.0;
+    double maximumRigidPositionResidualMeters = 0.0;
+    double maximumRigidVelocityResidualMetersPerSecond = 0.0;
     bool finite = true;
 
     bool operator==(
@@ -75,12 +92,16 @@ private:
     PlanarFaceResolvedBridgeDiagnostics diagnostics_;
 };
 
-// Fixed-correspondence bridge for one planar set of axis-aligned MAC tiles.
+// Planar bridge for one set of axis-aligned MAC tiles.
 // Reference triangles are clipped against every tile once. Each overlap area
 // and centroid becomes a material barycentric quadrature patch, so later
 // samples may carry nonuniform face traction while exact linear-triangle force,
-// moment, and power transfer remains available. General curved/Eulerian remap
-// and cut-cell motion remain separate future operators.
+// moment, and power transfer remains available. FixedMaterial retains the
+// original exact grid-face binding. RigidNormalTranslation additionally lets
+// the grid plane rebase and the physical surface move along its normal, while
+// requiring every structural coupling node to be the matching rigid normal
+// translation of its reference point. General transverse deformation,
+// curved/Eulerian remap, and nonplanar cut-cell motion remain future operators.
 class PlanarFaceResolvedFluidStructureBridge final {
 public:
     PlanarFaceResolvedFluidStructureBridge(
@@ -99,6 +120,11 @@ public:
     [[nodiscard]] PlanarFaceResolvedTransferResult evaluate(
         const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
         std::span<const CouplingNodeKinematics> nodeKinematics) const;
+
+    [[nodiscard]] PlanarFaceResolvedTransferResult evaluateMovingPlane(
+        const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
+        std::span<const CouplingNodeKinematics> nodeKinematics,
+        double physicalPlaneCoordinateMeters) const;
 
 private:
     struct FaceDefinition {
@@ -121,11 +147,19 @@ private:
         double areaSquareMeters = 0.0;
     };
 
+    [[nodiscard]] PlanarFaceResolvedTransferResult evaluateImpl(
+        const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
+        std::span<const CouplingNodeKinematics> nodeKinematics,
+        std::optional<double> physicalPlaneCoordinateMeters) const;
+
     std::uint64_t fluidSurfaceStableId_ = 0;
     ConservativeSurfaceTransfer transfer_;
     PlanarFaceResolvedBridgeSettings settings_;
     std::vector<FaceDefinition> faces_;
     std::vector<OverlapPatch> overlaps_;
+    std::vector<StructureVector3> referenceNodePositions_;
+    fluid::GridFaceAxis axis_ = fluid::GridFaceAxis::X;
+    double referencePlaneCoordinateMeters_ = 0.0;
     double referenceAreaSquareMeters_ = 0.0;
 };
 

@@ -58,25 +58,31 @@ impulse, angular impulse,
 and work, and applies the result transactionally across XPBD substeps. Its
 prescribed moving-piston canonical closes analytic pressure-volume work and
 delivers the same total impulse to structural momentum. Alongside the strict
-uniform fluid-to-structure subset, a planar fixed-correspondence bridge clips
-canonical MAC tiles against structural triangles and conservatively maps
-nonuniform face traction while closing per-face and aggregate area, force,
-moment, and power ledgers. The `simwing-fsi --case piston` harness crosses that
+uniform fluid-to-structure subset, a planar face-resolved bridge clips canonical
+MAC tiles against structural triangles and conservatively maps nonuniform face
+traction while closing per-face and aggregate area, force, moment, and power
+ledgers. Its rigid-normal mode keeps those material patches while the physical
+plane moves and the Eulerian grid plane rebases, provided transverse geometry
+remains fixed and fluid/structural normal velocities agree. The
+`simwing-fsi --case piston` harness crosses that
 face-resolved bridge, temporal coupling, XPBD acceptance, and replayable viewer
 frames with visible deterministic motion. The third
 `simwing-fsi --case open-piston` harness drives a `6000 kg` plate at
 `0.05 m/s`, exposes the resisting CFD pressure separately from its actuator,
 and publishes accepted partial-cell and geometric-conservation ledgers. At
 step 1200 it crosses its first `0.5 m` cell, rebases without a chamber-volume
-jump, and continues in the new topology. A real 3.28 fixture
+jump, and continues in the new topology. At step 2400 it crosses the periodic
+boundary while retaining an unwrapped `4 m` physical position. Its pressure
+loads now use the moving face-resolved bridge rather than the uniform-only
+subset. A real 3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,
 checkpoint replay, and completed trace using synthetic physical settings.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
-assembly, curved or changing grid-to-surface correspondence,
-general cut-cell pressure metrics, nonplanar topology events, multiple
-crossings per face, and AMR CFD remain open. These worker cases validate the
-pipeline; they are not yet wing CFD or aerodynamic truth.
+assembly, curved or transversely deforming grid-to-surface correspondence,
+general cut-cell pressure metrics, nonplanar topology events, multiple crossings
+per face, and AMR CFD remain open. These worker cases validate the pipeline;
+they are not yet wing CFD or aerodynamic truth.
 The inherited Playground is not used by these targets.
 
 ## Inherited LEparagliding Studio baseline

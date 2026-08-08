@@ -75,6 +75,42 @@ void testVisibleOpenPistonAndDeterminism() {
     check(initialGcl != nullptr
               && std::abs(initialGcl->values.front()) < 1.0e-13,
           "open piston: first visible frame closes geometric conservation");
+    const auto& initialBridge = first.bridgeDiagnostics();
+    const double firstEndPlane = 3.0 + 0.05
+        * first.stepSettings().timeStepSeconds;
+    check(initialBridge.correspondenceMode
+              == fsi::PlanarFaceCorrespondenceMode::RigidNormalTranslation
+              && initialBridge.overlapPatchCount >= 6
+              && initialBridge.gridPlaneCoordinateMeters == 3.0,
+          "open piston: pressure uses moving face-resolved correspondence");
+    checkNear(initialBridge.physicalPlaneCoordinateMeters,
+              firstEndPlane, 0.0,
+              "open piston: physical pressure plane follows the plate");
+    check(initialBridge.maximumRigidPositionResidualMeters < 1.0e-14
+              && initialBridge
+                     .maximumRigidVelocityResidualMetersPerSecond < 1.0e-14
+              && initialBridge.forceResidualNormNewtons < 1.0e-10
+              && initialBridge.momentResidualNormNewtonMeters < 1.0e-10
+              && std::abs(initialBridge.powerResidualWatts) < 1.0e-10,
+          "open piston: moving correspondence ledgers meet their budgets");
+    const auto* initialGridPlane = scalarField(
+        firstInitialFrame, "interface.grid_plane");
+    const auto* initialPhysicalPlane = scalarField(
+        firstInitialFrame, "interface.physical_plane");
+    const auto* initialCorrespondenceResidual = scalarField(
+        firstInitialFrame, "interface.correspondence_residual");
+    const auto* initialCorrespondenceVelocityResidual = scalarField(
+        firstInitialFrame, "interface.correspondence_velocity_residual");
+    check(initialGridPlane != nullptr
+              && initialGridPlane->values.front() == 3.0
+              && initialPhysicalPlane != nullptr
+              && initialPhysicalPlane->values.front() == firstEndPlane
+              && initialCorrespondenceResidual != nullptr
+              && initialCorrespondenceResidual->values.front() < 1.0e-14
+              && initialCorrespondenceVelocityResidual != nullptr
+              && initialCorrespondenceVelocityResidual->values.front()
+                  < 1.0e-14,
+          "open piston: trace exposes grid/physical correspondence geometry");
 
     viewer::DiagnosticFrame finalFrame = firstInitialFrame;
     constexpr std::uint64_t steps = 24;
@@ -207,6 +243,67 @@ void testAcceptedTopologyRebase() {
     checkNear(first.controlVolumeDiagnostics().endVolumeCubicMeters,
               15.0 + 6.0 * nextOffset, 2.0e-13,
               "rebase: chamber growth continues in the new epoch");
+    const auto& continuedBridge = first.bridgeDiagnostics();
+    check(continuedBridge.correspondenceMode
+              == fsi::PlanarFaceCorrespondenceMode::RigidNormalTranslation
+              && continuedBridge.gridPlaneCoordinateMeters == 3.5
+              && continuedBridge.overlapPatchCount >= 6,
+          "rebase: face-resolved material patches survive the new grid epoch");
+    checkNear(continuedBridge.physicalPlaneCoordinateMeters,
+              3.5 + nextOffset, 2.0e-13,
+              "rebase: physical correspondence continues beyond the grid plane");
+    check(continuedBridge.maximumRigidPositionResidualMeters < 1.0e-13
+              && continuedBridge
+                     .maximumRigidVelocityResidualMetersPerSecond < 1.0e-13
+              && continuedBridge.forceResidualNormNewtons < 1.0e-10
+              && continuedBridge.momentResidualNormNewtonMeters < 1.0e-10
+              && std::abs(continuedBridge.powerResidualWatts) < 1.0e-10,
+          "rebase: continued face-resolved ledgers remain closed");
+
+    viewer::DiagnosticFrame wrappedCrossingFrame = continuedFrame;
+    while (first.structure().checkpoint().acceptedStepCount < 2400) {
+        wrappedCrossingFrame = first.advance();
+        const auto replay = second.advance();
+        if (first.structure().checkpoint().acceptedStepCount >= 2399) {
+            check(serialized(wrappedCrossingFrame) == serialized(replay),
+                  "rebase: periodic crossing frames replay bit-for-bit");
+        }
+    }
+    check(first.topologyRebaseCount() == 2
+              && first.movingPlaneCoordinate() == 0
+              && first.surfaceOffsetMeters() == 0.0,
+          "rebase: second crossing wraps to periodic grid plane zero");
+    check(first.lastRebaseDiagnostics().accepted
+              && first.lastRebaseDiagnostics()
+                     .previousMovingPlaneCoordinate == 7
+              && first.lastRebaseDiagnostics()
+                     .rebasedMovingPlaneCoordinate == 0,
+          "rebase: periodic old and new topology epochs remain explicit");
+    checkNear(first.controlVolumeDiagnostics().endVolumeCubicMeters,
+              18.0, 3.0e-13,
+              "rebase: periodic crossing preserves the analytic chamber volume");
+    checkNear(first.bridgeDiagnostics().gridPlaneCoordinateMeters,
+              3.5, 0.0,
+              "rebase: terminal transfer remains on the old Eulerian plane");
+    checkNear(first.bridgeDiagnostics().physicalPlaneCoordinateMeters,
+              4.0, 3.0e-13,
+              "rebase: terminal physical plane remains unwrapped");
+
+    const auto wrappedContinued = first.advance();
+    const auto wrappedReplay = second.advance();
+    check(serialized(wrappedContinued) == serialized(wrappedReplay),
+          "rebase: first step after periodic wrap replays bit-for-bit");
+    checkNear(first.bridgeDiagnostics().gridPlaneCoordinateMeters,
+              0.0, 0.0,
+              "rebase: continued transfer uses wrapped Eulerian plane zero");
+    checkNear(first.bridgeDiagnostics().physicalPlaneCoordinateMeters,
+              4.0 + nextOffset, 3.0e-13,
+              "rebase: continued transfer retains unwrapped physical position");
+    check(first.bridgeDiagnostics().maximumRigidPositionResidualMeters
+              < 2.0e-13
+              && first.bridgeDiagnostics()
+                     .maximumRigidVelocityResidualMetersPerSecond < 1.0e-13,
+          "rebase: wrapped moving correspondence remains kinematically bound");
 }
 
 } // namespace

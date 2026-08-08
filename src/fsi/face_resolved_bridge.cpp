@@ -108,6 +108,40 @@ struct Vector2 {
     throw std::invalid_argument("face-resolved bridge has an unknown face axis");
 }
 
+void setNormalCoordinate(StructureVector3& value,
+                         const fluid::GridFaceAxis axis,
+                         const double coordinate) {
+    switch (axis) {
+    case fluid::GridFaceAxis::X:
+        value.x = coordinate;
+        return;
+    case fluid::GridFaceAxis::Y:
+        value.y = coordinate;
+        return;
+    case fluid::GridFaceAxis::Z:
+        value.z = coordinate;
+        return;
+    }
+    throw std::invalid_argument("face-resolved bridge has an unknown face axis");
+}
+
+[[nodiscard]] bool transverseIndicesMatch(
+    const fluid::MovingInterfaceFaceDiagnostics& actual,
+    const fluid::GridFaceAxis axis,
+    const std::size_t expectedI,
+    const std::size_t expectedJ,
+    const std::size_t expectedK) {
+    switch (axis) {
+    case fluid::GridFaceAxis::X:
+        return actual.j == expectedJ && actual.k == expectedK;
+    case fluid::GridFaceAxis::Y:
+        return actual.i == expectedI && actual.k == expectedK;
+    case fluid::GridFaceAxis::Z:
+        return actual.i == expectedI && actual.j == expectedJ;
+    }
+    throw std::invalid_argument("face-resolved bridge has an unknown face axis");
+}
+
 [[nodiscard]] Vector2 project(const StructureVector3& value,
                               const fluid::GridFaceAxis axis) {
     switch (axis) {
@@ -289,6 +323,8 @@ template<typename Inside, typename Intersection>
 void validateSettings(const PlanarFaceResolvedBridgeSettings& settings) {
     const double nonnegative[] = {
         settings.geometryToleranceMeters,
+        settings.absoluteVelocityToleranceMetersPerSecond,
+        settings.relativeVelocityTolerance,
         settings.minimumOverlapAreaSquareMeters,
         settings.absoluteAreaToleranceSquareMeters,
         settings.relativeAreaTolerance,
@@ -316,7 +352,11 @@ void validateSettings(const PlanarFaceResolvedBridgeSettings& settings) {
         || settings.transfer.barycentricTolerance < 0.0
         || !std::isfinite(settings.minimumNormalAlignment)
         || settings.minimumNormalAlignment < 0.0
-        || settings.minimumNormalAlignment > 1.0) {
+        || settings.minimumNormalAlignment > 1.0
+        || (settings.correspondenceMode
+                != PlanarFaceCorrespondenceMode::FixedMaterial
+            && settings.correspondenceMode
+                != PlanarFaceCorrespondenceMode::RigidNormalTranslation)) {
         throw std::invalid_argument(
             "face-resolved bridge settings are invalid");
     }
@@ -332,6 +372,18 @@ faceKey(const fluid::MovingInterfaceFaceDiagnostics& face) {
     return scale(add(toStructure(face.lowerCornerMeters),
                      toStructure(face.upperCornerMeters)),
                  0.5);
+}
+
+[[nodiscard]] StructureVector3 physicalFaceCenter(
+    const fluid::MovingInterfaceFaceDiagnostics& face,
+    const fluid::GridFaceAxis axis,
+    const std::optional<double> physicalPlaneCoordinateMeters) {
+    StructureVector3 center = faceCenter(face);
+    if (physicalPlaneCoordinateMeters.has_value()) {
+        setNormalCoordinate(
+            center, axis, *physicalPlaneCoordinateMeters);
+    }
+    return center;
 }
 
 } // namespace
@@ -384,6 +436,8 @@ PlanarFaceResolvedFluidStructureBridge(
     const auto plusRegion = selectedFaces.front().plusRegionStableId;
     const double planeCoordinate = normalCoordinate(
         toStructure(selectedFaces.front().lowerCornerMeters), axis);
+    axis_ = axis;
+    referencePlaneCoordinateMeters_ = planeCoordinate;
     std::tuple<int, std::size_t, std::size_t, std::size_t> previousKey;
     bool havePreviousKey = false;
     for (const auto& face : selectedFaces) {
@@ -392,7 +446,9 @@ PlanarFaceResolvedFluidStructureBridge(
             || face.axis != axis
             || face.minusRegionStableId == 0
             || face.plusRegionStableId == 0
-            || face.minusRegionStableId == face.plusRegionStableId
+            || (settings_.correspondenceMode
+                    == PlanarFaceCorrespondenceMode::FixedMaterial
+                && face.minusRegionStableId == face.plusRegionStableId)
             || face.minusRegionStableId != minusRegion
             || face.plusRegionStableId != plusRegion
             || !finite(face.lowerCornerMeters)
@@ -465,10 +521,12 @@ PlanarFaceResolvedFluidStructureBridge(
     }
 
     std::map<std::uint64_t, StructureVector3> referenceNodePositions;
+    referenceNodePositions_.reserve(transfer_.nodes().size());
     for (const auto& node : transfer_.nodes()) {
-        referenceNodePositions.emplace(
-            node.stableId,
-            target.definition().nodes[node.structureNode].positionMeters);
+        const StructureVector3 position =
+            target.definition().nodes[node.structureNode].positionMeters;
+        referenceNodePositions.emplace(node.stableId, position);
+        referenceNodePositions_.push_back(position);
     }
     std::vector<double> faceCoverage(faces_.size(), 0.0);
     std::vector<double> triangleCoverage(
@@ -592,6 +650,33 @@ PlanarFaceResolvedTransferResult
 PlanarFaceResolvedFluidStructureBridge::evaluate(
     const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
     const std::span<const CouplingNodeKinematics> nodeKinematics) const {
+    return evaluateImpl(fluidDiagnostics, nodeKinematics, std::nullopt);
+}
+
+PlanarFaceResolvedTransferResult
+PlanarFaceResolvedFluidStructureBridge::evaluateMovingPlane(
+    const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
+    const std::span<const CouplingNodeKinematics> nodeKinematics,
+    const double physicalPlaneCoordinateMeters) const {
+    return evaluateImpl(
+        fluidDiagnostics, nodeKinematics, physicalPlaneCoordinateMeters);
+}
+
+PlanarFaceResolvedTransferResult
+PlanarFaceResolvedFluidStructureBridge::evaluateImpl(
+    const fluid::MovingInterfaceProjectionDiagnostics& fluidDiagnostics,
+    const std::span<const CouplingNodeKinematics> nodeKinematics,
+    const std::optional<double> physicalPlaneCoordinateMeters) const {
+    const bool movingCorrespondence =
+        physicalPlaneCoordinateMeters.has_value();
+    if (movingCorrespondence
+            != (settings_.correspondenceMode
+                == PlanarFaceCorrespondenceMode::RigidNormalTranslation)
+        || (movingCorrespondence
+            && !std::isfinite(*physicalPlaneCoordinateMeters))) {
+        throw std::invalid_argument(
+            "face-resolved bridge correspondence mode does not match evaluation");
+    }
     if (fluidDiagnostics.interfaceVersion
             != fluid::faceAlignedMovingInterfaceVersion
         || !fluidDiagnostics.projection.converged
@@ -605,6 +690,7 @@ PlanarFaceResolvedFluidStructureBridge::evaluate(
         throw std::invalid_argument(
             "face-resolved bridge kinematics do not match the coupling surface");
     }
+    double maximumRigidPositionResidualMeters = 0.0;
     for (std::size_t index = 0; index < nodeKinematics.size(); ++index) {
         if (nodeKinematics[index].stableId
                 != transfer_.nodes()[index].stableId
@@ -613,6 +699,20 @@ PlanarFaceResolvedFluidStructureBridge::evaluate(
             throw std::invalid_argument(
                 "face-resolved bridge kinematics are non-finite or not canonical");
         }
+        if (movingCorrespondence) {
+            StructureVector3 expected = referenceNodePositions_[index];
+            setNormalCoordinate(
+                expected, axis_, *physicalPlaneCoordinateMeters);
+            maximumRigidPositionResidualMeters = std::max(
+                maximumRigidPositionResidualMeters,
+                length(subtract(
+                    nodeKinematics[index].positionMeters, expected)));
+        }
+    }
+    if (maximumRigidPositionResidualMeters
+        > settings_.geometryToleranceMeters) {
+        throw std::invalid_argument(
+            "moving face-resolved bridge requires rigid normal translation");
     }
     std::vector<const fluid::MovingInterfaceFaceDiagnostics*> selectedFaces;
     for (const auto& face : fluidDiagnostics.faces) {
@@ -624,6 +724,11 @@ PlanarFaceResolvedFluidStructureBridge::evaluate(
         throw std::invalid_argument(
             "current fluid diagnostics do not match the bound face count");
     }
+    const double gridPlaneCoordinateMeters = normalCoordinate(
+        toStructure(selectedFaces.front()->lowerCornerMeters), axis_);
+    const double currentPhysicalPlaneCoordinateMeters =
+        movingCorrespondence
+        ? *physicalPlaneCoordinateMeters : gridPlaneCoordinateMeters;
 
     PlanarFaceResolvedBridgeDiagnostics diagnostics;
     diagnostics.fluidSurfaceStableId = fluidSurfaceStableId_;
@@ -632,6 +737,15 @@ PlanarFaceResolvedFluidStructureBridge::evaluate(
     diagnostics.overlapPatchCount = overlaps_.size();
     diagnostics.referenceStructureAreaSquareMeters =
         referenceAreaSquareMeters_;
+    diagnostics.correspondenceMode = settings_.correspondenceMode;
+    diagnostics.gridPlaneCoordinateMeters = gridPlaneCoordinateMeters;
+    diagnostics.physicalPlaneCoordinateMeters =
+        currentPhysicalPlaneCoordinateMeters;
+    diagnostics.normalTranslationFromReferenceMeters =
+        currentPhysicalPlaneCoordinateMeters
+        - referencePlaneCoordinateMeters_;
+    diagnostics.maximumRigidPositionResidualMeters =
+        maximumRigidPositionResidualMeters;
     std::vector<double> mappedFacePower(faces_.size(), 0.0);
     std::vector<CouplingTriangleTractionQuadrature> quadrature;
     quadrature.reserve(overlaps_.size());
@@ -639,11 +753,22 @@ PlanarFaceResolvedFluidStructureBridge::evaluate(
          faceIndex < faces_.size(); ++faceIndex) {
         const auto& expected = faces_[faceIndex];
         const auto& actual = *selectedFaces[faceIndex];
-        const bool geometryMatches =
+        const StructureVector3 actualLower =
+            toStructure(actual.lowerCornerMeters);
+        const StructureVector3 actualUpper =
+            toStructure(actual.upperCornerMeters);
+        const Vector2 actualLower2 = project(actualLower, axis_);
+        const Vector2 actualUpper2 = project(actualUpper, axis_);
+        const Vector2 expectedLower2 = project(
+            toStructure(expected.lowerCornerMeters), axis_);
+        const Vector2 expectedUpper2 = project(
+            toStructure(expected.upperCornerMeters), axis_);
+        const bool commonGeometryMatches =
             actual.minusRegionStableId == expected.minusRegionStableId
             && actual.plusRegionStableId == expected.plusRegionStableId
-            && actual.axis == expected.axis
-            && actual.i == expected.i && actual.j == expected.j
+            && actual.axis == axis_;
+        const bool fixedGeometryMatches =
+            actual.i == expected.i && actual.j == expected.j
             && actual.k == expected.k
             && std::abs(actual.lowerCornerMeters.x
                         - expected.lowerCornerMeters.x)
@@ -663,6 +788,26 @@ PlanarFaceResolvedFluidStructureBridge::evaluate(
             && std::abs(actual.upperCornerMeters.z
                         - expected.upperCornerMeters.z)
                 <= settings_.geometryToleranceMeters;
+        const bool movingGeometryMatches =
+            transverseIndicesMatch(
+                actual, axis_, expected.i, expected.j, expected.k)
+            && std::abs(actualLower2.u - expectedLower2.u)
+                <= settings_.geometryToleranceMeters
+            && std::abs(actualLower2.v - expectedLower2.v)
+                <= settings_.geometryToleranceMeters
+            && std::abs(actualUpper2.u - expectedUpper2.u)
+                <= settings_.geometryToleranceMeters
+            && std::abs(actualUpper2.v - expectedUpper2.v)
+                <= settings_.geometryToleranceMeters
+            && std::abs(normalCoordinate(actualLower, axis_)
+                        - gridPlaneCoordinateMeters)
+                <= settings_.geometryToleranceMeters
+            && std::abs(normalCoordinate(actualUpper, axis_)
+                        - gridPlaneCoordinateMeters)
+                <= settings_.geometryToleranceMeters;
+        const bool geometryMatches = commonGeometryMatches
+            && (movingCorrespondence
+                ? movingGeometryMatches : fixedGeometryMatches);
         const double areaTolerance = combinedTolerance(
             settings_.absoluteAreaToleranceSquareMeters,
             settings_.relativeAreaTolerance,
@@ -708,10 +853,46 @@ PlanarFaceResolvedFluidStructureBridge::evaluate(
             diagnostics.fluidPressureForceNewtons, sourceForce);
         diagnostics.fluidPressureMomentNewtonMeters = add(
             diagnostics.fluidPressureMomentNewtonMeters,
-            cross(subtract(faceCenter(actual),
+            cross(subtract(
+                      physicalFaceCenter(
+                          actual, axis_,
+                          physicalPlaneCoordinateMeters),
                            settings_.transfer.momentReferenceMeters),
                   sourceForce));
         diagnostics.fluidPressurePowerWatts += actual.pressurePowerWatts;
+    }
+
+    if (movingCorrespondence) {
+        const double expectedNormalVelocity =
+            selectedFaces.front()->normalVelocityMetersPerSecond;
+        for (const auto* face : selectedFaces) {
+            diagnostics.maximumRigidVelocityResidualMetersPerSecond =
+                std::max(
+                    diagnostics.maximumRigidVelocityResidualMetersPerSecond,
+                    std::abs(face->normalVelocityMetersPerSecond
+                             - expectedNormalVelocity));
+        }
+        const StructureVector3 expectedVelocity = scale(
+            axisUnit(axis_), expectedNormalVelocity);
+        for (const auto& node : nodeKinematics) {
+            diagnostics.maximumRigidVelocityResidualMetersPerSecond =
+                std::max(
+                    diagnostics.maximumRigidVelocityResidualMetersPerSecond,
+                    length(subtract(
+                        node.velocityMetersPerSecond,
+                        expectedVelocity)));
+        }
+        const double velocityTolerance = combinedTolerance(
+            settings_.absoluteVelocityToleranceMetersPerSecond,
+            settings_.relativeVelocityTolerance,
+            std::abs(expectedNormalVelocity),
+            std::abs(expectedNormalVelocity)
+                + diagnostics.maximumRigidVelocityResidualMetersPerSecond);
+        if (diagnostics.maximumRigidVelocityResidualMetersPerSecond
+            > velocityTolerance) {
+            throw std::invalid_argument(
+                "moving face-resolved bridge velocity is not rigid and normal");
+        }
     }
 
     const auto aggregateSurface = std::lower_bound(
@@ -855,6 +1036,14 @@ PlanarFaceResolvedFluidStructureBridge::evaluate(
         && std::isfinite(diagnostics.structureSurfacePowerWatts)
         && std::isfinite(diagnostics.powerResidualWatts)
         && std::isfinite(diagnostics.maximumFacePowerResidualWatts)
+        && std::isfinite(diagnostics.gridPlaneCoordinateMeters)
+        && std::isfinite(diagnostics.physicalPlaneCoordinateMeters)
+        && std::isfinite(
+            diagnostics.normalTranslationFromReferenceMeters)
+        && std::isfinite(
+            diagnostics.maximumRigidPositionResidualMeters)
+        && std::isfinite(
+            diagnostics.maximumRigidVelocityResidualMetersPerSecond)
         && target.finite;
     if (!diagnostics.finite) {
         throw std::invalid_argument(

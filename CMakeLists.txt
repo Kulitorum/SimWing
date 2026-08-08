@@ -1051,7 +1051,7 @@ add_test(NAME simwing_fsi_open_piston_headless
 add_test(NAME simwing_fsi_open_piston_rebase_headless
     COMMAND simwing-fsi
         --case open-piston
-        --steps 1201
+        --steps 2401
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-open-piston-rebase-headless.swtrace")
 add_test(NAME simwing_viewer_help COMMAND simwing-viewer --help)

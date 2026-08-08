@@ -21,6 +21,8 @@ using simwing::fsi::StructureDefinition;
 using simwing::fsi::StructureStepSettings;
 using simwing::fsi::StructureVector3;
 using simwing::fsi::PlanarFaceResolvedFluidStructureBridge;
+using simwing::fsi::PlanarFaceCorrespondenceMode;
+using simwing::fsi::PlanarFaceResolvedBridgeSettings;
 using simwing::fsi::UniformFluidStructureBridge;
 using simwing::fsi::fluid::CellScalarField;
 using simwing::fsi::fluid::FaceAlignedMovingInterface;
@@ -93,6 +95,40 @@ StructureDefinition pistonDefinition(const double heightMeters = 3.0) {
     return definition;
 }
 
+StructureDefinition movingPlaneDefinition(
+    const GridFaceAxis axis,
+    const double planeCoordinateMeters) {
+    StructureDefinition definition;
+    switch (axis) {
+    case GridFaceAxis::X:
+        definition.nodes = {
+            {{planeCoordinateMeters, 0.0, 0.0}, 2.0, false},
+            {{planeCoordinateMeters, 2.0, 0.0}, 1.0, false},
+            {{planeCoordinateMeters, 2.0, 3.0}, 2.0, false},
+            {{planeCoordinateMeters, 0.0, 3.0}, 1.0, false},
+        };
+        break;
+    case GridFaceAxis::Y:
+        definition.nodes = {
+            {{0.0, planeCoordinateMeters, 0.0}, 2.0, false},
+            {{0.0, planeCoordinateMeters, 3.0}, 1.0, false},
+            {{4.0, planeCoordinateMeters, 3.0}, 2.0, false},
+            {{4.0, planeCoordinateMeters, 0.0}, 1.0, false},
+        };
+        break;
+    case GridFaceAxis::Z:
+        definition.nodes = {
+            {{0.0, 0.0, planeCoordinateMeters}, 2.0, false},
+            {{4.0, 0.0, planeCoordinateMeters}, 1.0, false},
+            {{4.0, 2.0, planeCoordinateMeters}, 2.0, false},
+            {{0.0, 2.0, planeCoordinateMeters}, 1.0, false},
+        };
+        break;
+    }
+    definition.triangles = {{{0, 1, 2}}, {{0, 2, 3}}};
+    return definition;
+}
+
 std::vector<CouplingSurfaceNodeDefinition> pistonNodes() {
     return {{40, 3}, {10, 0}, {30, 2}, {20, 1}};
 }
@@ -159,6 +195,49 @@ MovingInterfaceProjectionDiagnostics fluidPistonDiagnostics(
         grid, velocity, pressure, interfaces, settings);
 }
 
+MovingInterfaceProjectionDiagnostics openPlaneDiagnostics(
+    const GridFaceAxis axis,
+    const std::size_t movingPlaneCoordinate,
+    const double speedMetersPerSecond = 0.25) {
+    const auto grid = pistonGrid();
+    const auto counts = grid.cellCounts();
+    std::vector<GridFaceMovingInterface> faces;
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                const std::size_t coordinate = axis == GridFaceAxis::X
+                    ? i : (axis == GridFaceAxis::Y ? j : k);
+                if (coordinate == movingPlaneCoordinate) {
+                    faces.push_back({
+                        300, 9, 9, axis, i, j, k,
+                        speedMetersPerSecond,
+                    });
+                }
+            }
+        }
+    }
+    const FaceAlignedMovingInterface interfaces(
+        grid, std::move(faces));
+    MacVelocityField velocity(grid);
+    CellScalarField pressure(grid);
+    MovingInterfaceProjectionSettings settings;
+    settings.projection.densityKgPerCubicMeter = 1.2;
+    settings.projection.timeStepSeconds = 0.4;
+    settings.projection.absoluteResidualTolerance = 1.0e-11;
+    settings.projection.relativeResidualTolerance = 1.0e-13;
+    settings.projection.maximumIterations = 1000;
+    return projectVelocityWithMovingInterfaces(
+        grid, velocity, pressure, interfaces, settings);
+}
+
+MovingInterfaceProjectionDiagnostics openPistonDiagnostics(
+    const std::size_t movingPlaneCoordinate = 6,
+    const double speedMetersPerSecond = 0.25) {
+    return openPlaneDiagnostics(
+        GridFaceAxis::X, movingPlaneCoordinate,
+        speedMetersPerSecond);
+}
+
 std::vector<CouplingNodeKinematics> translatingKinematics(
     const simwing::fsi::ConservativeSurfaceTransfer& transfer,
     const Structure& structure,
@@ -166,6 +245,35 @@ std::vector<CouplingNodeKinematics> translatingKinematics(
     auto result = transfer.captureKinematics(structure);
     for (auto& node : result) {
         node.velocityMetersPerSecond = {speedMetersPerSecond, 0.0, 0.0};
+    }
+    return result;
+}
+
+std::vector<CouplingNodeKinematics> movingPlaneKinematics(
+    const simwing::fsi::ConservativeSurfaceTransfer& transfer,
+    const Structure& structure,
+    const double physicalPlaneCoordinateMeters,
+    const double speedMetersPerSecond = 0.25,
+    const GridFaceAxis axis = GridFaceAxis::X) {
+    auto result = transfer.captureKinematics(structure);
+    for (auto& node : result) {
+        switch (axis) {
+        case GridFaceAxis::X:
+            node.positionMeters.x = physicalPlaneCoordinateMeters;
+            node.velocityMetersPerSecond = {
+                speedMetersPerSecond, 0.0, 0.0};
+            break;
+        case GridFaceAxis::Y:
+            node.positionMeters.y = physicalPlaneCoordinateMeters;
+            node.velocityMetersPerSecond = {
+                0.0, speedMetersPerSecond, 0.0};
+            break;
+        case GridFaceAxis::Z:
+            node.positionMeters.z = physicalPlaneCoordinateMeters;
+            node.velocityMetersPerSecond = {
+                0.0, 0.0, speedMetersPerSecond};
+            break;
+        }
     }
     return result;
 }
@@ -421,6 +529,15 @@ void testFaceResolvedNonuniformPressureTransfer() {
             reference.faces, invalidSettings); },
         "face bridge validation: incompatible overlap and quadrature thresholds are rejected");
 
+    simwing::fsi::PlanarFaceResolvedBridgeSettings invalidMode;
+    invalidMode.correspondenceMode =
+        static_cast<PlanarFaceCorrespondenceMode>(255);
+    expectRejected(
+        [&] { PlanarFaceResolvedFluidStructureBridge invalidCorrespondenceMode(
+            structure, 200, pistonNodes(), pistonTriangles(),
+            reference.faces, invalidMode); },
+        "face bridge validation: unknown correspondence modes are rejected");
+
     auto overlappingReferenceFaces = reference.faces;
     auto firstReferenceRight = std::ranges::find_if(
         overlappingReferenceFaces,
@@ -482,12 +599,192 @@ void testFaceResolvedNonuniformPressureTransfer() {
         "face bridge validation: overlapping structural triangles are rejected");
 }
 
+void testMovingPlanarFaceCorrespondence() {
+    Structure structure(pistonDefinition());
+    const auto reference = openPistonDiagnostics();
+    PlanarFaceResolvedBridgeSettings settings;
+    settings.correspondenceMode =
+        PlanarFaceCorrespondenceMode::RigidNormalTranslation;
+    PlanarFaceResolvedFluidStructureBridge bridge(
+        structure, 300, pistonNodes(), pistonTriangles(),
+        reference.faces, settings);
+
+    const auto translatedKinematics = movingPlaneKinematics(
+        bridge.transfer(), structure, 3.2);
+    const auto first = bridge.evaluateMovingPlane(
+        reference, translatedKinematics, 3.2);
+    const auto second = bridge.evaluateMovingPlane(
+        reference, translatedKinematics, 3.2);
+    const auto& diagnostics = first.diagnostics();
+    check(first == second,
+          "moving bridge: translated correspondence replays bit-for-bit");
+    check(diagnostics.correspondenceMode
+              == PlanarFaceCorrespondenceMode::RigidNormalTranslation
+              && diagnostics.gridPlaneCoordinateMeters == 3.0
+              && diagnostics.physicalPlaneCoordinateMeters == 3.2,
+          "moving bridge: Eulerian grid plane and physical plane remain explicit");
+    checkNear(diagnostics.normalTranslationFromReferenceMeters,
+              0.2, 2.0e-16,
+              "moving bridge: physical translation is measured from reference");
+    checkNear(diagnostics.maximumRigidPositionResidualMeters,
+              0.0, 0.0,
+              "moving bridge: rigid translated nodes match the physical plane");
+    checkNear(diagnostics.maximumRigidVelocityResidualMetersPerSecond,
+              0.0, 0.0,
+              "moving bridge: structural and fluid normal velocities match");
+    check(diagnostics.forceResidualNormNewtons < 2.0e-10
+              && diagnostics.momentResidualNormNewtonMeters < 2.0e-10
+              && std::abs(diagnostics.powerResidualWatts) < 2.0e-10
+              && diagnostics.maximumFacePowerResidualWatts < 2.0e-10,
+          "moving bridge: translated force, moment, and power ledgers close");
+
+    const auto rebasedFluid = openPistonDiagnostics(7);
+    const auto rebasedKinematics = movingPlaneKinematics(
+        bridge.transfer(), structure, 3.6);
+    const auto rebased = bridge.evaluateMovingPlane(
+        rebasedFluid, rebasedKinematics, 3.6);
+    check(rebased.diagnostics().gridPlaneCoordinateMeters == 3.5
+              && rebased.diagnostics().physicalPlaneCoordinateMeters == 3.6
+              && rebased.diagnostics().overlapPatchCount
+                  == bridge.overlapPatchCount(),
+          "moving bridge: one material patch map survives a grid-plane rebase");
+    checkNear(rebased.diagnostics().normalTranslationFromReferenceMeters,
+              0.6, 5.0e-16,
+              "moving bridge: translation remains unwrapped after rebase");
+
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluate(
+            reference, translatedKinematics)); },
+        "moving bridge validation: correspondence mode must be explicit");
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluateMovingPlane(
+            reference, translatedKinematics, 3.19)); },
+        "moving bridge validation: declared physical plane must match structure");
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluateMovingPlane(
+            reference, translatedKinematics,
+            std::numeric_limits<double>::quiet_NaN())); },
+        "moving bridge validation: the declared physical plane must be finite");
+    auto nonrigidKinematics = translatedKinematics;
+    nonrigidKinematics.front().positionMeters.y += 0.01;
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluateMovingPlane(
+            reference, nonrigidKinematics, 3.2)); },
+        "moving bridge validation: transverse structural motion is rejected");
+    const auto wrongVelocityKinematics = movingPlaneKinematics(
+        bridge.transfer(), structure, 3.2, 0.2);
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluateMovingPlane(
+            reference, wrongVelocityKinematics, 3.2)); },
+        "moving bridge validation: fluid and structural speeds must match");
+    auto inconsistentZeroPressure = openPistonDiagnostics(6, 0.0);
+    auto stationaryKinematics = movingPlaneKinematics(
+        bridge.transfer(), structure, 3.2, 0.0);
+    static_cast<void>(bridge.evaluateMovingPlane(
+        inconsistentZeroPressure, stationaryKinematics, 3.2));
+    inconsistentZeroPressure.faces.front().normalVelocityMetersPerSecond =
+        0.01;
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluateMovingPlane(
+            inconsistentZeroPressure, stationaryKinematics, 3.2)); },
+        "moving bridge validation: velocity correspondence is checked at zero pressure");
+    auto changedTransverseTile = reference;
+    changedTransverseTile.faces.front().lowerCornerMeters.y += 0.01;
+    expectRejected(
+        [&] { static_cast<void>(bridge.evaluateMovingPlane(
+            changedTransverseTile, translatedKinematics, 3.2)); },
+        "moving bridge validation: transverse fluid tiling is immutable");
+
+    PlanarFaceResolvedBridgeSettings fixedSettings;
+    expectRejected(
+        [&] { PlanarFaceResolvedFluidStructureBridge fixedNonseparating(
+            structure, 300, pistonNodes(), pistonTriangles(),
+            reference.faces, fixedSettings); },
+        "moving bridge validation: nonseparating surfaces require moving mode");
+}
+
+void testMovingPlanarCorrespondenceAllAxes() {
+    struct AxisCase {
+        GridFaceAxis axis;
+        std::size_t referencePlane;
+        std::size_t rebasedPlane;
+        double referenceCoordinateMeters;
+        double rebasedGridCoordinateMeters;
+        double rebasedPhysicalCoordinateMeters;
+    };
+    const std::array cases{
+        AxisCase{GridFaceAxis::X, 6, 7, 3.0, 3.5, 3.7},
+        AxisCase{GridFaceAxis::Y, 1, 0, 1.0, 0.0, 2.2},
+        AxisCase{GridFaceAxis::Z, 2, 0, 2.0, 0.0, 3.2},
+    };
+    for (const auto& test : cases) {
+        try {
+            Structure structure(movingPlaneDefinition(
+                test.axis, test.referenceCoordinateMeters));
+            const auto reference = openPlaneDiagnostics(
+                test.axis, test.referencePlane);
+            PlanarFaceResolvedBridgeSettings settings;
+            settings.correspondenceMode =
+                PlanarFaceCorrespondenceMode::RigidNormalTranslation;
+            PlanarFaceResolvedFluidStructureBridge bridge(
+                structure, 300, pistonNodes(), pistonTriangles(),
+                reference.faces, settings);
+            const double firstPhysical =
+                test.referenceCoordinateMeters + 0.2;
+            const auto firstKinematics = movingPlaneKinematics(
+                bridge.transfer(), structure, firstPhysical,
+                0.25, test.axis);
+            const auto first = bridge.evaluateMovingPlane(
+                reference, firstKinematics, firstPhysical);
+            check(first.diagnostics().correspondenceMode
+                      == PlanarFaceCorrespondenceMode::RigidNormalTranslation
+                      && first.diagnostics()
+                             .maximumRigidPositionResidualMeters == 0.0
+                      && first.diagnostics()
+                             .maximumRigidVelocityResidualMetersPerSecond
+                          == 0.0,
+                  "moving axes: rigid correspondence accepts every orientation");
+
+            const auto rebasedFluid = openPlaneDiagnostics(
+                test.axis, test.rebasedPlane);
+            const auto rebasedKinematics = movingPlaneKinematics(
+                bridge.transfer(), structure,
+                test.rebasedPhysicalCoordinateMeters,
+                0.25, test.axis);
+            const auto rebased = bridge.evaluateMovingPlane(
+                rebasedFluid, rebasedKinematics,
+                test.rebasedPhysicalCoordinateMeters);
+            checkNear(rebased.diagnostics().gridPlaneCoordinateMeters,
+                      test.rebasedGridCoordinateMeters, 0.0,
+                      "moving axes: rebased Eulerian plane is orientation independent");
+            checkNear(rebased.diagnostics().physicalPlaneCoordinateMeters,
+                      test.rebasedPhysicalCoordinateMeters, 0.0,
+                      "moving axes: unwrapped physical plane survives periodic rebase");
+            check(rebased.diagnostics().forceResidualNormNewtons < 2.0e-10
+                      && rebased.diagnostics()
+                             .momentResidualNormNewtonMeters < 2.0e-10
+                      && std::abs(
+                             rebased.diagnostics().powerResidualWatts)
+                          < 2.0e-10,
+                  "moving axes: rebased force, moment, and power ledgers close");
+        } catch (const std::exception& exception) {
+            std::fprintf(
+                stderr,
+                "FAIL: moving axes: unexpected rejection for axis %d: %s\n",
+                static_cast<int>(test.axis), exception.what());
+            ++failures;
+        }
+    }
+}
+
 } // namespace
 
 int main() {
     testAnalyticStableIdBridgeAndStructuralAcceptance();
     testStrictRejectionContracts();
     testFaceResolvedNonuniformPressureTransfer();
+    testMovingPlanarFaceCorrespondence();
+    testMovingPlanarCorrespondenceAllAxes();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing fluid-structure bridge check(s) failed\n",

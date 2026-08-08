@@ -173,7 +173,9 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   face-aligned fluid-pressure surface to one structural coupling surface. The
   first is the exact uniform subset; the planar face-resolved path clips fixed
   MAC tiles against reference triangles and transfers nonuniform tile traction
-  through conservative barycentric patches.
+  through conservative barycentric patches. Its rigid-normal mode retains
+  those material patches while the physical plane moves and the Eulerian grid
+  plane rebases, with independent position/velocity/force/moment/power checks.
 - `simwing_piston_case`: Qt-free visible verification harness crossing fluid
   projection, the face-resolved bridge, temporal coupling, XPBD acceptance, and
   immutable viewer frames.
@@ -522,7 +524,9 @@ makes this a certified aerodynamic solver.
   and only accepted geometry/transport/structure states reach the trace. At an
   exact cell crossing the worker verifies old/new volume continuity, remaps the
   constraint within a written velocity budget, and commits the next epoch with
-  the complete frame.
+  the complete frame. Pressure reaches XPBD through the moving face-resolved
+  bridge, not the older uniform-only subset; grid and unwrapped physical planes
+  plus correspondence residuals remain explicit in every frame.
 - `src/fsi/fluid/grid.{h,cpp}` owns the uniform periodic Cartesian grid,
   cell-centred scalar fields, unique periodic MAC face velocities, and the
   paired finite-volume divergence/gradient operators.
@@ -569,13 +573,18 @@ makes this a certified aerodynamic solver.
   uniform grid-to-structure bridge. One stable fluid surface can drive one
   structural coupling surface only when adjacent-cell pressure traction is
   uniform and independent area, force, and power ledgers close.
-- `src/fsi/face_resolved_bridge.{h,cpp}` owns the planar fixed-correspondence
-  extension. It clips nonoverlapping, fully covering axis-aligned reference
-  MAC tiles against consistently oriented structural triangles once, then maps
-  each current tile traction through stable overlap-area/centroid barycentric
-  quadrature. Per-face and aggregate area, force, moment, and power ledgers
-  must close. Curved/Eulerian remap, cut cells, changing correspondence, and
-  strong-coupling convergence remain future work.
+- `src/fsi/face_resolved_bridge.{h,cpp}` owns two explicit planar
+  correspondence modes. Both clip nonoverlapping, fully covering axis-aligned
+  reference MAC tiles against consistently oriented structural triangles once,
+  then map each current tile traction through stable overlap-area/centroid
+  barycentric quadrature. `FixedMaterial` preserves the original exact face
+  binding. `RigidNormalTranslation` accepts equal-sided nonseparating surfaces,
+  normal grid-plane rebasing, and an explicitly unwrapped physical plane only
+  while all transverse tile geometry and structural node coordinates remain
+  fixed and all fluid/structural normal velocities agree. Per-face and
+  aggregate area, force, moment, and power ledgers must close. Curved,
+  transverse-deforming, or general Eulerian remap and strong-coupling
+  convergence remain future work.
 - New numerical targets must not link the inherited `playground_*` libraries.
   Cross the scene/structure/viewer boundaries through explicit adapters and
   versioned data only.
@@ -621,7 +630,7 @@ paths that release CI deliberately excludes from its offscreen test command.
 | SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`, `simwing_fluid_moving_interface`, `simwing_fluid_control_volume`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing no-jump projection energy, transactional failure, deterministic replay, Taylor-Green invariance, manufactured second-order pressure convergence, stable region/interface orientation, static sharp-jump balance, exact X/Y/Z face constraints, canonical face-tile geometry/traction ledgers, per-region compatibility/gauges, analytic translating-slab pressure impulse/work, open-piston partial-cell/surface-sweep/opening-flux GCL closure, and exact X/Y/Z one-plane rebase volume continuity |
 | SimWing conservative transfer | `simwing_transfer`; preserve stable topology/Structure binding, analytic uniform and barycentric-quadrature area/force/moment, rigid translation/rotation power, independent ledger closure, additive nodal load application, and rejection before mutation for foreign results/structures |
 | SimWing macro-step coupling | `simwing_coupling`; preserve strictly ordered local sample time, topology/duration binding, analytic moving-piston impulse and pressure-volume work, independent temporal ledger closure, momentum delivery through XPBD, deterministic replay, and pre-load checkpoint rollback on failure |
-| SimWing fluid/structure bridge and piston workers | `simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing_open_piston_case`, `simwing_fsi_piston_headless`, `simwing_fsi_open_piston_headless`, `simwing_fsi_open_piston_rebase_headless`; preserve the strict uniform subset, planar face-resolved nonuniform transfer, stable surface/geometry binding, complete nonoverlapping coverage, per-face and aggregate area/force/moment/power closure, analytic impulse delivery, explicit actuator-versus-CFD reaction, bit-identical replay across a topology crossing, accepted-only frames, and Qt-free headless execution |
+| SimWing fluid/structure bridge and piston workers | `simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing_open_piston_case`, `simwing_fsi_piston_headless`, `simwing_fsi_open_piston_headless`, `simwing_fsi_open_piston_rebase_headless`; preserve the strict uniform subset, planar face-resolved nonuniform transfer, stable surface/geometry binding, complete nonoverlapping coverage, per-face and aggregate area/force/moment/power closure, rigid-normal X/Y/Z grid/physical-plane correspondence and velocity binding, analytic impulse delivery, explicit actuator-versus-CFD reaction, bit-identical replay through periodic topology crossings, accepted-only frames, and Qt-free headless execution |
 | packaging/resources/CMake | configure from clean metadata, build Release, and run the full suite |
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with

@@ -501,24 +501,34 @@ uniform subset of those operators. It accepts one canonical face-aligned fluid
 surface, requires its facewise pressure-traction deviation to meet an explicit
 budget, reconstructs one uniform world-space traction, and then requires
 independent fluid/structure area, force, and power ledgers to close before
-returning the immutable structural transfer. A planar fixed-correspondence
-extension clips canonical nonoverlapping MAC tiles against fully covering,
-consistently oriented reference triangles once. Every positive-area overlap
-becomes a stable barycentric patch; current nonuniform tile traction is mapped
-through those patches only after per-face and aggregate area, force, moment,
-and power ledgers close. The `--case piston` worker now evaluates compatible
+returning the immutable structural transfer. A planar face-resolved extension
+clips canonical nonoverlapping MAC tiles against fully covering, consistently
+oriented reference triangles once. Every material overlap above the explicit
+`1e-14 m^2` sliver threshold becomes a stable barycentric patch; current
+nonuniform tile traction is mapped through those patches only after per-face
+and aggregate area, force, moment, and power ledgers close. Its fixed-material
+mode requires the original Eulerian face geometry exactly. Its
+rigid-normal-translation mode instead keeps transverse tiling and material
+patches immutable while explicitly separating the current Eulerian grid plane
+from the unwrapped physical plane. It accepts only a matching rigid structural
+translation and uniform normal velocity, with independent position and velocity
+correspondence ledgers, and is verified for X, Y, and Z normals and periodic
+grid-plane wrap. The `--case piston` worker now evaluates compatible
 start/end face-resolved fluid samples, trapezoidally integrates them, accepts
 the impulse through XPBD, and publishes the resulting moving two-triangle
 surface and CFD ledger fields to the standalone viewer. The
 `--case open-piston` worker adds the nonseparating connected-fluid projection,
 partial-cell geometry, resolved-opening GCL ledger, an explicit plate actuator,
-and a separately reported resisting CFD load. Both the numerical state and
-published frame cross accepted boundaries only. On an exact cell crossing it
-also verifies old/new chamber-volume continuity, remaps the constraint within a
+and a separately reported resisting CFD load. Its pressure reaction now crosses
+the moving face-resolved bridge at the structural plate's physical plane rather
+than through a surface-uniform bridge. Both the numerical state and published
+frame cross accepted boundaries only. On an exact cell crossing it also
+verifies old/new chamber-volume continuity, remaps the constraint within a
 written velocity budget, and commits the new fluid/control-volume epoch with
-the completed viewer frame. This does not yet implement curved or changing
-Eulerian correspondence, general cut-cell pressure metrics, nonplanar topology
-events, fluid/structure iteration, or a strong-coupling convergence decision.
+the completed viewer frame. This does not yet implement transverse or
+non-rigid surface deformation, curved correspondence, general cut-cell pressure
+metrics, nonplanar topology events, fluid/structure iteration, or a
+strong-coupling convergence decision.
 
 ### Phase 0 — Establish the remake boundary
 
@@ -617,17 +627,25 @@ face-resolved canonical then uses a disturbed projection with genuinely
 nonuniform tile pressure. Deterministic tile/triangle clipping preserves its
 force, moment, global power, and every face's local power within `2e-10` in the
 corresponding SI units; gaps, tile or triangle overlap, orientation mismatch,
-changed geometry, and locally inconsistent power are rejected. The visible
+changed geometry, and locally inconsistent power are rejected. The canonical
+additionally verifies rigid-normal translation on every grid axis. The
+Eulerian grid plane may rebase, including a periodic index wrap, while the
+physical plane remains unwrapped; stable material patches, transverse geometry,
+matching node positions, and matching face/node normal velocities must remain
+exact. The visible
 piston worker repeats the face-resolved full chain at `120 Hz` with a synthetic
 `6000 kg` tributary-mass plate so 600 default frames show about `1.38 m` of
 deterministic translation without leaving the initial viewer scale. The open
 piston worker uses the same mass and rate but drives at `0.05 m/s`: 600 frames
 move `0.25 m`, grow the analytic chamber from `12` to `13.5 m^3`, expose the
-actuator impulse separately from CFD pressure reaction, and remain inside the
-first `0.5 m` cell. At frame 1200 the plate reaches `3.5 m`, the chamber reaches
-`15 m^3`, and the worker transactionally advances grid plane 6 to 7 with zero
-volume residual and less than `2e-12 m/s` velocity remap; frame 1201 verifies
-continued partial-cell growth in the new epoch.
+actuator impulse separately from the moving face-resolved CFD pressure reaction,
+and remain inside the first `0.5 m` cell. At frame 1200 the plate reaches
+`3.5 m`, the chamber reaches `15 m^3`, and the worker transactionally advances
+grid plane 6 to 7 with zero volume residual and less than `2e-12 m/s` velocity
+remap; frame 1201 verifies continued partial-cell growth in the new epoch. At
+frame 2400 the physical plate reaches the unwrapped `4.0 m` position while the
+Eulerian plane wraps from index 7 to 0; frame 2401 verifies continued transfer
+and growth after that periodic topology epoch.
 
 Work:
 
@@ -655,15 +673,17 @@ Required canonical cases:
 The structure side now verifies prescribed volume, interface work, temporal
 impulse transfer, and transactional XPBD acceptance. The fluid side verifies a
 volume-compatible translating sealed slab with exact face velocity and matching
-per-wall pressure impulse/work. The planar fixed-correspondence stable-ID subset
-now also crosses those accepted face-resolved fluid samples into XPBD and the
-viewer with explicit interface residuals. The first open volume-changing piston
-now has one partial-cell geometry update and an independently closed
-surface-sweep/opening-transport GCL ledger plus an exact planar one-face
-topology rebase. General cut-cell pressure metrics, curved/changing
-correspondence, nonplanar or opening topology events, sealed deforming chambers,
-and the complete coupled fluid/structure energy ledger remain open, so the full
-Phase 2 piston gate is not yet closed.
+per-wall pressure impulse/work. The planar face-resolved stable-ID subset now
+also crosses those accepted fluid samples into XPBD and the viewer with explicit
+interface residuals. It supports both exact fixed material correspondence and
+rigid normal motion across grid rebases while preserving the transverse material
+patches. The first open volume-changing piston now has one partial-cell geometry
+update and an independently closed surface-sweep/opening-transport GCL ledger
+plus exact planar one-face topology rebases, including periodic wrap. General
+cut-cell pressure metrics, curved or transversely deforming correspondence,
+nonplanar or opening topology events, sealed deforming chambers, and the complete
+coupled fluid/structure energy ledger remain open, so the full Phase 2 piston
+gate is not yet closed.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written
