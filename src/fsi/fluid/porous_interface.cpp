@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
@@ -754,6 +755,423 @@ projectVelocityWithMovingAndPorousInterfaces(
         grid, predictedVelocityMetersPerSecond, pressurePascals,
         movingInterfaces, porousCrossings, &prescribedPressureJumps,
         settings);
+}
+
+namespace {
+
+bool finiteVector(const Vector3& value) noexcept {
+    return std::isfinite(value.x)
+        && std::isfinite(value.y)
+        && std::isfinite(value.z);
+}
+
+Vector3 addVector(
+    const Vector3& first,
+    const Vector3& second) noexcept {
+    return {
+        first.x + second.x,
+        first.y + second.y,
+        first.z + second.z,
+    };
+}
+
+Vector3 scaleVector(
+    const Vector3& value,
+    const double scale) noexcept {
+    return {value.x * scale, value.y * scale, value.z * scale};
+}
+
+Vector3 axialVector(
+    const GridFaceAxis axis,
+    const double value) {
+    switch (axis) {
+    case GridFaceAxis::X:
+        return {value, 0.0, 0.0};
+    case GridFaceAxis::Y:
+        return {0.0, value, 0.0};
+    case GridFaceAxis::Z:
+        return {0.0, 0.0, value};
+    }
+    throw std::invalid_argument("porous traction has an invalid face axis");
+}
+
+bool closeValue(
+    const double first,
+    const double second) noexcept {
+    return std::abs(first - second)
+        <= 1.0e-10
+            + 1.0e-11 * std::max(std::abs(first), std::abs(second));
+}
+
+bool closeVector(
+    const Vector3& first,
+    const Vector3& second) noexcept {
+    return closeValue(first.x, second.x)
+        && closeValue(first.y, second.y)
+        && closeValue(first.z, second.z);
+}
+
+double wrapCoordinate(
+    const double value,
+    const double lower,
+    const double upper) noexcept {
+    if (value < lower) return value + (upper - lower);
+    if (value >= upper) return value - (upper - lower);
+    return value;
+}
+
+std::pair<Vector3, Vector3> crossingBounds(
+    const PeriodicCartesianGrid& grid,
+    const GridFacePressureJump& crossing) {
+    const Vector3 spacing = grid.cellSpacingMeters();
+    const Vector3 lower = grid.lowerMeters();
+    const Vector3 upper = grid.upperMeters();
+    switch (crossing.axis) {
+    case GridFaceAxis::X: {
+        Vector3 center = grid.xFaceCenterMeters(
+            crossing.i, crossing.j, crossing.k);
+        center.x = wrapCoordinate(
+            center.x + (crossing.crossingFraction - 0.5) * spacing.x,
+            lower.x, upper.x);
+        return {
+            {center.x, center.y - 0.5 * spacing.y,
+             center.z - 0.5 * spacing.z},
+            {center.x, center.y + 0.5 * spacing.y,
+             center.z + 0.5 * spacing.z},
+        };
+    }
+    case GridFaceAxis::Y: {
+        Vector3 center = grid.yFaceCenterMeters(
+            crossing.i, crossing.j, crossing.k);
+        center.y = wrapCoordinate(
+            center.y + (crossing.crossingFraction - 0.5) * spacing.y,
+            lower.y, upper.y);
+        return {
+            {center.x - 0.5 * spacing.x, center.y,
+             center.z - 0.5 * spacing.z},
+            {center.x + 0.5 * spacing.x, center.y,
+             center.z + 0.5 * spacing.z},
+        };
+    }
+    case GridFaceAxis::Z: {
+        Vector3 center = grid.zFaceCenterMeters(
+            crossing.i, crossing.j, crossing.k);
+        center.z = wrapCoordinate(
+            center.z + (crossing.crossingFraction - 0.5) * spacing.z,
+            lower.z, upper.z);
+        return {
+            {center.x - 0.5 * spacing.x,
+             center.y - 0.5 * spacing.y, center.z},
+            {center.x + 0.5 * spacing.x,
+             center.y + 0.5 * spacing.y, center.z},
+        };
+    }
+    }
+    throw std::invalid_argument("porous traction has an invalid face axis");
+}
+
+PorousSurfaceTractionDiagnostics evaluatePorousSurfaceTractionImpl(
+    const PeriodicCartesianGrid& grid,
+    const PorousProjectionDiagnostics& source,
+    const double timeStepSeconds) {
+    if (!std::isfinite(timeStepSeconds) || !(timeStepSeconds > 0.0)) {
+        throw std::invalid_argument(
+            "porous traction requires a finite positive time step");
+    }
+    if (!source.accepted || !source.finite
+        || !source.projection.converged
+        || source.porousCrossingCount != source.samples.size()
+        || !std::isfinite(source.totalDissipationWatts)
+        || !std::isfinite(source.totalPorousDissipationJoules)
+        || source.totalDissipationWatts < 0.0
+        || source.totalPorousDissipationJoules < 0.0
+        || !closeValue(
+            source.totalPorousDissipationJoules,
+            source.totalDissipationWatts * timeStepSeconds)) {
+        throw std::invalid_argument(
+            "porous traction requires accepted consistent diagnostics");
+    }
+
+    PorousSurfaceTractionDiagnostics result;
+    result.faces.reserve(source.samples.size());
+    std::map<std::uint64_t, PorousSurfaceTractionAggregate> surfaces;
+    const GridCellCounts counts = grid.cellCounts();
+    for (const auto& sample : source.samples) {
+        const auto& crossing = sample.pressureJump;
+        if (crossing.surfaceStableId == 0
+            || crossing.minusRegionStableId == 0
+            || crossing.plusRegionStableId == 0
+            || crossing.minusRegionStableId == crossing.plusRegionStableId
+            || crossing.i >= counts.x
+            || crossing.j >= counts.y
+            || crossing.k >= counts.z
+            || !std::isfinite(crossing.crossingFraction)
+            || !(crossing.crossingFraction > 0.0)
+            || !(crossing.crossingFraction < 1.0)
+            || !std::isfinite(crossing.pressureJumpPascals)
+            || !std::isfinite(
+                sample.fluidNormalVelocityMetersPerSecond)
+            || !std::isfinite(
+                sample.surfaceNormalVelocityMetersPerSecond)
+            || !std::isfinite(
+                sample.relativeNormalVelocityMetersPerSecond)
+            || !std::isfinite(sample.faceAreaSquareMeters)
+            || !(sample.faceAreaSquareMeters > 0.0)
+            || !std::isfinite(
+                sample.volumeFlowRateCubicMetersPerSecond)
+            || !std::isfinite(sample.dissipationWatts)
+            || sample.dissipationWatts < 0.0
+            || !closeValue(
+                sample.faceAreaSquareMeters,
+                faceArea(grid, crossing.axis))
+            || !closeValue(
+                sample.relativeNormalVelocityMetersPerSecond,
+                sample.fluidNormalVelocityMetersPerSecond
+                    - sample.surfaceNormalVelocityMetersPerSecond)
+            || !closeValue(
+                sample.volumeFlowRateCubicMetersPerSecond,
+                sample.relativeNormalVelocityMetersPerSecond
+                    * sample.faceAreaSquareMeters)
+            || !closeValue(
+                sample.dissipationWatts,
+                -crossing.pressureJumpPascals
+                    * sample.volumeFlowRateCubicMetersPerSecond)) {
+            throw std::invalid_argument(
+                "porous traction sample is inconsistent");
+        }
+
+        const double axialFluidForce =
+            crossing.pressureJumpPascals
+            * sample.faceAreaSquareMeters;
+        const Vector3 fluidForce = axialVector(
+            crossing.axis, axialFluidForce);
+        const Vector3 fluidImpulse = scaleVector(
+            fluidForce, timeStepSeconds);
+        const double fluidPower = axialFluidForce
+            * sample.fluidNormalVelocityMetersPerSecond;
+        const double fluidWork = fluidPower * timeStepSeconds;
+        const Vector3 surfaceForce = scaleVector(fluidForce, -1.0);
+        const Vector3 surfaceImpulse = scaleVector(
+            surfaceForce, timeStepSeconds);
+        const double surfacePower = -axialFluidForce
+            * sample.surfaceNormalVelocityMetersPerSecond;
+        const double surfaceWork = surfacePower * timeStepSeconds;
+        const double dissipatedEnergy =
+            sample.dissipationWatts * timeStepSeconds;
+        const double energyResidual =
+            fluidWork + surfaceWork + dissipatedEnergy;
+        const auto bounds = crossingBounds(grid, crossing);
+
+        PorousFaceTractionDiagnostics face{
+            crossing.surfaceStableId,
+            crossing.minusRegionStableId,
+            crossing.plusRegionStableId,
+            crossing.axis,
+            crossing.i,
+            crossing.j,
+            crossing.k,
+            crossing.crossingFraction,
+            bounds.first,
+            bounds.second,
+            sample.faceAreaSquareMeters,
+            crossing.pressureJumpPascals,
+            sample.fluidNormalVelocityMetersPerSecond,
+            sample.surfaceNormalVelocityMetersPerSecond,
+            sample.relativeNormalVelocityMetersPerSecond,
+            fluidForce,
+            fluidImpulse,
+            fluidPower,
+            fluidWork,
+            surfaceForce,
+            surfaceImpulse,
+            surfacePower,
+            surfaceWork,
+            sample.dissipationWatts,
+            dissipatedEnergy,
+            energyResidual,
+        };
+        if (!finiteVector(face.pressureForceOnFluidNewtons)
+            || !finiteVector(face.pressureImpulseOnFluidNewtonSeconds)
+            || !finiteVector(face.pressureForceOnSurfaceNewtons)
+            || !finiteVector(face.pressureImpulseOnSurfaceNewtonSeconds)
+            || !std::isfinite(face.pressurePowerToFluidWatts)
+            || !std::isfinite(face.pressureWorkToFluidJoules)
+            || !std::isfinite(face.pressurePowerToSurfaceWatts)
+            || !std::isfinite(face.pressureWorkToSurfaceJoules)
+            || !std::isfinite(face.dissipatedEnergyJoules)
+            || !std::isfinite(face.energyResidualJoules)) {
+            throw std::overflow_error(
+                "porous traction ledger is not finite");
+        }
+        result.faces.push_back(face);
+
+        auto [surfaceIterator, inserted] =
+            surfaces.try_emplace(crossing.surfaceStableId);
+        auto& surface = surfaceIterator->second;
+        if (inserted) {
+            surface.stableId = crossing.surfaceStableId;
+        }
+        ++surface.faceCount;
+        surface.areaSquareMeters += face.areaSquareMeters;
+        surface.pressureForceOnFluidNewtons = addVector(
+            surface.pressureForceOnFluidNewtons,
+            face.pressureForceOnFluidNewtons);
+        surface.pressureImpulseOnFluidNewtonSeconds = addVector(
+            surface.pressureImpulseOnFluidNewtonSeconds,
+            face.pressureImpulseOnFluidNewtonSeconds);
+        surface.pressurePowerToFluidWatts +=
+            face.pressurePowerToFluidWatts;
+        surface.pressureWorkToFluidJoules +=
+            face.pressureWorkToFluidJoules;
+        surface.pressureForceOnSurfaceNewtons = addVector(
+            surface.pressureForceOnSurfaceNewtons,
+            face.pressureForceOnSurfaceNewtons);
+        surface.pressureImpulseOnSurfaceNewtonSeconds = addVector(
+            surface.pressureImpulseOnSurfaceNewtonSeconds,
+            face.pressureImpulseOnSurfaceNewtonSeconds);
+        surface.pressurePowerToSurfaceWatts +=
+            face.pressurePowerToSurfaceWatts;
+        surface.pressureWorkToSurfaceJoules +=
+            face.pressureWorkToSurfaceJoules;
+        surface.dissipationWatts += face.dissipationWatts;
+        surface.dissipatedEnergyJoules += face.dissipatedEnergyJoules;
+        surface.energyResidualJoules += face.energyResidualJoules;
+
+        result.totalPressureForceOnFluidNewtons = addVector(
+            result.totalPressureForceOnFluidNewtons,
+            face.pressureForceOnFluidNewtons);
+        result.totalPressureImpulseOnFluidNewtonSeconds = addVector(
+            result.totalPressureImpulseOnFluidNewtonSeconds,
+            face.pressureImpulseOnFluidNewtonSeconds);
+        result.totalPressurePowerToFluidWatts +=
+            face.pressurePowerToFluidWatts;
+        result.totalPressureWorkToFluidJoules +=
+            face.pressureWorkToFluidJoules;
+        result.totalPressureForceOnSurfaceNewtons = addVector(
+            result.totalPressureForceOnSurfaceNewtons,
+            face.pressureForceOnSurfaceNewtons);
+        result.totalPressureImpulseOnSurfaceNewtonSeconds = addVector(
+            result.totalPressureImpulseOnSurfaceNewtonSeconds,
+            face.pressureImpulseOnSurfaceNewtonSeconds);
+        result.totalPressurePowerToSurfaceWatts +=
+            face.pressurePowerToSurfaceWatts;
+        result.totalPressureWorkToSurfaceJoules +=
+            face.pressureWorkToSurfaceJoules;
+        result.totalDissipationWatts += face.dissipationWatts;
+        result.totalDissipatedEnergyJoules +=
+            face.dissipatedEnergyJoules;
+        result.maximumAbsoluteFaceEnergyResidualJoules = std::max(
+            result.maximumAbsoluteFaceEnergyResidualJoules,
+            std::abs(face.energyResidualJoules));
+    }
+
+    result.surfaces.reserve(surfaces.size());
+    bool surfacesAccepted = true;
+    for (auto& [stableId, surface] : surfaces) {
+        static_cast<void>(stableId);
+        const double surfaceEnergyScale =
+            std::abs(surface.pressureWorkToFluidJoules)
+            + std::abs(surface.pressureWorkToSurfaceJoules)
+            + std::abs(surface.dissipatedEnergyJoules);
+        surfacesAccepted = surfacesAccepted
+            && surface.faceCount > 0
+            && std::isfinite(surface.areaSquareMeters)
+            && surface.areaSquareMeters > 0.0
+            && finiteVector(surface.pressureForceOnFluidNewtons)
+            && finiteVector(
+                surface.pressureImpulseOnFluidNewtonSeconds)
+            && finiteVector(surface.pressureForceOnSurfaceNewtons)
+            && finiteVector(
+                surface.pressureImpulseOnSurfaceNewtonSeconds)
+            && std::isfinite(surface.pressurePowerToFluidWatts)
+            && std::isfinite(surface.pressureWorkToFluidJoules)
+            && std::isfinite(surface.pressurePowerToSurfaceWatts)
+            && std::isfinite(surface.pressureWorkToSurfaceJoules)
+            && std::isfinite(surface.dissipationWatts)
+            && std::isfinite(surface.dissipatedEnergyJoules)
+            && std::isfinite(surface.energyResidualJoules)
+            && std::abs(surface.energyResidualJoules)
+                <= 1.0e-10 + 1.0e-11 * surfaceEnergyScale
+            && closeVector(
+                surface.pressureForceOnSurfaceNewtons,
+                scaleVector(
+                    surface.pressureForceOnFluidNewtons, -1.0))
+            && closeVector(
+                surface.pressureImpulseOnSurfaceNewtonSeconds,
+                scaleVector(
+                    surface.pressureImpulseOnFluidNewtonSeconds,
+                    -1.0));
+        result.surfaces.push_back(surface);
+    }
+    result.energyResidualJoules =
+        result.totalPressureWorkToFluidJoules
+        + result.totalPressureWorkToSurfaceJoules
+        + result.totalDissipatedEnergyJoules;
+    result.finite =
+        finiteVector(result.totalPressureForceOnFluidNewtons)
+        && finiteVector(
+            result.totalPressureImpulseOnFluidNewtonSeconds)
+        && finiteVector(result.totalPressureForceOnSurfaceNewtons)
+        && finiteVector(
+            result.totalPressureImpulseOnSurfaceNewtonSeconds)
+        && std::isfinite(result.totalPressurePowerToFluidWatts)
+        && std::isfinite(result.totalPressureWorkToFluidJoules)
+        && std::isfinite(result.totalPressurePowerToSurfaceWatts)
+        && std::isfinite(result.totalPressureWorkToSurfaceJoules)
+        && std::isfinite(result.totalDissipationWatts)
+        && std::isfinite(result.totalDissipatedEnergyJoules)
+        && std::isfinite(result.energyResidualJoules)
+        && std::isfinite(
+            result.maximumAbsoluteFaceEnergyResidualJoules);
+    const double energyScale =
+        std::abs(result.totalPressureWorkToFluidJoules)
+        + std::abs(result.totalPressureWorkToSurfaceJoules)
+        + std::abs(result.totalDissipatedEnergyJoules);
+    result.accepted = result.finite && surfacesAccepted
+        && closeValue(
+            result.totalDissipationWatts,
+            source.totalDissipationWatts)
+        && closeValue(
+            result.totalDissipatedEnergyJoules,
+            source.totalPorousDissipationJoules)
+        && std::abs(result.energyResidualJoules)
+            <= 1.0e-10 + 1.0e-11 * energyScale
+        && result.maximumAbsoluteFaceEnergyResidualJoules
+            <= 1.0e-10 + 1.0e-11 * energyScale
+        && closeVector(
+            result.totalPressureForceOnSurfaceNewtons,
+            scaleVector(result.totalPressureForceOnFluidNewtons, -1.0))
+        && closeVector(
+            result.totalPressureImpulseOnSurfaceNewtonSeconds,
+            scaleVector(
+                result.totalPressureImpulseOnFluidNewtonSeconds, -1.0));
+    return result;
+}
+
+} // namespace
+
+PorousSurfaceTractionDiagnostics evaluatePorousSurfaceTraction(
+    const PeriodicCartesianGrid& grid,
+    const PorousProjectionDiagnostics& diagnostics,
+    const double timeStepSeconds) {
+    return evaluatePorousSurfaceTractionImpl(
+        grid, diagnostics, timeStepSeconds);
+}
+
+PorousSurfaceTractionDiagnostics evaluatePorousSurfaceTraction(
+    const PeriodicCartesianGrid& grid,
+    const MovingPorousProjectionDiagnostics& diagnostics,
+    const double timeStepSeconds) {
+    if (!diagnostics.accepted || !diagnostics.finite
+        || !diagnostics.porous.accepted || !diagnostics.porous.finite
+        || !diagnostics.movingInterface.finite
+        || diagnostics.porous.projection
+            != diagnostics.movingInterface.projection) {
+        throw std::invalid_argument(
+            "porous traction requires accepted moving-porous diagnostics");
+    }
+    return evaluatePorousSurfaceTractionImpl(
+        grid, diagnostics.porous, timeStepSeconds);
 }
 
 } // namespace simwing::fsi::fluid

@@ -211,7 +211,11 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   grid/topology fingerprints. Distinct deterministic bounded/checksummed
   little-endian codecs persist the moving-only state and the complete
   moving/porous composition; the latter nests and revalidates the former rather
-  than duplicating its interface/field wire contract.
+  than duplicating its interface/field wire contract. Accepted porous samples
+  also map to deterministic stable-ID face/surface traction diagnostics with
+  equal-and-opposite fluid/sheet force and impulse, distinct fluid/sheet power
+  and work, and explicit porous-dissipation energy closure; separately
+  prescribed jumps remain outside that sheet-load ownership.
   Its viscosity operators are a bounded explicit periodic MAC Euler oracle and
   a two-stage SSPRK2 path, both with the sharp
   `nu*dt*sum(1/h^2) <= 0.5` per-stage stability contract, exact zero/uniform

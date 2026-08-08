@@ -182,6 +182,81 @@ struct MovingPorousProjectionDiagnostics {
         const MovingPorousProjectionDiagnostics&) const = default;
 };
 
+inline constexpr std::uint32_t porousSurfaceTractionVersion = 1;
+
+struct PorousFaceTractionDiagnostics {
+    std::uint64_t surfaceStableId = 0;
+    std::uint64_t minusRegionStableId = 0;
+    std::uint64_t plusRegionStableId = 0;
+    GridFaceAxis axis = GridFaceAxis::X;
+    std::size_t i = 0;
+    std::size_t j = 0;
+    std::size_t k = 0;
+    double crossingFraction = 0.5;
+    Vector3 lowerCornerMeters;
+    Vector3 upperCornerMeters;
+    double areaSquareMeters = 0.0;
+    double pressureJumpPascals = 0.0;
+    double fluidNormalVelocityMetersPerSecond = 0.0;
+    double surfaceNormalVelocityMetersPerSecond = 0.0;
+    double relativeNormalVelocityMetersPerSecond = 0.0;
+    Vector3 pressureForceOnFluidNewtons;
+    Vector3 pressureImpulseOnFluidNewtonSeconds;
+    double pressurePowerToFluidWatts = 0.0;
+    double pressureWorkToFluidJoules = 0.0;
+    Vector3 pressureForceOnSurfaceNewtons;
+    Vector3 pressureImpulseOnSurfaceNewtonSeconds;
+    double pressurePowerToSurfaceWatts = 0.0;
+    double pressureWorkToSurfaceJoules = 0.0;
+    double dissipationWatts = 0.0;
+    double dissipatedEnergyJoules = 0.0;
+    double energyResidualJoules = 0.0;
+
+    bool operator==(const PorousFaceTractionDiagnostics&) const = default;
+};
+
+struct PorousSurfaceTractionAggregate {
+    std::uint64_t stableId = 0;
+    std::size_t faceCount = 0;
+    double areaSquareMeters = 0.0;
+    Vector3 pressureForceOnFluidNewtons;
+    Vector3 pressureImpulseOnFluidNewtonSeconds;
+    double pressurePowerToFluidWatts = 0.0;
+    double pressureWorkToFluidJoules = 0.0;
+    Vector3 pressureForceOnSurfaceNewtons;
+    Vector3 pressureImpulseOnSurfaceNewtonSeconds;
+    double pressurePowerToSurfaceWatts = 0.0;
+    double pressureWorkToSurfaceJoules = 0.0;
+    double dissipationWatts = 0.0;
+    double dissipatedEnergyJoules = 0.0;
+    double energyResidualJoules = 0.0;
+
+    bool operator==(const PorousSurfaceTractionAggregate&) const = default;
+};
+
+struct PorousSurfaceTractionDiagnostics {
+    std::uint32_t version = porousSurfaceTractionVersion;
+    std::vector<PorousFaceTractionDiagnostics> faces;
+    std::vector<PorousSurfaceTractionAggregate> surfaces;
+    Vector3 totalPressureForceOnFluidNewtons;
+    Vector3 totalPressureImpulseOnFluidNewtonSeconds;
+    double totalPressurePowerToFluidWatts = 0.0;
+    double totalPressureWorkToFluidJoules = 0.0;
+    Vector3 totalPressureForceOnSurfaceNewtons;
+    Vector3 totalPressureImpulseOnSurfaceNewtonSeconds;
+    double totalPressurePowerToSurfaceWatts = 0.0;
+    double totalPressureWorkToSurfaceJoules = 0.0;
+    double totalDissipationWatts = 0.0;
+    double totalDissipatedEnergyJoules = 0.0;
+    double energyResidualJoules = 0.0;
+    double maximumAbsoluteFaceEnergyResidualJoules = 0.0;
+    bool finite = true;
+    bool accepted = false;
+
+    bool operator==(
+        const PorousSurfaceTractionDiagnostics&) const = default;
+};
+
 // Closes the same endpoint/midpoint porous law through the disconnected
 // moving-interface projector. Impermeable moving faces and porous/prescribed
 // jump faces remain separately owned; any overlap is rejected by the combined
@@ -207,5 +282,23 @@ projectVelocityWithMovingAndPorousInterfaces(
     const std::vector<PorousGridFaceCrossing>& porousCrossings,
     const SharpPressureJumpField& prescribedPressureJumps,
     const MovingPorousProjectionSettings& settings = {});
+
+// Reconstructs the equal-and-opposite pressure load carried by only the
+// calibrated porous sheets. Separately prescribed jumps remain owned by their
+// own source and are intentionally excluded. For every face and aggregate,
+// fluid pressure work + sheet pressure work + porous dissipation closes to
+// zero. The moving overload additionally requires complete outer and nested
+// acceptance before exposing traction to a downstream structure adapter.
+[[nodiscard]] PorousSurfaceTractionDiagnostics
+evaluatePorousSurfaceTraction(
+    const PeriodicCartesianGrid& grid,
+    const PorousProjectionDiagnostics& diagnostics,
+    double timeStepSeconds);
+
+[[nodiscard]] PorousSurfaceTractionDiagnostics
+evaluatePorousSurfaceTraction(
+    const PeriodicCartesianGrid& grid,
+    const MovingPorousProjectionDiagnostics& diagnostics,
+    double timeStepSeconds);
 
 } // namespace simwing::fsi::fluid

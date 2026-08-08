@@ -861,7 +861,14 @@ normal, and reconstructed diagnostic pressure. A static headless worker makes
   prescribed jumps, nonlinear diagnostics, and outer acceptance. Decode is
   transactional, reuses both accepted-state validators, and enforces independent
   byte, field, interface, porous-crossing, pressure-jump, region, and diagnostic
-  limits before publishing output.
+  limits before publishing output. A conservative porous-traction adapter now
+  reconstructs every accepted calibrated tile at its subcell position, groups
+  faces deterministically by stable surface ID, and exposes equal-and-opposite
+  fluid/sheet force and impulse. Fluid pressure work uses constitutive-time
+  fluid velocity, sheet work uses authored sheet velocity, and their deficit
+  closes against porous dissipation per face, per surface, and globally.
+  Separately prescribed pressure sources are deliberately not attributed to
+  porous-sheet traction.
   The regression budgets are:
 gradient/divergence adjoint error at or below `2e-14` in the canonical
 integral, Taylor-Green maximum divergence below `2e-14 1/s` with a

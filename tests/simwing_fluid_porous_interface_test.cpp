@@ -790,6 +790,151 @@ void testMovingAndPorousProjectionCoupling() {
           "moving porous: overlapping ownership is rejected transactionally");
 }
 
+void testPorousSurfaceTractionLedgers() {
+    const auto grid = movingPorousGrid();
+    const FaceAlignedMovingInterface movingInterfaces(
+        grid, movingPorousSlabFaces(grid));
+    const auto porous = movingPorousPlane(grid);
+    const auto balance = movingPorousBalancePlane(grid, 1.5);
+    const auto settings = movingPorousSettings();
+    MacVelocityField velocity(grid);
+    CellScalarField pressure(grid);
+    const auto diagnostics = projectVelocityWithMovingAndPorousInterfaces(
+        grid, velocity, pressure, movingInterfaces,
+        porous, balance, settings);
+    const auto traction = evaluatePorousSurfaceTraction(
+        grid, diagnostics,
+        settings.movingProjection.projection.timeStepSeconds);
+    const auto fixedView = evaluatePorousSurfaceTraction(
+        grid, diagnostics.porous,
+        settings.movingProjection.projection.timeStepSeconds);
+
+    check(traction.accepted && traction.finite
+              && traction.version == porousSurfaceTractionVersion
+              && traction.faces.size() == 6
+              && traction.surfaces.size() == 1
+              && traction == fixedView,
+          "porous traction: accepted fixed/moving adapters expose identical calibrated sheets");
+    check(traction.faces.front().surfaceStableId == 300
+              && traction.faces.front().minusRegionStableId == 10
+              && traction.faces.front().plusRegionStableId == 11
+              && traction.faces.front().lowerCornerMeters
+                  == Vector3{1.45, 0.0, 0.0}
+              && traction.faces.front().upperCornerMeters
+                  == Vector3{1.45, 1.0, 1.0},
+          "porous traction: stable topology and subcell physical bounds survive reconstruction");
+    checkNear(traction.totalPressureForceOnFluidNewtons.x,
+              -9.0, 2.0e-10,
+              "porous traction: pressure jump produces fluid force");
+    checkNear(traction.totalPressureForceOnSurfaceNewtons.x,
+              9.0, 2.0e-10,
+              "porous traction: sheet receives equal-and-opposite force");
+    checkNear(
+        traction.totalPressureImpulseOnFluidNewtonSeconds.x,
+        -3.6, 2.0e-10,
+        "porous traction: fluid force integrates to impulse");
+    checkNear(
+        traction.totalPressureImpulseOnSurfaceNewtonSeconds.x,
+        3.6, 2.0e-10,
+        "porous traction: sheet reaction integrates to impulse");
+    checkNear(traction.totalPressurePowerToFluidWatts,
+              -2.25, 2.0e-10,
+              "porous traction: fluid pressure power uses fluid velocity");
+    checkNear(traction.totalPressurePowerToSurfaceWatts,
+              0.9, 2.0e-10,
+              "porous traction: sheet pressure power uses sheet velocity");
+    checkNear(traction.totalDissipationWatts,
+              1.35, 2.0e-10,
+              "porous traction: relative pressure work becomes material dissipation");
+    checkNear(traction.totalDissipatedEnergyJoules,
+              0.54, 2.0e-10,
+              "porous traction: dissipation integrates over the macro step");
+    checkNear(traction.energyResidualJoules,
+              0.0, 3.0e-16,
+              "porous traction: fluid, sheet, and dissipative work close");
+    checkNear(traction.surfaces.front().energyResidualJoules,
+              0.0, 3.0e-16,
+              "porous traction: stable surface aggregate closes energy");
+    checkNear(diagnostics.porous.totalPressureJumpForceOnFluidNewtons.x,
+              0.0, 2.0e-10,
+              "porous traction: prescribed balancing source remains outside sheet load ownership");
+
+    const auto midpointSettings = movingPorousSettings(
+        PorousConstitutiveEvaluation::Midpoint);
+    MacVelocityField midpointVelocity(grid);
+    CellScalarField midpointPressure(grid);
+    const auto midpointDiagnostics =
+        projectVelocityWithMovingAndPorousInterfaces(
+            grid, midpointVelocity, midpointPressure, movingInterfaces,
+            porous, movingPorousBalancePlane(grid, 0.25),
+            midpointSettings);
+    const auto midpointTraction = evaluatePorousSurfaceTraction(
+        grid, midpointDiagnostics,
+        midpointSettings.movingProjection.projection.timeStepSeconds);
+    check(midpointTraction.accepted
+              && midpointTraction.faces.front()
+                     .fluidNormalVelocityMetersPerSecond ==
+                  midpointDiagnostics.porous.samples.front()
+                      .fluidNormalVelocityMetersPerSecond,
+          "porous traction: midpoint loads use the diagnosed constitutive-time fluid velocity");
+    checkNear(midpointTraction.totalPressureForceOnSurfaceNewtons.x,
+              1.5, 2.0e-10,
+              "porous traction: midpoint pressure reaction reaches the sheet");
+    checkNear(midpointTraction.totalPressurePowerToFluidWatts,
+              -0.1875, 2.0e-10,
+              "porous traction: midpoint fluid power is time-centered");
+    checkNear(midpointTraction.totalPressurePowerToSurfaceWatts,
+              0.15, 2.0e-10,
+              "porous traction: midpoint surface power retains prescribed sheet motion");
+    checkNear(midpointTraction.totalDissipatedEnergyJoules,
+              0.015, 2.0e-10,
+              "porous traction: midpoint work deficit equals porous dissipation");
+    checkNear(midpointTraction.energyResidualJoules,
+              0.0, 3.0e-16,
+              "porous traction: midpoint energy closes exactly");
+
+    auto splitPorous = porous;
+    for (std::size_t index = splitPorous.size() / 2;
+         index < splitPorous.size(); ++index) {
+        splitPorous[index].surfaceStableId = 301;
+    }
+    MacVelocityField splitVelocity(grid);
+    CellScalarField splitPressure(grid);
+    const auto splitDiagnostics =
+        projectVelocityWithMovingAndPorousInterfaces(
+            grid, splitVelocity, splitPressure, movingInterfaces,
+            splitPorous, balance, settings);
+    const auto splitTraction = evaluatePorousSurfaceTraction(
+        grid, splitDiagnostics,
+        settings.movingProjection.projection.timeStepSeconds);
+    check(splitTraction.accepted
+              && splitTraction.surfaces.size() == 2
+              && splitTraction.surfaces[0].stableId == 300
+              && splitTraction.surfaces[1].stableId == 301
+              && splitTraction.surfaces[0].faceCount == 3
+              && splitTraction.surfaces[1].faceCount == 3,
+          "porous traction: stable surface aggregates are deterministic and complete");
+
+    auto rejected = diagnostics;
+    rejected.accepted = false;
+    expectInvalid(
+        [&] { static_cast<void>(evaluatePorousSurfaceTraction(
+            grid, rejected,
+            settings.movingProjection.projection.timeStepSeconds)); },
+        "porous traction: unaccepted moving wrapper cannot expose sheet load");
+    auto corrupted = diagnostics.porous;
+    corrupted.totalPorousDissipationJoules += 1.0;
+    expectInvalid(
+        [&] { static_cast<void>(evaluatePorousSurfaceTraction(
+            grid, corrupted,
+            settings.movingProjection.projection.timeStepSeconds)); },
+        "porous traction: inconsistent source energy is rejected");
+    expectInvalid(
+        [&] { static_cast<void>(evaluatePorousSurfaceTraction(
+            grid, diagnostics, 0.0)); },
+        "porous traction: nonpositive integration interval is rejected");
+}
+
 void testAxisAreaAndValidation() {
     const PeriodicCartesianGrid grid(
         {2, 2, 2}, {}, {4.0, 6.0, 8.0});
@@ -946,6 +1091,7 @@ int main() {
     testImplicitGridPressureFluxCoupling();
     testCoupledPorousDelegationValidationAndRollback();
     testMovingAndPorousProjectionCoupling();
+    testPorousSurfaceTractionLedgers();
     testAxisAreaAndValidation();
     testPressureDrivenPlugFlow();
     if (failures != 0) {
