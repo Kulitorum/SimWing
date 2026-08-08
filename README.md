@@ -453,7 +453,11 @@ Coincident grid-plane area remains duplicated and flagged on both adjacent
 cells in the raw clipping output. A separate ownership stage pairs those exact
 duplicates into one canonical MAC-face area with authored side-region IDs and
 explicit winding sign; ordinary areas remain cell-owned and zero-area contacts
-remain diagnostic. Unpaired periodic-domain boundary area is rejected. Cut-cell
+remain diagnostic. Those unique owners now become stable barycentric
+quadrature points which retain the authored material, sheet, role, and both
+fluid regions and feed ordered traction through the conservative Structure
+transfer without integrating shared-plane area twice. This boundary does not
+invent traction. Unpaired periodic-domain boundary area is rejected. Cut-cell
 volume fractions, general face crossings, and region reconstruction remain open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam

@@ -410,6 +410,7 @@ src/fsi/
     scene_structure.*       authoritative scene-to-XPBD assembly
     scene_fluid_surface.*   compact two-sided surface + accepted motion
     scene_fluid_surface_transfer.* authoritative conservative-load binding
+    scene_fluid_quadrature.* unique owned area to stable transfer quadrature
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -477,6 +478,7 @@ Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_scene_structure`, `simwing_scene_fluid_surface`,
 `simwing_scene_fluid_surface_transfer`,
 `simwing_scene_fluid_geometry`,
+`simwing_scene_fluid_quadrature`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
 `simwing_coupled_state`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
@@ -514,9 +516,12 @@ the complete expected pair set. Exact pairs are clipped into flattened
 barycentric point/segment/area patches with analytic area and centroids.
 Coincident shared-plane area remains duplicated and visibly flagged until a
 separate ownership stage pairs it into one canonical internal MAC face with
-authored side regions and winding sign. It rejects unresolved periodic-domain
-boundary area. Volume fractions, general face crossings, and region
-reconstruction remain open. A canonical Qt-free
+authored side regions and winding sign. Unique cell and face owners then become
+stable barycentric quadrature points carrying authored physical identity into
+the existing conservative load transfer; shared-plane area is integrated once
+and no traction is invented at this boundary. It rejects unresolved
+periodic-domain boundary area. Volume fractions, general face crossings, and
+region reconstruction remain open. A canonical Qt-free
 structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.

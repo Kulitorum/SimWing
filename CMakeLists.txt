@@ -300,6 +300,18 @@ target_link_libraries(simwing_scene_fluid_geometry PUBLIC
     simwing_scene_fluid_surface
 )
 
+add_library(simwing_scene_fluid_quadrature STATIC
+    src/fsi/scene_fluid_quadrature.cpp
+    src/fsi/scene_fluid_quadrature.h
+)
+target_include_directories(simwing_scene_fluid_quadrature PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_scene_fluid_quadrature PUBLIC
+    simwing_scene_fluid_geometry
+    simwing_scene_fluid_surface_transfer
+)
+
 add_library(simwing_viewer_protocol STATIC
     src/viewer/viewer_protocol.cpp
     src/viewer/viewer_protocol.h
@@ -915,6 +927,12 @@ add_executable(simwing-scene-surface-ownership-test
 target_link_libraries(simwing-scene-surface-ownership-test
     PRIVATE simwing_scene_fluid_geometry)
 
+add_executable(simwing-scene-fluid-quadrature-test
+    tests/simwing_scene_fluid_quadrature_test.cpp
+)
+target_link_libraries(simwing-scene-fluid-quadrature-test
+    PRIVATE simwing_scene_fluid_quadrature)
+
 add_executable(simwing-viewer-protocol-test
     tests/simwing_viewer_protocol_test.cpp
 )
@@ -1312,6 +1330,7 @@ set_target_properties(
     simwing-scene-surface-intersection-test
     simwing-scene-surface-clipping-test
     simwing-scene-surface-ownership-test
+    simwing-scene-fluid-quadrature-test
     simwing-viewer-protocol-test
     simwing-vector-glyphs-test
     simwing-structure-frame-test
@@ -1388,6 +1407,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-scene-surface-intersection-test
         simwing-scene-surface-clipping-test
         simwing-scene-surface-ownership-test
+        simwing-scene-fluid-quadrature-test
         simwing-viewer-protocol-test
         simwing-vector-glyphs-test
         simwing-structure-frame-test
@@ -1559,6 +1579,8 @@ add_test(NAME simwing_scene_surface_clipping
     COMMAND simwing-scene-surface-clipping-test)
 add_test(NAME simwing_scene_surface_ownership
     COMMAND simwing-scene-surface-ownership-test)
+add_test(NAME simwing_scene_fluid_quadrature
+    COMMAND simwing-scene-fluid-quadrature-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
 add_test(NAME simwing_vector_glyphs COMMAND simwing-vector-glyphs-test)
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
