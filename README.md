@@ -53,7 +53,17 @@ requires a divergence-free MAC advector, delegates uniform fields bit-exactly
 to the oracle, and supports safe nonlinear self-advection. Under its local
 outgoing-CFL limit it preserves component momentum and bounds without adding
 kinetic energy; a periodic shear fixture observes first-order convergence.
-The transport and Euler/SSPRK2 viscosity modes now compose with the zero-mean
+A pressure-projected nonlinear SSPRK2 operator now uses two self-advection
+stages without feeding a divergent intermediate field back as its own
+advector. It projects stage one, advances stage two, convexly averages that
+prediction with the old field, and projects the result. All four candidates
+remain private until pressure, velocity, momentum, energy, and continuity pass;
+a fixed-grid vortical refinement observes second-order temporal behavior while
+the donor-cell spatial reconstruction remains first order. It remains a
+standalone verification operator until its pressure stages are reconciled with
+viscous splitting in the macro-step.
+The original single-stage transport and Euler/SSPRK2 viscosity modes compose
+with the zero-mean
 pressure solve in one transactional periodic fluid step. Every stage runs on
 candidate fields; velocity and pressure commit together only when transport
 bounds, viscous stability, projection convergence, and the final

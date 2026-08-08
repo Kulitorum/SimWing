@@ -388,6 +388,7 @@ src/fsi/
         grid.*              block hierarchy and field storage
         geometry.*          discrete surface and region reconstruction
         advection.*         bounded uniform/variable MAC transport
+        projected_advection.* projected nonlinear SSPRK2 transport
         diffusion.*         bounded periodic MAC viscosity verification
         evolution.*         transactional selectable fluid macro-step
         projection.*
@@ -482,8 +483,19 @@ and do not add kinetic energy under a local outgoing-CFL limit; the aliased
 field path supplies first-order nonlinear self-advection. A periodic shear
 fixture observes the expected first-order refinement. This is the conservative
 variable-flow baseline for later second-order reconstruction, not that
-production operator itself. The composed periodic macro-step selects either
-transport and Euler or SSPRK2 viscosity, then runs the zero-mean projection on
+production operator itself. A pressure-projected nonlinear SSPRK2 operator now
+keeps every intermediate incompressible before it can become its own advector:
+stage one donor transport is projected, stage two self-advects from that
+accepted field, the twice-advanced prediction is convexly averaged with the old
+field, and the result is projected again. Both pressure and velocity remain
+private until all four stages and the aggregate momentum/energy/continuity
+ledger pass. Exact manual-stage composition, repeated-step eligibility, and a
+fixed-grid vortical refinement show deterministic second-order temporal
+behavior. This does not upgrade the first-order donor-cell spatial
+reconstruction. The operator remains standalone until its internal pressure
+stages are reconciled with viscous splitting. The existing composed periodic
+macro-step selects a single-stage transport mode and either Euler or SSPRK2
+viscosity, then runs the zero-mean projection on
 private candidates. Velocity and pressure commit together only after every
 stage and an independent aggregate momentum/kinetic-energy ledger pass.
 Regressions are bit-identical to their standalone uniform/nonlinear transport
@@ -646,9 +658,9 @@ cases meet their declared tolerances.
 
 Status: in progress. `simwing_fluid` currently owns the uniform periodic
 verification grid, bounded uniform and divergence-free variable-flow velocity
-transport, nonlinear self-advection, Euler and second-order SSPRK2 laminar
-velocity diffusion, their transactional selectable composed macro-step,
-pressure
+transport, nonlinear self-advection, pressure-projected second-order temporal
+transport, Euler and second-order SSPRK2 laminar velocity diffusion, their
+transactional selectable composed macro-step, pressure
 projection, and fixed-topology face-aligned moving
 constraints, plus the first open planar one-partial-cell control-volume
 operator, its exact next-plane topology rebase, and the bounded physical

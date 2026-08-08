@@ -308,6 +308,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/planar_cut_surface.h
     src/fsi/fluid/projection.cpp
     src/fsi/fluid/projection.h
+    src/fsi/fluid/projected_advection.cpp
+    src/fsi/fluid/projected_advection.h
 )
 target_include_directories(simwing_fluid PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
@@ -683,6 +685,11 @@ add_executable(simwing-fluid-variable-advection-test
 )
 target_link_libraries(simwing-fluid-variable-advection-test PRIVATE simwing_fluid)
 
+add_executable(simwing-fluid-projected-advection-test
+    tests/simwing_fluid_projected_advection_test.cpp
+)
+target_link_libraries(simwing-fluid-projected-advection-test PRIVATE simwing_fluid)
+
 add_executable(simwing-fluid-evolution-test
     tests/simwing_fluid_evolution_test.cpp
 )
@@ -891,6 +898,7 @@ set_target_properties(
     simwing-fluid-diffusion-test
     simwing-fluid-advection-test
     simwing-fluid-variable-advection-test
+    simwing-fluid-projected-advection-test
     simwing-fluid-evolution-test
     simwing-transfer-test
     simwing-coupling-test
@@ -943,6 +951,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-fluid-diffusion-test
         simwing-fluid-advection-test
         simwing-fluid-variable-advection-test
+        simwing-fluid-projected-advection-test
         simwing-fluid-evolution-test
         simwing-transfer-test
         simwing-coupling-test
@@ -1091,6 +1100,8 @@ add_test(NAME simwing_fluid_advection
     COMMAND simwing-fluid-advection-test)
 add_test(NAME simwing_fluid_variable_advection
     COMMAND simwing-fluid-variable-advection-test)
+add_test(NAME simwing_fluid_projected_advection
+    COMMAND simwing-fluid-projected-advection-test)
 add_test(NAME simwing_fluid_evolution
     COMMAND simwing-fluid-evolution-test)
 add_test(NAME simwing_transfer COMMAND simwing-transfer-test)
