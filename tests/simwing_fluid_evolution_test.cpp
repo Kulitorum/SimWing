@@ -17,6 +17,8 @@ using simwing::fsi::fluid::GridFaceAxis;
 using simwing::fsi::fluid::GridFacePressureJump;
 using simwing::fsi::fluid::MacVelocityField;
 using simwing::fsi::fluid::MovingPlanarPorousSheetStrangStages;
+using simwing::fsi::fluid::
+    MovingPlanarPorousSheetStrangValidationSettings;
 using simwing::fsi::fluid::PeriodicCartesianGrid;
 using simwing::fsi::fluid::PeriodicFlowAdvectionMode;
 using simwing::fsi::fluid::PeriodicFlowDiffusionMode;
@@ -1704,6 +1706,15 @@ void testMovingPlanarPorousStrangStages() {
               && wrappedPressure == replayPressure
               && wrapped.firstHalfSheet == first
               && wrapped.secondHalfSheet == second
+              && std::abs(wrapped.stageSampleIntervalSeconds - 0.05)
+                  < 1.0e-15
+              && std::abs(wrapped.physicalDisplacementMeters - 0.02)
+                  < 1.0e-15
+              && std::abs(
+                     wrapped.trapezoidalDisplacementMeters - 0.02)
+                  < 1.0e-15
+              && std::abs(wrapped.kinematicResidualMeters)
+                  <= wrapped.kinematicToleranceMeters
               && wrapped.flow.firstHalfPorous.samples.size() == 6
               && wrapped.flow.secondHalfPorous.samples.size() == 6,
           "moving porous Strang: wrapped stage epochs advance deterministically");
@@ -1748,6 +1759,16 @@ void testMovingPlanarPorousStrangStages() {
                     invalidStages, driving, iteration, flowSettings));
         },
         "moving porous Strang: stage identity changes are rejected");
+    invalidStages = fixedStages;
+    invalidStages.secondHalf.physicalPlaneCoordinateMeters = 0.9;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+                    grid, rejectedVelocity, rejectedPressure,
+                    invalidStages, driving, iteration, flowSettings));
+        },
+        "moving porous Strang: stage positions cannot teleport relative to velocity");
     invalidStages = wrappedStages;
     invalidStages.secondHalf.topology.faceCoordinate = 1;
     invalidStages.secondHalf.physicalPlaneCoordinateMeters = 4.51;
@@ -1759,6 +1780,17 @@ void testMovingPlanarPorousStrangStages() {
                     invalidStages, driving, iteration, flowSettings));
         },
         "moving porous Strang: skipped topology segments are rejected");
+    MovingPlanarPorousSheetStrangValidationSettings invalidValidation;
+    invalidValidation.absolutePositionToleranceMeters = -1.0;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
+                    grid, rejectedVelocity, rejectedPressure,
+                    fixedStages, driving, iteration, flowSettings,
+                    invalidValidation));
+        },
+        "moving porous Strang: invalid kinematic tolerances are rejected");
     check(rejectedVelocity == originalVelocity
               && rejectedPressure == originalPressure,
           "moving porous Strang: metadata rejection mutates neither field");

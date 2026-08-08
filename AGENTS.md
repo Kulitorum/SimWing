@@ -864,9 +864,12 @@ makes this a certified aerodynamic solver.
   changing its fields or nested diagnostics. Its stage-resolved planar overload
   accepts distinct complete sheet definitions at the two porous midpoints,
   preserves identity/regions/resistance, admits only a retained or adjacent
-  topology epoch, retains both unwrapped epochs in diagnostics, and crosses a
-  `3 -> 0`, image `0 -> 1` wrap transactionally inside one macro-step. This is
-  moving planar porous-source sampling, not a cut-cell remap.
+  topology epoch, and requires their displacement to equal trapezoidal
+  integration of sampled normal velocity over `dt/2` within explicit
+  tolerances. It retains both unwrapped epochs and that kinematic residual in
+  diagnostics, and crosses a `3 -> 0`, image `0 -> 1` wrap transactionally
+  inside one macro-step. This is moving planar porous-source sampling, not a
+  cut-cell remap.
 - `src/fsi/fluid/checkpoint.{h,cpp}` owns the versioned in-memory checkpoint for
   one accepted moving-interface fluid epoch. Its immutable payload includes
   pressure, velocity, exact interface kinematics, and projection diagnostics;
@@ -1069,6 +1072,12 @@ consistent, while rejecting incomplete or internally inconsistent wrappers.
 | SimWing macro-step coupling | `simwing_coupling`; preserve strictly ordered local sample time, topology/duration binding, analytic moving-piston impulse and pressure-volume work, independent temporal ledger closure, momentum delivery through XPBD, deterministic replay, and pre-load checkpoint rollback on failure |
 | SimWing fluid/structure bridge and piston workers | `simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing_porous_sheet_case`, `simwing_open_piston_case`, `simwing_fsi_piston_headless`, `simwing_fsi_porous_sheet_headless`, `simwing_fsi_porous_sheet_checkpoint_write`, `simwing_fsi_porous_sheet_checkpoint_resume`, `simwing_fsi_porous_sheet_checkpoint_verify`, `simwing_fsi_porous_sheet_wrapped_checkpoint_write`, `simwing_fsi_porous_sheet_wrapped_checkpoint_resume`, `simwing_fsi_porous_sheet_wrapped_checkpoint_verify`, `simwing_fsi_porous_sheet_rejects_foreign_checkpoint`, `simwing_fsi_open_piston_headless`, `simwing_fsi_open_piston_rebase_headless`, `simwing_fsi_open_piston_checkpoint_write`, `simwing_fsi_open_piston_checkpoint_resume`, `simwing_fsi_open_piston_checkpoint_verify`, `simwing_fsi_open_piston_rejects_foreign_checkpoint`; preserve the strict uniform subset, planar face-resolved nonuniform transfer, stable surface/geometry binding, complete nonoverlapping coverage, per-face and aggregate area/force/moment/power closure, porous sheet-reaction ownership with prescribed-source exclusion and closed source/mapped impulse/work/dissipation ledgers, analytic porous-sheet midpoint momentum and pump-work/porous-loss/kinetic-energy closure across all six explicit ordinary MAC-face rebases including the `7 -> 0` signed-image wrap, direction-reversed pump/momentum closure through six negative rebases and the `0 -> 7` signed-image `-1` wrap, distinct directional provenance/fingerprint and transactional cross-direction checkpoint rejection, exact persistent continuation from every pre-pump topology epoch, process-level same-path additional-step restart at the ordinary wrapped `face=0,image=1` epoch, later next-image pump-collision rollback, immutable initial/ordinary/rebased/terminal porous-sheet checkpoint restore with topology bound to the accepted constitutive midpoint, deterministic bounded/checksummed `SWPS` round trips, complete topology version/axis/wrapped-face/signed-image ownership, nested Structure validation, explicit field and bounded-replay identity, exact next-frame or repeated terminal-collision replay, transactional public-metadata/magic/version/reserved/checksum/truncation/trailing/topology-version/topology-axis/topology-face/topology-image/byte/sample/replay/nested-state rejection, same-path additional-step porous-sheet CLI resume from the rebased epoch, absolute autosave cadence, final-write deduplication, and foreign-format rejection before trace creation, rigid-normal X/Y/Z grid/physical-plane correspondence and velocity binding, analytic impulse delivery, explicit actuator-versus-complete-CFD reaction, bit-identical replay through periodic topology crossings and composite checkpoint restore, deterministic bounded/checksummed composite persistence, ordinary/rebased decode-reencode and next-frame equivalence, transactional magic/version/checksum/truncation/trailing/topology/limit rejection including recomputed-checksum diagnostic identity/geometry/acceptance corruption, atomic same-path additional-step resume from a rebase epoch, absolute autosave cadence, final-write deduplication, cross-format rejection before trace creation, open-piston structure/fluid/actuator/system momentum residual below `1e-8 N*s` and energy residual below `2e-9 J`, accepted-only frames, and Qt-free headless execution |
 | packaging/resources/CMake | configure from clean metadata, build Release, and run the full suite |
+
+For `simwing_fluid_evolution`, the stage-resolved planar porous check also
+requires `dt/2` trapezoidal position/normal-velocity consistency, explicit
+finite nonnegative tolerances, an owned residual within that bound, and
+transactional rejection of otherwise topology-valid motion that would
+teleport the sheet.
 
 For `simwing_fluid_interface_jump`, static sharp-jump balance includes ordered
 same-face crossings, distinct open-interval positions, continuous region-chain

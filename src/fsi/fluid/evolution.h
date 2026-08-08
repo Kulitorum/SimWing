@@ -17,7 +17,7 @@ inline constexpr std::uint32_t periodicFlowStepVersion = 4;
 inline constexpr std::uint32_t periodicFlowStrangSspRk2Version = 1;
 inline constexpr std::uint32_t porousPeriodicFlowStrangSspRk2Version = 1;
 inline constexpr std::uint32_t
-    movingPlanarPorousFlowStrangSspRk2Version = 1;
+    movingPlanarPorousFlowStrangSspRk2Version = 2;
 inline constexpr std::uint32_t periodicFlowStrangSubcyclingVersion = 1;
 inline constexpr std::size_t periodicFlowStrangMaximumSubsteps = 4096;
 
@@ -292,11 +292,25 @@ struct MovingPlanarPorousSheetStrangStages {
         const MovingPlanarPorousSheetStrangStages&) const = default;
 };
 
+struct MovingPlanarPorousSheetStrangValidationSettings {
+    double absolutePositionToleranceMeters = 1.0e-12;
+    double relativePositionTolerance = 1.0e-12;
+
+    bool operator==(
+        const MovingPlanarPorousSheetStrangValidationSettings&) const =
+        default;
+};
+
 struct MovingPlanarPorousFlowStrangSspRk2Diagnostics {
     std::uint32_t version =
         movingPlanarPorousFlowStrangSspRk2Version;
     PlanarPorousSheetDefinition firstHalfSheet;
     PlanarPorousSheetDefinition secondHalfSheet;
+    double stageSampleIntervalSeconds = 0.0;
+    double physicalDisplacementMeters = 0.0;
+    double trapezoidalDisplacementMeters = 0.0;
+    double kinematicResidualMeters = 0.0;
+    double kinematicToleranceMeters = 0.0;
     PorousPeriodicFlowStrangSspRk2Diagnostics flow;
     bool finite = true;
     bool accepted = false;
@@ -308,9 +322,11 @@ struct MovingPlanarPorousFlowStrangSspRk2Diagnostics {
 // Stage-resolved symmetric porous/bulk/porous flow for one complete moving
 // planar sheet. Both definitions are validated and fully tiled before any
 // field candidate is advanced. Identity, regions, resistance, and topology
-// continuity are immutable across the macro step; accepted diagnostics retain
-// both complete unwrapped topology epochs. This is an adjacent planar porous
-// source transition, not a general cut-cell remap.
+// continuity are immutable across the macro step. Their displacement must
+// equal trapezoidal integration of the two sampled normal velocities over the
+// half-step interval within explicit tolerances. Accepted diagnostics retain
+// both complete unwrapped topology epochs and that kinematic residual. This is
+// an adjacent planar porous source transition, not a general cut-cell remap.
 [[nodiscard]] MovingPlanarPorousFlowStrangSspRk2Diagnostics
 advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
     const PeriodicCartesianGrid& grid,
@@ -318,7 +334,9 @@ advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
     CellScalarField& pressurePascals,
     const MovingPlanarPorousSheetStrangStages& sheetStages,
     const PorousIterationSettings& porousIteration,
-    const PeriodicFlowStrangSspRk2Settings& settings = {});
+    const PeriodicFlowStrangSspRk2Settings& settings = {},
+    const MovingPlanarPorousSheetStrangValidationSettings&
+        validationSettings = {});
 
 [[nodiscard]] MovingPlanarPorousFlowStrangSspRk2Diagnostics
 advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
@@ -328,7 +346,9 @@ advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
     const MovingPlanarPorousSheetStrangStages& sheetStages,
     const SharpPressureJumpField& prescribedPressureJumps,
     const PorousIterationSettings& porousIteration,
-    const PeriodicFlowStrangSspRk2Settings& settings = {});
+    const PeriodicFlowStrangSspRk2Settings& settings = {},
+    const MovingPlanarPorousSheetStrangValidationSettings&
+        validationSettings = {});
 
 enum class PeriodicFlowStrangSubcyclingFailureStage : std::uint8_t {
     None = 0,

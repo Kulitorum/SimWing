@@ -1134,7 +1134,19 @@ advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheetImpl(
     const MovingPlanarPorousSheetStrangStages& sheetStages,
     const SharpPressureJumpField* prescribedPressureJumps,
     const PorousIterationSettings& porousIteration,
-    const PeriodicFlowStrangSspRk2Settings& settings) {
+    const PeriodicFlowStrangSspRk2Settings& settings,
+    const MovingPlanarPorousSheetStrangValidationSettings&
+        validationSettings) {
+    validateSettings(settings);
+    if (!std::isfinite(
+            validationSettings.absolutePositionToleranceMeters)
+        || validationSettings.absolutePositionToleranceMeters < 0.0
+        || !std::isfinite(
+            validationSettings.relativePositionTolerance)
+        || validationSettings.relativePositionTolerance < 0.0) {
+        throw std::invalid_argument(
+            "moving planar porous Strang validation settings are invalid");
+    }
     const auto& first = sheetStages.firstHalf;
     const auto& second = sheetStages.secondHalf;
     if (first.surfaceStableId != second.surfaceStableId
@@ -1169,9 +1181,43 @@ advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheetImpl(
             "moving planar porous Strang stages have discontinuous topology");
     }
 
+    const double stageSampleIntervalSeconds =
+        0.5 * settings.timeStepSeconds;
+    const double physicalDisplacementMeters =
+        second.physicalPlaneCoordinateMeters
+        - first.physicalPlaneCoordinateMeters;
+    const double trapezoidalDisplacementMeters =
+        0.5 * stageSampleIntervalSeconds
+        * (first.surfaceNormalVelocityMetersPerSecond
+           + second.surfaceNormalVelocityMetersPerSecond);
+    const double kinematicResidualMeters =
+        physicalDisplacementMeters - trapezoidalDisplacementMeters;
+    const double kinematicToleranceMeters = combinedTolerance(
+        validationSettings.absolutePositionToleranceMeters,
+        validationSettings.relativePositionTolerance,
+        std::abs(physicalDisplacementMeters),
+        std::abs(trapezoidalDisplacementMeters));
+    if (!std::isfinite(physicalDisplacementMeters)
+        || !std::isfinite(trapezoidalDisplacementMeters)
+        || !std::isfinite(kinematicResidualMeters)
+        || !std::isfinite(kinematicToleranceMeters)
+        || std::abs(kinematicResidualMeters)
+            > kinematicToleranceMeters) {
+        throw std::invalid_argument(
+            "moving planar porous Strang stage kinematics are inconsistent");
+    }
+
     MovingPlanarPorousFlowStrangSspRk2Diagnostics diagnostics;
     diagnostics.firstHalfSheet = first;
     diagnostics.secondHalfSheet = second;
+    diagnostics.stageSampleIntervalSeconds =
+        stageSampleIntervalSeconds;
+    diagnostics.physicalDisplacementMeters =
+        physicalDisplacementMeters;
+    diagnostics.trapezoidalDisplacementMeters =
+        trapezoidalDisplacementMeters;
+    diagnostics.kinematicResidualMeters = kinematicResidualMeters;
+    diagnostics.kinematicToleranceMeters = kinematicToleranceMeters;
     diagnostics.flow =
         advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
             grid, velocityMetersPerSecond, pressurePascals,
@@ -1221,11 +1267,14 @@ advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
     CellScalarField& pressurePascals,
     const MovingPlanarPorousSheetStrangStages& sheetStages,
     const PorousIterationSettings& porousIteration,
-    const PeriodicFlowStrangSspRk2Settings& settings) {
+    const PeriodicFlowStrangSspRk2Settings& settings,
+    const MovingPlanarPorousSheetStrangValidationSettings&
+        validationSettings) {
     return
         advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheetImpl(
             grid, velocityMetersPerSecond, pressurePascals,
-            sheetStages, nullptr, porousIteration, settings);
+            sheetStages, nullptr, porousIteration, settings,
+            validationSettings);
 }
 
 MovingPlanarPorousFlowStrangSspRk2Diagnostics
@@ -1236,12 +1285,14 @@ advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheet(
     const MovingPlanarPorousSheetStrangStages& sheetStages,
     const SharpPressureJumpField& prescribedPressureJumps,
     const PorousIterationSettings& porousIteration,
-    const PeriodicFlowStrangSspRk2Settings& settings) {
+    const PeriodicFlowStrangSspRk2Settings& settings,
+    const MovingPlanarPorousSheetStrangValidationSettings&
+        validationSettings) {
     return
         advancePeriodicFlowStrangSspRk2WithMovingPlanarPorousSheetImpl(
             grid, velocityMetersPerSecond, pressurePascals,
             sheetStages, &prescribedPressureJumps,
-            porousIteration, settings);
+            porousIteration, settings, validationSettings);
 }
 
 PeriodicFlowStrangSubcyclingDiagnostics

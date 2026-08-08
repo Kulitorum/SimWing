@@ -204,8 +204,11 @@ fields or nested diagnostics.
 A stage-resolved planar overload now samples one immutable sheet definition at
 each porous half-step midpoint. The two stages must keep stable identity,
 oriented regions, and resistance, while the pure topology selector permits the
-second sample to retain or move by one adjacent segment. A wrapped `3 -> 0`,
-image `0 -> 1` regression retains both complete unwrapped epochs, and invalid
+second sample to retain or move by one adjacent segment. Their physical
+displacement must also match trapezoidal integration of the two normal-velocity
+samples across the `dt/2` interval within explicit absolute/relative
+tolerances. A wrapped `3 -> 0`, image `0 -> 1` regression retains both complete
+unwrapped epochs and the closed kinematic residual; inconsistent motion,
 identity, placement, skipped topology, or a later numerical failure commits
 neither field. This advances moving planar porous sources through the complete
 symmetric flow step; it does not claim a cut-cell remap.
