@@ -1184,9 +1184,10 @@ add_test(NAME simwing_fsi_periodic_flow_checkpoint_write
         --steps 4
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-periodic-flow-checkpoint-write.swtrace"
-        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-periodic-flow.swpc")
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-periodic-flow.swpc"
+        --checkpoint-every 2)
 set_tests_properties(simwing_fsi_periodic_flow_checkpoint_write PROPERTIES
-    PASS_REGULAR_EXPRESSION "completed 4 periodic-flow step\\(s\\)")
+    PASS_REGULAR_EXPRESSION "completed 4 periodic-flow step\\(s\\).*checkpoint-writes=2")
 add_test(NAME simwing_fsi_periodic_flow_checkpoint_resume
     COMMAND simwing-fsi
         --case periodic-flow
@@ -1194,10 +1195,11 @@ add_test(NAME simwing_fsi_periodic_flow_checkpoint_resume
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-periodic-flow-checkpoint-resume.swtrace"
         --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-periodic-flow.swpc"
-        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-periodic-flow.swpc")
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-periodic-flow.swpc"
+        --checkpoint-every 2)
 set_tests_properties(simwing_fsi_periodic_flow_checkpoint_resume PROPERTIES
     DEPENDS simwing_fsi_periodic_flow_checkpoint_write
-    PASS_REGULAR_EXPRESSION "completed 7 periodic-flow step\\(s\\)")
+    PASS_REGULAR_EXPRESSION "completed 7 periodic-flow step\\(s\\).*checkpoint-writes=2")
 add_test(NAME simwing_fsi_periodic_flow_checkpoint_verify
     COMMAND simwing-fsi
         --case periodic-flow
@@ -1215,6 +1217,14 @@ add_test(NAME simwing_fsi_checkpoint_rejects_foreign_case
         --no-viewer
         --checkpoint-out "${CMAKE_BINARY_DIR}/invalid-structural.swpc")
 set_tests_properties(simwing_fsi_checkpoint_rejects_foreign_case PROPERTIES
+    WILL_FAIL TRUE)
+add_test(NAME simwing_fsi_checkpoint_interval_requires_output
+    COMMAND simwing-fsi
+        --case periodic-flow
+        --steps 0
+        --no-viewer
+        --checkpoint-every 2)
+set_tests_properties(simwing_fsi_checkpoint_interval_requires_output PROPERTIES
     WILL_FAIL TRUE)
 add_test(NAME simwing_fsi_open_piston_headless
     COMMAND simwing-fsi

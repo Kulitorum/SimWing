@@ -107,7 +107,9 @@ same or an equivalent rebuilt worker. A bounded, versioned, checksummed
 little-endian file codec preserves that complete payload. The worker accepts it
 through `--checkpoint-in` and atomically replaces `--checkpoint-out`; requested
 steps are additional after restore. Live checkpoint control messages remain
-future protocol work.
+future protocol work. For long runs, `--checkpoint-every N` also saves after
+accepted absolute step multiples and at the final state, so a resumed run keeps
+the original cadence and never writes a rejected candidate.
 Both the projected transport and Strang flow paths select donor-cell or limited
 monotonized-central reconstruction explicitly; donor-cell remains the default.
 The original single-stage transport and Euler/SSPRK2 viscosity modes compose
@@ -281,14 +283,15 @@ Run:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600
 .\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600 --no-viewer
-.\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600 --no-viewer --checkpoint-out periodic-flow.swpc
-.\build\bin\Release\simwing-fsi.exe --case periodic-flow --checkpoint-in periodic-flow.swpc --steps 600 --checkpoint-out periodic-flow.swpc
+.\build\bin\Release\simwing-fsi.exe --case periodic-flow --steps 600 --no-viewer --checkpoint-out periodic-flow.swpc --checkpoint-every 60
+.\build\bin\Release\simwing-fsi.exe --case periodic-flow --checkpoint-in periodic-flow.swpc --steps 600 --checkpoint-out periodic-flow.swpc --checkpoint-every 60
 ```
 
 The first SimWing command launches the standalone trace viewer by default. The
 second is the unthrottled headless form for tests and scripted verification.
 The final two commands save and resume the exact accepted periodic-flow state;
-the resumed command advances 600 additional intervals.
+the resumed command advances 600 additional intervals and both autosave every
+60 absolute accepted steps.
 
 `windeployqt` and the OCCT runtime deployment run after the build, so the build
 output is directly runnable. The install target includes the required OCCT

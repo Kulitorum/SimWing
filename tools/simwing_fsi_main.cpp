@@ -52,6 +52,7 @@ struct Options {
     std::filesystem::path tracePath;
     std::filesystem::path checkpointInputPath;
     std::filesystem::path checkpointOutputPath;
+    std::uint64_t checkpointEvery = 0;
     bool viewer = true;
     bool help = false;
     WorkerCase workerCase = WorkerCase::Structural;
@@ -65,6 +66,7 @@ void printUsage(FILE* stream) {
         "                   [--trace PATH]\n"
         "                   [--checkpoint-in PATH]\n"
         "                   [--checkpoint-out PATH]\n"
+        "                   [--checkpoint-every N]\n"
         "                   [--viewer|--no-viewer]\n"
         "\n"
         "Runs a canonical Qt-free numerical case and writes a completed diagnostic\n"
@@ -75,8 +77,9 @@ void printUsage(FILE* stream) {
         "topology rebasing; consuming its resolved opening is rejected.\n"
         "'periodic-flow' advances the bounded Strang/SSPRK2 Taylor-Green CFD\n"
         "canonical and publishes cell-centred pressure/velocity points. Its optional\n"
-        "checkpoint paths restore/save exact accepted state; --steps then counts\n"
-        "additional intervals. Interactive runs launch the sibling simwing-viewer\n"
+        "checkpoint paths restore/save exact accepted state; --checkpoint-every\n"
+        "autosaves at absolute accepted-step multiples and the final state. --steps\n"
+        "counts additional intervals. Interactive runs launch the sibling viewer\n"
         "with --follow; --no-viewer is unthrottled for tests and CI.\n");
 }
 
@@ -189,6 +192,20 @@ bool parseOptions(int argc,
             }
             options.checkpointOutputPath =
                 std::filesystem::path(argument.substr(17));
+        } else if (argument == "--checkpoint-every") {
+            if (++index >= argc
+                || !parseUnsigned(argv[index], options.checkpointEvery)
+                || options.checkpointEvery == 0) {
+                error = "--checkpoint-every requires a positive integer";
+                return false;
+            }
+        } else if (argument.starts_with("--checkpoint-every=")) {
+            if (!parseUnsigned(
+                    argument.substr(19), options.checkpointEvery)
+                || options.checkpointEvery == 0) {
+                error = "--checkpoint-every requires a positive integer";
+                return false;
+            }
         } else {
             error = "unknown option: " + std::string(argument);
             return false;
@@ -206,6 +223,11 @@ bool parseOptions(int argc,
          || !options.checkpointOutputPath.empty())
         && options.workerCase != WorkerCase::PeriodicFlow) {
         error = "checkpoint paths require --case periodic-flow";
+        return false;
+    }
+    if (options.checkpointEvery != 0
+        && options.checkpointOutputPath.empty()) {
+        error = "--checkpoint-every requires --checkpoint-out";
         return false;
     }
     return true;
@@ -558,6 +580,9 @@ int main(int argc, char* argv[]) {
         }
 
         const auto run = [&](auto& simulation) -> int {
+            std::uint64_t lastCheckpointStep =
+                std::numeric_limits<std::uint64_t>::max();
+            std::uint64_t checkpointWriteCount = 0;
             simwing::viewer::TraceWriter writer(output);
             if (!writer.writeHeader(simulation.traceHeader())
                 || !flushTrace(output, error)) {
@@ -601,6 +626,27 @@ int main(int argc, char* argv[]) {
                                  error.c_str());
                     return 1;
                 }
+                if constexpr (std::is_same_v<
+                                  std::remove_cvref_t<decltype(simulation)>,
+                                  simwing::fsi::PeriodicFlowCase>) {
+                    if (options.checkpointEvery != 0
+                        && simulation.acceptedStepCount()
+                               % options.checkpointEvery == 0) {
+                        if (!writePeriodicFlowCheckpoint(
+                                options.checkpointOutputPath,
+                                simulation.checkpoint(),
+                                error)) {
+                            std::fprintf(
+                                stderr,
+                                "checkpoint autosave failed: %s\n",
+                                error.c_str());
+                            return 1;
+                        }
+                        lastCheckpointStep =
+                            simulation.acceptedStepCount();
+                        ++checkpointWriteCount;
+                    }
+                }
                 if (options.viewer) {
                     nextFrameTime += std::chrono::duration_cast<
                         std::chrono::steady_clock::duration>(
@@ -622,13 +668,18 @@ int main(int argc, char* argv[]) {
                               std::remove_cvref_t<decltype(simulation)>,
                               simwing::fsi::PeriodicFlowCase>) {
                 if (!options.checkpointOutputPath.empty()
-                    && !writePeriodicFlowCheckpoint(
-                        options.checkpointOutputPath,
-                        simulation.checkpoint(),
-                        error)) {
-                    std::fprintf(stderr, "checkpoint save failed: %s\n",
-                                 error.c_str());
-                    return 1;
+                    && lastCheckpointStep
+                        != simulation.acceptedStepCount()) {
+                    if (!writePeriodicFlowCheckpoint(
+                            options.checkpointOutputPath,
+                            simulation.checkpoint(),
+                            error)) {
+                        std::fprintf(stderr, "checkpoint save failed: %s\n",
+                                     error.c_str());
+                        return 1;
+                    }
+                    lastCheckpointStep = simulation.acceptedStepCount();
+                    ++checkpointWriteCount;
                 }
             }
 
@@ -665,7 +716,8 @@ int main(int argc, char* argv[]) {
                 std::printf(
                     "simwing-fsi completed %llu periodic-flow step(s), "
                     "t=%.9g s, substeps=%zu, max-CFL=%.6g, "
-                    "divergence-L2=%.6g 1/s, energy=%.9g J, trace=%s\n",
+                    "divergence-L2=%.6g 1/s, energy=%.9g J, "
+                    "checkpoint-writes=%llu, trace=%s\n",
                     static_cast<unsigned long long>(
                         simulation.acceptedStepCount()),
                     simulation.simulationTimeSeconds(),
@@ -673,6 +725,7 @@ int main(int argc, char* argv[]) {
                     diagnostics.maximumObservedOutgoingCourantNumber,
                     diagnostics.finalDivergenceL2PerSecond,
                     diagnostics.kineticEnergyAfterJoules,
+                    static_cast<unsigned long long>(checkpointWriteCount),
                     options.tracePath.string().c_str());
             }
             return 0;

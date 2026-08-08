@@ -458,8 +458,11 @@ little-endian file codec now preserves every MAC component, pressure sample,
 nested diagnostic, step, and time behind a versioned, byte-bounded, checksummed
 envelope. Decode is transactional and reuses the worker restore validator.
 `simwing-fsi --checkpoint-in/--checkpoint-out` exposes additional-step resume
-for this case only, with atomic output replacement. Live checkpoint control
-messages remain a separate future boundary.
+for this case only, with atomic output replacement. `--checkpoint-every N`
+runs at accepted-step safe points using absolute step multiples, preserving its
+cadence across restarts; the final accepted state is always saved without a
+duplicate write. Live checkpoint control messages remain a separate future
+boundary.
 The exact-model capture now exports validated scene-v2.1 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical
@@ -775,7 +778,10 @@ truncation, trailing data, checksum corruption, and every configured limit must
 leave the destination checkpoint unchanged. The CLI integration writes four
 steps, restores them, advances three additional steps, atomically replaces the
 same restart file, decodes it again, and reports seven total accepted steps
-without launching Qt.
+without launching Qt. With interval two, the four-step run writes at steps two
+and four, while the resumed run writes at absolute step six and final step
+seven; each reports exactly two writes. Interval mode without an output path is
+rejected before a worker or trace is created.
 The Qt-free viewer-geometry regression separately requires exact arrow shaft
 direction and relative magnitude, one shaft plus two arrowhead segments per
 retained nonzero vector, dimensional automatic scaling, owning deterministic
