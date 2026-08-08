@@ -1,0 +1,257 @@
+#include "fluid/porous_interface.h"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+#include <tuple>
+#include <utility>
+
+namespace simwing::fsi::fluid {
+namespace {
+
+void validateResistance(const DarcyForchheimerResistance& resistance) {
+    if (!std::isfinite(resistance.linearPascalSecondsPerMeter)
+        || !std::isfinite(
+            resistance.quadraticPascalSecondsSquaredPerSquareMeter)
+        || resistance.linearPascalSecondsPerMeter < 0.0
+        || resistance.quadraticPascalSecondsSquaredPerSquareMeter < 0.0
+        || (resistance.linearPascalSecondsPerMeter == 0.0
+            && resistance.quadraticPascalSecondsSquaredPerSquareMeter
+                == 0.0)) {
+        throw std::invalid_argument(
+            "porous resistance requires a finite nonnegative active coefficient");
+    }
+}
+
+std::uint8_t axisOrdinal(const GridFaceAxis axis) {
+    switch (axis) {
+    case GridFaceAxis::X:
+        return 0;
+    case GridFaceAxis::Y:
+        return 1;
+    case GridFaceAxis::Z:
+        return 2;
+    }
+    throw std::invalid_argument("porous crossing has an invalid axis");
+}
+
+auto canonicalKey(const GridFacePressureJump& crossing) {
+    return std::tuple{
+        axisOrdinal(crossing.axis),
+        crossing.k, crossing.j, crossing.i,
+        crossing.crossingFraction,
+        crossing.surfaceStableId,
+        crossing.minusRegionStableId,
+        crossing.plusRegionStableId};
+}
+
+double faceNormalVelocity(
+    const PeriodicCartesianGrid& grid,
+    const MacVelocityField& velocity,
+    const PorousGridFaceCrossing& crossing) {
+    const auto counts = grid.cellCounts();
+    static_cast<void>(axisOrdinal(crossing.axis));
+    if (crossing.i >= counts.x
+        || crossing.j >= counts.y
+        || crossing.k >= counts.z) {
+        throw std::invalid_argument("porous crossing index is out of range");
+    }
+    const std::size_t index = grid.cellIndex(
+        crossing.i, crossing.j, crossing.k);
+    switch (crossing.axis) {
+    case GridFaceAxis::X:
+        return velocity.xFaces()[index];
+    case GridFaceAxis::Y:
+        return velocity.yFaces()[index];
+    case GridFaceAxis::Z:
+        return velocity.zFaces()[index];
+    }
+    throw std::invalid_argument("porous crossing has an invalid axis");
+}
+
+double faceArea(const PeriodicCartesianGrid& grid,
+                const GridFaceAxis axis) {
+    const auto spacing = grid.cellSpacingMeters();
+    switch (axis) {
+    case GridFaceAxis::X:
+        return spacing.y * spacing.z;
+    case GridFaceAxis::Y:
+        return spacing.x * spacing.z;
+    case GridFaceAxis::Z:
+        return spacing.x * spacing.y;
+    }
+    throw std::invalid_argument("porous crossing has an invalid axis");
+}
+
+} // namespace
+
+double porousPressureJumpPascals(
+    const DarcyForchheimerResistance& resistance,
+    const double relativeNormalVelocityMetersPerSecond) {
+    validateResistance(resistance);
+    if (!std::isfinite(relativeNormalVelocityMetersPerSecond)) {
+        throw std::invalid_argument(
+            "porous relative normal velocity must be finite");
+    }
+    const double magnitude = std::abs(
+        relativeNormalVelocityMetersPerSecond);
+    const double jump = -relativeNormalVelocityMetersPerSecond
+        * (resistance.linearPascalSecondsPerMeter
+           + resistance.quadraticPascalSecondsSquaredPerSquareMeter
+               * magnitude);
+    if (!std::isfinite(jump)) {
+        throw std::overflow_error("porous pressure jump is not finite");
+    }
+    return jump;
+}
+
+double porousRelativeNormalVelocityMetersPerSecond(
+    const DarcyForchheimerResistance& resistance,
+    const double pressureJumpPascals) {
+    validateResistance(resistance);
+    if (!std::isfinite(pressureJumpPascals)) {
+        throw std::invalid_argument("porous pressure jump must be finite");
+    }
+    const double pressureDrop = std::abs(pressureJumpPascals);
+    if (pressureDrop == 0.0) return 0.0;
+
+    double speed = 0.0;
+    if (resistance.quadraticPascalSecondsSquaredPerSquareMeter == 0.0) {
+        speed = pressureDrop / resistance.linearPascalSecondsPerMeter;
+    } else if (resistance.linearPascalSecondsPerMeter == 0.0) {
+        speed = std::sqrt(pressureDrop)
+            / std::sqrt(
+                resistance.quadraticPascalSecondsSquaredPerSquareMeter);
+    } else {
+        const double maximum = std::numeric_limits<double>::max();
+        if (resistance.quadraticPascalSecondsSquaredPerSquareMeter
+            <= maximum / pressureDrop / 4.0) {
+            const double quadraticRoot = 2.0
+                * std::sqrt(
+                    resistance
+                        .quadraticPascalSecondsSquaredPerSquareMeter)
+                * std::sqrt(pressureDrop);
+            const double root = std::hypot(
+                resistance.linearPascalSecondsPerMeter,
+                quadraticRoot);
+            speed = (pressureDrop / root)
+                / (0.5
+                   * (1.0
+                      + resistance.linearPascalSecondsPerMeter / root));
+        } else {
+            const double linearOverPressure =
+                resistance.linearPascalSecondsPerMeter / pressureDrop;
+            const double quadraticOverPressure =
+                resistance.quadraticPascalSecondsSquaredPerSquareMeter
+                / pressureDrop;
+            const double rootOverPressure = std::hypot(
+                linearOverPressure,
+                2.0 * std::sqrt(quadraticOverPressure));
+            speed = (1.0 / rootOverPressure)
+                / (0.5 * (1.0
+                           + linearOverPressure / rootOverPressure));
+        }
+    }
+    if (!std::isfinite(speed) || !(speed > 0.0)) {
+        throw std::overflow_error(
+            "porous relative normal velocity is not finite");
+    }
+    return std::copysign(speed, -pressureJumpPascals);
+}
+
+PorousPressureJumpField::PorousPressureJumpField(
+    const PeriodicCartesianGrid& grid,
+    const MacVelocityField& fluidVelocityMetersPerSecond,
+    std::vector<PorousGridFaceCrossing> crossings)
+    : pressureJumps_(grid) {
+    if (!fluidVelocityMetersPerSecond.matches(grid)
+        || !isFinite(fluidVelocityMetersPerSecond)) {
+        throw std::invalid_argument(
+            "porous crossings require a matching finite MAC velocity");
+    }
+
+    samples_.reserve(crossings.size());
+    std::vector<GridFacePressureJump> pressureJumps;
+    pressureJumps.reserve(crossings.size());
+    for (const auto& crossing : crossings) {
+        validateResistance(crossing.resistance);
+        if (!std::isfinite(crossing.surfaceNormalVelocityMetersPerSecond)) {
+            throw std::invalid_argument(
+                "porous surface normal velocity must be finite");
+        }
+        const double fluidVelocity = faceNormalVelocity(
+            grid, fluidVelocityMetersPerSecond, crossing);
+        const double relativeVelocity = fluidVelocity
+            - crossing.surfaceNormalVelocityMetersPerSecond;
+        const double jump = porousPressureJumpPascals(
+            crossing.resistance, relativeVelocity);
+        const double area = faceArea(grid, crossing.axis);
+        const double flow = relativeVelocity * area;
+        const double dissipation = -jump * flow;
+        if (!std::isfinite(flow)
+            || !std::isfinite(dissipation)
+            || dissipation < 0.0) {
+            throw std::overflow_error(
+                "porous flux or dissipation is not finite");
+        }
+        GridFacePressureJump pressureJump{
+            crossing.surfaceStableId,
+            crossing.minusRegionStableId,
+            crossing.plusRegionStableId,
+            crossing.axis,
+            crossing.i,
+            crossing.j,
+            crossing.k,
+            jump,
+            crossing.crossingFraction,
+        };
+        pressureJumps.push_back(pressureJump);
+        samples_.push_back({
+            pressureJump,
+            fluidVelocity,
+            crossing.surfaceNormalVelocityMetersPerSecond,
+            relativeVelocity,
+            area,
+            flow,
+            dissipation,
+        });
+        totalDissipationWatts_ += dissipation;
+        if (!std::isfinite(totalDissipationWatts_)) {
+            throw std::overflow_error(
+                "total porous dissipation is not finite");
+        }
+    }
+
+    SharpPressureJumpField canonical(
+        grid, std::move(pressureJumps));
+    std::sort(samples_.begin(), samples_.end(),
+              [](const auto& first, const auto& second) {
+                  return canonicalKey(first.pressureJump)
+                      < canonicalKey(second.pressureJump);
+              });
+    const auto canonicalFaces = canonical.faces();
+    for (std::size_t index = 0; index < samples_.size(); ++index) {
+        if (samples_[index].pressureJump != canonicalFaces[index]) {
+            throw std::logic_error(
+                "porous crossing canonicalization is inconsistent");
+        }
+    }
+    pressureJumps_ = std::move(canonical);
+}
+
+const SharpPressureJumpField&
+PorousPressureJumpField::pressureJumps() const noexcept {
+    return pressureJumps_;
+}
+
+std::span<const PorousGridFaceSample>
+PorousPressureJumpField::samples() const noexcept {
+    return samples_;
+}
+
+double PorousPressureJumpField::totalDissipationWatts() const noexcept {
+    return totalDissipationWatts_;
+}
+
+} // namespace simwing::fsi::fluid

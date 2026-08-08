@@ -322,6 +322,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/moving_interface.h
     src/fsi/fluid/planar_cut_surface.cpp
     src/fsi/fluid/planar_cut_surface.h
+    src/fsi/fluid/porous_interface.cpp
+    src/fsi/fluid/porous_interface.h
     src/fsi/fluid/projection.cpp
     src/fsi/fluid/projection.h
     src/fsi/fluid/projected_advection.cpp
@@ -780,6 +782,12 @@ add_executable(simwing-pressure-jump-case-test
 target_link_libraries(simwing-pressure-jump-case-test
     PRIVATE simwing_pressure_jump_case)
 
+add_executable(simwing-fluid-porous-interface-test
+    tests/simwing_fluid_porous_interface_test.cpp
+)
+target_link_libraries(simwing-fluid-porous-interface-test
+    PRIVATE simwing_fluid)
+
 add_executable(simwing-worker-control-protocol-test
     tests/simwing_worker_control_protocol_test.cpp
 )
@@ -1072,6 +1080,7 @@ set_target_properties(
     simwing-periodic-flow-case-test
     simwing-pressure-jump-frame-test
     simwing-pressure-jump-case-test
+    simwing-fluid-porous-interface-test
     simwing-worker-control-protocol-test
     simwing-worker-control-stream-test
     simwing-control-stdio-fixture
@@ -1135,6 +1144,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-periodic-flow-case-test
         simwing-pressure-jump-frame-test
         simwing-pressure-jump-case-test
+        simwing-fluid-porous-interface-test
         simwing-worker-control-protocol-test
         simwing-worker-control-stream-test
         simwing-control-stdio-fixture
@@ -1290,6 +1300,8 @@ add_test(NAME simwing_pressure_jump_frame
     COMMAND simwing-pressure-jump-frame-test)
 add_test(NAME simwing_pressure_jump_case
     COMMAND simwing-pressure-jump-case-test)
+add_test(NAME simwing_fluid_porous_interface
+    COMMAND simwing-fluid-porous-interface-test)
 add_test(NAME simwing_worker_control_protocol
     COMMAND simwing-worker-control-protocol-test)
 add_test(NAME simwing_worker_control_stream

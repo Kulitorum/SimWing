@@ -432,6 +432,7 @@ src/fsi/
         evolution.*         transactional flow steps and subcycling
         projection.*
         interface_jump.*
+        porous_interface.* calibrated flux-driven porous jump and ledger
         moving_interface.*  grid-face constraints and region topology
         moving_control_volume.* open planar GCL and topology epochs
         checkpoint.*        accepted fluid/topology checkpoint + persistence
@@ -859,6 +860,15 @@ projection must reproduce the analytic `-125/+125 Pa` cell field, remain below
 bit-identically across independent and repeated workers. This makes multiple
 same-face layers inspectable end-to-end but does not claim moving folded or
 cut-cell topology.
+A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
+velocity relative to each authored sheet tile and emits the corresponding
+signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
+dissipation, and its exact monotone inverse is stable across the pure-linear,
+pure-quadratic, and combined fits. A periodic prescribed-flux plane with an
+explicit balancing pressure source preserves a `195 Pa` porous loss without
+changing its uniform velocity. This establishes the constitutive and ledger
+boundary only; pressure-driven implicit porous coupling is still required for
+the full porous-sheet canonical.
 The case checkpoint must restore the initial state and a later accepted state,
 then reproduce the next frame bit-for-bit in both the original and an equivalent
 rebuilt worker. Version, case fingerprint, grid, sample count, step, time, and
@@ -1002,7 +1012,8 @@ Required canonical cases:
 
 - Taylor-Green vortex and manufactured divergence/pressure solutions;
 - channel/flat-plate flow and a static pressure jump across a membrane;
-- flow through a calibrated porous sheet;
+- flow through a calibrated porous sheet (the explicit prescribed-flux
+  constitutive subset is complete; implicit pressure/flux coupling remains);
 - moving piston/membrane with analytic volume and work balance;
 - flexible flag and a thin shell with one interface per cell;
 - two closely spaced and folded sheets with multiple crossings per cell;

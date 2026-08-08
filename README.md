@@ -150,6 +150,13 @@ and subcell fraction. The `pressure-jump` worker exercises that path with 48
 ordered transitions in a periodic split slab, preserving the analytic
 `-125/+125 Pa` state without spurious velocity. It is a static visibility
 oracle, not moving folded topology or cut-cell evolution.
+A calibrated Darcy-Forchheimer adapter now converts resolved normal fluid slip
+relative to a fabric tile into the same signed sharp-jump representation. Its
+exact monotone inverse, canonical X/Y/Z MAC sampling, tile volume flux, and
+nonnegative pressure dissipation are tested. A periodic prescribed-flux plane
+with an explicit balancing pressure source retains its analytic `195 Pa` loss
+without spurious velocity. This first constitutive path is explicit and
+flux-driven; implicit pressure/porous-flux coupling remains future work.
 Face-aligned moving membranes can now partition stable fluid regions, impose
 an exact normal MAC velocity, and project each region transactionally while
 retaining its prior pressure gauge. A translating sealed-slab canonical closes
