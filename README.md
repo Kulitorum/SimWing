@@ -462,7 +462,10 @@ segments: matching copies from adjacent cells become one stable transverse
 face crossing with an in-face authored-side direction, while unpaired edges
 remain contact and coplanar area remains separately face-owned. Unpaired
 periodic-domain boundary area and grid-edge crossing ambiguity are rejected.
-Cut-cell volume fractions and fluid-region reconstruction remain open.
+A bounded sparse index now groups every crossing and coplanar owner by stable
+grid-bound MAC face while keeping multiple sheets separate; its summed length
+and area are diagnostics, not union coverage. Cut-cell volume fractions and
+fluid-region reconstruction remain open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,
