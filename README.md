@@ -200,6 +200,12 @@ separate. Empty topology is exact to the moving-only path, and a face claimed
 by both an impermeable constraint and a porous jump is rejected transactionally.
 This is fixed-grid coexistence with moving boundaries, not yet moving porous
 cut-cell topology.
+The accepted wrapper can cross the planar open-piston GCL and physical
+cut-surface boundaries without discarding its nonlinear status. In the porous
+opening canonical, the summed tile flux exactly fills the swept chamber volume,
+matches the independently sampled opening transport, and retains the final
+moving-surface reaction; rejected or internally inconsistent wrappers cannot
+expose either downstream ledger.
 A pressure-driven companion advances a uniform fluid plug with an
 implicit-midpoint nonlinear solve; every step independently closes pressure
 impulse, driving work, porous dissipation, and kinetic energy.

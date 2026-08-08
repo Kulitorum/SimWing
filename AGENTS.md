@@ -879,6 +879,10 @@ makes this a certified aerodynamic solver.
   nonseparating planar surface and one complete open MAC plane. Within the
   first partial cell it independently closes geometric volume change, surface
   sweep, projected opening transport, velocity, and pressure-power ledgers. An
+  overload accepts only a fully accepted moving-porous wrapper whose nested
+  base projections remain identical, preventing a converged inner solve from
+  escaping an unaccepted nonlinear iteration. The porous-opening canonical
+  matches its resolved tile flux to both the swept volume and GCL transport. An
   explicit candidate rebase converts the completed partial cell to a full
   reference layer on the next positive-axis MAC plane while preserving stable
   IDs and chamber volume; it rejects skipped planes, changed regions, broken
@@ -892,6 +896,8 @@ makes this a certified aerodynamic solver.
   matching periodic image, and independently closes aggregate area, force,
   moment, and power. It transfers the projection constraint reaction; it does
   not interpolate a new cell pressure or claim general cut-cell reconstruction.
+  Its moving-porous overload enforces the same complete outer acceptance and
+  nested-projection identity before exposing the physical reaction.
   Its temporal resampler preserves that accepted reaction force while changing
   only congruent physical geometry, rigid normal velocity, moment, and power so
   a macro-step-average projection load can be integrated at endpoint kinematics.
@@ -961,6 +967,9 @@ For porous flow inside fixed-topology moving regions,
 `simwing_fluid_porous_interface` must preserve endpoint/midpoint constitutive
 closure, exact constrained velocity, separate moving-reaction and porous-jump
 ledgers, bit-exact empty delegation, overlap rejection, and nonlinear rollback.
+`simwing_fluid_control_volume` must additionally keep porous opening-tile flux,
+moving-volume change, projected opening transport, and physical cut reaction
+consistent, while rejecting incomplete or internally inconsistent wrappers.
 
 | Change area | Minimum relevant checks |
 |---|---|

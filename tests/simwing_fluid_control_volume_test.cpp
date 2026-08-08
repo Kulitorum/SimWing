@@ -1,10 +1,12 @@
 #include "fluid/moving_control_volume.h"
+#include "fluid/planar_cut_surface.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -13,11 +15,17 @@ using simwing::fsi::fluid::CellScalarField;
 using simwing::fsi::fluid::FaceAlignedMovingInterface;
 using simwing::fsi::fluid::GridFaceAxis;
 using simwing::fsi::fluid::GridFaceMovingInterface;
+using simwing::fsi::fluid::GridFacePressureJump;
 using simwing::fsi::fluid::MacVelocityField;
 using simwing::fsi::fluid::MovingInterfaceProjectionSettings;
+using simwing::fsi::fluid::MovingPorousProjectionSettings;
 using simwing::fsi::fluid::PeriodicCartesianGrid;
 using simwing::fsi::fluid::PlanarControlVolumeStep;
 using simwing::fsi::fluid::PlanarMovingControlVolume;
+using simwing::fsi::fluid::PorousGridFaceCrossing;
+using simwing::fsi::fluid::SharpPressureJumpField;
+using simwing::fsi::fluid::evaluatePlanarCutSurfacePressure;
+using simwing::fsi::fluid::projectVelocityWithMovingAndPorousInterfaces;
 using simwing::fsi::fluid::projectVelocityWithMovingInterfaces;
 using simwing::fsi::fluid::rebasePlanarMovingControlVolume;
 
@@ -126,6 +134,47 @@ MovingInterfaceProjectionSettings projectionSettings() {
     return settings;
 }
 
+std::vector<PorousGridFaceCrossing> porousOpeningFaces(
+    const PeriodicCartesianGrid& grid) {
+    std::vector<PorousGridFaceCrossing> result;
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            result.push_back({
+                600, 10, 11, GridFaceAxis::X, 2, j, k,
+                0.35, 0.0, {10.0, 0.0}});
+        }
+    }
+    return result;
+}
+
+SharpPressureJumpField porousOpeningBalance(
+    const PeriodicCartesianGrid& grid) {
+    std::vector<GridFacePressureJump> result;
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            result.push_back({
+                601, 11, 10, GridFaceAxis::X, 4, j, k,
+                2.5, 0.65});
+        }
+    }
+    return SharpPressureJumpField(grid, std::move(result));
+}
+
+MovingPorousProjectionSettings porousControlVolumeSettings() {
+    MovingPorousProjectionSettings result;
+    result.movingProjection = projectionSettings();
+    result.iteration.absoluteNormalVelocityToleranceMetersPerSecond =
+        1.0e-12;
+    result.iteration.relativeNormalVelocityTolerance = 1.0e-12;
+    result.iteration.absolutePressureJumpTolerancePascals = 1.0e-11;
+    result.iteration.relativePressureJumpTolerance = 1.0e-12;
+    result.iteration.relaxation = 0.5;
+    result.iteration.maximumNonlinearIterations = 100;
+    return result;
+}
+
 void testAcceleratedOpenPistonAndGcl() {
     const auto grid = pistonGrid();
     const FaceAlignedMovingInterface interfaces(
@@ -221,6 +270,74 @@ void testAcceleratedOpenPistonAndGcl() {
               && first.maximumSurfaceVelocityErrorMetersPerSecond < 2.0e-12
               && first.finite && first.accepted,
           "open piston: surface geometry and opening-flux GCL ledgers close");
+}
+
+void testPorousOpeningAcrossControlAndCutSurface() {
+    const auto grid = pistonGrid();
+    const FaceAlignedMovingInterface interfaces(
+        grid, pistonFaces(grid));
+    const PlanarMovingControlVolume controlVolume(
+        grid, interfaces, 300, 2);
+    const auto porous = porousOpeningFaces(grid);
+    const auto balance = porousOpeningBalance(grid);
+    const auto settings = porousControlVolumeSettings();
+    MacVelocityField velocity(grid);
+    CellScalarField pressure(grid);
+    const auto fluid = projectVelocityWithMovingAndPorousInterfaces(
+        grid, velocity, pressure, interfaces,
+        porous, balance, settings);
+    const PlanarControlVolumeStep step{0.0, 0.1, 0.4};
+    const auto control = controlVolume.evaluate(
+        grid, velocity, fluid, step);
+    const auto cut = evaluatePlanarCutSurfacePressure(
+        grid, controlVolume, fluid, 0.1, 3.1);
+
+    double porousTransportCubicMeters = 0.0;
+    for (const auto& sample : fluid.porous.samples) {
+        porousTransportCubicMeters +=
+            sample.volumeFlowRateCubicMetersPerSecond
+            * step.durationSeconds;
+    }
+    check(fluid.accepted && control.accepted && cut.accepted,
+          "porous control volume: projection, GCL, and cut reaction all accept");
+    checkNear(porousTransportCubicMeters,
+              control.geometryVolumeChangeCubicMeters, 8.0e-12,
+              "porous control volume: resolved porous opening flux fills the swept chamber");
+    checkNear(control.openingTransportVolumeCubicMeters,
+              porousTransportCubicMeters, 8.0e-12,
+              "porous control volume: GCL opening transport is the porous tile sum");
+    checkNear(fluid.porous.samples.front()
+                  .pressureJump.pressureJumpPascals,
+              -2.5, 3.0e-11,
+              "porous control volume: opening slip closes the analytic Darcy loss");
+    checkNear(fluid.porous.totalPorousDissipationJoules,
+              1.5, 3.0e-10,
+              "porous control volume: opening dissipation integrates over the epoch");
+    check(cut.pressureForceNewtons
+              == fluid.movingInterface.surfaces.front()
+                     .constraintReactionForceNewtons
+              && cut.pressurePowerWatts
+                  == fluid.movingInterface.surfaces.front()
+                         .constraintReactionPowerWatts,
+          "porous control volume: physical cut geometry retains the final moving reaction");
+
+    auto rejected = fluid;
+    rejected.accepted = false;
+    expectRejected(
+        [&] { static_cast<void>(controlVolume.evaluate(
+            grid, velocity, rejected, step)); },
+        "porous control volume: an unaccepted outer iteration cannot expose its inner GCL");
+    expectRejected(
+        [&] { static_cast<void>(evaluatePlanarCutSurfacePressure(
+            grid, controlVolume, rejected, 0.1, 3.1)); },
+        "porous control volume: an unaccepted outer iteration cannot expose a cut reaction");
+
+    auto inconsistent = fluid;
+    ++inconsistent.porous.projection.iterationCount;
+    expectRejected(
+        [&] { static_cast<void>(controlVolume.evaluate(
+            grid, velocity, inconsistent, step)); },
+        "porous control volume: divergent nested projection diagnostics are rejected");
 }
 
 void testAllAxisControlVolumes() {
@@ -462,6 +579,7 @@ void testValidationAndFailedLedgers() {
 
 int main() {
     testAcceleratedOpenPistonAndGcl();
+    testPorousOpeningAcrossControlAndCutSurface();
     testAllAxisControlVolumes();
     testExplicitTopologyRebase();
     testValidationAndFailedLedgers();

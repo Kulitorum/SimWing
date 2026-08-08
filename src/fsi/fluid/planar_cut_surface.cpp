@@ -528,6 +528,27 @@ PlanarCutSurfacePressureDiagnostics evaluatePlanarCutSurfacePressure(
     return diagnostics;
 }
 
+PlanarCutSurfacePressureDiagnostics evaluatePlanarCutSurfacePressure(
+    const PeriodicCartesianGrid& grid,
+    const PlanarMovingControlVolume& controlVolume,
+    const MovingPorousProjectionDiagnostics& interfaceDiagnostics,
+    const double surfaceOffsetMeters,
+    const double physicalPlaneCoordinateMeters,
+    const PlanarCutSurfacePressureSettings& settings) {
+    if (!interfaceDiagnostics.accepted
+        || !interfaceDiagnostics.finite
+        || !interfaceDiagnostics.porous.accepted
+        || !interfaceDiagnostics.porous.finite
+        || interfaceDiagnostics.porous.projection
+            != interfaceDiagnostics.movingInterface.projection) {
+        throw std::invalid_argument(
+            "planar cut surface requires accepted moving-porous diagnostics");
+    }
+    return evaluatePlanarCutSurfacePressure(
+        grid, controlVolume, interfaceDiagnostics.movingInterface,
+        surfaceOffsetMeters, physicalPlaneCoordinateMeters, settings);
+}
+
 PlanarCutSurfacePressureDiagnostics resamplePlanarCutSurfaceReaction(
     const PeriodicCartesianGrid& grid,
     const PlanarMovingControlVolume& controlVolume,

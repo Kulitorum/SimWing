@@ -844,6 +844,12 @@ normal, and reconstructed diagnostic pressure. A static headless worker makes
   diagnostics, separate porous jump/work/dissipation ledgers, deterministic
   replay, empty-topology delegation, and transactional failure. This remains
   fixed-grid coexistence, not a general moving porous-sheet or cut-cell solve.
+  The accepted nonlinear wrapper now crosses the planar control-volume and
+  physical cut-surface boundaries only as a whole. A porous resolved opening
+  matches summed tile flux to swept chamber volume and independently sampled
+  GCL transport while retaining the final moving reaction. Unaccepted wrappers
+  and mismatched nested projection diagnostics are rejected before either
+  downstream ledger is exposed.
   The regression budgets are:
 gradient/divergence adjoint error at or below `2e-14` in the canonical
 integral, Taylor-Green maximum divergence below `2e-14 1/s` with a

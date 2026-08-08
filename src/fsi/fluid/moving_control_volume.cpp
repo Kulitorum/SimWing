@@ -520,6 +520,26 @@ PlanarControlVolumeDiagnostics PlanarMovingControlVolume::evaluate(
     return diagnostics;
 }
 
+PlanarControlVolumeDiagnostics PlanarMovingControlVolume::evaluate(
+    const PeriodicCartesianGrid& grid,
+    const MacVelocityField& projectedVelocityMetersPerSecond,
+    const MovingPorousProjectionDiagnostics& interfaceDiagnostics,
+    const PlanarControlVolumeStep& step,
+    const PlanarControlVolumeSettings& settings) const {
+    if (!interfaceDiagnostics.accepted
+        || !interfaceDiagnostics.finite
+        || !interfaceDiagnostics.porous.accepted
+        || !interfaceDiagnostics.porous.finite
+        || interfaceDiagnostics.porous.projection
+            != interfaceDiagnostics.movingInterface.projection) {
+        throw std::invalid_argument(
+            "planar control volume requires accepted moving-porous diagnostics");
+    }
+    return evaluate(
+        grid, projectedVelocityMetersPerSecond,
+        interfaceDiagnostics.movingInterface, step, settings);
+}
+
 PlanarControlVolumeRebaseResult rebasePlanarMovingControlVolume(
     const PeriodicCartesianGrid& grid,
     const PlanarMovingControlVolume& current,

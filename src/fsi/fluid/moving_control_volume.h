@@ -1,6 +1,6 @@
 #pragma once
 
-#include "fluid/moving_interface.h"
+#include "fluid/porous_interface.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -131,6 +131,17 @@ public:
         const PeriodicCartesianGrid& grid,
         const MacVelocityField& projectedVelocityMetersPerSecond,
         const MovingInterfaceProjectionDiagnostics& interfaceDiagnostics,
+        const PlanarControlVolumeStep& step,
+        const PlanarControlVolumeSettings& settings = {}) const;
+
+    // Accepts the complete nonlinear wrapper so a converged inner moving
+    // projection cannot be mistaken for an accepted porous solve. The porous
+    // and moving diagnostics must retain the identical final base projection
+    // before the existing GCL ledger is evaluated.
+    [[nodiscard]] PlanarControlVolumeDiagnostics evaluate(
+        const PeriodicCartesianGrid& grid,
+        const MacVelocityField& projectedVelocityMetersPerSecond,
+        const MovingPorousProjectionDiagnostics& interfaceDiagnostics,
         const PlanarControlVolumeStep& step,
         const PlanarControlVolumeSettings& settings = {}) const;
 

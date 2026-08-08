@@ -100,6 +100,17 @@ evaluatePlanarCutSurfacePressure(
     double physicalPlaneCoordinateMeters,
     const PlanarCutSurfacePressureSettings& settings = {});
 
+// Preserves the outer nonlinear acceptance boundary before translating the
+// retained moving-interface reaction to physical cut-surface geometry.
+[[nodiscard]] PlanarCutSurfacePressureDiagnostics
+evaluatePlanarCutSurfacePressure(
+    const PeriodicCartesianGrid& grid,
+    const PlanarMovingControlVolume& controlVolume,
+    const MovingPorousProjectionDiagnostics& interfaceDiagnostics,
+    double surfaceOffsetMeters,
+    double physicalPlaneCoordinateMeters,
+    const PlanarCutSurfacePressureSettings& settings = {});
+
 // Retains an already accepted face-resolved pressure reaction while sampling
 // its power on another congruent physical plane and rigid normal velocity in
 // the same topology epoch. This is the explicit temporal adapter for a
