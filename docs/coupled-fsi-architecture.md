@@ -387,7 +387,7 @@ src/fsi/
     fluid/
         grid.*              block hierarchy and field storage
         geometry.*          discrete surface and region reconstruction
-        advection.*         bounded uniform/variable MAC transport
+        advection.*         bounded donor/limited-MC MAC transport
         projected_advection.* projected nonlinear SSPRK2 transport
         diffusion.*         bounded periodic MAC viscosity verification
         evolution.*         transactional selectable fluid macro-step
@@ -473,28 +473,34 @@ velocity. Its update is a conservative convex combination for
 create a new component extremum or increase kinetic energy, commutes with the
 discrete divergence, and becomes an exact one-cell periodic translation at the
 sharp CFL-one boundary. Its full-period sine regression converges at the
-expected first order. This is the bounded baseline for later second-order
-convection, not that production operator itself. A variable-flow donor-cell
-companion now averages a divergence-free MAC advector onto every translated
-component control-volume face and uses one shared periodic upwind flux. The
-uniform subset delegates bit-exactly to the oracle. General accepted steps
-preserve all three component momenta, stay within old-time component bounds,
-and do not add kinetic energy under a local outgoing-CFL limit; the aliased
-field path supplies first-order nonlinear self-advection. A periodic shear
-fixture observes the expected first-order refinement. This is the conservative
-variable-flow baseline for later second-order reconstruction, not that
-production operator itself. A pressure-projected nonlinear SSPRK2 operator now
-keeps every intermediate incompressible before it can become its own advector:
-stage one donor transport is projected, stage two self-advects from that
-accepted field, the twice-advanced prediction is convexly averaged with the old
-field, and the result is projected again. Both pressure and velocity remain
-private until all four stages and the aggregate momentum/energy/continuity
-ledger pass. Exact manual-stage composition, repeated-step eligibility, and a
-fixed-grid vortical refinement show deterministic second-order temporal
-behavior. This does not upgrade the first-order donor-cell spatial
-reconstruction. A symmetric second-order temporal flow path now reconciles its
-internal pressure stages with viscosity: half-step SSPRK2 diffusion, full
-projected nonlinear SSPRK2 transport, and the matching viscous half step.
+expected first order. A variable-flow companion averages a divergence-free MAC
+advector onto every translated-component control-volume face and uses one
+shared periodic upwind flux. Its default donor reconstruction delegates the
+uniform subset bit-exactly to the oracle. General accepted donor steps preserve
+all three component momenta, stay within old-time component bounds, and do not
+add kinetic energy under a local outgoing-CFL limit; the aliased field path
+supplies first-order nonlinear self-advection. A periodic shear fixture observes
+the expected first-order refinement. The same conservative faces now support a
+selectable monotonized-central reconstruction. It is enclosed in fixed-advector
+SSPRK2 because an individual limited forward-Euler stage can add the expected
+`O(dt^2)` energy even when the committed convex aggregate is dissipative. That
+intermediate exception is explicit in diagnostics and does not relax the
+committed step: the aggregate still enforces original component bounds, component
+momentum, finite state, and non-increasing energy. A discontinuous pulse remains
+bounded, while smooth uniform full-period transport shows near-second-order L1
+refinement. General nonlinear spatial order remains an open acceptance item.
+A pressure-projected nonlinear SSPRK2 operator now keeps every intermediate
+incompressible before it can become its own advector: stage one selected
+transport is projected, stage two self-advects from that accepted field, the
+twice-advanced prediction is convexly averaged with the old field, and the
+result is projected again. Both pressure and velocity remain private until all
+four stages and the aggregate momentum/energy/continuity ledger pass. Exact
+manual-stage composition, repeated-step eligibility, and a fixed-grid vortical
+refinement show deterministic second-order temporal behavior. Donor remains
+the default; limited MC is selectable. A symmetric second-order temporal flow
+path now reconciles its internal pressure stages with viscosity: half-step
+SSPRK2 diffusion, full projected nonlinear SSPRK2 transport, and the matching
+viscous half step.
 Every sub-integrator works on the same private candidate, their individual
 energy losses sum to the full-step loss, and pressure/velocity commit only
 after the aggregate momentum, energy, and continuity ledger passes. Exact
@@ -507,8 +513,8 @@ stage and an independent aggregate momentum/kinetic-energy ledger pass.
 Regressions are bit-identical to their standalone uniform/nonlinear transport
 and Euler/SSPRK2 diffusion stages, retain every stage diagnostic, and reject at
 advection, diffusion, or projection without changing either input field. This
-is the first complete nonlinear evolution path, but donor-cell transport and
-first-order operator splitting remain. A canonical single-crossing
+is the first complete nonlinear evolution path; its single-stage transport and
+operator splitting remain first order. A canonical single-crossing
 grid-face field now retains stable surface IDs, two distinct fluid-region IDs,
 and the signed pressure discontinuity. Its paired sharp gradient and Poisson
 source preserve a static pressurized slab without smoothing the pressure or
@@ -663,9 +669,10 @@ cases meet their declared tolerances.
 ### Phase 2 — CFD verification kernel
 
 Status: in progress. `simwing_fluid` currently owns the uniform periodic
-verification grid, bounded uniform and divergence-free variable-flow velocity
-transport, nonlinear self-advection, pressure-projected second-order temporal
-transport, Euler and second-order SSPRK2 laminar velocity diffusion, their
+verification grid, bounded donor and limited monotonized-central uniform and
+divergence-free variable-flow velocity transport, nonlinear self-advection,
+pressure-projected second-order temporal transport, Euler and second-order
+SSPRK2 laminar velocity diffusion, their
 transactional selectable composed macro-step, the symmetric second-order
 temporal Strang flow path, pressure
 projection, and fixed-topology face-aligned moving
@@ -685,8 +692,10 @@ divergence below `2e-12 1/s`, pressure convergence ratios in `[3.9, 4.2]` for
 two successive resolution doublings, viscous eigenvalue convergence ratios in
 `[3.95, 4.05]` then `[3.98, 4.02]`, exact zero and uniform viscous modes, exact
 acceptance of the non-amplifying diffusion-number `0.5` boundary, no
-kinetic-energy increase, donor-cell full-period error ratios in `[1.7, 2.2]`
-then `[1.8, 2.1]`, exact bounded CFL-one translation, and periodic
+kinetic-energy increase for every committed transport aggregate, donor-cell
+full-period error ratios in `[1.7, 2.2]` then `[1.8, 2.1]`, limited-MC L1
+full-period error ratios in `[3.1, 4.8]` over two successive resolution
+doublings, exact bounded CFL-one translation, and periodic
 component-momentum sums preserved within `5e-14` in the projection mixed-mode
 case; viscous physical-momentum residual stays below `2e-12 N*s`. The
 static 250 Pa slab must retain its two pressure levels within `2e-12 Pa` and

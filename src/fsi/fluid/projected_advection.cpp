@@ -52,6 +52,10 @@ void validateSettings(
     if (!std::ranges::all_of(finiteValues, [](const double value) {
             return std::isfinite(value);
         })
+        || (settings.reconstruction
+                != VariableMacReconstruction::DonorCell
+            && settings.reconstruction
+                != VariableMacReconstruction::MonotonizedCentral)
         || settings.densityKgPerCubicMeter <= 0.0
         || settings.timeStepSeconds <= 0.0
         || settings.maximumLocalOutgoingCourantNumber <= 0.0
@@ -121,6 +125,7 @@ VariableMacAdvectionSettings advectionSettings(
     VariableMacAdvectionSettings result;
     result.densityKgPerCubicMeter = settings.densityKgPerCubicMeter;
     result.timeStepSeconds = settings.timeStepSeconds;
+    result.reconstruction = settings.reconstruction;
     result.maximumLocalOutgoingCourantNumber =
         settings.maximumLocalOutgoingCourantNumber;
     result.absoluteDivergenceTolerancePerSecond =
@@ -133,6 +138,10 @@ VariableMacAdvectionSettings advectionSettings(
     result.absoluteEnergyToleranceJoules =
         settings.absoluteEnergyToleranceJoules;
     result.relativeEnergyTolerance = settings.relativeEnergyTolerance;
+    if (settings.reconstruction
+        == VariableMacReconstruction::MonotonizedCentral) {
+        result.enforceEulerEnergyNonIncrease = false;
+    }
     return result;
 }
 
@@ -169,6 +178,7 @@ advectVelocityProjectedSspRk2(
     }
 
     ProjectedMacAdvectionSspRk2Diagnostics diagnostics;
+    diagnostics.reconstruction = settings.reconstruction;
     diagnostics.momentumBeforeNewtonSeconds = momentumNewtonSeconds(
         grid, velocityMetersPerSecond, settings.densityKgPerCubicMeter);
     diagnostics.momentumAfterNewtonSeconds =
@@ -182,12 +192,12 @@ advectVelocityProjectedSspRk2(
         grid, velocityMetersPerSecond, initialDivergence);
     diagnostics.initialDivergenceL2PerSecond = l2Norm(initialDivergence);
 
-    const auto donorSettings = advectionSettings(settings);
+    const auto transportSettings = advectionSettings(settings);
     const auto pressureSettings = projectionSettings(settings);
     auto firstVelocity = velocityMetersPerSecond;
     auto firstPressure = pressurePascals;
     diagnostics.firstAdvection = advectVelocityByMacFlow(
-        grid, firstVelocity, firstVelocity, donorSettings);
+        grid, firstVelocity, firstVelocity, transportSettings);
     if (!diagnostics.firstAdvection.accepted) {
         diagnostics.failureStage =
             ProjectedMacAdvectionFailureStage::FirstAdvection;
@@ -207,7 +217,7 @@ advectVelocityProjectedSspRk2(
     auto finalPressure = firstPressure;
     diagnostics.secondAdvection = advectVelocityByMacFlow(
         grid, twiceAdvancedVelocity, twiceAdvancedVelocity,
-        donorSettings);
+        transportSettings);
     if (!diagnostics.secondAdvection.accepted) {
         diagnostics.failureStage =
             ProjectedMacAdvectionFailureStage::SecondAdvection;

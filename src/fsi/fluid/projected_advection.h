@@ -8,7 +8,7 @@
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t projectedMacAdvectionSspRk2Version = 1;
+inline constexpr std::uint32_t projectedMacAdvectionSspRk2Version = 2;
 
 enum class ProjectedMacAdvectionFailureStage : std::uint8_t {
     None = 0,
@@ -22,6 +22,8 @@ enum class ProjectedMacAdvectionFailureStage : std::uint8_t {
 struct ProjectedMacAdvectionSspRk2Settings {
     double densityKgPerCubicMeter = 1.225;
     double timeStepSeconds = 1.0 / 60.0;
+    VariableMacReconstruction reconstruction =
+        VariableMacReconstruction::DonorCell;
     double maximumLocalOutgoingCourantNumber = 1.0;
     double absoluteDivergenceTolerancePerSecond = 1.0e-11;
     double relativeDivergenceTolerance = 1.0e-12;
@@ -36,6 +38,8 @@ struct ProjectedMacAdvectionSspRk2Settings {
 
 struct ProjectedMacAdvectionSspRk2Diagnostics {
     std::uint32_t version = projectedMacAdvectionSspRk2Version;
+    VariableMacReconstruction reconstruction =
+        VariableMacReconstruction::DonorCell;
     VariableMacAdvectionDiagnostics firstAdvection;
     ProjectionDiagnostics firstProjection;
     VariableMacAdvectionDiagnostics secondAdvection;
@@ -64,8 +68,10 @@ struct ProjectedMacAdvectionSspRk2Diagnostics {
 // divergence-free MAC state; pressure projection makes stage one eligible to
 // act as stage two's advector and projects the final convex combination. Both
 // fields commit together only after all four stages and the aggregate ledger
-// pass. This improves temporal order, while donor-cell spatial reconstruction
-// remains first order.
+// pass. Donor-cell reconstruction remains the default; the selectable
+// monotonized-central reconstruction is limited and conservative, with its
+// intermediate Euler energy criterion deferred to this aggregate SSPRK2
+// acceptance.
 [[nodiscard]] ProjectedMacAdvectionSspRk2Diagnostics
 advectVelocityProjectedSspRk2(
     const PeriodicCartesianGrid& grid,

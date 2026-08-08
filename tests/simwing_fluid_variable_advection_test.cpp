@@ -14,7 +14,9 @@ using simwing::fsi::fluid::MacVelocityField;
 using simwing::fsi::fluid::PeriodicCartesianGrid;
 using simwing::fsi::fluid::UniformMacAdvectionSettings;
 using simwing::fsi::fluid::VariableMacAdvectionSettings;
+using simwing::fsi::fluid::VariableMacReconstruction;
 using simwing::fsi::fluid::advectVelocityByMacFlow;
+using simwing::fsi::fluid::advectVelocityByMacFlowSspRk2;
 using simwing::fsi::fluid::advectVelocityByUniformFlow;
 
 int failures = 0;
@@ -303,6 +305,154 @@ void testFirstOrderVariableFlowConvergence() {
           "convergence: refined variable-shear transport remains first order");
 }
 
+void testMusclSspRk2ExactCompositionAndBounds() {
+    const double twoPi = 2.0 * std::numbers::pi;
+    const PeriodicCartesianGrid grid(
+        {18, 15, 3}, {}, {twoPi, twoPi, 1.0});
+    const auto advector = shearAdvector(grid);
+    const auto original = deterministicVelocity(grid);
+    auto reconstructedSettings = settings();
+    reconstructedSettings.reconstruction =
+        VariableMacReconstruction::MonotonizedCentral;
+    reconstructedSettings.timeStepSeconds = 0.02;
+    auto eulerSettings = reconstructedSettings;
+    eulerSettings.enforceEulerEnergyNonIncrease = false;
+
+    auto twiceAdvanced = original;
+    const auto expectedFirst = advectVelocityByMacFlow(
+        grid, twiceAdvanced, advector, eulerSettings);
+    const auto expectedSecond = advectVelocityByMacFlow(
+        grid, twiceAdvanced, advector, eulerSettings);
+    auto expected = original;
+    const auto average = [](const std::span<const double> before,
+                            const std::span<const double> twice,
+                            const std::span<double> destination) {
+        for (std::size_t index = 0; index < before.size(); ++index) {
+            destination[index] = before[index]
+                + 0.5 * (twice[index] - before[index]);
+        }
+    };
+    average(original.xFaces(), twiceAdvanced.xFaces(), expected.xFaces());
+    average(original.yFaces(), twiceAdvanced.yFaces(), expected.yFaces());
+    average(original.zFaces(), twiceAdvanced.zFaces(), expected.zFaces());
+
+    auto first = original;
+    auto second = original;
+    const auto firstDiagnostics = advectVelocityByMacFlowSspRk2(
+        grid, first, advector, reconstructedSettings);
+    const auto secondDiagnostics = advectVelocityByMacFlowSspRk2(
+        grid, second, advector, reconstructedSettings);
+    check(expectedFirst.accepted && expectedSecond.accepted
+              && firstDiagnostics.accepted
+              && firstDiagnostics.reconstruction
+                  == VariableMacReconstruction::MonotonizedCentral
+              && firstDiagnostics.firstEulerStage == expectedFirst
+              && firstDiagnostics.secondEulerStage == expectedSecond
+              && first == expected,
+          "MUSCL SSPRK2: result and diagnostics equal two Euler stages exactly");
+    check(first == second && firstDiagnostics == secondDiagnostics,
+          "MUSCL SSPRK2: reconstructed transport replays bit-for-bit");
+    check(firstDiagnostics.bounded
+              && firstDiagnostics.maximumBoundViolationMetersPerSecond
+                  == 0.0
+              && firstDiagnostics.momentumResidualNormNewtonSeconds
+                  < 4.0e-12
+              && firstDiagnostics.kineticEnergyAfterJoules
+                  <= firstDiagnostics.kineticEnergyBeforeJoules,
+          "MUSCL SSPRK2: bounds, momentum, and energy ledgers close");
+
+    const PeriodicCartesianGrid pulseGrid(
+        {32, 2, 2}, {}, {1.0, 1.0, 1.0});
+    auto pulse = MacVelocityField(pulseGrid);
+    for (std::size_t index = 0; index < pulseGrid.cellCount(); ++index) {
+        const std::size_t i = index % pulseGrid.cellCounts().x;
+        pulse.xFaces()[index] = i >= 8 && i < 20 ? 1.0 : 0.0;
+    }
+    const auto pulseAdvector = uniformAdvector(pulseGrid, 1.0, 0.0, 0.0);
+    auto pulseSettings = reconstructedSettings;
+    pulseSettings.timeStepSeconds = 0.4
+        * pulseGrid.cellSpacingMeters().x;
+    const auto pulseDiagnostics = advectVelocityByMacFlowSspRk2(
+        pulseGrid, pulse, pulseAdvector, pulseSettings);
+    check(pulseDiagnostics.accepted && pulseDiagnostics.bounded
+              && pulseDiagnostics.componentMinimumAfterMetersPerSecond.x
+                  >= 0.0
+              && pulseDiagnostics.componentMaximumAfterMetersPerSecond.x
+                  <= 1.0,
+          "MUSCL SSPRK2: a discontinuous pulse stays inside its exact old-time bounds");
+}
+
+double musclFullPeriodError(const std::size_t resolution) {
+    const double twoPi = 2.0 * std::numbers::pi;
+    const PeriodicCartesianGrid grid(
+        {resolution, 2, 2}, {}, {twoPi, 1.0, 1.0});
+    MacVelocityField velocity(grid);
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                velocity.xFaces()[grid.cellIndex(i, j, k)] = std::sin(
+                    grid.xFaceCenterMeters(i, j, k).x);
+            }
+        }
+    }
+    const auto expected = velocity;
+    const auto advector = uniformAdvector(grid, 1.0, 0.0, 0.0);
+    const double requestedTimeStep =
+        0.35 * grid.cellSpacingMeters().x;
+    const std::size_t steps = static_cast<std::size_t>(
+        std::ceil(twoPi / requestedTimeStep));
+    auto transportSettings = settings();
+    transportSettings.reconstruction =
+        VariableMacReconstruction::MonotonizedCentral;
+    transportSettings.timeStepSeconds =
+        twoPi / static_cast<double>(steps);
+    for (std::size_t step = 0; step < steps; ++step) {
+        const auto diagnostics = advectVelocityByMacFlowSspRk2(
+            grid, velocity, advector, transportSettings);
+        check(diagnostics.accepted,
+              "MUSCL convergence: every full-period SSPRK2 step is accepted");
+        if (!diagnostics.accepted) {
+            std::fprintf(
+                stderr,
+                "MUSCL rejection: first=%d stable=%d bounded=%d bound=%.17g energyLoss=%.17g cfl=%.17g\n",
+                diagnostics.firstEulerStage.accepted ? 1 : 0,
+                diagnostics.firstEulerStage.stable ? 1 : 0,
+                diagnostics.firstEulerStage.bounded ? 1 : 0,
+                diagnostics.firstEulerStage.maximumBoundViolationMetersPerSecond,
+                diagnostics.firstEulerStage.numericalKineticEnergyLossJoules,
+                diagnostics.firstEulerStage.maximumLocalOutgoingCourantNumber);
+            break;
+        }
+    }
+    double absoluteError = 0.0;
+    for (std::size_t index = 0; index < grid.cellCount(); ++index) {
+        const double error = velocity.xFaces()[index]
+            - expected.xFaces()[index];
+        absoluteError += std::abs(error);
+    }
+    return absoluteError / static_cast<double>(grid.cellCount());
+}
+
+void testMusclObservedSecondOrderSpatialConvergence() {
+    const double coarseError = musclFullPeriodError(32);
+    const double mediumError = musclFullPeriodError(64);
+    const double fineError = musclFullPeriodError(128);
+    const double coarseRatio = coarseError / mediumError;
+    const double fineRatio = mediumError / fineError;
+    if (!(coarseRatio > 3.1 && coarseRatio < 4.8)
+        || !(fineRatio > 3.1 && fineRatio < 4.8)) {
+        std::fprintf(stderr,
+                     "MUSCL ratios: %.17g %.17g errors %.17g %.17g %.17g\n",
+                     coarseRatio, fineRatio,
+                     coarseError, mediumError, fineError);
+    }
+    check(coarseRatio > 3.1 && coarseRatio < 4.8,
+          "MUSCL convergence: first smooth-wave L1 refinement approaches second order");
+    check(fineRatio > 3.1 && fineRatio < 4.8,
+          "MUSCL convergence: refined smooth-wave L1 transport remains near second order");
+}
+
 void testTransactionalRejection() {
     const PeriodicCartesianGrid grid(
         {8, 7, 6}, {}, {2.0, 3.0, 4.0});
@@ -347,6 +497,17 @@ void testTransactionalRejection() {
     check(invalid == original,
           "validation: invalid settings are transactional");
 
+    invalid = original;
+    invalidSettings = settings();
+    invalidSettings.reconstruction =
+        static_cast<VariableMacReconstruction>(255);
+    expectRejected(
+        [&] { static_cast<void>(advectVelocityByMacFlow(
+            grid, invalid, shear, invalidSettings)); },
+        "validation: an unknown reconstruction is rejected");
+    check(invalid == original,
+          "validation: rejected reconstruction is transactional");
+
     auto nonfiniteAdvector = shear;
     nonfiniteAdvector.yFaces().front() =
         std::numeric_limits<double>::quiet_NaN();
@@ -376,6 +537,8 @@ int main() {
     testVariableFlowConservationBoundsAndDeterminism();
     testNonlinearSelfAdvectionAlias();
     testFirstOrderVariableFlowConvergence();
+    testMusclSspRk2ExactCompositionAndBounds();
+    testMusclObservedSecondOrderSpatialConvergence();
     testTransactionalRejection();
     if (failures != 0) {
         std::fprintf(stderr,

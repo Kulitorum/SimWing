@@ -53,6 +53,13 @@ requires a divergence-free MAC advector, delegates uniform fields bit-exactly
 to the oracle, and supports safe nonlinear self-advection. Under its local
 outgoing-CFL limit it preserves component momentum and bounds without adding
 kinetic energy; a periodic shear fixture observes first-order convergence.
+A selectable monotonized-central reconstruction limits a second-order slope on
+those same shared faces. Its forward-Euler stages may add the expected
+second-order-in-time energy defect only while private inside SSPRK2; the
+committed convex update rechecks original component bounds, momentum, and
+non-increasing energy. A discontinuous pulse remains bounded and smooth
+uniform-flow L1 refinement approaches second order. General nonlinear spatial
+order remains to be established.
 A pressure-projected nonlinear SSPRK2 operator now uses two self-advection
 stages without feeding a divergent intermediate field back as its own
 advector. It projects stage one, advances stage two, convexly averages that
@@ -65,6 +72,8 @@ advances half a step on each side of the full projected nonlinear transport
 step. The resulting Strang composition is transactional across all three
 sub-integrators, closes their energy-loss sum, and observes second-order
 fixed-grid temporal refinement.
+Both the projected transport and Strang flow paths select donor-cell or limited
+monotonized-central reconstruction explicitly; donor-cell remains the default.
 The original single-stage transport and Euler/SSPRK2 viscosity modes compose
 with the zero-mean
 pressure solve in one transactional periodic fluid step. Every stage runs on

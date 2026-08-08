@@ -91,6 +91,10 @@ void validateSettings(const VariableMacAdvectionSettings& settings) {
     if (!std::ranges::all_of(finiteValues, [](const double value) {
             return std::isfinite(value);
         })
+        || (settings.reconstruction
+                != VariableMacReconstruction::DonorCell
+            && settings.reconstruction
+                != VariableMacReconstruction::MonotonizedCentral)
         || settings.densityKgPerCubicMeter <= 0.0
         || settings.timeStepSeconds <= 0.0
         || settings.maximumLocalOutgoingCourantNumber <= 0.0
@@ -234,12 +238,66 @@ struct VariableComponentMetrics {
     double maximumChangeMetersPerSecond = 0.0;
 };
 
+double minmod(const double first,
+              const double second,
+              const double third) noexcept {
+    if (first > 0.0 && second > 0.0 && third > 0.0) {
+        return std::min({first, second, third});
+    }
+    if (first < 0.0 && second < 0.0 && third < 0.0) {
+        return std::max({first, second, third});
+    }
+    return 0.0;
+}
+
+double monotonizedCentralSlope(
+    const GridCellCounts counts,
+    const std::span<const double> source,
+    const std::array<std::size_t, 3>& coordinates,
+    const Axis direction) noexcept {
+    auto negative = coordinates;
+    shiftNegative(negative, counts, direction);
+    auto positive = coordinates;
+    shiftPositive(positive, counts, direction);
+    const double center = source[uncheckedIndex(counts, coordinates)];
+    const double backward = center
+        - source[uncheckedIndex(counts, negative)];
+    const double forward = source[uncheckedIndex(counts, positive)]
+        - center;
+    return minmod(
+        0.5 * (backward + forward),
+        2.0 * backward,
+        2.0 * forward);
+}
+
+double reconstructedUpwindValue(
+    const GridCellCounts counts,
+    const std::span<const double> source,
+    const std::array<std::size_t, 3>& leftCoordinates,
+    const std::array<std::size_t, 3>& rightCoordinates,
+    const Axis direction,
+    const double faceVelocity,
+    const VariableMacReconstruction reconstruction) noexcept {
+    const bool fromLeft = faceVelocity >= 0.0;
+    const auto& upwindCoordinates = fromLeft
+        ? leftCoordinates : rightCoordinates;
+    const double upwindValue = source[uncheckedIndex(
+        counts, upwindCoordinates)];
+    if (reconstruction == VariableMacReconstruction::DonorCell) {
+        return upwindValue;
+    }
+    const double slope = monotonizedCentralSlope(
+        counts, source, upwindCoordinates, direction);
+    return upwindValue + (fromLeft ? 0.5 : -0.5) * slope;
+}
+
 void advectComponentByMacFlow(
     const GridCellCounts counts,
     const Vector3& spacing,
     const double timeStepSeconds,
     const MacVelocityField& advectingVelocity,
     const Axis transportedComponent,
+    const VariableMacReconstruction reconstruction,
     const std::span<const double> source,
     const std::span<double> destination,
     VariableComponentMetrics& metrics) {
@@ -270,14 +328,12 @@ void advectComponentByMacFlow(
                     const double negativeVelocity = positiveFluxVelocity(
                         counts, advectingVelocity, transportedComponent,
                         direction, negativeCoordinates);
-                    const double positiveValue = positiveVelocity >= 0.0
-                        ? source[center]
-                        : source[uncheckedIndex(
-                            counts, positiveCoordinates)];
-                    const double negativeValue = negativeVelocity >= 0.0
-                        ? source[uncheckedIndex(
-                            counts, negativeCoordinates)]
-                        : source[center];
+                    const double positiveValue = reconstructedUpwindValue(
+                        counts, source, coordinates, positiveCoordinates,
+                        direction, positiveVelocity, reconstruction);
+                    const double negativeValue = reconstructedUpwindValue(
+                        counts, source, negativeCoordinates, coordinates,
+                        direction, negativeVelocity, reconstruction);
                     fluxDivergence += inverseSpacing[directionIndex]
                         * (positiveVelocity * positiveValue
                            - negativeVelocity * negativeValue);
@@ -341,6 +397,20 @@ void advectComponent(
                     std::abs(destination[center] - source[center]));
             }
         }
+    }
+}
+
+void averageSspRk2Component(
+    const std::span<const double> original,
+    const std::span<const double> twiceAdvanced,
+    const std::span<double> destination,
+    double& maximumChange) {
+    for (std::size_t index = 0; index < original.size(); ++index) {
+        destination[index] = original[index]
+            + 0.5 * (twiceAdvanced[index] - original[index]);
+        maximumChange = std::max(
+            maximumChange,
+            std::abs(destination[index] - original[index]));
     }
 }
 
@@ -539,6 +609,9 @@ VariableMacAdvectionDiagnostics advectVelocityByMacFlow(
     }
 
     VariableMacAdvectionDiagnostics diagnostics;
+    diagnostics.reconstruction = settings.reconstruction;
+    diagnostics.energyCriterionEnabled =
+        settings.enforceEulerEnergyNonIncrease;
     diagnostics.densityKgPerCubicMeter = settings.densityKgPerCubicMeter;
     diagnostics.timeStepSeconds = settings.timeStepSeconds;
     diagnostics.maximumAcceptedLocalOutgoingCourantNumber =
@@ -594,7 +667,9 @@ VariableMacAdvectionDiagnostics advectVelocityByMacFlow(
         advectingMinimumX == advectingMaximumX
         && advectingMinimumY == advectingMaximumY
         && advectingMinimumZ == advectingMaximumZ;
-    if (diagnostics.uniformAdvector) {
+    if (diagnostics.uniformAdvector
+        && settings.reconstruction
+            == VariableMacReconstruction::DonorCell) {
         UniformMacAdvectionSettings uniformSettings;
         uniformSettings.densityKgPerCubicMeter =
             settings.densityKgPerCubicMeter;
@@ -649,6 +724,14 @@ VariableMacAdvectionDiagnostics advectVelocityByMacFlow(
         diagnostics.divergenceCompatible = true;
         diagnostics.stable = uniform.stable;
         diagnostics.bounded = uniform.bounded;
+        const double energyTolerance = combinedTolerance(
+            settings.absoluteEnergyToleranceJoules,
+            settings.relativeEnergyTolerance,
+            std::abs(uniform.kineticEnergyBeforeJoules),
+            std::abs(uniform.kineticEnergyAfterJoules));
+        diagnostics.energyNonIncreasing =
+            uniform.kineticEnergyAfterJoules
+            <= uniform.kineticEnergyBeforeJoules + energyTolerance;
         diagnostics.finite = uniform.finite;
         diagnostics.accepted = uniform.accepted;
         return diagnostics;
@@ -659,16 +742,19 @@ VariableMacAdvectionDiagnostics advectVelocityByMacFlow(
     advectComponentByMacFlow(
         grid.cellCounts(), spacing, settings.timeStepSeconds,
         advectingVelocityMetersPerSecond, Axis::X,
+        settings.reconstruction,
         velocityMetersPerSecond.xFaces(), candidate.xFaces(),
         componentMetrics);
     advectComponentByMacFlow(
         grid.cellCounts(), spacing, settings.timeStepSeconds,
         advectingVelocityMetersPerSecond, Axis::Y,
+        settings.reconstruction,
         velocityMetersPerSecond.yFaces(), candidate.yFaces(),
         componentMetrics);
     advectComponentByMacFlow(
         grid.cellCounts(), spacing, settings.timeStepSeconds,
         advectingVelocityMetersPerSecond, Axis::Z,
+        settings.reconstruction,
         velocityMetersPerSecond.zFaces(), candidate.zFaces(),
         componentMetrics);
     diagnostics.maximumLocalOutgoingCourantNumber =
@@ -760,9 +846,170 @@ VariableMacAdvectionDiagnostics advectVelocityByMacFlow(
     diagnostics.bounded = diagnostics.finite
         && diagnostics.maximumBoundViolationMetersPerSecond
             <= boundTolerance;
+    diagnostics.energyNonIncreasing = diagnostics.finite
+        && diagnostics.kineticEnergyAfterJoules
+            <= diagnostics.kineticEnergyBeforeJoules + energyTolerance;
     diagnostics.accepted = diagnostics.finite
         && diagnostics.divergenceCompatible
         && diagnostics.stable
+        && diagnostics.bounded
+        && diagnostics.momentumResidualNormNewtonSeconds
+            <= momentumTolerance
+        && (!settings.enforceEulerEnergyNonIncrease
+            || diagnostics.energyNonIncreasing);
+    if (diagnostics.accepted) {
+        velocityMetersPerSecond = std::move(candidate);
+    }
+    return diagnostics;
+}
+
+VariableMacAdvectionSspRk2Diagnostics
+advectVelocityByMacFlowSspRk2(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    const MacVelocityField& advectingVelocityMetersPerSecond,
+    const VariableMacAdvectionSettings& settings) {
+    validateSettings(settings);
+    if (!velocityMetersPerSecond.matches(grid)
+        || !advectingVelocityMetersPerSecond.matches(grid)) {
+        throw std::invalid_argument(
+            "variable MAC SSPRK2 advection velocity does not match its grid");
+    }
+    if (!isFinite(velocityMetersPerSecond)
+        || !isFinite(advectingVelocityMetersPerSecond)) {
+        throw std::invalid_argument(
+            "variable MAC SSPRK2 advection velocity must be finite");
+    }
+
+    VariableMacAdvectionSspRk2Diagnostics diagnostics;
+    diagnostics.reconstruction = settings.reconstruction;
+    diagnostics.momentumBeforeNewtonSeconds = momentumNewtonSeconds(
+        grid, velocityMetersPerSecond, settings.densityKgPerCubicMeter);
+    diagnostics.momentumAfterNewtonSeconds =
+        diagnostics.momentumBeforeNewtonSeconds;
+    diagnostics.kineticEnergyBeforeJoules = kineticEnergyJoules(
+        grid, velocityMetersPerSecond, settings.densityKgPerCubicMeter);
+    diagnostics.kineticEnergyAfterJoules =
+        diagnostics.kineticEnergyBeforeJoules;
+    const auto [minimumX, maximumX] = extrema(
+        velocityMetersPerSecond.xFaces());
+    const auto [minimumY, maximumY] = extrema(
+        velocityMetersPerSecond.yFaces());
+    const auto [minimumZ, maximumZ] = extrema(
+        velocityMetersPerSecond.zFaces());
+    diagnostics.componentMinimumBeforeMetersPerSecond = {
+        minimumX, minimumY, minimumZ};
+    diagnostics.componentMaximumBeforeMetersPerSecond = {
+        maximumX, maximumY, maximumZ};
+    diagnostics.componentMinimumAfterMetersPerSecond =
+        diagnostics.componentMinimumBeforeMetersPerSecond;
+    diagnostics.componentMaximumAfterMetersPerSecond =
+        diagnostics.componentMaximumBeforeMetersPerSecond;
+
+    auto eulerSettings = settings;
+    if (settings.reconstruction
+        == VariableMacReconstruction::MonotonizedCentral) {
+        eulerSettings.enforceEulerEnergyNonIncrease = false;
+    }
+    auto twiceAdvanced = velocityMetersPerSecond;
+    diagnostics.firstEulerStage = advectVelocityByMacFlow(
+        grid, twiceAdvanced, advectingVelocityMetersPerSecond,
+        eulerSettings);
+    if (!diagnostics.firstEulerStage.accepted) {
+        diagnostics.finite = diagnostics.firstEulerStage.finite;
+        return diagnostics;
+    }
+    diagnostics.secondEulerStage = advectVelocityByMacFlow(
+        grid, twiceAdvanced, advectingVelocityMetersPerSecond,
+        eulerSettings);
+    if (!diagnostics.secondEulerStage.accepted) {
+        diagnostics.finite = diagnostics.firstEulerStage.finite
+            && diagnostics.secondEulerStage.finite;
+        return diagnostics;
+    }
+
+    MacVelocityField candidate = velocityMetersPerSecond;
+    averageSspRk2Component(
+        velocityMetersPerSecond.xFaces(), twiceAdvanced.xFaces(),
+        candidate.xFaces(),
+        diagnostics.maximumVelocityChangeMetersPerSecond);
+    averageSspRk2Component(
+        velocityMetersPerSecond.yFaces(), twiceAdvanced.yFaces(),
+        candidate.yFaces(),
+        diagnostics.maximumVelocityChangeMetersPerSecond);
+    averageSspRk2Component(
+        velocityMetersPerSecond.zFaces(), twiceAdvanced.zFaces(),
+        candidate.zFaces(),
+        diagnostics.maximumVelocityChangeMetersPerSecond);
+    const auto [candidateMinimumX, candidateMaximumX] = extrema(
+        candidate.xFaces());
+    const auto [candidateMinimumY, candidateMaximumY] = extrema(
+        candidate.yFaces());
+    const auto [candidateMinimumZ, candidateMaximumZ] = extrema(
+        candidate.zFaces());
+    diagnostics.componentMinimumAfterMetersPerSecond = {
+        candidateMinimumX, candidateMinimumY, candidateMinimumZ};
+    diagnostics.componentMaximumAfterMetersPerSecond = {
+        candidateMaximumX, candidateMaximumY, candidateMaximumZ};
+    diagnostics.maximumBoundViolationMetersPerSecond = std::max({
+        0.0,
+        minimumX - candidateMinimumX,
+        minimumY - candidateMinimumY,
+        minimumZ - candidateMinimumZ,
+        candidateMaximumX - maximumX,
+        candidateMaximumY - maximumY,
+        candidateMaximumZ - maximumZ,
+    });
+    diagnostics.momentumAfterNewtonSeconds = momentumNewtonSeconds(
+        grid, candidate, settings.densityKgPerCubicMeter);
+    diagnostics.momentumResidualNewtonSeconds = subtract(
+        diagnostics.momentumAfterNewtonSeconds,
+        diagnostics.momentumBeforeNewtonSeconds);
+    diagnostics.momentumResidualNormNewtonSeconds = length(
+        diagnostics.momentumResidualNewtonSeconds);
+    diagnostics.kineticEnergyAfterJoules = kineticEnergyJoules(
+        grid, candidate, settings.densityKgPerCubicMeter);
+    diagnostics.numericalKineticEnergyLossJoules =
+        diagnostics.kineticEnergyBeforeJoules
+        - diagnostics.kineticEnergyAfterJoules;
+    diagnostics.finite = diagnostics.firstEulerStage.finite
+        && diagnostics.secondEulerStage.finite
+        && isFinite(candidate)
+        && finite(diagnostics.componentMinimumAfterMetersPerSecond)
+        && finite(diagnostics.componentMaximumAfterMetersPerSecond)
+        && std::isfinite(diagnostics.maximumBoundViolationMetersPerSecond)
+        && finite(diagnostics.momentumBeforeNewtonSeconds)
+        && finite(diagnostics.momentumAfterNewtonSeconds)
+        && finite(diagnostics.momentumResidualNewtonSeconds)
+        && std::isfinite(
+            diagnostics.momentumResidualNormNewtonSeconds)
+        && std::isfinite(diagnostics.kineticEnergyBeforeJoules)
+        && std::isfinite(diagnostics.kineticEnergyAfterJoules)
+        && std::isfinite(diagnostics.numericalKineticEnergyLossJoules)
+        && std::isfinite(
+            diagnostics.maximumVelocityChangeMetersPerSecond);
+    const double boundScale = std::max({
+        std::abs(minimumX), std::abs(maximumX),
+        std::abs(minimumY), std::abs(maximumY),
+        std::abs(minimumZ), std::abs(maximumZ),
+    });
+    const double boundTolerance = combinedTolerance(
+        settings.absoluteBoundToleranceMetersPerSecond,
+        settings.relativeBoundTolerance, boundScale, boundScale);
+    const double momentumTolerance = combinedTolerance(
+        settings.absoluteMomentumToleranceNewtonSeconds,
+        settings.relativeMomentumTolerance,
+        length(diagnostics.momentumBeforeNewtonSeconds),
+        length(diagnostics.momentumAfterNewtonSeconds));
+    const double energyTolerance = combinedTolerance(
+        settings.absoluteEnergyToleranceJoules,
+        settings.relativeEnergyTolerance,
+        std::abs(diagnostics.kineticEnergyBeforeJoules),
+        std::abs(diagnostics.kineticEnergyAfterJoules));
+    diagnostics.bounded = diagnostics.finite
+        && diagnostics.maximumBoundViolationMetersPerSecond
+            <= boundTolerance;
+    diagnostics.accepted = diagnostics.finite
         && diagnostics.bounded
         && diagnostics.momentumResidualNormNewtonSeconds
             <= momentumTolerance

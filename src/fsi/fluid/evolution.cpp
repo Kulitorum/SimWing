@@ -105,6 +105,10 @@ void validateSettings(
     if (!std::ranges::all_of(finiteValues, [](const double value) {
             return std::isfinite(value);
         })
+        || (settings.advectionReconstruction
+                != VariableMacReconstruction::DonorCell
+            && settings.advectionReconstruction
+                != VariableMacReconstruction::MonotonizedCentral)
         || settings.densityKgPerCubicMeter <= 0.0
         || settings.kinematicViscositySquareMetersPerSecond < 0.0
         || settings.timeStepSeconds <= 0.0
@@ -451,6 +455,7 @@ advancePeriodicFlowStrangSspRk2(
     advectionSettings.densityKgPerCubicMeter =
         settings.densityKgPerCubicMeter;
     advectionSettings.timeStepSeconds = settings.timeStepSeconds;
+    advectionSettings.reconstruction = settings.advectionReconstruction;
     advectionSettings.maximumLocalOutgoingCourantNumber =
         settings.maximumLocalOutgoingCourantNumber;
     advectionSettings.absoluteDivergenceTolerancePerSecond =

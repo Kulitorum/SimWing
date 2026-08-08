@@ -109,6 +109,8 @@ struct PeriodicFlowStrangSspRk2Settings {
     double densityKgPerCubicMeter = 1.225;
     double kinematicViscositySquareMetersPerSecond = 1.5e-5;
     double timeStepSeconds = 1.0 / 60.0;
+    VariableMacReconstruction advectionReconstruction =
+        VariableMacReconstruction::DonorCell;
     double maximumLocalOutgoingCourantNumber = 1.0;
     double advectionAbsoluteDivergenceTolerancePerSecond = 1.0e-11;
     double advectionRelativeDivergenceTolerance = 1.0e-12;
@@ -154,7 +156,8 @@ struct PeriodicFlowStrangSspRk2Diagnostics {
 // transport over the full step, and the symmetric viscous half step. All
 // candidates remain private and pressure/velocity commit together only after
 // every sub-integrator and the independent aggregate ledger pass. Donor-cell
-// convection remains first order in space.
+// convection remains the default; limited monotonized-central reconstruction
+// is selectable for the higher-order smooth-flow path.
 [[nodiscard]] PeriodicFlowStrangSspRk2Diagnostics
 advancePeriodicFlowStrangSspRk2(
     const PeriodicCartesianGrid& grid,

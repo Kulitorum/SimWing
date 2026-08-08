@@ -209,13 +209,19 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   variable-flow operator. That operator reconstructs shared staggered
   control-volume fluxes from a divergence-free MAC field, supports nonlinear
   self-advection, and preserves periodic component momentum, bounds, and
-  non-increasing energy under its local outgoing-CFL limit. Both remain first
-  order, not the intended second-order production convection.
+  non-increasing energy under its local outgoing-CFL limit. Both donor forms
+  remain first order. A selectable monotonized-central (MC) reconstruction
+  supplies the conservative limited higher-order path. Its Euler stages may add
+  the expected
+  `O(dt^2)` energy only inside an enclosing SSPRK2 transaction; the committed
+  update still enforces old-time bounds, momentum, and non-increasing energy.
+  Smooth uniform-flow L1 refinement approaches second order, while general
+  nonlinear spatial order is not yet established.
   A projected SSPRK2 nonlinear operator composes two such self-advection stages
   with intermediate/final pressure projections. It preserves transactional
   pressure/velocity commit, stage eligibility, momentum, and non-increasing
-  energy, and has observed second-order temporal refinement on a fixed grid;
-  its donor-cell spatial reconstruction remains first order.
+  energy, has observed second-order temporal refinement on a fixed grid, and
+  accepts either donor-cell or limited MC reconstruction.
   The composed periodic evolution step selects uniform or nonlinear transport
   and Euler or SSPRK2 viscosity, then runs the zero-mean projection on
   candidates and commits velocity and pressure together only after every stage
@@ -223,8 +229,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   A second-order temporal path instead uses symmetric Strang splitting:
   half-step SSPRK2 viscosity, full projected nonlinear SSPRK2 transport, and
   the matching viscous half step. Its exact sub-integrator ledger and
-  fixed-grid refinement are tested; donor-cell convection remains first order
-  in space.
+  fixed-grid refinement are tested; donor-cell remains the default and limited
+  MC reconstruction is selectable.
   It has no Playground dependency and is not yet an arbitrary/multiple-crossing
   or whole-wing flow solver.
 - `simwing_viewer_protocol`: Qt-free immutable diagnostic-frame and trace
@@ -584,27 +590,35 @@ makes this a certified aerodynamic solver.
   stability/conservation contract, and is second order in time for the
   discrete viscous eigenproblem. Coupled advection/viscosity splitting is not
   yet the intended second-order production time integrator.
-- `src/fsi/fluid/advection.{h,cpp}` owns the bounded donor-cell transport
-  operators for periodic MAC components. The prescribed-uniform oracle is a
+- `src/fsi/fluid/advection.{h,cpp}` owns the bounded donor-cell and limited MC
+  transport operators for periodic MAC components. The prescribed-uniform oracle is a
   convex combination when `sum(abs(U_i)*dt/h_i) <= 1` and commutes with the
   discrete divergence. The variable-flow path averages a divergence-free MAC
   advector onto each translated component control volume, uses one shared
   upwind flux per periodic face, and supports safe self-advection aliasing.
-  Accepted steps preserve component momentum, bounds, and non-increasing
-  kinetic energy under the local outgoing-CFL limit. It is the conservative
-  first-order baseline; second-order reconstruction remains future work.
+  Accepted donor steps preserve component momentum, bounds, and non-increasing
+  kinetic energy under the local outgoing-CFL limit. MC reconstructs
+  monotonized slopes on the same shared faces. Its individual Euler stages may
+  bypass only the energy check inside `advectVelocityByMacFlowSspRk2`; the
+  convex aggregate rechecks original component bounds, momentum, and energy.
+  A discontinuous pulse stays bounded, and smooth periodic uniform transport
+  shows near-second-order L1 refinement. General nonlinear spatial convergence
+  remains open.
 - `src/fsi/fluid/projected_advection.{h,cpp}` owns pressure-projected nonlinear
   SSPRK2 transport. Stage one is self-advected and projected before becoming
   stage two's advector; the old field and twice-advanced prediction are then
   convexly averaged and projected again. Velocity and pressure commit together
-  only after both donor stages, both projections, and the aggregate
+  only after both selected transport stages, both projections, and the aggregate
   momentum/energy ledger pass. The fixed-grid vortical regression observes
-  second-order temporal refinement, not second-order spatial accuracy.
+  second-order temporal refinement. Donor or limited MC reconstruction is
+  selected explicitly; intermediate MC Euler energy is accepted only here and
+  the projected aggregate must still be non-increasing.
 - `src/fsi/fluid/evolution.{h,cpp}` composes selectable uniform or nonlinear
   self-advection, Euler or SSPRK2 viscosity, and periodic projection into the
   first complete fluid macro-step. Its second path composes half-step SSPRK2
   viscosity, projected nonlinear SSPRK2 transport, and a symmetric viscous half
-  step into the first complete second-order temporal periodic flow integrator.
+  step into the first complete second-order temporal periodic flow integrator;
+  it exposes donor-cell or limited MC reconstruction explicitly.
   Stage diagnostics remain intact, the aggregate momentum/energy/divergence
   ledger is checked independently, and failure at advection, diffusion,
   projection, either Strang sub-integrator, or final conservation commits
@@ -724,7 +738,7 @@ paths that release CI deliberately excludes from its offscreen test command.
 | Playground body/pressure/cells/material | `playground_pressure_solve`, `playground_cells`, `playground_metrics`, `playground_material`, `softwing_material`, and the deterministic bench guards below |
 | Playground contact | `playground_contact`, `playground_contact_integration`, plus a relevant bench/GUI scenario |
 | SimWing scene/structure/viewer foundations | `simwing_scene`, `simwing_model_scene_export`, `simwing_model_scene_real_export`, `simwing_structure`, `simwing_scene_structure`, `simwing_viewer_protocol`, `simwing_structure_frame`, plus `softwing_material`/`softwing_cell_volume` when core primitives change and `softwing_suspension_checkpoint` for payload/suspension state |
-| SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`, `simwing_fluid_moving_interface`, `simwing_fluid_control_volume`, `simwing_fluid_cut_surface`, `simwing_fluid_checkpoint`, `simwing_fluid_diffusion`, `simwing_fluid_advection`, `simwing_fluid_variable_advection`, `simwing_fluid_projected_advection`, `simwing_fluid_evolution`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing projection/diffusion/transport energy, transactional failure and composed all-stage rollback, deterministic replay, Taylor-Green invariance, manufactured second-order pressure and viscous spatial-eigenvalue convergence, exact zero/uniform/Nyquist viscous modes and the `0.5` per-stage stability boundary, exact Euler-stage SSPRK2 composition and observed second-order viscous temporal convergence, bounded donor-cell uniform transport with exact CFL-one shift and divergence commutation, exact uniform delegation from the variable path, divergence-free staggered control-volume flux closure, safe nonlinear self-advection aliasing, observed first-order uniform and variable-shear refinement, exact four-stage projected nonlinear SSPRK2 composition, repeated stage eligibility, observed fixed-grid second-order nonlinear temporal refinement, exact symmetric half-viscosity/projected-transport/half-viscosity Strang composition, closed sub-integrator energy ledger, full-flow rollback and observed second-order temporal refinement, exact standalone-versus-composed uniform/nonlinear and Euler/SSPRK2 stage equivalence, stable region/interface orientation, static sharp-jump balance, exact X/Y/Z face constraints, separate adjacent-pressure and complete direct-enforcement reaction ledgers, canonical face-tile geometry/traction ledgers, per-region compatibility/gauges, analytic translating-slab pressure impulse/work, open-piston partial-cell/surface-sweep/opening-flux GCL closure, exact X/Y/Z one-plane rebase volume continuity, accepted physical cut-plane area/force/moment/power, macro-step-average endpoint resampling, periodic-image closure, and immutable grid/topology-bound accepted-state checkpoint replay |
+| SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`, `simwing_fluid_moving_interface`, `simwing_fluid_control_volume`, `simwing_fluid_cut_surface`, `simwing_fluid_checkpoint`, `simwing_fluid_diffusion`, `simwing_fluid_advection`, `simwing_fluid_variable_advection`, `simwing_fluid_projected_advection`, `simwing_fluid_evolution`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing projection/diffusion/committed-transport energy, transactional failure and composed all-stage rollback, deterministic replay, Taylor-Green invariance, manufactured second-order pressure and viscous spatial-eigenvalue convergence, exact zero/uniform/Nyquist viscous modes and the `0.5` per-stage stability boundary, exact Euler-stage SSPRK2 composition and observed second-order viscous temporal convergence, bounded donor-cell uniform transport with exact CFL-one shift and divergence commutation, exact uniform delegation from the variable path, divergence-free staggered control-volume flux closure, safe nonlinear self-advection aliasing, observed first-order uniform and variable-shear refinement, exact limited-MC SSPRK2 stage composition, discontinuous-pulse bounds, confined intermediate Euler energy exception, and near-second-order smooth-wave L1 refinement, exact four-stage projected nonlinear SSPRK2 composition with donor/MC selection, repeated stage eligibility, observed fixed-grid second-order nonlinear temporal refinement, exact symmetric half-viscosity/projected-transport/half-viscosity Strang composition with donor/MC selection, closed sub-integrator energy ledger, full-flow rollback and observed second-order temporal refinement, exact standalone-versus-composed uniform/nonlinear and Euler/SSPRK2 stage equivalence, stable region/interface orientation, static sharp-jump balance, exact X/Y/Z face constraints, separate adjacent-pressure and complete direct-enforcement reaction ledgers, canonical face-tile geometry/traction ledgers, per-region compatibility/gauges, analytic translating-slab pressure impulse/work, open-piston partial-cell/surface-sweep/opening-flux GCL closure, exact X/Y/Z one-plane rebase volume continuity, accepted physical cut-plane area/force/moment/power, macro-step-average endpoint resampling, periodic-image closure, and immutable grid/topology-bound accepted-state checkpoint replay |
 | SimWing conservative transfer | `simwing_transfer`; preserve stable topology/Structure binding, analytic uniform and barycentric-quadrature area/force/moment, rigid translation/rotation power, independent ledger closure, additive nodal load application, and rejection before mutation for foreign results/structures |
 | SimWing macro-step coupling | `simwing_coupling`; preserve strictly ordered local sample time, topology/duration binding, analytic moving-piston impulse and pressure-volume work, independent temporal ledger closure, momentum delivery through XPBD, deterministic replay, and pre-load checkpoint rollback on failure |
 | SimWing fluid/structure bridge and piston workers | `simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing_open_piston_case`, `simwing_fsi_piston_headless`, `simwing_fsi_open_piston_headless`, `simwing_fsi_open_piston_rebase_headless`; preserve the strict uniform subset, planar face-resolved nonuniform transfer, stable surface/geometry binding, complete nonoverlapping coverage, per-face and aggregate area/force/moment/power closure, rigid-normal X/Y/Z grid/physical-plane correspondence and velocity binding, analytic impulse delivery, explicit actuator-versus-complete-CFD reaction, bit-identical replay through periodic topology crossings and composite checkpoint restore, open-piston structure/fluid/actuator/system momentum residual below `1e-8 N*s` and energy residual below `2e-9 J`, accepted-only frames, and Qt-free headless execution |

@@ -24,6 +24,7 @@ using simwing::fsi::fluid::ProjectedMacAdvectionSspRk2Settings;
 using simwing::fsi::fluid::ProjectionSettings;
 using simwing::fsi::fluid::UniformMacAdvectionSettings;
 using simwing::fsi::fluid::VariableMacAdvectionSettings;
+using simwing::fsi::fluid::VariableMacReconstruction;
 using simwing::fsi::fluid::advancePeriodicFlow;
 using simwing::fsi::fluid::advancePeriodicFlowStrangSspRk2;
 using simwing::fsi::fluid::advectVelocityProjectedSspRk2;
@@ -74,6 +75,8 @@ PeriodicFlowStrangSspRk2Settings strangSettings() {
     result.densityKgPerCubicMeter = 1.2;
     result.kinematicViscositySquareMetersPerSecond = 0.02;
     result.timeStepSeconds = 0.01;
+    result.advectionReconstruction =
+        VariableMacReconstruction::MonotonizedCentral;
     result.advectionAbsoluteDivergenceTolerancePerSecond = 2.0e-10;
     result.advectionRelativeDivergenceTolerance = 1.0e-12;
     result.projectionAbsoluteResidualTolerance = 1.0e-12;
@@ -408,6 +411,7 @@ ProjectedMacAdvectionSspRk2Settings projectedSettings(
     ProjectedMacAdvectionSspRk2Settings result;
     result.densityKgPerCubicMeter = source.densityKgPerCubicMeter;
     result.timeStepSeconds = source.timeStepSeconds;
+    result.reconstruction = source.advectionReconstruction;
     result.maximumLocalOutgoingCourantNumber =
         source.maximumLocalOutgoingCourantNumber;
     result.absoluteDivergenceTolerancePerSecond =
@@ -632,6 +636,19 @@ void testStrangRollback() {
     check(invalidVelocity == originalVelocity
               && invalidPressure == originalPressure,
           "Strang validation: invalid settings mutate neither field");
+
+    invalidVelocity = originalVelocity;
+    invalidPressure = originalPressure;
+    invalidSettings = strangSettings();
+    invalidSettings.advectionReconstruction =
+        static_cast<VariableMacReconstruction>(255);
+    expectRejected(
+        [&] { static_cast<void>(advancePeriodicFlowStrangSspRk2(
+            grid, invalidVelocity, invalidPressure, invalidSettings)); },
+        "Strang validation: unknown reconstruction is rejected");
+    check(invalidVelocity == originalVelocity
+              && invalidPressure == originalPressure,
+          "Strang validation: rejected reconstruction mutates neither field");
 }
 
 void testStageFailureRollback() {

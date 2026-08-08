@@ -17,6 +17,7 @@ using simwing::fsi::fluid::ProjectedMacAdvectionFailureStage;
 using simwing::fsi::fluid::ProjectedMacAdvectionSspRk2Settings;
 using simwing::fsi::fluid::ProjectionSettings;
 using simwing::fsi::fluid::VariableMacAdvectionSettings;
+using simwing::fsi::fluid::VariableMacReconstruction;
 using simwing::fsi::fluid::advectVelocityByMacFlow;
 using simwing::fsi::fluid::advectVelocityProjectedSspRk2;
 using simwing::fsi::fluid::projectVelocity;
@@ -95,11 +96,12 @@ ProjectedMacAdvectionSspRk2Settings settings() {
     return result;
 }
 
-VariableMacAdvectionSettings donorSettings(
+VariableMacAdvectionSettings transportSettings(
     const ProjectedMacAdvectionSspRk2Settings& source) {
     VariableMacAdvectionSettings result;
     result.densityKgPerCubicMeter = source.densityKgPerCubicMeter;
     result.timeStepSeconds = source.timeStepSeconds;
+    result.reconstruction = source.reconstruction;
     result.maximumLocalOutgoingCourantNumber =
         source.maximumLocalOutgoingCourantNumber;
     result.absoluteDivergenceTolerancePerSecond =
@@ -111,6 +113,10 @@ VariableMacAdvectionSettings donorSettings(
     result.absoluteEnergyToleranceJoules =
         source.absoluteEnergyToleranceJoules;
     result.relativeEnergyTolerance = source.relativeEnergyTolerance;
+    if (source.reconstruction
+        == VariableMacReconstruction::MonotonizedCentral) {
+        result.enforceEulerEnergyNonIncrease = false;
+    }
     return result;
 }
 
@@ -143,7 +149,7 @@ void testExactCompositionAndDeterminism() {
     const auto originalVelocity = vorticalVelocity(grid);
     const CellScalarField originalPressure(grid);
     const auto integrationSettings = settings();
-    const auto advection = donorSettings(integrationSettings);
+    const auto advection = transportSettings(integrationSettings);
     const auto projection = pressureSettings(integrationSettings);
 
     auto firstStage = originalVelocity;
@@ -238,6 +244,40 @@ void testUniformNoOpAndRepeatedEligibility() {
                   && first.finalDivergenceL2PerSecond < 2.0e-10,
               "projected SSPRK2: each accepted result is eligible for the next step");
     }
+}
+
+void testLimitedReconstructionNonlinearPath() {
+    const double twoPi = 2.0 * std::numbers::pi;
+    const PeriodicCartesianGrid grid(
+        {16, 14, 2}, {}, {twoPi, twoPi, 1.0});
+    auto firstVelocity = vorticalVelocity(grid);
+    auto secondVelocity = firstVelocity;
+    CellScalarField firstPressure(grid);
+    CellScalarField secondPressure(grid);
+    auto integrationSettings = settings();
+    integrationSettings.reconstruction =
+        VariableMacReconstruction::MonotonizedCentral;
+    integrationSettings.timeStepSeconds = 0.005;
+    const auto first = advectVelocityProjectedSspRk2(
+        grid, firstVelocity, firstPressure, integrationSettings);
+    const auto second = advectVelocityProjectedSspRk2(
+        grid, secondVelocity, secondPressure, integrationSettings);
+    check(first.accepted && second.accepted
+              && first.reconstruction
+                  == VariableMacReconstruction::MonotonizedCentral
+              && first.firstAdvection.reconstruction
+                  == VariableMacReconstruction::MonotonizedCentral
+              && !first.firstAdvection.energyCriterionEnabled
+              && !first.secondAdvection.energyCriterionEnabled,
+          "limited nonlinear path: projected SSPRK2 encloses both MUSCL Euler stages");
+    check(first == second && firstVelocity == secondVelocity
+              && firstPressure == secondPressure,
+          "limited nonlinear path: reconstructed projected transport replays exactly");
+    check(first.momentumResidualNormNewtonSeconds < 4.0e-12
+              && first.kineticEnergyAfterJoules
+                  <= first.kineticEnergyBeforeJoules
+              && first.finalDivergenceL2PerSecond < 2.0e-10,
+          "limited nonlinear path: aggregate momentum, energy, and continuity close");
 }
 
 struct FlowState {
@@ -355,6 +395,19 @@ void testTransactionalRejection() {
               && invalidPressure == originalPressure,
           "validation: invalid settings mutate neither field");
 
+    invalidVelocity = originalVelocity;
+    invalidPressure = originalPressure;
+    invalidSettings = settings();
+    invalidSettings.reconstruction =
+        static_cast<VariableMacReconstruction>(255);
+    expectRejected(
+        [&] { static_cast<void>(advectVelocityProjectedSspRk2(
+            grid, invalidVelocity, invalidPressure, invalidSettings)); },
+        "validation: an unknown projected reconstruction is rejected");
+    check(invalidVelocity == originalVelocity
+              && invalidPressure == originalPressure,
+          "validation: rejected reconstruction mutates neither field");
+
     auto nonfiniteVelocity = originalVelocity;
     auto nonfinitePressure = originalPressure;
     nonfiniteVelocity.xFaces().front() =
@@ -373,6 +426,7 @@ void testTransactionalRejection() {
 int main() {
     testExactCompositionAndDeterminism();
     testUniformNoOpAndRepeatedEligibility();
+    testLimitedReconstructionNonlinearPath();
     testObservedSecondOrderTemporalRefinement();
     testTransactionalRejection();
     if (failures != 0) {
