@@ -2361,6 +2361,12 @@ ContactPairHandle SoftBody::addContactPair(
     }
 
     const std::size_t index = contactPairs_.size();
+    // A checkpoint is valid immediately after topology construction, before
+    // the first contact-enabled substep has reset diagnostics. Complete both
+    // potentially allocating reserves before committing either parallel
+    // vector so registration remains transactional.
+    contactPairs_.reserve(index + 1);
+    contactPairDiagnostics_.reserve(index + 1);
     contactPairs_.push_back(
         {kind,
          firstKind,
@@ -2368,6 +2374,7 @@ ContactPairHandle SoftBody::addContactPair(
          secondKind,
          secondIndex,
          settings});
+    contactPairDiagnostics_.emplace_back();
     return ContactPairHandle(this, index);
 }
 

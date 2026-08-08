@@ -237,6 +237,16 @@ responsibilities:
 - compute structural energy, constraint residuals, penetration, line loads,
   and material strain in every accepted step.
 
+The accepted opaque `SoftBodyCheckpoint` now has its own versioned persistent
+codec. It stores every committed mutable node, pressure, multiplier, contact
+warm-start, record, diagnostic, and audit value in a deterministic,
+checksummed, byte-bounded little-endian envelope. Decode is transactional and
+requires a checkpoint from an equivalent rebuilt body as its topology template;
+immutable masses, connectivity, constraint definitions, membrane materials,
+and contact registration are copied from that trusted template rather than the
+wire. This is the structural-core payload needed by an enclosing Structure
+checkpoint format, not yet the full Structure/suspension or open-piston file.
+
 Material calibration is not optional. Replace prototype fallback constants with
 identified parameter sets, while keeping an explicitly named synthetic material
 for regression tests. Required measurements include biaxial fabric response,
@@ -489,7 +499,10 @@ roots and assembles the rigid payload; contact remains an explicit worker policy
 because scene-v2 has no authoritative contact material yet. `softwing_core`
 provides complementary transactional checkpoints for complete SoftBody/contact
 and suspension/rigid-payload state, and `simwing_structure` restores them as one
-composite transaction. The real 3.28 regression now reaches an accepted coupled
+composite transaction. The opaque SoftBody payload also has a bounded,
+checksummed deterministic codec whose decode is bound to an equivalent rebuilt
+topology. The enclosing Structure/suspension and open-piston file formats remain
+open. The real 3.28 regression now reaches an accepted coupled
 structural step and replayable diagnostic trace with synthetic physical export
 settings. Manufacturing flat-pattern UVs, exact authored line-attachment
 vertices, authored paired seams and stitch mechanics, live bidirectional
@@ -915,8 +928,9 @@ Work:
 - in parallel conceptually, use IBAMR or OpenFOAM/preCICE as an external
   reference for selected canonical cases, not as a required GUI dependency;
 - implement arbitrary moving-interface/jump conditions, curved/changing
-  paired grid-side correspondence, refinement, full composite checkpoint-file
-  persistence, and broader control messages;
+  paired grid-side correspondence, refinement, enclosing Structure/suspension
+  and full open-piston checkpoint-file persistence, and broader control
+  messages;
 - extend the current cell-point pressure, velocity, divergence, and vorticity
   diagnostics with rate-limited AMR blocks, slices, traction, and pressure-jump
   layers as each field becomes available;

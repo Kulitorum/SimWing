@@ -182,6 +182,7 @@ add_library(softwing_core STATIC
     src/softwing/parallel.cpp
     src/softwing/pneumatics.cpp
     src/softwing/soft_body.cpp
+    src/softwing/soft_body_checkpoint_persistence.cpp
     src/softwing/suspension.cpp
 )
 target_include_directories(softwing_core PUBLIC
@@ -658,6 +659,12 @@ add_executable(softwing-suspension-checkpoint-test
 target_link_libraries(softwing-suspension-checkpoint-test
     PRIVATE softwing_core)
 
+add_executable(softwing-checkpoint-persistence-test
+    tests/softwing_checkpoint_persistence_test.cpp
+)
+target_link_libraries(softwing-checkpoint-persistence-test
+    PRIVATE softwing_core)
+
 add_executable(simwing-scene-test
     tests/simwing_scene_test.cpp
 )
@@ -989,6 +996,7 @@ set_target_properties(
     softwing-material-test
     softwing-cell-volume-test
     softwing-suspension-checkpoint-test
+    softwing-checkpoint-persistence-test
     simwing-scene-test
     simwing-model-scene-export-test
     simwing-model-scene-real-export-test
@@ -1048,6 +1056,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         softwing-material-test
         softwing-cell-volume-test
         softwing-suspension-checkpoint-test
+        softwing-checkpoint-persistence-test
         simwing-scene-test
         simwing-model-scene-export-test
         simwing-model-scene-real-export-test
@@ -1191,6 +1200,8 @@ add_test(NAME softwing_material COMMAND softwing-material-test)
 add_test(NAME softwing_cell_volume COMMAND softwing-cell-volume-test)
 add_test(NAME softwing_suspension_checkpoint
     COMMAND softwing-suspension-checkpoint-test)
+add_test(NAME softwing_checkpoint_persistence
+    COMMAND softwing-checkpoint-persistence-test)
 add_test(NAME simwing_scene COMMAND simwing-scene-test)
 add_test(NAME simwing_model_scene_export
     COMMAND simwing-model-scene-export-test)

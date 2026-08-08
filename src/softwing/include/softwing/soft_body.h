@@ -20,6 +20,7 @@ class PneumaticNetwork;
 class SuspensionSystem;
 class AerodynamicSystem;
 struct ContactAuditTestAccess;
+struct SoftBodyCheckpointPersistenceAccess;
 // Accepted Stage 7 flight-state restart module. It is a production friend
 // (not test access): the SOFTWING_FLIGHT_STATE 1 artifact restores committed
 // state into existing live owners without widening any public mutator.
@@ -260,6 +261,11 @@ struct RectangularMembraneCoupon {
 // and commits transactionally after all allocating copies have succeeded.
 class SoftBodyCheckpoint {
 public:
+    // Publicly nameable only so the core's separate persistence translation
+    // unit can define helpers around it. The definition remains private to
+    // src/softwing and no state member is exposed through this API.
+    struct State;
+
     SoftBodyCheckpoint() = default;
     SoftBodyCheckpoint(const SoftBodyCheckpoint&) = default;
     SoftBodyCheckpoint(SoftBodyCheckpoint&&) noexcept = default;
@@ -271,7 +277,7 @@ public:
 
 private:
     friend class SoftBody;
-    struct State;
+    friend struct SoftBodyCheckpointPersistenceAccess;
     explicit SoftBodyCheckpoint(std::shared_ptr<const State> state)
         : state_(std::move(state)) {}
 

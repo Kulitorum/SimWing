@@ -73,6 +73,13 @@ count; `workerThreads == 0` still selects the untouched serial sweep):
   forces, contact warm starts, accepted contact records, diagnostics, and audit
   keys. Derived scheduling caches are rebuilt lazily. `simwing_structure`
   composes this with the suspension checkpoint before publishing a safe point.
+- `softwing/checkpoint_persistence.h` — a deterministic, checksummed,
+  byte-bounded little-endian codec for that opaque SoftBody checkpoint. The
+  payload carries mutable state only and must be decoded against a checkpoint
+  from an equivalent rebuilt topology; persisted bytes therefore cannot
+  redefine masses, connectivity, materials, or contact registration. Contact
+  pair diagnostics are initialized with registration so even the pre-step
+  checkpoint is complete and restorable.
 
 The generic membrane constraint-space damping field predates the Playground
 material mode. Nonzero values are stable for the small isolated coupons it was
