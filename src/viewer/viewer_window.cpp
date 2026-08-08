@@ -1047,8 +1047,6 @@ private:
         readInFlight_ = true; // The stream requests its first frame at startup.
         stepWhenReady_ = false;
         playing_ = true;
-        desiredField_.clear();
-        view_->setField({});
         view_->setFrame({});
         view_->setMessage({});
         restartAction_->setEnabled(true);
@@ -1211,7 +1209,6 @@ private:
             fieldCombo_->blockSignals(false);
             if (desiredIndex == 0 && !desiredField_.isEmpty()) {
                 desiredField_.clear();
-                view_->setField({});
             }
         }
 
@@ -1249,9 +1246,16 @@ private:
             vectorCombo_->blockSignals(false);
             if (desiredIndex == 0 && !desiredVectorField_.isEmpty()) {
                 desiredVectorField_.clear();
-                view_->setVectorField({});
             }
         }
+
+        // A selection is renderer state, while every diagnostic frame owns a
+        // fresh immutable set of field values. Rebind both names on every
+        // presented frame even when the combo-box contents did not change.
+        // This keeps live scalar colours and vector glyphs attached to the
+        // incoming frame instead of relying on a selector-change signal.
+        view_->setField(desiredField_);
+        view_->setVectorField(desiredVectorField_);
     }
 
     void updatePlayAction() {

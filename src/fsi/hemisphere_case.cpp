@@ -168,8 +168,7 @@ void addRestShapeDihedrals(StructureDefinition& definition) {
                 2.0 * std::numbers::pi * static_cast<double>(longitude)
                 / static_cast<double>(hemisphereRadialSegments);
             const bool fixed = latitude == hemisphereLatitudeSegments
-                && longitude % (hemisphereRadialSegments
-                                / hemisphereAnchorCount) == 0;
+                && isHemisphereAnchorLongitude(longitude);
             definition.nodes.push_back(
                 {{radialDistance * std::cos(azimuth),
                   radialDistance * std::sin(azimuth),
@@ -247,7 +246,7 @@ void addRestShapeDihedrals(StructureDefinition& definition) {
              second,
              length(subtract(definition.nodes[second].positionMeters,
                              definition.nodes[first].positionMeters)),
-             0.0});
+             hemisphereRimComplianceMetersPerNewton});
     }
     addRestShapeDihedrals(definition);
     return definition;

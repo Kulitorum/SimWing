@@ -50,15 +50,34 @@ void testTopologyAndBoundary() {
           "hemisphere topology contains the complete membrane disk");
 
     std::size_t fixedNodes = 0;
-    for (const fsi::StructureNodeDefinition& node : definition.nodes) {
+    for (std::size_t nodeIndex = 0;
+         nodeIndex < definition.nodes.size();
+         ++nodeIndex) {
+        const fsi::StructureNodeDefinition& node = definition.nodes[nodeIndex];
         if (node.fixed) {
             ++fixedNodes;
             check(std::abs(node.positionMeters.z) < 1.0e-14,
                   "only equatorial nodes are fixed");
+            const std::size_t boundaryBegin = 1
+                + (fsi::hemisphereLatitudeSegments - 1)
+                      * fsi::hemisphereRadialSegments;
+            check(nodeIndex >= boundaryBegin
+                      && fsi::isHemisphereAnchorLongitude(
+                          nodeIndex - boundaryBegin),
+                  "only the retained original rim points are fixed");
         }
     }
     check(fixedNodes == fsi::hemisphereAnchorCount,
-          "exactly three equally spaced equatorial points are anchored");
+          "exactly two original equatorial points are anchored");
+    const bool compliantRim = std::all_of(
+        definition.constraints.begin(), definition.constraints.end(),
+        [](const fsi::StructureConstraintDefinition& constraint) {
+            return constraint.kind == fsi::StructureConstraintKind::Distance
+                && constraint.complianceMetersPerNewton
+                    == fsi::hemisphereRimComplianceMetersPerNewton;
+        });
+    check(compliantRim,
+          "every visible rim segment is compliant rather than rigid");
 }
 
 void testDeterministicPressureMotion() {
@@ -96,9 +115,8 @@ void testDeterministicPressureMotion() {
     double maximumFreeBoundaryMotion = 0.0;
     for (std::size_t node = boundaryBegin; node < final.nodes.size(); ++node) {
         const std::size_t longitude = node - boundaryBegin;
-        const bool anchored = longitude
-                % (fsi::hemisphereRadialSegments
-                   / fsi::hemisphereAnchorCount) == 0;
+        const bool anchored =
+            fsi::isHemisphereAnchorLongitude(longitude);
         if (anchored) {
             anchorsUnchanged = anchorsUnchanged
                 && final.nodes[node].positionMeters
@@ -120,9 +138,9 @@ void testDeterministicPressureMotion() {
         }
     }
     check(anchorsUnchanged,
-          "pressure motion preserves all three anchors exactly");
-    check(maximumFreeBoundaryMotion > 1.0e-3,
-          "pressure motion visibly frees the unanchored equatorial rim");
+          "pressure motion preserves both anchors exactly");
+    check(maximumFreeBoundaryMotion > 0.5,
+          "pressure motion produces a large free-rim flap");
     check(first.maximumFreeRimDisplacementMeters()
               == maximumFreeBoundaryMotion,
           "reported free-rim motion matches the accepted structure state");

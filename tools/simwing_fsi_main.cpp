@@ -99,7 +99,7 @@ void printUsage(FILE* stream) {
         "\n"
         "Runs a canonical Qt-free numerical case and writes a completed diagnostic\n"
         "trace. 'structural' is the original analytic XPBD harness; 'hemisphere'\n"
-        "runs a pressure-loaded fabric dome held at three equatorial points;\n"
+        "runs a pressure-loaded fabric dome held at two equatorial points with a compliant rim;\n"
         "'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
         "'strong-piston' strongly iterates that chain for a light added-mass plate;\n"

@@ -841,9 +841,10 @@ makes this a certified aerodynamic solver.
   not aerodynamic truth; it writes only accepted steps and launches the
   sibling viewer by default. `--no-viewer` must remain Qt-free and unthrottled.
 - `src/fsi/hemisphere_case.{h,cpp}` is the larger structural/viewer canonical:
-  a triangulated fabric hemisphere held at three equatorial points, intrinsic
-  membrane charts, signed rest-shape hinges, and time-varying analytic follower
-  pressure. It deliberately tests curved loaded structure, not CFD truth.
+  a triangulated fabric hemisphere held at two equatorial points with a
+  compliant rim, intrinsic membrane charts, signed rest-shape hinges, and
+  time-varying analytic follower pressure. It deliberately tests curved loaded
+  structure, not CFD truth.
   `--checkpoint-in`, `--checkpoint-out`, and `--checkpoint-every` are supported
   by periodic-flow, moving-porous-flow, open-piston, and porous-sheet workers;
   all restore before
