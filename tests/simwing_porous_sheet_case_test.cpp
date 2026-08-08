@@ -181,14 +181,47 @@ void testCompletedTrace() {
           "porous-sheet trace: replay contains every accepted frame");
 }
 
-void testTopologyBoundaryRollback() {
+void testTopologyRebaseAndCollisionRollback() {
     fsi::CoupledPorousSheetCase simulation;
+    fsi::CoupledPorousSheetCase replay;
+    viewer::DiagnosticFrame rebaseFrame;
+    viewer::DiagnosticFrame replayFrame;
+    for (std::size_t attempt = 0; attempt < 400
+         && simulation.topologyRebaseCount() == 0; ++attempt) {
+        rebaseFrame = simulation.advance();
+        replayFrame = replay.advance();
+    }
+    check(simulation.topologyRebaseCount() == 1
+              && simulation.porousFaceCoordinate() == 4
+              && simulation.diagnostics().topologyRebasedThisStep
+              && simulation.diagnostics().topologyRebaseCount == 1
+              && simulation.diagnostics().porousFaceCoordinate == 4
+              && simulation.diagnostics()
+                     .bridge.mapping.gridPlaneCoordinateMeters
+                  == simulation.diagnostics()
+                         .sheetPositionAtConstitutiveTimeMeters
+              && simulation.diagnostics()
+                     .bridge.mapping.physicalPlaneCoordinateMeters > 1.75,
+          "porous-sheet topology: first dual-cell crossing commits an explicit rebase");
+    check(serialized(rebaseFrame) == serialized(replayFrame),
+          "porous-sheet topology: the accepted crossing frame replays bit-for-bit");
+
+    const auto rebasedCheckpoint = simulation.checkpoint();
+    fsi::CoupledPorousSheetCase restored;
+    restored.restore(rebasedCheckpoint);
+    check(rebasedCheckpoint.topologyRebaseCount == 1
+              && rebasedCheckpoint.porousFaceCoordinate == 4
+              && serialized(simulation.advance())
+                  == serialized(restored.advance()),
+          "porous-sheet topology: rebased checkpoint resumes the exact next frame");
+
     bool rejected = false;
     for (std::size_t attempt = 0; attempt < 1000; ++attempt) {
         const auto structureBefore = simulation.structure().checkpoint();
         const auto velocityBefore = simulation.velocity();
         const auto pressureBefore = simulation.pressure();
         const auto diagnosticsBefore = simulation.diagnostics();
+        const auto checkpointBefore = simulation.checkpoint();
         try {
             static_cast<void>(simulation.advance());
         } catch (const std::exception&) {
@@ -202,14 +235,18 @@ void testTopologyBoundaryRollback() {
                           == structureBefore.pendingExternalForcesNewtons
                       && simulation.velocity() == velocityBefore
                       && simulation.pressure() == pressureBefore
-                      && simulation.diagnostics() == diagnosticsBefore,
-                  "porous-sheet topology: rejected segment crossing rolls back every owner");
+                      && simulation.diagnostics() == diagnosticsBefore
+                      && simulation.topologyRebaseCount()
+                          == checkpointBefore.topologyRebaseCount
+                      && simulation.porousFaceCoordinate()
+                          == checkpointBefore.porousFaceCoordinate,
+                  "porous-sheet topology: pump collision rolls back every owner and epoch");
             rejected = true;
             break;
         }
     }
     check(rejected,
-          "porous-sheet topology: fixed epoch rejects before an implicit remap");
+          "porous-sheet topology: later pump-surface collision is rejected explicitly");
 }
 
 void expectRestoreRejected(
@@ -232,6 +269,8 @@ void expectRestoreRejected(
     check(rejected
               && after.acceptedStepCount == before.acceptedStepCount
               && after.simulationTimeSeconds == before.simulationTimeSeconds
+              && after.topologyRebaseCount == before.topologyRebaseCount
+              && after.porousFaceCoordinate == before.porousFaceCoordinate
               && structureAfter.acceptedStepCount
                   == structureBefore.acceptedStepCount
               && structureAfter.nodes == structureBefore.nodes
@@ -252,7 +291,7 @@ void testCheckpointReplayAndValidation() {
           "porous-sheet checkpoint: initial state reproduces the first frame");
 
     fsi::CoupledPorousSheetCase owner;
-    constexpr std::uint64_t checkpointStep = 60;
+    constexpr std::uint64_t checkpointStep = 350;
     for (std::uint64_t step = 0; step < checkpointStep; ++step) {
         static_cast<void>(owner.advance());
     }
@@ -263,6 +302,10 @@ void testCheckpointReplayAndValidation() {
               && checkpoint.caseFingerprint
                   == fsi::coupledPorousSheetCaseFingerprint
               && checkpoint.acceptedStepCount == checkpointStep
+              && checkpoint.topologyRebaseCount == 1
+              && checkpoint.porousFaceCoordinate == 4
+              && restored.topologyRebaseCount() == 1
+              && restored.porousFaceCoordinate() == 4
               && restored.diagnostics() == owner.diagnostics()
               && restored.velocity() == owner.velocity()
               && restored.pressure() == owner.pressure(),
@@ -270,7 +313,7 @@ void testCheckpointReplayAndValidation() {
     checkNear(
         checkpoint.simulationTimeSeconds,
         checkpointStep * owner.stepSettings().timeStepSeconds,
-        2.0e-15,
+        1.0e-14,
         "porous-sheet checkpoint: public time retains the accepted step epoch");
     const auto expected = owner.advance();
     const auto replay = restored.advance();
@@ -302,6 +345,16 @@ void testCheckpointReplayAndValidation() {
     expectRestoreRejected(
         restored, invalid,
         "porous-sheet checkpoint validation: public time must match private state");
+    invalid = checkpoint;
+    invalid.topologyRebaseCount = 0;
+    expectRestoreRejected(
+        restored, invalid,
+        "porous-sheet checkpoint validation: topology epoch must match state");
+    invalid = checkpoint;
+    invalid.porousFaceCoordinate = 3;
+    expectRestoreRejected(
+        restored, invalid,
+        "porous-sheet checkpoint validation: topology face must match state");
     expectRestoreRejected(
         restored, {},
         "porous-sheet checkpoint validation: empty payload is transactional");
@@ -382,6 +435,10 @@ void expectDecodeRejected(
               && destination.acceptedStepCount == before.acceptedStepCount
               && destination.simulationTimeSeconds
                   == before.simulationTimeSeconds
+              && destination.topologyRebaseCount
+                  == before.topologyRebaseCount
+              && destination.porousFaceCoordinate
+                  == before.porousFaceCoordinate
               && serialized(expected.advance())
                   == serialized(actual.advance()),
           message);
@@ -403,7 +460,7 @@ void testPersistentCheckpoint() {
           "porous-sheet persistence: decoded initial state reproduces the first frame");
 
     fsi::CoupledPorousSheetCase owner;
-    constexpr std::uint64_t stepCount = 60;
+    constexpr std::uint64_t stepCount = 350;
     for (std::uint64_t step = 0; step < stepCount; ++step) {
         static_cast<void>(owner.advance());
     }
@@ -420,7 +477,9 @@ void testPersistentCheckpoint() {
     auto destination = destinationOwner.checkpoint();
     check(fsi::deserializeCoupledPorousSheetCheckpoint(
               first, destinationOwner, destination, &error)
-              && destination.acceptedStepCount == stepCount,
+              && destination.acceptedStepCount == stepCount
+              && destination.topologyRebaseCount == 1
+              && destination.porousFaceCoordinate == 4,
           "porous-sheet persistence: accepted checkpoint decodes transactionally");
     const auto reencoded = encodeCheckpoint(destinationOwner, destination);
     check(reencoded == first,
@@ -467,6 +526,24 @@ void testPersistentCheckpoint() {
         fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::ChecksumMismatch,
         "porous-sheet persistence validation: checksum damage is transactional");
 
+    constexpr std::size_t payloadOffset = 16;
+    constexpr std::size_t topologyRebaseOffsetInPayload = 28;
+    constexpr std::size_t porousFaceOffsetInPayload = 36;
+    invalid = first;
+    invalid[payloadOffset + topologyRebaseOffsetInPayload] ^= 1;
+    recomputeEnvelopeChecksum(invalid);
+    expectDecodeRejected(
+        invalid, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::InvalidData,
+        "porous-sheet persistence validation: topology epoch corruption cannot evade replay");
+    invalid = first;
+    invalid[payloadOffset + porousFaceOffsetInPayload] ^= 1;
+    recomputeEnvelopeChecksum(invalid);
+    expectDecodeRejected(
+        invalid, destinationOwner, destination,
+        fsi::CoupledPorousSheetCheckpointPersistenceErrorCode::InvalidData,
+        "porous-sheet persistence validation: topology face corruption cannot evade replay");
+
     fsi::CoupledPorousSheetCheckpointPersistenceLimits limits;
     limits.maximumEncodedBytes = first.size() - 1;
     expectDecodeRejected(
@@ -499,9 +576,8 @@ void testPersistentCheckpoint() {
           "porous-sheet persistence validation: failed encoding preserves caller output");
 
     invalid = first;
-    constexpr std::size_t payloadOffset = 16;
-    constexpr std::size_t structureSizeOffsetInPayload = 108;
-    constexpr std::size_t structureOffsetInPayload = 116;
+    constexpr std::size_t structureSizeOffsetInPayload = 124;
+    constexpr std::size_t structureOffsetInPayload = 132;
     const std::size_t structureSize = static_cast<std::size_t>(readU64(
         invalid, payloadOffset + structureSizeOffsetInPayload));
     check(structureSize > 32,
@@ -526,7 +602,7 @@ void testPersistentCheckpoint() {
 int main() {
     testCoupledPorousSheet();
     testCompletedTrace();
-    testTopologyBoundaryRollback();
+    testTopologyRebaseAndCollisionRollback();
     testCheckpointReplayAndValidation();
     testPersistentCheckpoint();
     if (failures != 0) {

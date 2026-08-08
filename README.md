@@ -248,11 +248,13 @@ frames with visible deterministic motion. The
 `simwing-fsi --case porous-sheet` harness drives fluid through a translating
 linear-resistance sheet, transfers only the sheet reaction to XPBD, and closes
 the pump impulse/work, porous dissipation, and fluid/structure kinetic-energy
-ledgers before publishing a frame. It is a fixed-topology midpoint oracle and
-stops before the sheet leaves its current MAC segment. Its in-memory composite
-checkpoint restores the complete accepted state with exact next-frame replay;
-the checksummed persistent form reuses Structure's codec, stores the MAC fields,
-and validates them against bounded deterministic replay before decode.
+ledgers before publishing a frame. It commits one explicit MAC-face rebase when
+the sheet enters the next dual-cell segment, then stops before colliding with
+the prescribed pump surface. Its in-memory composite checkpoint restores the
+complete accepted state with exact next-frame replay;
+the checksummed persistent form reuses Structure's codec, stores the topology
+epoch and MAC fields, and validates them against bounded deterministic replay
+before decode.
 The
 `simwing-fsi --case open-piston` harness drives a `6000 kg` plate at
 `0.05 m/s`, exposes the resisting CFD pressure separately from its actuator,
@@ -412,7 +414,7 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case pressure-jump --steps 4 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case porous-flow --steps 120 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case porous-sheet --steps 120 --no-viewer
-.\build\bin\Release\simwing-fsi.exe --case porous-sheet --steps 60 --no-viewer --checkpoint-out porous-sheet.swps --checkpoint-every 30
+.\build\bin\Release\simwing-fsi.exe --case porous-sheet --steps 330 --no-viewer --checkpoint-out porous-sheet.swps --checkpoint-every 165
 .\build\bin\Release\simwing-fsi.exe --case porous-sheet --checkpoint-in porous-sheet.swps --steps 30 --checkpoint-out porous-sheet.swps --checkpoint-every 30
 ```
 

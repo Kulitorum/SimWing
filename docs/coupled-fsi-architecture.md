@@ -971,9 +971,12 @@ XPBD. Its analytic linear-resistance midpoint relation independently closes
 fluid and sheet momentum against prescribed pump impulse, and closes their
 kinetic-energy changes plus porous dissipation against pump work on every
 accepted step. The immutable trace shows the translated two-sided sheet and
-keeps pressure jump, sheet impulse, pump work, and porous loss separate. It is
-fixed-topology by construction and rejects the sheet at its current MAC-segment
-boundary; it is not a moving cut-cell remap or a general strong-coupling solve.
+keeps pressure jump, sheet impulse, pump work, and porous loss separate. At the
+first accepted midpoint sample in the next dual-cell segment it explicitly
+rebinds the crossing to the next MAC face while preserving physical sheet and
+fluid state. A later collision with the prescribed pump surface is rejected;
+this remains a planar oracle, not a general moving cut-cell remap or a general
+strong-coupling solve.
 Its immutable in-memory checkpoint owns the nested Structure state, MAC
 velocity, pressure, and last accepted coupled diagnostics. Restore validates
 the case identity, exact step/time epoch, rigid sheet state, uniform fluid
@@ -981,10 +984,11 @@ state, field energy, and cumulative pump momentum before one transactional
 commit; initial and accepted checkpoints reproduce the exact next frame in an
 equivalent rebuilt worker.
 The distinct `SWPS` persistent envelope reuses the validated Structure codec
-and stores all three MAC velocity components plus pressure explicitly. Because
-this canonical has no controls and terminates within one topology epoch, decode
-regenerates its coupled diagnostic by bounded replay and requires the decoded
-Structure and every field sample to match that replay bit-for-bit. Magic,
+and stores the topology epoch, all three MAC velocity components, and pressure
+explicitly. Because this canonical has no runtime-varying controls, decode
+regenerates its coupled diagnostic across topology epochs by bounded replay and
+requires the decoded Structure and every field sample to match that replay
+bit-for-bit. Magic,
 protocol, reserved bits, payload size, checksum, nested Structure state, total
 bytes, scalar samples, and replay steps are bounded and rejected before the
 destination checkpoint changes. The standard worker checkpoint flags now write
@@ -997,16 +1001,17 @@ rebuilt worker. Version, case fingerprint, grid, sample count, step, time, and
 payload presence are independently rejected before mutation. Its persistent
 encoding must be byte-deterministic across repeats and decode/re-encode, retain
 all nested diagnostics exactly, and continue bit-for-bit after either initial
-or accepted-state decode. The default untrusted-input limits are `64 MiB`,
-5,000,000 scalar samples, and 4096 substeps. Bad magic/version/reserved bits,
+or accepted-state decode. The default untrusted-input limits are `256 MiB`,
+5,000,000 scalar samples, and 10,000 replay steps. Bad magic/version/reserved
+bits,
 truncation, trailing data, checksum corruption, and every configured limit must
-leave the destination checkpoint unchanged. The CLI integration writes four
-steps, restores them, advances three additional steps, atomically replaces the
-same restart file, decodes it again, and reports seven total accepted steps
-without launching Qt. With interval two, the four-step run writes at steps two
-and four, while the resumed run writes at absolute step six and final step
-seven; each reports exactly two writes. Interval mode without an output path is
-rejected before a worker or trace is created.
+leave the destination checkpoint unchanged. The porous-sheet CLI integration
+writes through the first topology rebase at step 330, restores it, advances
+three additional steps, atomically replaces the same restart file, and decodes
+it again without launching Qt. The initial interval of 165 writes at steps 165
+and 330; the resumed interval of two writes at absolute step 332 and final step
+333. Interval mode without an output path is rejected before a worker or trace
+is created.
 The open-piston CLI counterpart checkpoints at absolute steps 600 and 1200,
 therefore persisting the first accepted topology rebase. It restores that file,
 advances three additional steps, atomically replaces the same path at step 1202
@@ -1161,9 +1166,10 @@ composite persistent checkpoint before or after a topology rebase.
 The coupled porous-sheet oracle now also exercises the accepted
 fluid-to-structure boundary end to end: a periodic pump drives midpoint flow,
 the porous adapter excludes that pump from material traction, the bridge maps
-only the sheet reaction, and XPBD receives the same impulse and work. Its
-one-segment translation is intentionally a smaller gate than moving porous
-topology.
+only the sheet reaction, and XPBD receives the same impulse and work. Its first
+MAC-face topology rebase, rebased checkpoint replay, and later explicit
+pump-collision rejection remain intentionally smaller gates than general
+moving porous topology.
 General interpolated cut-cell pressure metrics, curved or transversely deforming
 correspondence, nonplanar or opening topology events, sealed deforming chambers,
 a complete coupled energy ledger for those general cases, and richer

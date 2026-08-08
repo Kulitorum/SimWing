@@ -99,7 +99,7 @@ void printUsage(FILE* stream) {
         "'porous-flow' advances a pressure-driven Darcy-Forchheimer plug and\n"
         "publishes its porous and periodic gauge-closure planes.\n"
         "'porous-sheet' couples a translating Darcy sheet to XPBD while a\n"
-        "periodic pump drives fluid through it inside one topology epoch.\n"
+        "periodic pump drives fluid through it across one MAC-face rebase.\n"
         "'pressure-jump' repeatedly verifies a static split-region slab and\n"
         "publishes each ordered sharp-interface layer. Porous-sheet,\n"
         "open-piston, and periodic-flow checkpoint paths\n"
@@ -1177,6 +1177,7 @@ int main(int argc, char* argv[]) {
                         "simwing-fsi completed %llu porous-sheet step(s), "
                         "t=%.9g s, sheet-x=%.9g m, sheet-speed=%.9g m/s, "
                         "fluid-speed=%.9g m/s, energy-residual=%.3g J, "
+                        "topology-rebases=%llu, face=%zu, "
                         "checkpoint-writes=%llu, trace=%s\n",
                         static_cast<unsigned long long>(
                         checkpoint.acceptedStepCount),
@@ -1185,6 +1186,9 @@ int main(int argc, char* argv[]) {
                         sheetSpeed,
                         fluidSpeed,
                         coupled.energyResidualJoules,
+                        static_cast<unsigned long long>(
+                            simulation.topologyRebaseCount()),
+                        simulation.porousFaceCoordinate(),
                         static_cast<unsigned long long>(
                             checkpointWriteCount),
                         options.tracePath.string().c_str());

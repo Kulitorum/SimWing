@@ -221,6 +221,8 @@ bool serializeCoupledPorousSheetCheckpoint(
         payload.u64(checkpointValue.caseFingerprint);
         payload.u64(checkpointValue.acceptedStepCount);
         payload.real(checkpointValue.simulationTimeSeconds);
+        payload.u64(checkpointValue.topologyRebaseCount);
+        payload.u64(checkpointValue.porousFaceCoordinate);
         const auto counts = owner.grid().cellCounts();
         payload.u64(counts.x);
         payload.u64(counts.y);
@@ -353,6 +355,8 @@ bool deserializeCoupledPorousSheetCheckpoint(
         const std::uint64_t caseFingerprint = payload.u64();
         const std::uint64_t acceptedStepCount = payload.u64();
         const double simulationTimeSeconds = payload.real();
+        const std::uint64_t topologyRebaseCount = payload.u64();
+        const std::uint64_t porousFaceCoordinate64 = payload.u64();
         if (stateVersion != coupledPorousSheetCheckpointVersion
             || caseFingerprint != coupledPorousSheetCaseFingerprint
             || !std::isfinite(simulationTimeSeconds)
@@ -365,6 +369,12 @@ bool deserializeCoupledPorousSheetCheckpoint(
             return fail(error,
                         CoupledPorousSheetCheckpointPersistenceErrorCode::LimitExceeded,
                         "coupled porous sheet checkpoint replay exceeds the configured limit");
+        }
+        if (porousFaceCoordinate64
+            > std::numeric_limits<std::size_t>::max()) {
+            return fail(error,
+                        CoupledPorousSheetCheckpointPersistenceErrorCode::LimitExceeded,
+                        "coupled porous sheet topology exceeds platform limits");
         }
         const std::uint64_t countX = payload.u64();
         const std::uint64_t countY = payload.u64();
@@ -445,6 +455,10 @@ bool deserializeCoupledPorousSheetCheckpoint(
             || replayCheckpoint.acceptedStepCount != acceptedStepCount
             || replayCheckpoint.simulationTimeSeconds
                 != simulationTimeSeconds
+            || replayCheckpoint.topologyRebaseCount
+                != topologyRebaseCount
+            || replayCheckpoint.porousFaceCoordinate
+                != static_cast<std::size_t>(porousFaceCoordinate64)
             || !samePublicStructure(
                 replayDetail.structure, decodedStructure)
             || replayDetail.velocity != decodedVelocity

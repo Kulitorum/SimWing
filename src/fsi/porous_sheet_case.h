@@ -6,6 +6,7 @@
 #include "structure_frame.h"
 #include "viewer_protocol.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -14,13 +15,14 @@ namespace simwing::fsi {
 struct CoupledPorousSheetCheckpointCodecAccess;
 
 inline constexpr char coupledPorousSheetCaseChecksum[] =
-    "sha256:simwing-coupled-porous-sheet-case-v1";
+    "sha256:simwing-coupled-porous-sheet-case-v2";
 inline constexpr char coupledPorousSheetCaseSolverId[] =
-    "simwing-fsi-coupled-porous-sheet-worker-v1";
-inline constexpr std::uint32_t coupledPorousSheetDiagnosticsVersion = 1;
-inline constexpr std::uint32_t coupledPorousSheetCheckpointVersion = 1;
+    "simwing-fsi-coupled-porous-sheet-worker-v2";
+inline constexpr std::uint32_t coupledPorousSheetDiagnosticsVersion = 2;
+inline constexpr std::uint32_t coupledPorousSheetCheckpointVersion = 2;
 inline constexpr std::uint64_t coupledPorousSheetCaseFingerprint =
-    0x8b43f6c2d9157ea1ULL;
+    0x8b43f6c2d9157ea2ULL;
+inline constexpr std::size_t coupledPorousSheetInitialFaceCoordinate = 3;
 
 struct CoupledPorousSheetStepDiagnostics {
     std::uint32_t version = coupledPorousSheetDiagnosticsVersion;
@@ -49,6 +51,10 @@ struct CoupledPorousSheetStepDiagnostics {
     double energyResidualJoules = 0.0;
     double maximumFluidUniformityResidualMetersPerSecond = 0.0;
     double maximumSheetRigidMotionResidualMeters = 0.0;
+    std::uint64_t topologyRebaseCount = 0;
+    std::size_t porousFaceCoordinate =
+        coupledPorousSheetInitialFaceCoordinate;
+    bool topologyRebasedThisStep = false;
     fluid::PorousProjectionDiagnostics fluidProjection;
     fluid::PorousSurfaceTractionDiagnostics porousTraction;
     PorousFaceResolvedBridgeDiagnostics bridge;
@@ -65,6 +71,9 @@ struct CoupledPorousSheetCheckpoint {
     std::uint64_t caseFingerprint = coupledPorousSheetCaseFingerprint;
     std::uint64_t acceptedStepCount = 0;
     double simulationTimeSeconds = 0.0;
+    std::uint64_t topologyRebaseCount = 0;
+    std::size_t porousFaceCoordinate =
+        coupledPorousSheetInitialFaceCoordinate;
 
 private:
     friend class CoupledPorousSheetCase;
@@ -73,14 +82,16 @@ private:
     std::shared_ptr<const Detail> detail;
 };
 
-// A fixed-topology, one-degree-of-freedom coupled verification oracle. A
+// A one-degree-of-freedom coupled verification oracle. A
 // periodic pump drives flow through one planar Darcy sheet. The midpoint
 // porous solve owns fluid pressure work and dissipation; the stable-ID bridge
 // transfers only the equal-and-opposite sheet reaction into XPBD. The scalar
 // midpoint relation is analytic for this linear material, so fluid, sheet,
 // pump, and dissipation ledgers can be checked independently. The sheet may
-// translate only within its authored MAC segment; topology rebasing and
-// general strong coupling remain outside this case.
+// rebinds to the next MAC face after crossing one dual-cell boundary while
+// preserving physical position and accepted fluid state. It rejects the later
+// collision with the pump surface. General strong coupling remains outside
+// this case.
 class CoupledPorousSheetCase final {
 public:
     CoupledPorousSheetCase();
@@ -104,6 +115,8 @@ public:
     diagnostics() const noexcept;
     [[nodiscard]] std::uint64_t acceptedStepCount() const noexcept;
     [[nodiscard]] double simulationTimeSeconds() const noexcept;
+    [[nodiscard]] std::uint64_t topologyRebaseCount() const noexcept;
+    [[nodiscard]] std::size_t porousFaceCoordinate() const noexcept;
 
 private:
     fluid::PeriodicCartesianGrid grid_;
@@ -116,6 +129,9 @@ private:
     viewer::StructureFrameMapping frameMapping_;
     StructureStepSettings stepSettings_;
     CoupledPorousSheetStepDiagnostics diagnostics_;
+    std::uint64_t topologyRebaseCount_ = 0;
+    std::size_t porousFaceCoordinate_ =
+        coupledPorousSheetInitialFaceCoordinate;
 };
 
 } // namespace simwing::fsi

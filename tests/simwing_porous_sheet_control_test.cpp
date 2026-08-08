@@ -58,20 +58,22 @@ void testCheckpointAndContinuation() {
     fsi::WorkerControlResponse response;
     fsi::WorkerControlProtocolError protocolError;
     check(session.execute(
-              {fsi::WorkerControlCommandKind::Advance, 401, 3},
+              {fsi::WorkerControlCommandKind::Advance, 401, 330},
               response, &protocolError)
               && !protocolError
               && response.kind
                   == fsi::WorkerControlResponseKind::Advanced
               && response.requestId == 401
-              && response.acceptedStepCount == 3
+              && response.acceptedStepCount == 330
               && response.simulationTimeSeconds
                   == simulation.simulationTimeSeconds()
-              && response.producedFrameCount == 3
-              && publishedFrameCount == 3
+              && response.producedFrameCount == 330
+              && publishedFrameCount == 330
               && lastPublishedFrame.has_value()
-              && lastPublishedFrame->step == 3,
-          "porous-sheet control publishes each accepted coupled step");
+              && lastPublishedFrame->step == 330
+              && simulation.topologyRebaseCount() == 1
+              && simulation.porousFaceCoordinate() == 4,
+          "porous-sheet control publishes through the first topology rebase");
 
     check(session.execute(
               {fsi::WorkerControlCommandKind::Checkpoint, 402, 0},
@@ -79,9 +81,11 @@ void testCheckpointAndContinuation() {
               && response.kind
                   == fsi::WorkerControlResponseKind::Checkpointed
               && response.requestId == 402
-              && response.acceptedStepCount == 3
+              && response.acceptedStepCount == 330
               && savedCheckpoint.has_value()
-              && savedCheckpoint->acceptedStepCount == 3
+              && savedCheckpoint->acceptedStepCount == 330
+              && savedCheckpoint->topologyRebaseCount == 1
+              && savedCheckpoint->porousFaceCoordinate == 4
               && savedCheckpoint->simulationTimeSeconds
                   == simulation.simulationTimeSeconds(),
           "porous-sheet control delegates the complete coupled checkpoint");
@@ -94,9 +98,9 @@ void testCheckpointAndContinuation() {
               response, &protocolError)
               && response.kind
                   == fsi::WorkerControlResponseKind::Advanced
-              && response.acceptedStepCount == 4
+              && response.acceptedStepCount == 331
               && response.producedFrameCount == 1
-              && publishedFrameCount == 4
+              && publishedFrameCount == 331
               && serializedFrame(*lastPublishedFrame)
                   == serializedFrame(expectedNext),
           "delegated porous-sheet checkpoint reproduces the controlled next frame");
@@ -106,7 +110,7 @@ void testCheckpointAndContinuation() {
               response, &protocolError)
               && response.kind == fsi::WorkerControlResponseKind::Stopped
               && response.requestId == 404
-              && response.acceptedStepCount == 4
+              && response.acceptedStepCount == 331
               && session.stopped(),
           "porous-sheet control stops at the final accepted safe point");
     check(session.execute(
@@ -115,8 +119,8 @@ void testCheckpointAndContinuation() {
               && response.kind == fsi::WorkerControlResponseKind::Error
               && response.failureCode
                   == fsi::WorkerControlFailureCode::InvalidCommand
-              && response.acceptedStepCount == 4
-              && simulation.acceptedStepCount() == 4,
+              && response.acceptedStepCount == 331
+              && simulation.acceptedStepCount() == 331,
           "stopped porous-sheet control rejects later checkpoint mutation");
 }
 

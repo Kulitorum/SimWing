@@ -1560,13 +1560,13 @@ set_tests_properties(simwing_fsi_checkpoint_interval_requires_output PROPERTIES
 add_test(NAME simwing_fsi_porous_sheet_checkpoint_write
     COMMAND simwing-fsi
         --case porous-sheet
-        --steps 60
+        --steps 330
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-porous-sheet-checkpoint-write.swtrace"
         --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-porous-sheet.swps"
-        --checkpoint-every 30)
+        --checkpoint-every 165)
 set_tests_properties(simwing_fsi_porous_sheet_checkpoint_write PROPERTIES
-    PASS_REGULAR_EXPRESSION "completed 60 porous-sheet step\\(s\\).*checkpoint-writes=2")
+    PASS_REGULAR_EXPRESSION "completed 330 porous-sheet step\\(s\\).*checkpoint-writes=2")
 add_test(NAME simwing_fsi_porous_sheet_checkpoint_resume
     COMMAND simwing-fsi
         --case porous-sheet
@@ -1578,7 +1578,7 @@ add_test(NAME simwing_fsi_porous_sheet_checkpoint_resume
         --checkpoint-every 2)
 set_tests_properties(simwing_fsi_porous_sheet_checkpoint_resume PROPERTIES
     DEPENDS simwing_fsi_porous_sheet_checkpoint_write
-    PASS_REGULAR_EXPRESSION "completed 63 porous-sheet step\\(s\\).*checkpoint-writes=2")
+    PASS_REGULAR_EXPRESSION "completed 333 porous-sheet step\\(s\\).*checkpoint-writes=2")
 add_test(NAME simwing_fsi_porous_sheet_checkpoint_verify
     COMMAND simwing-fsi
         --case porous-sheet
@@ -1588,7 +1588,7 @@ add_test(NAME simwing_fsi_porous_sheet_checkpoint_verify
         --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-porous-sheet.swps")
 set_tests_properties(simwing_fsi_porous_sheet_checkpoint_verify PROPERTIES
     DEPENDS simwing_fsi_porous_sheet_checkpoint_resume
-    PASS_REGULAR_EXPRESSION "completed 63 porous-sheet step\\(s\\)")
+    PASS_REGULAR_EXPRESSION "completed 333 porous-sheet step\\(s\\)")
 add_test(NAME simwing_fsi_porous_sheet_rejects_foreign_checkpoint
     COMMAND simwing-fsi
         --case porous-sheet
