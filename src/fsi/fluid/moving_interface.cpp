@@ -309,6 +309,63 @@ void applyPressureCorrection(
     }
 }
 
+void applyPressureCorrectionWithJumps(
+    const PeriodicCartesianGrid& grid,
+    const FaceAlignedMovingInterface& interfaces,
+    const CellScalarField& pressureCorrection,
+    const SharpPressureJumpField& pressureJumps,
+    const double correctionScale,
+    MacVelocityField& velocity) {
+    MacVelocityField pressureGradient(grid);
+    computePressureGradientWithJumps(
+        grid, pressureCorrection, pressureJumps, pressureGradient);
+    const auto xConstraints = interfaces.xFaceConstraints();
+    const auto yConstraints = interfaces.yFaceConstraints();
+    const auto zConstraints = interfaces.zFaceConstraints();
+    for (std::size_t face = 0; face < grid.cellCount(); ++face) {
+        if (xConstraints[face] == 0) {
+            velocity.xFaces()[face] -=
+                correctionScale * pressureGradient.xFaces()[face];
+        }
+        if (yConstraints[face] == 0) {
+            velocity.yFaces()[face] -=
+                correctionScale * pressureGradient.yFaces()[face];
+        }
+        if (zConstraints[face] == 0) {
+            velocity.zFaces()[face] -=
+                correctionScale * pressureGradient.zFaces()[face];
+        }
+    }
+}
+
+void validateDistinctFaceOwnership(
+    const PeriodicCartesianGrid& grid,
+    const FaceAlignedMovingInterface& interfaces,
+    const SharpPressureJumpField& pressureJumps) {
+    const auto xConstraints = interfaces.xFaceConstraints();
+    const auto yConstraints = interfaces.yFaceConstraints();
+    const auto zConstraints = interfaces.zFaceConstraints();
+    for (const auto& face : pressureJumps.faces()) {
+        const auto index = grid.cellIndex(face.i, face.j, face.k);
+        bool constrained = false;
+        switch (face.axis) {
+        case GridFaceAxis::X:
+            constrained = xConstraints[index] != 0;
+            break;
+        case GridFaceAxis::Y:
+            constrained = yConstraints[index] != 0;
+            break;
+        case GridFaceAxis::Z:
+            constrained = zConstraints[index] != 0;
+            break;
+        }
+        if (constrained) {
+            throw std::invalid_argument(
+                "one MAC face cannot carry both a moving constraint and a pressure jump");
+        }
+    }
+}
+
 double faceArea(const PeriodicCartesianGrid& grid,
                 const GridFaceAxis axis) {
     const auto spacing = grid.cellSpacingMeters();
@@ -627,11 +684,14 @@ FaceAlignedMovingInterface::zFaceNormalVelocitiesMetersPerSecond() const noexcep
     return zFaceNormalVelocitiesMetersPerSecond_;
 }
 
-MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
+namespace {
+
+MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfacesImpl(
     const PeriodicCartesianGrid& grid,
     MacVelocityField& predictedVelocityMetersPerSecond,
     CellScalarField& pressurePascals,
     const FaceAlignedMovingInterface& interfaces,
+    const SharpPressureJumpField* pressureJumps,
     const MovingInterfaceProjectionSettings& settings) {
     validateSettings(settings);
     if (!interfaces.matches(grid)
@@ -645,11 +705,20 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
         throw std::invalid_argument(
             "moving-interface projection fields must be finite");
     }
+    if (pressureJumps != nullptr) {
+        if (!pressureJumps->matches(grid)) {
+            throw std::invalid_argument(
+                "moving-interface pressure-jump field does not match its grid");
+        }
+        validateDistinctFaceOwnership(grid, interfaces, *pressureJumps);
+    }
 
     MovingInterfaceProjectionDiagnostics diagnostics;
     diagnostics.interfaceVersion = interfaces.version();
     diagnostics.interfaceFaceCount = interfaces.faceCount();
     diagnostics.fluidRegionCount = interfaces.regionCount();
+    diagnostics.projection.pressureJumpFaceCount = pressureJumps == nullptr
+        ? 0 : pressureJumps->faceCount();
     const auto regionIds = interfaces.regionStableIds();
     const auto cellRegions = cellRegionIndices(interfaces);
     std::vector<std::size_t> regionCellCounts;
@@ -706,8 +775,20 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
         rightHandSide.values()[cell] =
             rightHandSideScale * divergence.values()[cell];
     }
+    if (pressureJumps != nullptr) {
+        CellScalarField pressureJumpSource(grid);
+        computePressureJumpSource(
+            grid, *pressureJumps, pressureJumpSource);
+        projection.pressureJumpSourceCompatibilityPascalsPerSquareMeter =
+            mean(pressureJumpSource);
+        for (std::size_t cell = 0; cell < grid.cellCount(); ++cell) {
+            rightHandSide.values()[cell] -=
+                pressureJumpSource.values()[cell];
+        }
+    }
     // Remove only compatibility roundoff already admitted by the explicit
-    // physical volume-rate tolerance. Material incompatibility returned above.
+    // physical volume-rate tolerance, plus paired sharp-source roundoff within
+    // each disconnected region. Material incompatibility returned above.
     subtractRegionMeans(rightHandSide, cellRegions, regionIds.size());
 
     CellScalarField candidateCorrection = pressurePascals;
@@ -805,11 +886,17 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
         return diagnostics;
     }
 
-    applyPressureCorrection(
-        grid, interfaces, candidateCorrection,
-        settings.projection.timeStepSeconds
-            / settings.projection.densityKgPerCubicMeter,
-        candidateVelocity);
+    const double correctionScale = settings.projection.timeStepSeconds
+        / settings.projection.densityKgPerCubicMeter;
+    if (pressureJumps == nullptr) {
+        applyPressureCorrection(
+            grid, interfaces, candidateCorrection, correctionScale,
+            candidateVelocity);
+    } else {
+        applyPressureCorrectionWithJumps(
+            grid, interfaces, candidateCorrection, *pressureJumps,
+            correctionScale, candidateVelocity);
+    }
     CellScalarField candidatePressure = candidateCorrection;
     for (std::size_t cell = 0; cell < grid.cellCount(); ++cell) {
         candidatePressure.values()[cell] +=
@@ -1025,6 +1112,41 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
     predictedVelocityMetersPerSecond = std::move(candidateVelocity);
     pressurePascals = std::move(candidatePressure);
     return diagnostics;
+}
+
+} // namespace
+
+MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& predictedVelocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const FaceAlignedMovingInterface& interfaces,
+    const MovingInterfaceProjectionSettings& settings) {
+    return projectVelocityWithMovingInterfacesImpl(
+        grid, predictedVelocityMetersPerSecond, pressurePascals, interfaces,
+        nullptr, settings);
+}
+
+MovingInterfaceProjectionDiagnostics
+projectVelocityWithMovingInterfacesAndPressureJumps(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& predictedVelocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const FaceAlignedMovingInterface& interfaces,
+    const SharpPressureJumpField& pressureJumps,
+    const MovingInterfaceProjectionSettings& settings) {
+    if (!pressureJumps.matches(grid)) {
+        throw std::invalid_argument(
+            "moving-interface pressure-jump field does not match its grid");
+    }
+    if (pressureJumps.empty()) {
+        return projectVelocityWithMovingInterfaces(
+            grid, predictedVelocityMetersPerSecond, pressurePascals,
+            interfaces, settings);
+    }
+    return projectVelocityWithMovingInterfacesImpl(
+        grid, predictedVelocityMetersPerSecond, pressurePascals, interfaces,
+        &pressureJumps, settings);
 }
 
 } // namespace simwing::fsi::fluid

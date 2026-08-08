@@ -149,6 +149,14 @@ subcycled full-flow paths carry that same topology through every private step.
 The balanced slab stays sharp without spurious velocity throughout; empty-jump
 overloads remain bit-exact to the original evolution APIs. Powered or moving
 jump work still belongs in an explicit coupled energy ledger.
+The disconnected moving-interface projection also accepts the same immutable
+sharp field on unconstrained faces. Its Poisson source is gauged independently
+inside each sealed fluid component, while impermeable moving faces retain sole
+ownership of their MAC velocity and reaction; overlapping ownership is rejected
+before either field can change. A translating sealed-slab canonical carries a
+second static pressure slab inside one component with analytic pressure and no
+spurious flow. This is coexistence of two fixed-grid boundary types, not yet a
+general moving porous-sheet coupling.
 The immutable diagnostic adapter keeps the owning cell pressure and velocity
 samples and adds a separate oriented quad for every authored crossing, so
 same-face layers remain visible with their region pairing, signed jump, normal,

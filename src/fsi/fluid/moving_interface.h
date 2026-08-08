@@ -205,4 +205,18 @@ projectVelocityWithMovingInterfaces(
     const FaceAlignedMovingInterface& interfaces,
     const MovingInterfaceProjectionSettings& settings = {});
 
+// Applies the same disconnected moving-interface projection while retaining
+// prescribed sharp pressure jumps on unconstrained faces. A grid face cannot
+// be owned by both boundaries: an impermeable moving constraint and a
+// pressure-jump crossing on the same MAC degree of freedom are rejected.
+// Empty jump fields take the exact moving-interface-only path.
+[[nodiscard]] MovingInterfaceProjectionDiagnostics
+projectVelocityWithMovingInterfacesAndPressureJumps(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& predictedVelocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const FaceAlignedMovingInterface& interfaces,
+    const SharpPressureJumpField& pressureJumps,
+    const MovingInterfaceProjectionSettings& settings = {});
+
 } // namespace simwing::fsi::fluid

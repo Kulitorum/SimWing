@@ -14,11 +14,14 @@ using simwing::fsi::fluid::CellScalarField;
 using simwing::fsi::fluid::FaceAlignedMovingInterface;
 using simwing::fsi::fluid::GridFaceAxis;
 using simwing::fsi::fluid::GridFaceMovingInterface;
+using simwing::fsi::fluid::GridFacePressureJump;
 using simwing::fsi::fluid::MacVelocityField;
 using simwing::fsi::fluid::MovingInterfaceProjectionSettings;
 using simwing::fsi::fluid::PeriodicCartesianGrid;
+using simwing::fsi::fluid::SharpPressureJumpField;
 using simwing::fsi::fluid::Vector3;
 using simwing::fsi::fluid::projectVelocityWithMovingInterfaces;
+using simwing::fsi::fluid::projectVelocityWithMovingInterfacesAndPressureJumps;
 
 int failures = 0;
 
@@ -92,6 +95,23 @@ std::vector<GridFaceMovingInterface> slabFaces(
         }
     }
     return result;
+}
+
+SharpPressureJumpField interiorSlabJumps(
+    const PeriodicCartesianGrid& grid,
+    const double jumpPascals = 120.0) {
+    std::vector<GridFacePressureJump> faces;
+    const auto counts = grid.cellCounts();
+    faces.reserve(2 * counts.y * counts.z);
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            faces.push_back({
+                300, 10, 11, GridFaceAxis::X, 3, j, k, jumpPascals});
+            faces.push_back({
+                301, 11, 10, GridFaceAxis::X, 5, j, k, -jumpPascals});
+        }
+    }
+    return SharpPressureJumpField(grid, std::move(faces));
 }
 
 MovingInterfaceProjectionSettings pistonSettings() {
@@ -443,6 +463,152 @@ void testDisturbedProjectionAndDeterminism() {
           "projection: disturbed moving-interface diagnostics are finite");
 }
 
+void testMovingInterfacesAndSharpPressureJumps() {
+    const auto grid = pistonGrid();
+    const FaceAlignedMovingInterface interfaces(grid, slabFaces(grid));
+    const auto jumps = interiorSlabJumps(grid);
+    MacVelocityField velocity(grid);
+    std::ranges::fill(velocity.xFaces(), 0.25);
+    CellScalarField pressure(grid);
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                pressure.values()[grid.cellIndex(i, j, k)] =
+                    i >= 3 && i < 5 ? 120.0 : 0.0;
+            }
+        }
+    }
+    const auto originalVelocity = velocity;
+    const auto originalPressure = pressure;
+    const auto diagnostics =
+        projectVelocityWithMovingInterfacesAndPressureJumps(
+            grid, velocity, pressure, interfaces, jumps, pistonSettings());
+    check(diagnostics.projection.converged
+              && diagnostics.projection.iterationCount == 0,
+          "combined: an analytic sharp slab inside a moving region takes zero correction");
+    check(diagnostics.projection.pressureJumpFaceCount == 12,
+          "combined: every authored sharp crossing remains diagnosed");
+    checkNear(
+        diagnostics.projection
+            .pressureJumpSourceCompatibilityPascalsPerSquareMeter,
+        0.0, 0.0,
+        "combined: the paired sharp source remains globally compatible");
+    check(velocity == originalVelocity && pressure == originalPressure,
+          "combined: compatible translation and sharp pressure remain bit-identical");
+    checkNear(diagnostics.projection.divergenceMaximumAfterPerSecond,
+              0.0, 0.0,
+              "combined: the sharp slab creates no spurious flow");
+    checkNear(diagnostics.maximumNormalVelocityErrorMetersPerSecond,
+              0.0, 0.0,
+              "combined: moving-face normal velocity remains exact");
+    checkVectorNear(diagnostics.totalConstraintReactionForceNewtons,
+                    {}, 0.0,
+                    "combined: an internal sharp slab does not invent a moving-wall reaction");
+    check(diagnostics.finite,
+          "combined: moving and sharp-interface diagnostics remain finite");
+
+    MacVelocityField solvedVelocity(grid);
+    std::ranges::fill(solvedVelocity.xFaces(), 0.25);
+    CellScalarField solvedPressure(grid);
+    const auto solvedDiagnostics =
+        projectVelocityWithMovingInterfacesAndPressureJumps(
+            grid, solvedVelocity, solvedPressure, interfaces, jumps,
+            pistonSettings());
+    double maximumPressureError = 0.0;
+    double maximumVelocityError = 0.0;
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                const auto index = grid.cellIndex(i, j, k);
+                const double expectedPressure = i == 2 || i == 5
+                    ? -60.0 : (i == 3 || i == 4 ? 60.0 : 0.0);
+                maximumPressureError = std::max(
+                    maximumPressureError,
+                    std::abs(solvedPressure.values()[index]
+                             - expectedPressure));
+                maximumVelocityError = std::max({
+                    maximumVelocityError,
+                    std::abs(solvedVelocity.xFaces()[index] - 0.25),
+                    std::abs(solvedVelocity.yFaces()[index]),
+                    std::abs(solvedVelocity.zFaces()[index]),
+                });
+            }
+        }
+    }
+    check(solvedDiagnostics.projection.converged
+              && solvedDiagnostics.projection.iterationCount > 0,
+          "combined: a cold sharp-pressure solve converges in the disconnected region");
+    check(maximumPressureError < 2.0e-13,
+          "combined: a cold solve reconstructs the analytic region-gauged pressure");
+    check(maximumVelocityError < 2.0e-13,
+          "combined: the reconstructed jump leaves translation free of spurious flow");
+
+    MacVelocityField directVelocity(grid);
+    fillDeterministicVelocity(directVelocity);
+    MacVelocityField emptyVelocity = directVelocity;
+    CellScalarField directPressure(grid, 2.0);
+    CellScalarField emptyPressure = directPressure;
+    const SharpPressureJumpField empty(grid);
+    const auto directDiagnostics = projectVelocityWithMovingInterfaces(
+        grid, directVelocity, directPressure, interfaces, pistonSettings());
+    const auto emptyDiagnostics =
+        projectVelocityWithMovingInterfacesAndPressureJumps(
+            grid, emptyVelocity, emptyPressure, interfaces, empty,
+            pistonSettings());
+    check(directVelocity == emptyVelocity
+              && directPressure == emptyPressure
+              && directDiagnostics == emptyDiagnostics,
+          "combined: an empty jump field takes the exact moving-only arithmetic path");
+
+    const SharpPressureJumpField overlapping(grid, {
+        {400, 20, 21, GridFaceAxis::X, 2, 0, 0, 5.0},
+    });
+    const auto beforeOverlapVelocity = velocity;
+    const auto beforeOverlapPressure = pressure;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                projectVelocityWithMovingInterfacesAndPressureJumps(
+                    grid, velocity, pressure, interfaces, overlapping,
+                    pistonSettings()));
+        },
+        "combined: one MAC face cannot be both impermeable and pressure-jumped");
+    check(velocity == beforeOverlapVelocity
+              && pressure == beforeOverlapPressure,
+          "combined: overlapping ownership is rejected before field mutation");
+
+    const PeriodicCartesianGrid foreignGrid(
+        {9, 2, 3}, {}, {4.5, 2.0, 3.0});
+    const SharpPressureJumpField foreign(foreignGrid);
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                projectVelocityWithMovingInterfacesAndPressureJumps(
+                    grid, velocity, pressure, interfaces, foreign,
+                    pistonSettings()));
+        },
+        "combined: a sharp field from another grid shape is rejected");
+
+    MacVelocityField failedVelocity(grid);
+    CellScalarField failedPressure(grid);
+    const auto originalFailedVelocity = failedVelocity;
+    const auto originalFailedPressure = failedPressure;
+    auto failingSettings = pistonSettings();
+    failingSettings.projection.absoluteResidualTolerance = 1.0e-30;
+    failingSettings.projection.relativeResidualTolerance = 0.0;
+    failingSettings.projection.maximumIterations = 1;
+    const auto failedDiagnostics =
+        projectVelocityWithMovingInterfacesAndPressureJumps(
+            grid, failedVelocity, failedPressure, interfaces, jumps,
+            failingSettings);
+    check(!failedDiagnostics.projection.converged,
+          "combined: a truncated disconnected sharp solve is rejected");
+    check(failedVelocity == originalFailedVelocity
+              && failedPressure == originalFailedPressure,
+          "combined: a failed sharp solve commits neither field");
+}
+
 void testIncompatibilityValidationAndRollback() {
     const auto grid = pistonGrid();
     const FaceAlignedMovingInterface incompatible(
@@ -506,6 +672,7 @@ int main() {
     testAnalyticTranslatingSlabPressureWork();
     testAllAxisConstraintStencils();
     testDisturbedProjectionAndDeterminism();
+    testMovingInterfacesAndSharpPressureJumps();
     testIncompatibilityValidationAndRollback();
     if (failures != 0) {
         std::fprintf(stderr,

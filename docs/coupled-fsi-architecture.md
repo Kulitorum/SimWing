@@ -829,10 +829,16 @@ continuous region chain, and contribute through one deterministic aggregate
 stencil jump. An owning frame adapter now retains every individual crossing as
 an oriented quad at its subcell fraction with its two region IDs, signed jump,
 normal, and reconstructed diagnostic pressure. A static headless worker makes
-that layered field replayable without involving Qt. The same immutable field
-now survives both projected SSPRK2 pressure stages and every private Strang
-substep without changing the balanced slab velocity; empty fields preserve the
-legacy arithmetic exactly. The regression budgets are:
+  that layered field replayable without involving Qt. The same immutable field
+  now survives both projected SSPRK2 pressure stages and every private Strang
+  substep without changing the balanced slab velocity; empty fields preserve the
+  legacy arithmetic exactly. The disconnected moving-interface projection now
+  accepts that field on unconstrained faces as well: sharp sources close within
+  each connected fluid component, constrained velocities remain exact, and an
+  overlapping moving/jump face is rejected transactionally. The translating
+  sealed-slab canonical reconstructs a second analytic pressure slab inside one
+  component without spurious flow. This remains fixed-grid coexistence, not a
+  general moving porous-sheet solve. The regression budgets are:
 gradient/divergence adjoint error at or below `2e-14` in the canonical
 integral, Taylor-Green maximum divergence below `2e-14 1/s` with a
 bit-identical zero correction, discretely manufactured post-projection L2

@@ -838,6 +838,12 @@ makes this a certified aerodynamic solver.
   predicted constrained-face velocity: on the uniform MAC grid,
   `F_reaction = A*(p_minus-p_plus)*n - rho*V_face*(U-u*)/dt`. The direct term is
   exactly zero for an already compatible prescribed velocity.
+  The same disconnected solve may retain an immutable sharp pressure-jump
+  field on unconstrained faces. Its paired source is gauged per connected fluid
+  region, the jump-corrected gradient never modifies constrained MAC values,
+  and a face claimed by both boundary types is rejected before mutation. Empty
+  jump fields preserve the moving-only arithmetic bit-for-bit. This fixed-grid
+  coexistence is not a moving porous or folded-interface coupling model.
 - `src/fsi/fluid/moving_control_volume.{h,cpp}` binds one complete
   nonseparating planar surface and one complete open MAC plane. Within the
   first partial cell it independently closes geometric volume change, surface
