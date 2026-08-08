@@ -467,8 +467,11 @@ grid-bound MAC face while keeping multiple sheets separate; its summed length
 and area are diagnostics, not union coverage. A face-local graph now stitches
 adjacent triangle segments through stable authored vertex/edge provenance,
 recomputes shared-edge intersections canonically, and keeps opening-boundary
-and grid-edge endpoints explicit. Open graphs are not falsely treated as
-closed regions. Cut-cell volume fractions and fluid-region reconstruction remain open.
+and grid-edge endpoints explicit. Degree-two components are now extracted as
+winding-directed open chains or closed loops only when their authored region
+pair stays consistent; branches and conflicts are rejected. Open chains are
+not falsely treated as closed regions. Cut-cell volume fractions and
+fluid-region reconstruction remain open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,
