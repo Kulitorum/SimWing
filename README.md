@@ -70,10 +70,15 @@ frames with visible deterministic motion. The third
 `simwing-fsi --case open-piston` harness drives a `6000 kg` plate at
 `0.05 m/s`, exposes the resisting CFD pressure separately from its actuator,
 and publishes accepted partial-cell and geometric-conservation ledgers. Before
-that pressure reaches XPBD, a fluid-side planar cut-surface operator places each
-face-resolved constraint reaction on the congruent physical plane and closes
-area, force, moment, power, and periodic-image ledgers. This is a bounded
-reaction-geometry operator, not cell-pressure interpolation. At
+that load reaches XPBD, a fluid-side planar cut-surface operator places each
+face-resolved complete constraint reaction on the congruent physical plane and
+closes area, force, moment, power, and periodic-image ledgers. The complete load
+adds the direct MAC-velocity enforcement reaction to adjacent pressure traction.
+Because projection produces a macro-step-average reaction, the same accepted
+force is sampled at both endpoint kinematics before temporal integration. This
+closes the worker's structure, fluid, actuator, and total momentum and kinetic-
+energy ledgers; it remains a bounded reaction-geometry operator, not cell-
+pressure interpolation. At
 step 1200 it crosses its first `0.5 m` cell, rebases without a chamber-volume
 jump, and continues in the new topology. At step 2400 it crosses the periodic
 boundary while retaining an unwrapped `4 m` physical position. Its accepted

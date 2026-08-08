@@ -103,6 +103,42 @@ void testVisibleOpenPistonAndDeterminism() {
               && initialCutSurface.forceResidualNormNewtons < 1.0e-10
               && std::abs(initialCutSurface.powerResidualWatts) < 1.0e-10,
           "open piston: fluid accepts pressure geometry at the physical cut plane");
+    const auto& initialConservation = first.conservationDiagnostics();
+    check(initialConservation.accepted
+              && initialConservation.version
+                  == fsi::openPistonConservationVersion
+              && initialConservation
+                     .structureMomentumResidualNormNewtonSeconds < 1.0e-10
+              && initialConservation
+                     .fluidMomentumResidualNormNewtonSeconds < 1.0e-10
+              && initialConservation
+                     .systemMomentumResidualNormNewtonSeconds < 1.0e-10
+              && std::abs(initialConservation.structureEnergyResidualJoules)
+                  < 1.0e-10
+              && std::abs(initialConservation.fluidEnergyResidualJoules)
+                  < 1.0e-10
+              && std::abs(initialConservation.systemEnergyResidualJoules)
+                  < 1.0e-10,
+          "open piston: first coupled momentum and energy ledgers close");
+    checkNear(initialConservation.fluidMomentumChangeNewtonSeconds.x,
+              1.44, 3.0e-12,
+              "open piston: fluid plug gains its analytic momentum");
+    checkNear(
+        initialConservation.pressureImpulseToStructureNewtonSeconds.x,
+        -1.44, 3.0e-12,
+        "open piston: complete CFD reaction delivers opposite impulse");
+    checkNear(initialConservation.actuatorImpulseNewtonSeconds.x,
+              301.44, 3.0e-12,
+              "open piston: actuator supplies structure plus fluid momentum");
+    checkNear(initialConservation.fluidKineticEnergyChangeJoules,
+              0.036, 2.0e-14,
+              "open piston: fluid plug gains its analytic kinetic energy");
+    checkNear(initialConservation.pressureWorkToStructureJoules,
+              -0.036, 2.0e-14,
+              "open piston: time-averaged CFD reaction loses fluid kinetic work");
+    checkNear(initialConservation.actuatorWorkJoules,
+              7.536, 2.0e-13,
+              "open piston: actuator work balances both kinetic-energy gains");
     const auto* initialGridPlane = scalarField(
         firstInitialFrame, "interface.grid_plane");
     const auto* initialPhysicalPlane = scalarField(
@@ -117,6 +153,10 @@ void testVisibleOpenPistonAndDeterminism() {
         firstInitialFrame, "fluid.cut_surface_force_residual");
     const auto* initialCutPowerResidual = scalarField(
         firstInitialFrame, "fluid.cut_surface_power_residual");
+    const auto* initialSystemMomentumResidual = scalarField(
+        firstInitialFrame, "conservation.system_momentum_residual");
+    const auto* initialSystemEnergyResidual = scalarField(
+        firstInitialFrame, "conservation.system_energy_residual");
     check(initialGridPlane != nullptr
               && initialGridPlane->values.front() == 3.0
               && initialPhysicalPlane != nullptr
@@ -131,7 +171,12 @@ void testVisibleOpenPistonAndDeterminism() {
               && initialCutForceResidual != nullptr
               && initialCutForceResidual->values.front() < 1.0e-10
               && initialCutPowerResidual != nullptr
-              && std::abs(initialCutPowerResidual->values.front()) < 1.0e-10,
+              && std::abs(initialCutPowerResidual->values.front()) < 1.0e-10
+              && initialSystemMomentumResidual != nullptr
+              && initialSystemMomentumResidual->values.front() < 1.0e-10
+              && initialSystemEnergyResidual != nullptr
+              && std::abs(initialSystemEnergyResidual->values.front())
+                  < 1.0e-10,
           "open piston: trace exposes grid/physical correspondence geometry");
 
     viewer::DiagnosticFrame finalFrame = firstInitialFrame;
@@ -287,6 +332,12 @@ void testAcceptedTopologyRebase() {
               && first.cutSurfaceDiagnostics()
                      .periodicPositionResidualMeters < 1.0e-13,
           "rebase: fluid-side cut pressure follows the new physical epoch");
+    check(first.conservationDiagnostics().accepted
+              && first.conservationDiagnostics()
+                     .systemMomentumResidualNormNewtonSeconds < 1.0e-8
+              && std::abs(first.conservationDiagnostics()
+                              .systemEnergyResidualJoules) < 2.0e-9,
+          "rebase: continued coupled conservation remains accepted");
     checkNear(first.cutSurfaceDiagnostics().physicalPlaneCoordinateMeters,
               3.5 + nextOffset, 2.0e-13,
               "rebase: fluid-side cut pressure uses the physical plate position");
@@ -350,6 +401,12 @@ void testAcceptedTopologyRebase() {
               && first.cutSurfaceDiagnostics()
                      .periodicPositionResidualMeters < 3.0e-13,
           "rebase: cut pressure accepts the periodic physical image");
+    check(first.conservationDiagnostics().accepted
+              && first.conservationDiagnostics()
+                     .systemMomentumResidualNormNewtonSeconds < 1.0e-8
+              && std::abs(first.conservationDiagnostics()
+                              .systemEnergyResidualJoules) < 2.0e-9,
+          "rebase: wrapped coupled conservation remains accepted");
     checkNear(first.cutSurfaceDiagnostics().physicalPlaneCoordinateMeters,
               4.0 + nextOffset, 3.0e-13,
               "rebase: wrapped cut pressure retains the unwrapped position");

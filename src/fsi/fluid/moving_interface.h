@@ -10,7 +10,7 @@
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t faceAlignedMovingInterfaceVersion = 1;
+inline constexpr std::uint32_t faceAlignedMovingInterfaceVersion = 2;
 
 // A zero-thickness interface exactly coincident with one periodic MAC face.
 // normalVelocityMetersPerSecond is signed in the positive coordinate-axis
@@ -120,6 +120,14 @@ struct MovingInterfaceFaceDiagnostics {
     Vector3 pressureTractionPascals;
     Vector3 pressureForceNewtons;
     double pressurePowerWatts = 0.0;
+    // Full fluid-on-interface constraint reaction. The adjacent-cell pressure
+    // contribution above is insufficient when imposing the face velocity also
+    // changes the predicted MAC degree of freedom directly. The direct term is
+    // zero for an already compatible prescribed velocity.
+    Vector3 directConstraintForceNewtons;
+    Vector3 constraintReactionTractionPascals;
+    Vector3 constraintReactionForceNewtons;
+    double constraintReactionPowerWatts = 0.0;
 
     bool operator==(const MovingInterfaceFaceDiagnostics&) const = default;
 };
@@ -142,6 +150,16 @@ struct MovingInterfaceSurfaceDiagnostics {
     double maximumPressureTractionDeviationPascals = 0.0;
     double pressurePowerWatts = 0.0;
     double pressureWorkJoules = 0.0;
+    // The complete constraint reaction adds the impulse required to replace
+    // the predicted normal MAC velocity with the prescribed value. This is the
+    // load that must cross a coupled fluid/structure boundary. For an already
+    // compatible predicted face velocity it reduces exactly to pressureForce.
+    Vector3 directConstraintForceNewtons;
+    Vector3 constraintReactionForceNewtons;
+    Vector3 constraintReactionImpulseNewtonSeconds;
+    double maximumConstraintReactionTractionDeviationPascals = 0.0;
+    double constraintReactionPowerWatts = 0.0;
+    double constraintReactionWorkJoules = 0.0;
 
     bool operator==(const MovingInterfaceSurfaceDiagnostics&) const = default;
 };
@@ -157,6 +175,10 @@ struct MovingInterfaceProjectionDiagnostics {
     Vector3 totalPressureImpulseNewtonSeconds;
     double totalPressurePowerWatts = 0.0;
     double totalPressureWorkJoules = 0.0;
+    Vector3 totalConstraintReactionForceNewtons;
+    Vector3 totalConstraintReactionImpulseNewtonSeconds;
+    double totalConstraintReactionPowerWatts = 0.0;
+    double totalConstraintReactionWorkJoules = 0.0;
     std::vector<MovingFluidRegionDiagnostics> regions;
     std::vector<MovingInterfaceFaceDiagnostics> faces;
     std::vector<MovingInterfaceSurfaceDiagnostics> surfaces;
@@ -171,8 +193,10 @@ struct MovingInterfaceProjectionDiagnostics {
 // the caller's prior mean pressure in each region is retained. Those separate
 // means are null modes of this incompressible solve, so their difference is an
 // explicit scenario/coupling input rather than a pressure level discovered by
-// this kernel. A failed or region-incompatible solve commits neither velocity
-// nor pressure.
+// this kernel. Face diagnostics separate adjacent pressure traction from the
+// complete constraint reaction, which also accounts for direct replacement of
+// a predicted constrained-face velocity. A failed or region-incompatible solve
+// commits neither velocity nor pressure.
 [[nodiscard]] MovingInterfaceProjectionDiagnostics
 projectVelocityWithMovingInterfaces(
     const PeriodicCartesianGrid& grid,

@@ -170,6 +170,19 @@ void testAcceleratedOpenPistonAndGcl() {
               && firstFluid.surfaces.front().pressureForceNewtons.x < 0.0
               && firstFluid.surfaces.front().pressurePowerWatts < 0.0,
           "open piston: accelerating fluid exerts a resisting pressure load");
+    checkNear(firstFluid.surfaces.front()
+                  .constraintReactionImpulseNewtonSeconds.x,
+              -7.2, 3.0e-12,
+              "open piston: complete constraint reaction balances fluid momentum");
+    checkNear(firstFluid.surfaces.front()
+                  .constraintReactionWorkJoules,
+              -1.8, 1.0e-12,
+              "open piston: end-velocity reaction power retains its rectangular work");
+    check(firstFluid.surfaces.front().directConstraintForceNewtons.x < 0.0
+              && firstFluid.surfaces.front()
+                     .constraintReactionForceNewtons.x
+                  < firstFluid.surfaces.front().pressureForceNewtons.x,
+          "open piston: direct MAC enforcement completes adjacent pressure traction");
 
     const PlanarControlVolumeStep step{0.0, 0.1, 0.4};
     const auto first = controlVolume.evaluate(
@@ -428,11 +441,12 @@ void testValidationAndFailedLedgers() {
         "validation: unaccepted fluid projection is rejected");
 
     auto inconsistentPower = fluid;
-    inconsistentPower.surfaces.front().pressurePowerWatts += 1.0;
+    inconsistentPower.surfaces.front()
+        .constraintReactionPowerWatts += 1.0;
     expectRejected(
         [&] { static_cast<void>(controlVolume.evaluate(
             grid, velocity, inconsistentPower, {0.0, 0.1, 0.4})); },
-        "validation: face and surface pressure-power ledgers must agree");
+        "validation: face and surface reaction-power ledgers must agree");
 
     auto invalidSettings = simwing::fsi::fluid::PlanarControlVolumeSettings{};
     invalidSettings.relativeVolumeTolerance =

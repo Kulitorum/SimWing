@@ -5,6 +5,7 @@
 #include <cmath>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -213,6 +214,161 @@ double acceptanceResidual(
     return result;
 }
 
+StructureVector3 add(const StructureVector3& first,
+                     const StructureVector3& second) {
+    return {first.x + second.x,
+            first.y + second.y,
+            first.z + second.z};
+}
+
+StructureVector3 subtract(const StructureVector3& first,
+                          const StructureVector3& second) {
+    return {first.x - second.x,
+            first.y - second.y,
+            first.z - second.z};
+}
+
+StructureVector3 scale(const StructureVector3& value,
+                       const double factor) {
+    return {value.x * factor,
+            value.y * factor,
+            value.z * factor};
+}
+
+double length(const StructureVector3& value) {
+    return std::hypot(value.x, value.y, value.z);
+}
+
+StructureVector3 fluidMomentumNewtonSeconds(
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::MacVelocityField& velocity) {
+    StructureVector3 result;
+    for (const double value : velocity.xFaces()) {
+        result.x += value;
+    }
+    for (const double value : velocity.yFaces()) {
+        result.y += value;
+    }
+    for (const double value : velocity.zFaces()) {
+        result.z += value;
+    }
+    return scale(
+        result,
+        fluidDensityKgPerCubicMeter
+            * grid.cellVolumeCubicMeters());
+}
+
+double combinedTolerance(const double absoluteTolerance,
+                         const double relativeTolerance,
+                         const double firstScale,
+                         const double secondScale) {
+    return absoluteTolerance
+        + relativeTolerance * std::max(firstScale, secondScale);
+}
+
+OpenPistonConservationDiagnostics makeConservationDiagnostics(
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::MacVelocityField& startFluidVelocity,
+    const fluid::MacVelocityField& endFluidVelocity,
+    const StructureDiagnostics& startStructure,
+    const StructureDiagnostics& endStructure,
+    const TimeIntegratedTransferDiagnostics& pressureTransfer,
+    const double actuatorImpulseNewtonSeconds,
+    const double startSpeedMetersPerSecond,
+    const double endSpeedMetersPerSecond) {
+    OpenPistonConservationDiagnostics result;
+    result.structureMomentumChangeNewtonSeconds = subtract(
+        endStructure.linearMomentumKgMetersPerSecond,
+        startStructure.linearMomentumKgMetersPerSecond);
+    result.fluidMomentumChangeNewtonSeconds = subtract(
+        fluidMomentumNewtonSeconds(grid, endFluidVelocity),
+        fluidMomentumNewtonSeconds(grid, startFluidVelocity));
+    result.pressureImpulseToStructureNewtonSeconds =
+        pressureTransfer.integratedSurfaceImpulseNewtonSeconds;
+    result.actuatorImpulseNewtonSeconds = {
+        actuatorImpulseNewtonSeconds, 0.0, 0.0};
+    result.structureMomentumResidualNewtonSeconds = subtract(
+        result.structureMomentumChangeNewtonSeconds,
+        add(result.pressureImpulseToStructureNewtonSeconds,
+            result.actuatorImpulseNewtonSeconds));
+    result.structureMomentumResidualNormNewtonSeconds = length(
+        result.structureMomentumResidualNewtonSeconds);
+    result.fluidMomentumResidualNewtonSeconds = add(
+        result.fluidMomentumChangeNewtonSeconds,
+        result.pressureImpulseToStructureNewtonSeconds);
+    result.fluidMomentumResidualNormNewtonSeconds = length(
+        result.fluidMomentumResidualNewtonSeconds);
+    result.systemMomentumResidualNewtonSeconds = subtract(
+        add(result.structureMomentumChangeNewtonSeconds,
+            result.fluidMomentumChangeNewtonSeconds),
+        result.actuatorImpulseNewtonSeconds);
+    result.systemMomentumResidualNormNewtonSeconds = length(
+        result.systemMomentumResidualNewtonSeconds);
+
+    result.structureKineticEnergyChangeJoules =
+        endStructure.kineticEnergyJoules
+        - startStructure.kineticEnergyJoules;
+    result.fluidKineticEnergyChangeJoules =
+        fluid::kineticEnergyJoules(
+            grid, endFluidVelocity, fluidDensityKgPerCubicMeter)
+        - fluid::kineticEnergyJoules(
+            grid, startFluidVelocity, fluidDensityKgPerCubicMeter);
+    result.pressureWorkToStructureJoules =
+        pressureTransfer.integratedSurfaceWorkJoules;
+    result.actuatorWorkJoules = actuatorImpulseNewtonSeconds
+        * 0.5 * (startSpeedMetersPerSecond
+                 + endSpeedMetersPerSecond);
+    result.structureEnergyResidualJoules =
+        result.structureKineticEnergyChangeJoules
+        - result.pressureWorkToStructureJoules
+        - result.actuatorWorkJoules;
+    result.fluidEnergyResidualJoules =
+        result.fluidKineticEnergyChangeJoules
+        + result.pressureWorkToStructureJoules;
+    result.systemEnergyResidualJoules =
+        result.structureKineticEnergyChangeJoules
+        + result.fluidKineticEnergyChangeJoules
+        - result.actuatorWorkJoules;
+
+    result.finite = startStructure.finite && endStructure.finite
+        && std::isfinite(result.structureMomentumResidualNormNewtonSeconds)
+        && std::isfinite(result.fluidMomentumResidualNormNewtonSeconds)
+        && std::isfinite(result.systemMomentumResidualNormNewtonSeconds)
+        && std::isfinite(result.structureKineticEnergyChangeJoules)
+        && std::isfinite(result.fluidKineticEnergyChangeJoules)
+        && std::isfinite(result.pressureWorkToStructureJoules)
+        && std::isfinite(result.actuatorWorkJoules)
+        && std::isfinite(result.structureEnergyResidualJoules)
+        && std::isfinite(result.fluidEnergyResidualJoules)
+        && std::isfinite(result.systemEnergyResidualJoules);
+    const double momentumTolerance = combinedTolerance(
+        1.0e-8, 1.0e-11,
+        length(result.structureMomentumChangeNewtonSeconds),
+        std::max(
+            length(result.fluidMomentumChangeNewtonSeconds),
+            length(result.actuatorImpulseNewtonSeconds)));
+    const double energyTolerance = combinedTolerance(
+        2.0e-9, 1.0e-11,
+        std::abs(result.structureKineticEnergyChangeJoules),
+        std::max(
+            std::abs(result.fluidKineticEnergyChangeJoules),
+            std::abs(result.actuatorWorkJoules)));
+    result.accepted = result.finite
+        && result.structureMomentumResidualNormNewtonSeconds
+            <= momentumTolerance
+        && result.fluidMomentumResidualNormNewtonSeconds
+            <= momentumTolerance
+        && result.systemMomentumResidualNormNewtonSeconds
+            <= momentumTolerance
+        && std::abs(result.structureEnergyResidualJoules)
+            <= energyTolerance
+        && std::abs(result.fluidEnergyResidualJoules)
+            <= energyTolerance
+        && std::abs(result.systemEnergyResidualJoules)
+            <= energyTolerance;
+    return result;
+}
+
 viewer::Vec3d toViewer(const StructureVector3& value) {
     return {value.x, value.y, value.z};
 }
@@ -224,6 +380,7 @@ void appendFields(
     const fluid::PlanarCutSurfacePressureDiagnostics& cutDiagnostics,
     const PlanarFaceResolvedBridgeDiagnostics& bridgeDiagnostics,
     const TimeIntegratedTransferDiagnostics& integratedDiagnostics,
+    const OpenPistonConservationDiagnostics& conservation,
     const double actuatorImpulseNewtonSeconds,
     const std::uint64_t topologyRebaseCount,
     const double rebaseVolumeResidualCubicMeters,
@@ -253,6 +410,9 @@ void appendFields(
     frame.scalarFields.push_back({
         "actuator.step_impulse", "N*s", viewer::FieldAssociation::Global,
         {actuatorImpulseNewtonSeconds}});
+    frame.scalarFields.push_back({
+        "actuator.step_work", "J", viewer::FieldAssociation::Global,
+        {conservation.actuatorWorkJoules}});
     frame.vectorFields.push_back({
         "interface.step_impulse", "N*s", viewer::FieldAssociation::Global,
         {toViewer(
@@ -308,6 +468,30 @@ void appendFields(
         "fluid.cut_surface_power_residual", "W",
         viewer::FieldAssociation::Global,
         {cutDiagnostics.powerResidualWatts}});
+    frame.scalarFields.push_back({
+        "conservation.structure_momentum_residual", "N*s",
+        viewer::FieldAssociation::Global,
+        {conservation.structureMomentumResidualNormNewtonSeconds}});
+    frame.scalarFields.push_back({
+        "conservation.fluid_momentum_residual", "N*s",
+        viewer::FieldAssociation::Global,
+        {conservation.fluidMomentumResidualNormNewtonSeconds}});
+    frame.scalarFields.push_back({
+        "conservation.system_momentum_residual", "N*s",
+        viewer::FieldAssociation::Global,
+        {conservation.systemMomentumResidualNormNewtonSeconds}});
+    frame.scalarFields.push_back({
+        "conservation.structure_energy_residual", "J",
+        viewer::FieldAssociation::Global,
+        {conservation.structureEnergyResidualJoules}});
+    frame.scalarFields.push_back({
+        "conservation.fluid_energy_residual", "J",
+        viewer::FieldAssociation::Global,
+        {conservation.fluidEnergyResidualJoules}});
+    frame.scalarFields.push_back({
+        "conservation.system_energy_residual", "J",
+        viewer::FieldAssociation::Global,
+        {conservation.systemEnergyResidualJoules}});
 }
 
 } // namespace
@@ -336,6 +520,8 @@ viewer::TraceHeader OpenPistonCase::traceHeader() const {
 viewer::DiagnosticFrame OpenPistonCase::advance() {
     const double timeStep = stepSettings_.timeStepSeconds;
     const auto beforeStates = structure_.nodeStates();
+    const StructureDiagnostics beforeStructureDiagnostics =
+        structure_.diagnostics();
     if (beforeStates.size() != 4) {
         throw std::logic_error(
             "open piston structure topology changed unexpectedly");
@@ -429,14 +615,15 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
         structure_);
     const auto endKinematics = predictedKinematics(
         bridge_.transfer(), structure_, endSpeed, timeStep);
-    const auto startCutSurface =
-        fluid::evaluatePlanarCutSurfacePressure(
-            grid_, controlVolume_, fluidDiagnostics_,
-            surfaceOffsetMeters_, startPhysicalPlaneMeters);
     const auto endCutSurface =
         fluid::evaluatePlanarCutSurfacePressure(
             grid_, controlVolume_, endFluid,
             endOffset, endPhysicalPlaneMeters);
+    const auto startCutSurface =
+        fluid::resamplePlanarCutSurfaceReaction(
+            grid_, controlVolume_, endCutSurface,
+            surfaceOffsetMeters_, startPhysicalPlaneMeters,
+            startSpeed);
     if (!startCutSurface.accepted || !endCutSurface.accepted) {
         throw std::runtime_error(
             "open piston physical cut-surface pressure was not accepted");
@@ -488,6 +675,40 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
 
     const auto& bridgeDiagnostics = endTransfer.diagnostics();
     const auto& integratedDiagnostics = integrated.diagnostics();
+    OpenPistonConservationDiagnostics conservation;
+    try {
+        conservation = makeConservationDiagnostics(
+            grid_, fluidVelocity_, candidateVelocity,
+            beforeStructureDiagnostics, structureDiagnostics,
+            integratedDiagnostics, actuatorImpulse,
+            startSpeed, endSpeed);
+        if (!conservation.accepted) {
+            throw std::runtime_error(
+                "open piston coupled momentum or energy ledger did not close: "
+                "structure momentum="
+                + std::to_string(
+                    conservation
+                        .structureMomentumResidualNormNewtonSeconds)
+                + ", fluid momentum="
+                + std::to_string(
+                    conservation.fluidMomentumResidualNormNewtonSeconds)
+                + ", system momentum="
+                + std::to_string(
+                    conservation.systemMomentumResidualNormNewtonSeconds)
+                + ", structure energy="
+                + std::to_string(
+                    conservation.structureEnergyResidualJoules)
+                + ", fluid energy="
+                + std::to_string(
+                    conservation.fluidEnergyResidualJoules)
+                + ", system energy="
+                + std::to_string(
+                    conservation.systemEnergyResidualJoules));
+        }
+    } catch (...) {
+        structure_.restore(beforeActuator);
+        throw;
+    }
     viewer::StructureFrameContext context;
     context.sceneChecksum = openPistonCaseChecksum;
     context.solverCommit = openPistonCaseSolverId;
@@ -505,13 +726,12 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
     const double domainVolume = grid_.cellVolumeCubicMeters()
         * static_cast<double>(grid_.cellCount());
     const double fluidMass = fluidDensityKgPerCubicMeter * domainVolume;
+    const StructureVector3 endFluidMomentum =
+        fluidMomentumNewtonSeconds(grid_, candidateVelocity);
     context.conservation.fluidMassKilograms = fluidMass;
-    context.conservation.totalMomentumNewtonSeconds = {
-        structureDiagnostics.linearMomentumKgMetersPerSecond.x
-            + fluidMass * endSpeed,
-        structureDiagnostics.linearMomentumKgMetersPerSecond.y,
-        structureDiagnostics.linearMomentumKgMetersPerSecond.z,
-    };
+    context.conservation.totalMomentumNewtonSeconds = toViewer(add(
+        structureDiagnostics.linearMomentumKgMetersPerSecond,
+        endFluidMomentum));
     context.conservation.totalEnergyJoules =
         structureDiagnostics.kineticEnergyJoules
         + acceptedFluid.projection.kineticEnergyAfterJoules;
@@ -529,7 +749,8 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
             structure_, frameMapping_, context);
         appendFields(
             frame, acceptedFluid, controlDiagnostics, endCutSurface,
-            bridgeDiagnostics, integratedDiagnostics, actuatorImpulse,
+            bridgeDiagnostics, integratedDiagnostics, conservation,
+            actuatorImpulse,
             topologyRebaseCount_ + (endsAtCellBoundary ? 1 : 0),
             rebaseVolumeResidual, rebaseVelocityResidual);
         viewer::ProtocolError error;
@@ -549,6 +770,7 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
     controlVolumeDiagnostics_ = controlDiagnostics;
     cutSurfaceDiagnostics_ = endCutSurface;
     bridgeDiagnostics_ = bridgeDiagnostics;
+    conservationDiagnostics_ = conservation;
     if (rebase.has_value()) {
         controlVolume_ = std::move(rebase->controlVolume);
         lastRebaseDiagnostics_ = rebase->diagnostics;
@@ -588,6 +810,11 @@ OpenPistonCase::bridgeDiagnostics() const noexcept {
 const fluid::PlanarCutSurfacePressureDiagnostics&
 OpenPistonCase::cutSurfaceDiagnostics() const noexcept {
     return cutSurfaceDiagnostics_;
+}
+
+const OpenPistonConservationDiagnostics&
+OpenPistonCase::conservationDiagnostics() const noexcept {
+    return conservationDiagnostics_;
 }
 
 double OpenPistonCase::surfaceOffsetMeters() const noexcept {

@@ -657,8 +657,10 @@ void testMovingPlanarFaceCorrespondence() {
         grid, referenceControlVolume, reference, 0.2, 3.2);
     const auto cutTransfer = bridge.evaluateCutSurface(
         cutSurface, translatedKinematics);
-    check(cutSurface.accepted && cutTransfer == first,
-          "moving bridge: accepted fluid-side cut geometry drives the same transfer");
+    check(cutSurface.accepted && cutTransfer != first
+              && cutTransfer.diagnostics().fluidPressureForceNewtons.x
+                  == cutSurface.pressureForceNewtons.x,
+          "moving bridge: cut geometry transfers the complete constraint reaction");
     auto corruptedCutGeometry = cutSurface;
     corruptedCutGeometry.faces.front().physicalLowerCornerMeters.y += 0.01;
     expectRejected(

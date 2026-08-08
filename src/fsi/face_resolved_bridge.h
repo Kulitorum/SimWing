@@ -13,7 +13,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t planarFaceResolvedBridgeVersion = 3;
+inline constexpr std::uint32_t planarFaceResolvedBridgeVersion = 4;
 
 enum class PlanarFaceCorrespondenceMode : std::uint8_t {
     FixedMaterial = 0,

@@ -66,6 +66,22 @@ std::size_t faceIndex(const PeriodicCartesianGrid& grid,
     return grid.cellIndex(face.i, face.j, face.k);
 }
 
+double normalFaceVelocity(
+    const PeriodicCartesianGrid& grid,
+    const MacVelocityField& velocity,
+    const GridFaceMovingInterface& face) {
+    const std::size_t index = faceIndex(grid, face);
+    switch (face.axis) {
+    case GridFaceAxis::X:
+        return velocity.xFaces()[index];
+    case GridFaceAxis::Y:
+        return velocity.yFaces()[index];
+    case GridFaceAxis::Z:
+        return velocity.zFaces()[index];
+    }
+    throw std::invalid_argument("moving interface face has an unknown axis");
+}
+
 std::pair<std::size_t, std::size_t> adjacentCells(
     const PeriodicCartesianGrid& grid,
     const GridFaceMovingInterface& face) {
@@ -831,6 +847,22 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
             face.axis, pressureDifferencePascals);
         const Vector3 force = axialVector(
             face.axis, pressureForceAlongPositiveAxis);
+        const double directConstraintForceAlongPositiveAxis =
+            -settings.projection.densityKgPerCubicMeter
+            * grid.cellVolumeCubicMeters()
+            / settings.projection.timeStepSeconds
+            * (face.normalVelocityMetersPerSecond
+               - normalFaceVelocity(
+                   grid, predictedVelocityMetersPerSecond, face));
+        const Vector3 directConstraintForce = axialVector(
+            face.axis, directConstraintForceAlongPositiveAxis);
+        const double constraintReactionForceAlongPositiveAxis =
+            pressureForceAlongPositiveAxis
+            + directConstraintForceAlongPositiveAxis;
+        const Vector3 constraintReactionForce = axialVector(
+            face.axis, constraintReactionForceAlongPositiveAxis);
+        const Vector3 constraintReactionTraction = scale(
+            constraintReactionForce, 1.0 / area);
         const auto [lowerCorner, upperCorner] = faceCorners(grid, face);
         diagnostics.faces.push_back({
             face.surfaceStableId,
@@ -848,6 +880,11 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
             force,
             pressureForceAlongPositiveAxis
                 * face.normalVelocityMetersPerSecond,
+            directConstraintForce,
+            constraintReactionTraction,
+            constraintReactionForce,
+            constraintReactionForceAlongPositiveAxis
+                * face.normalVelocityMetersPerSecond,
         });
         auto& surface = surfaces[face.surfaceStableId];
         surface.stableId = face.surfaceStableId;
@@ -858,6 +895,15 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
         surface.pressurePowerWatts +=
             pressureForceAlongPositiveAxis
             * face.normalVelocityMetersPerSecond;
+        surface.directConstraintForceNewtons = add(
+            surface.directConstraintForceNewtons,
+            directConstraintForce);
+        surface.constraintReactionForceNewtons = add(
+            surface.constraintReactionForceNewtons,
+            constraintReactionForce);
+        surface.constraintReactionPowerWatts +=
+            constraintReactionForceAlongPositiveAxis
+            * face.normalVelocityMetersPerSecond;
     }
     for (const auto& face : diagnostics.faces) {
         auto& surface = surfaces.at(face.surfaceStableId);
@@ -867,6 +913,14 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
         surface.maximumPressureTractionDeviationPascals = std::max(
             surface.maximumPressureTractionDeviationPascals,
             length(subtract(face.pressureTractionPascals, meanTraction)));
+        const Vector3 meanConstraintReactionTraction = scale(
+            surface.constraintReactionForceNewtons,
+            1.0 / surface.areaSquareMeters);
+        surface.maximumConstraintReactionTractionDeviationPascals = std::max(
+            surface.maximumConstraintReactionTractionDeviationPascals,
+            length(subtract(
+                face.constraintReactionTractionPascals,
+                meanConstraintReactionTraction)));
     }
     diagnostics.surfaces.reserve(surfaces.size());
     for (auto& [stableId, surface] : surfaces) {
@@ -876,6 +930,12 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
             settings.projection.timeStepSeconds);
         surface.pressureWorkJoules = surface.pressurePowerWatts
             * settings.projection.timeStepSeconds;
+        surface.constraintReactionImpulseNewtonSeconds = scale(
+            surface.constraintReactionForceNewtons,
+            settings.projection.timeStepSeconds);
+        surface.constraintReactionWorkJoules =
+            surface.constraintReactionPowerWatts
+            * settings.projection.timeStepSeconds;
         diagnostics.totalPressureForceNewtons = add(
             diagnostics.totalPressureForceNewtons,
             surface.pressureForceNewtons);
@@ -884,6 +944,16 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
             surface.pressureImpulseNewtonSeconds);
         diagnostics.totalPressurePowerWatts += surface.pressurePowerWatts;
         diagnostics.totalPressureWorkJoules += surface.pressureWorkJoules;
+        diagnostics.totalConstraintReactionForceNewtons = add(
+            diagnostics.totalConstraintReactionForceNewtons,
+            surface.constraintReactionForceNewtons);
+        diagnostics.totalConstraintReactionImpulseNewtonSeconds = add(
+            diagnostics.totalConstraintReactionImpulseNewtonSeconds,
+            surface.constraintReactionImpulseNewtonSeconds);
+        diagnostics.totalConstraintReactionPowerWatts +=
+            surface.constraintReactionPowerWatts;
+        diagnostics.totalConstraintReactionWorkJoules +=
+            surface.constraintReactionWorkJoules;
         diagnostics.surfaces.push_back(surface);
     }
     diagnostics.finite = projection.converged
@@ -895,6 +965,12 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
         && finite(diagnostics.totalPressureImpulseNewtonSeconds)
         && std::isfinite(diagnostics.totalPressurePowerWatts)
         && std::isfinite(diagnostics.totalPressureWorkJoules)
+        && finite(diagnostics.totalConstraintReactionForceNewtons)
+        && finite(diagnostics.totalConstraintReactionImpulseNewtonSeconds)
+        && std::isfinite(
+            diagnostics.totalConstraintReactionPowerWatts)
+        && std::isfinite(
+            diagnostics.totalConstraintReactionWorkJoules)
         && diagnostics.faces.size() == interfaces.faceCount()
         && std::ranges::all_of(
             diagnostics.faces,
@@ -910,7 +986,12 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
                         face.normalVelocityMetersPerSecond)
                     && finite(face.pressureTractionPascals)
                     && finite(face.pressureForceNewtons)
-                    && std::isfinite(face.pressurePowerWatts);
+                    && std::isfinite(face.pressurePowerWatts)
+                    && finite(face.directConstraintForceNewtons)
+                    && finite(face.constraintReactionTractionPascals)
+                    && finite(face.constraintReactionForceNewtons)
+                    && std::isfinite(
+                        face.constraintReactionPowerWatts);
             })
         && std::ranges::all_of(
             diagnostics.surfaces,
@@ -923,7 +1004,17 @@ MovingInterfaceProjectionDiagnostics projectVelocityWithMovingInterfaces(
                     && std::isfinite(
                         surface.maximumPressureTractionDeviationPascals)
                     && std::isfinite(surface.pressurePowerWatts)
-                    && std::isfinite(surface.pressureWorkJoules);
+                    && std::isfinite(surface.pressureWorkJoules)
+                    && finite(surface.directConstraintForceNewtons)
+                    && finite(surface.constraintReactionForceNewtons)
+                    && finite(
+                        surface.constraintReactionImpulseNewtonSeconds)
+                    && std::isfinite(
+                        surface.maximumConstraintReactionTractionDeviationPascals)
+                    && std::isfinite(
+                        surface.constraintReactionPowerWatts)
+                    && std::isfinite(
+                        surface.constraintReactionWorkJoules);
             })
         && isFinite(candidateVelocity) && isFinite(candidatePressure);
     if (!diagnostics.finite) {

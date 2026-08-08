@@ -8,7 +8,7 @@
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t planarMovingControlVolumeVersion = 1;
+inline constexpr std::uint32_t planarMovingControlVolumeVersion = 2;
 inline constexpr std::uint32_t planarControlVolumeRebaseVersion = 1;
 
 struct PlanarControlVolumeStep {
@@ -67,6 +67,8 @@ struct PlanarControlVolumeDiagnostics {
     double surfaceGeometryResidualCubicMeters = 0.0;
     double continuityResidualCubicMeters = 0.0;
     double maximumSurfaceVelocityErrorMetersPerSecond = 0.0;
+    // Complete fluid-on-surface constraint-reaction power, including direct
+    // MAC velocity enforcement as well as adjacent pressure traction.
     double surfacePressurePowerWatts = 0.0;
     double rectangularSurfacePressureWorkJoules = 0.0;
     bool finite = true;

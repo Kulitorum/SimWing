@@ -383,7 +383,7 @@ PlanarControlVolumeDiagnostics PlanarMovingControlVolume::evaluate(
         / step.durationSeconds;
 
     std::size_t selectedFaceIndex = 0;
-    double facePressurePowerWatts = 0.0;
+    double faceReactionPowerWatts = 0.0;
     const auto projectedNormalVelocity = velocities(
         projectedVelocityMetersPerSecond, axis_);
     for (const auto& face : interfaceDiagnostics.faces) {
@@ -403,7 +403,8 @@ PlanarControlVolumeDiagnostics PlanarMovingControlVolume::evaluate(
             || face.k != expected.k
             || !std::isfinite(face.areaSquareMeters)
             || !std::isfinite(face.normalVelocityMetersPerSecond)
-            || !std::isfinite(face.pressurePowerWatts)) {
+            || !std::isfinite(face.pressurePowerWatts)
+            || !std::isfinite(face.constraintReactionPowerWatts)) {
             throw std::invalid_argument(
                 "interface diagnostics do not match the bound piston plane");
         }
@@ -427,7 +428,7 @@ PlanarControlVolumeDiagnostics PlanarMovingControlVolume::evaluate(
         diagnostics.surfaceSweptVolumeCubicMeters +=
             face.normalVelocityMetersPerSecond
             * face.areaSquareMeters * step.durationSeconds;
-        facePressurePowerWatts += face.pressurePowerWatts;
+        faceReactionPowerWatts += face.constraintReactionPowerWatts;
     }
     if (selectedFaceIndex != surfaceFaces_.size()) {
         throw std::invalid_argument(
@@ -456,19 +457,23 @@ PlanarControlVolumeDiagnostics PlanarMovingControlVolume::evaluate(
     if (surface == interfaceDiagnostics.surfaces.end()
         || surface->stableId != movingSurfaceStableId_
         || surface->faceCount != surfaceFaces_.size()
-        || !std::isfinite(surface->pressurePowerWatts)) {
+        || !std::isfinite(surface->constraintReactionPowerWatts)) {
         throw std::invalid_argument(
             "piston surface aggregate is absent or invalid");
     }
-    diagnostics.surfacePressurePowerWatts = surface->pressurePowerWatts;
+    diagnostics.surfacePressurePowerWatts =
+        surface->constraintReactionPowerWatts;
     diagnostics.rectangularSurfacePressureWorkJoules =
-        surface->pressurePowerWatts * step.durationSeconds;
+        surface->constraintReactionPowerWatts
+        * step.durationSeconds;
     const double powerTolerance = combinedTolerance(
         settings.absolutePowerToleranceWatts,
         settings.relativePowerTolerance,
-        std::abs(facePressurePowerWatts),
-        std::abs(surface->pressurePowerWatts));
-    if (std::abs(facePressurePowerWatts - surface->pressurePowerWatts)
+        std::abs(faceReactionPowerWatts),
+        std::abs(surface->constraintReactionPowerWatts));
+    if (std::abs(
+            faceReactionPowerWatts
+            - surface->constraintReactionPowerWatts)
         > powerTolerance) {
         throw std::invalid_argument(
             "piston face power does not match its surface aggregate");

@@ -276,6 +276,15 @@ void testAnalyticTranslatingSlabPressureWork() {
                     "piston: one face tile carries its integrated force");
     checkNear(firstRightFace.pressurePowerWatts, 27.5, 0.0,
               "piston: one face tile carries its pressure power");
+    checkVectorNear(firstRightFace.directConstraintForceNewtons,
+                    {}, 0.0,
+                    "piston: compatible predicted velocity needs no direct reaction");
+    checkVectorNear(firstRightFace.constraintReactionForceNewtons,
+                    firstRightFace.pressureForceNewtons, 0.0,
+                    "piston: compatible constraint reaction equals pressure force");
+    checkNear(firstRightFace.constraintReactionPowerWatts,
+              firstRightFace.pressurePowerWatts, 0.0,
+              "piston: compatible constraint reaction preserves pressure power");
     check(left.stableId == 100 && right.stableId == 200,
           "piston: surface diagnostics are canonicalized by stable ID");
     checkNear(left.areaSquareMeters, 6.0, 0.0,
@@ -286,6 +295,11 @@ void testAnalyticTranslatingSlabPressureWork() {
                     "piston: left pressure force is analytic and outward");
     checkVectorNear(right.pressureForceNewtons, {660.0, 0.0, 0.0}, 0.0,
                     "piston: right pressure force is analytic and outward");
+    checkVectorNear(right.directConstraintForceNewtons, {}, 0.0,
+                    "piston: compatible surface has zero direct constraint force");
+    checkVectorNear(right.constraintReactionForceNewtons,
+                    right.pressureForceNewtons, 0.0,
+                    "piston: compatible surface reaction equals pressure load");
     checkNear(left.maximumPressureTractionDeviationPascals, 0.0, 0.0,
               "piston: left pressure traction is exactly uniform");
     checkNear(right.maximumPressureTractionDeviationPascals, 0.0, 0.0,

@@ -683,6 +683,13 @@ PlanarFaceResolvedFluidStructureBridge::evaluateCutSurface(
         || !std::isfinite(cutSurface.periodicPositionResidualMeters)
         || cutSurface.periodicPositionResidualMeters
             > settings_.geometryToleranceMeters
+        || !std::isfinite(cutSurface.normalVelocityMetersPerSecond)
+        || !std::isfinite(
+            cutSurface.maximumNormalVelocitySpreadMetersPerSecond)
+        || !std::isfinite(
+            cutSurface.reactionSourcePhysicalPlaneCoordinateMeters)
+        || !std::isfinite(
+            cutSurface.reactionSourceNormalVelocityMetersPerSecond)
         || !std::isfinite(cutSurface.areaSquareMeters)
         || !std::isfinite(cutSurface.sourceAreaSquareMeters)
         || !finite(cutSurface.pressureForceNewtons)

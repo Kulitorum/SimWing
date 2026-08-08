@@ -11,10 +11,38 @@
 
 namespace simwing::fsi {
 
+inline constexpr std::uint32_t openPistonConservationVersion = 1;
+
 inline constexpr char openPistonCaseChecksum[] =
-    "sha256:simwing-open-control-volume-piston-case-v4";
+    "sha256:simwing-open-control-volume-piston-case-v5";
 inline constexpr char openPistonCaseSolverId[] =
-    "simwing-fsi-open-control-volume-piston-worker-v4";
+    "simwing-fsi-open-control-volume-piston-worker-v5";
+
+struct OpenPistonConservationDiagnostics {
+    std::uint32_t version = openPistonConservationVersion;
+    StructureVector3 structureMomentumChangeNewtonSeconds;
+    StructureVector3 fluidMomentumChangeNewtonSeconds;
+    StructureVector3 pressureImpulseToStructureNewtonSeconds;
+    StructureVector3 actuatorImpulseNewtonSeconds;
+    StructureVector3 structureMomentumResidualNewtonSeconds;
+    double structureMomentumResidualNormNewtonSeconds = 0.0;
+    StructureVector3 fluidMomentumResidualNewtonSeconds;
+    double fluidMomentumResidualNormNewtonSeconds = 0.0;
+    StructureVector3 systemMomentumResidualNewtonSeconds;
+    double systemMomentumResidualNormNewtonSeconds = 0.0;
+    double structureKineticEnergyChangeJoules = 0.0;
+    double fluidKineticEnergyChangeJoules = 0.0;
+    double pressureWorkToStructureJoules = 0.0;
+    double actuatorWorkJoules = 0.0;
+    double structureEnergyResidualJoules = 0.0;
+    double fluidEnergyResidualJoules = 0.0;
+    double systemEnergyResidualJoules = 0.0;
+    bool finite = true;
+    bool accepted = false;
+
+    bool operator==(
+        const OpenPistonConservationDiagnostics&) const = default;
+};
 
 // Visible verification harness for an accelerating planar piston in one
 // connected periodic fluid region. A complete moving sheet is nonseparating:
@@ -26,7 +54,10 @@ inline constexpr char openPistonCaseSolverId[] =
 // volume continuity, remaps the constraint by one face without a material
 // velocity jump, and commits the new topology only with the complete frame.
 // The pressure transfer retains face-resolved material patches while requiring
-// the structural plate to match the unwrapped physical cut-surface plane.
+// the structural plate to match the unwrapped physical cut-surface plane. The
+// projection's complete macro-step-average constraint reaction is sampled at
+// both endpoint kinematics; fluid, structure, actuator, and system momentum and
+// kinetic-energy ledgers must all close before commit.
 class OpenPistonCase final {
 public:
     OpenPistonCase();
@@ -49,6 +80,8 @@ public:
     bridgeDiagnostics() const noexcept;
     [[nodiscard]] const fluid::PlanarCutSurfacePressureDiagnostics&
     cutSurfaceDiagnostics() const noexcept;
+    [[nodiscard]] const OpenPistonConservationDiagnostics&
+    conservationDiagnostics() const noexcept;
     [[nodiscard]] double surfaceOffsetMeters() const noexcept;
     [[nodiscard]] std::size_t movingPlaneCoordinate() const noexcept;
     [[nodiscard]] std::uint64_t topologyRebaseCount() const noexcept;
@@ -70,6 +103,7 @@ private:
     fluid::PlanarControlVolumeRebaseDiagnostics lastRebaseDiagnostics_;
     fluid::PlanarCutSurfacePressureDiagnostics cutSurfaceDiagnostics_;
     PlanarFaceResolvedBridgeDiagnostics bridgeDiagnostics_;
+    OpenPistonConservationDiagnostics conservationDiagnostics_;
     double surfaceOffsetMeters_ = 0.0;
     double lastRebaseVelocityResidualMetersPerSecond_ = 0.0;
     std::uint64_t topologyRebaseCount_ = 0;

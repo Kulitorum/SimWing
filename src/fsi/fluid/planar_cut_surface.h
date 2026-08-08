@@ -8,11 +8,13 @@
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t planarCutSurfacePressureVersion = 1;
+inline constexpr std::uint32_t planarCutSurfacePressureVersion = 2;
 
 struct PlanarCutSurfacePressureSettings {
     Vector3 momentReferenceMeters;
     double absolutePositionToleranceMeters = 1.0e-12;
+    double absoluteVelocityToleranceMetersPerSecond = 1.0e-11;
+    double relativeVelocityTolerance = 1.0e-11;
     double absoluteAreaToleranceSquareMeters = 1.0e-11;
     double relativeAreaTolerance = 1.0e-11;
     double absoluteForceToleranceNewtons = 1.0e-10;
@@ -61,6 +63,11 @@ struct PlanarCutSurfacePressureDiagnostics {
     double gridPlaneCoordinateMeters = 0.0;
     double physicalPlaneCoordinateMeters = 0.0;
     double periodicPositionResidualMeters = 0.0;
+    double normalVelocityMetersPerSecond = 0.0;
+    double maximumNormalVelocitySpreadMetersPerSecond = 0.0;
+    bool kinematicsResampled = false;
+    double reactionSourcePhysicalPlaneCoordinateMeters = 0.0;
+    double reactionSourceNormalVelocityMetersPerSecond = 0.0;
     double areaSquareMeters = 0.0;
     double sourceAreaSquareMeters = 0.0;
     double areaResidualSquareMeters = 0.0;
@@ -91,6 +98,22 @@ evaluatePlanarCutSurfacePressure(
     const MovingInterfaceProjectionDiagnostics& interfaceDiagnostics,
     double surfaceOffsetMeters,
     double physicalPlaneCoordinateMeters,
+    const PlanarCutSurfacePressureSettings& settings = {});
+
+// Retains an already accepted face-resolved pressure reaction while sampling
+// its power on another congruent physical plane and rigid normal velocity in
+// the same topology epoch. This is the explicit temporal adapter for a
+// projection reaction that represents a macro-step average rather than an
+// endpoint force. Traction and force remain unchanged; geometry and power are
+// fully revalidated through evaluatePlanarCutSurfacePressure.
+[[nodiscard]] PlanarCutSurfacePressureDiagnostics
+resamplePlanarCutSurfaceReaction(
+    const PeriodicCartesianGrid& grid,
+    const PlanarMovingControlVolume& controlVolume,
+    const PlanarCutSurfacePressureDiagnostics& acceptedReaction,
+    double surfaceOffsetMeters,
+    double physicalPlaneCoordinateMeters,
+    double normalVelocityMetersPerSecond,
     const PlanarCutSurfacePressureSettings& settings = {});
 
 } // namespace simwing::fsi::fluid

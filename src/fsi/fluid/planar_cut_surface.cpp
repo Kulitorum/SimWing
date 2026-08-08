@@ -179,6 +179,8 @@ void setNormalCoordinate(Vector3& value,
 void validateSettings(const PlanarCutSurfacePressureSettings& settings) {
     const std::array nonnegative{
         settings.absolutePositionToleranceMeters,
+        settings.absoluteVelocityToleranceMetersPerSecond,
+        settings.relativeVelocityTolerance,
         settings.absoluteAreaToleranceSquareMeters,
         settings.relativeAreaTolerance,
         settings.absoluteForceToleranceNewtons,
@@ -275,6 +277,12 @@ PlanarCutSurfacePressureDiagnostics evaluatePlanarCutSurfacePressure(
         physicalPlaneCoordinateMeters;
     diagnostics.periodicPositionResidualMeters = std::abs(
         periodicDisplacement - periodicImage * periodMeters);
+    diagnostics.normalVelocityMetersPerSecond =
+        selectedFaces.front()->normalVelocityMetersPerSecond;
+    diagnostics.reactionSourcePhysicalPlaneCoordinateMeters =
+        physicalPlaneCoordinateMeters;
+    diagnostics.reactionSourceNormalVelocityMetersPerSecond =
+        diagnostics.normalVelocityMetersPerSecond;
     diagnostics.faces.reserve(selectedFaces.size());
 
     std::size_t previousFaceIndex = 0;
@@ -295,21 +303,30 @@ PlanarCutSurfacePressureDiagnostics evaluatePlanarCutSurfacePressure(
             settings.relativeAreaTolerance,
             source->areaSquareMeters, tileArea);
         const Vector3 axialTraction = axisVector(
-            axis, normalCoordinate(source->pressureTractionPascals, axis));
+            axis, normalCoordinate(
+                source->constraintReactionTractionPascals, axis));
         const Vector3 expectedForce = scale(
+            source->constraintReactionTractionPascals,
+            source->areaSquareMeters);
+        const Vector3 expectedPressureForce = scale(
             source->pressureTractionPascals,
             source->areaSquareMeters);
+        const Vector3 decomposedReactionForce = add(
+            source->pressureForceNewtons,
+            source->directConstraintForceNewtons);
         const double faceForceTolerance = combinedTolerance(
             settings.absoluteForceToleranceNewtons,
             settings.relativeForceTolerance,
-            length(expectedForce), length(source->pressureForceNewtons));
+            length(expectedForce),
+            length(source->constraintReactionForceNewtons));
         const double expectedPower = dot(
-            source->pressureForceNewtons,
+            source->constraintReactionForceNewtons,
             axisVector(axis, source->normalVelocityMetersPerSecond));
         const double facePowerTolerance = combinedTolerance(
             settings.absolutePowerToleranceWatts,
             settings.relativePowerTolerance,
-            std::abs(expectedPower), std::abs(source->pressurePowerWatts));
+            std::abs(expectedPower),
+            std::abs(source->constraintReactionPowerWatts));
         if (source->minusRegionStableId
                 != controlVolume.fluidRegionStableId()
             || source->plusRegionStableId
@@ -319,12 +336,15 @@ PlanarCutSurfacePressureDiagnostics evaluatePlanarCutSurfacePressure(
                 != controlVolume.movingPlaneCoordinate()
             || !finite(source->lowerCornerMeters)
             || !finite(source->upperCornerMeters)
+            || !finite(source->constraintReactionTractionPascals)
+            || !finite(source->constraintReactionForceNewtons)
             || !finite(source->pressureTractionPascals)
             || !finite(source->pressureForceNewtons)
+            || !finite(source->directConstraintForceNewtons)
             || !std::isfinite(source->areaSquareMeters)
             || source->areaSquareMeters <= 0.0
             || !std::isfinite(source->normalVelocityMetersPerSecond)
-            || !std::isfinite(source->pressurePowerWatts)
+            || !std::isfinite(source->constraintReactionPowerWatts)
             || (havePreviousFaceIndex
                 && currentFaceIndex <= previousFaceIndex)
             || length(subtract(
@@ -336,12 +356,29 @@ PlanarCutSurfacePressureDiagnostics evaluatePlanarCutSurfacePressure(
             || std::abs(source->areaSquareMeters - tileArea)
                 > tileAreaTolerance
             || length(subtract(
-                   source->pressureTractionPascals, axialTraction))
+                   source->constraintReactionTractionPascals,
+                   axialTraction))
                 > 0.0
             || length(subtract(
-                   source->pressureForceNewtons, expectedForce))
+                   source->constraintReactionForceNewtons,
+                   expectedForce))
                 > faceForceTolerance
-            || std::abs(source->pressurePowerWatts - expectedPower)
+            || length(subtract(
+                   source->pressureForceNewtons,
+                   expectedPressureForce))
+                > faceForceTolerance
+            || length(subtract(
+                   source->directConstraintForceNewtons,
+                   axisVector(axis, normalCoordinate(
+                       source->directConstraintForceNewtons, axis))))
+                > 0.0
+            || length(subtract(
+                   source->constraintReactionForceNewtons,
+                   decomposedReactionForce))
+                > faceForceTolerance
+            || std::abs(
+                   source->constraintReactionPowerWatts
+                   - expectedPower)
                 > facePowerTolerance
             || std::abs(normalCoordinate(
                     source->lowerCornerMeters, axis)
@@ -356,6 +393,10 @@ PlanarCutSurfacePressureDiagnostics evaluatePlanarCutSurfacePressure(
         }
         previousFaceIndex = currentFaceIndex;
         havePreviousFaceIndex = true;
+        diagnostics.maximumNormalVelocitySpreadMetersPerSecond = std::max(
+            diagnostics.maximumNormalVelocitySpreadMetersPerSecond,
+            std::abs(source->normalVelocityMetersPerSecond
+                     - diagnostics.normalVelocityMetersPerSecond));
         Vector3 physicalLower = source->lowerCornerMeters;
         Vector3 physicalUpper = source->upperCornerMeters;
         setNormalCoordinate(
@@ -376,14 +417,14 @@ PlanarCutSurfacePressureDiagnostics evaluatePlanarCutSurfacePressure(
             physicalUpper,
             source->areaSquareMeters,
             source->normalVelocityMetersPerSecond,
-            source->pressureTractionPascals,
-            source->pressureForceNewtons,
-            source->pressurePowerWatts,
+            source->constraintReactionTractionPascals,
+            source->constraintReactionForceNewtons,
+            source->constraintReactionPowerWatts,
         });
         diagnostics.areaSquareMeters += source->areaSquareMeters;
         diagnostics.pressureForceNewtons = add(
             diagnostics.pressureForceNewtons,
-            source->pressureForceNewtons);
+            source->constraintReactionForceNewtons);
         const Vector3 physicalCenter = scale(
             add(physicalLower, physicalUpper), 0.5);
         diagnostics.pressureMomentNewtonMeters = add(
@@ -391,8 +432,9 @@ PlanarCutSurfacePressureDiagnostics evaluatePlanarCutSurfacePressure(
             cross(subtract(
                       physicalCenter,
                       settings.momentReferenceMeters),
-                  source->pressureForceNewtons));
-        diagnostics.pressurePowerWatts += source->pressurePowerWatts;
+                  source->constraintReactionForceNewtons));
+        diagnostics.pressurePowerWatts +=
+            source->constraintReactionPowerWatts;
     }
 
     const auto surface = std::lower_bound(
@@ -407,8 +449,8 @@ PlanarCutSurfacePressureDiagnostics evaluatePlanarCutSurfacePressure(
         || surface->stableId != controlVolume.movingSurfaceStableId()
         || surface->faceCount != selectedFaces.size()
         || !std::isfinite(surface->areaSquareMeters)
-        || !finite(surface->pressureForceNewtons)
-        || !std::isfinite(surface->pressurePowerWatts)) {
+        || !finite(surface->constraintReactionForceNewtons)
+        || !std::isfinite(surface->constraintReactionPowerWatts)) {
         throw std::invalid_argument(
             "planar cut surface is missing its pressure aggregate");
     }
@@ -416,21 +458,29 @@ PlanarCutSurfacePressureDiagnostics evaluatePlanarCutSurfacePressure(
     diagnostics.areaResidualSquareMeters =
         diagnostics.areaSquareMeters - surface->areaSquareMeters;
     diagnostics.sourcePressureForceNewtons =
-        surface->pressureForceNewtons;
+        surface->constraintReactionForceNewtons;
     diagnostics.forceResidualNewtons = subtract(
         diagnostics.pressureForceNewtons,
-        surface->pressureForceNewtons);
+        surface->constraintReactionForceNewtons);
     diagnostics.forceResidualNormNewtons = length(
         diagnostics.forceResidualNewtons);
-    diagnostics.sourcePressurePowerWatts = surface->pressurePowerWatts;
+    diagnostics.sourcePressurePowerWatts =
+        surface->constraintReactionPowerWatts;
     diagnostics.powerResidualWatts = diagnostics.pressurePowerWatts
-        - surface->pressurePowerWatts;
+        - surface->constraintReactionPowerWatts;
 
     diagnostics.finite =
         std::isfinite(diagnostics.surfaceOffsetMeters)
         && std::isfinite(diagnostics.gridPlaneCoordinateMeters)
         && std::isfinite(diagnostics.physicalPlaneCoordinateMeters)
         && std::isfinite(diagnostics.periodicPositionResidualMeters)
+        && std::isfinite(diagnostics.normalVelocityMetersPerSecond)
+        && std::isfinite(
+            diagnostics.maximumNormalVelocitySpreadMetersPerSecond)
+        && std::isfinite(
+            diagnostics.reactionSourcePhysicalPlaneCoordinateMeters)
+        && std::isfinite(
+            diagnostics.reactionSourceNormalVelocityMetersPerSecond)
         && std::isfinite(diagnostics.areaSquareMeters)
         && std::isfinite(diagnostics.sourceAreaSquareMeters)
         && std::isfinite(diagnostics.areaResidualSquareMeters)
@@ -452,12 +502,18 @@ PlanarCutSurfacePressureDiagnostics evaluatePlanarCutSurfacePressure(
         settings.absoluteForceToleranceNewtons,
         settings.relativeForceTolerance,
         length(diagnostics.pressureForceNewtons),
-        length(surface->pressureForceNewtons));
+        length(surface->constraintReactionForceNewtons));
     const double powerTolerance = combinedTolerance(
         settings.absolutePowerToleranceWatts,
         settings.relativePowerTolerance,
         std::abs(diagnostics.pressurePowerWatts),
-        std::abs(surface->pressurePowerWatts));
+        std::abs(surface->constraintReactionPowerWatts));
+    const double velocityTolerance = combinedTolerance(
+        settings.absoluteVelocityToleranceMetersPerSecond,
+        settings.relativeVelocityTolerance,
+        std::abs(diagnostics.normalVelocityMetersPerSecond),
+        std::abs(diagnostics.normalVelocityMetersPerSecond)
+            + diagnostics.maximumNormalVelocitySpreadMetersPerSecond);
     diagnostics.accepted = diagnostics.finite
         && diagnostics.periodicPositionResidualMeters
             <= settings.absolutePositionToleranceMeters
@@ -466,8 +522,105 @@ PlanarCutSurfacePressureDiagnostics evaluatePlanarCutSurfacePressure(
             <= areaTolerance
         && std::abs(diagnostics.areaResidualSquareMeters) <= areaTolerance
         && diagnostics.forceResidualNormNewtons <= forceTolerance
+        && diagnostics.maximumNormalVelocitySpreadMetersPerSecond
+            <= velocityTolerance
         && std::abs(diagnostics.powerResidualWatts) <= powerTolerance;
     return diagnostics;
+}
+
+PlanarCutSurfacePressureDiagnostics resamplePlanarCutSurfaceReaction(
+    const PeriodicCartesianGrid& grid,
+    const PlanarMovingControlVolume& controlVolume,
+    const PlanarCutSurfacePressureDiagnostics& acceptedReaction,
+    const double surfaceOffsetMeters,
+    const double physicalPlaneCoordinateMeters,
+    const double normalVelocityMetersPerSecond,
+    const PlanarCutSurfacePressureSettings& settings) {
+    validateSettings(settings);
+    if (acceptedReaction.version != planarCutSurfacePressureVersion
+        || !acceptedReaction.finite || !acceptedReaction.accepted
+        || acceptedReaction.sourceInterfaceVersion
+            != faceAlignedMovingInterfaceVersion
+        || acceptedReaction.surfaceStableId
+            != controlVolume.movingSurfaceStableId()
+        || acceptedReaction.axis != controlVolume.axis()
+        || acceptedReaction.faceCount != acceptedReaction.faces.size()
+        || !std::isfinite(normalVelocityMetersPerSecond)
+        || length(subtract(
+               acceptedReaction.momentReferenceMeters,
+               settings.momentReferenceMeters))
+            > settings.absolutePositionToleranceMeters) {
+        throw std::invalid_argument(
+            "planar cut-surface reaction cannot be resampled");
+    }
+
+    MovingInterfaceProjectionDiagnostics synthetic;
+    synthetic.projection.converged = true;
+    synthetic.interfaceVersion = acceptedReaction.sourceInterfaceVersion;
+    synthetic.interfaceFaceCount = acceptedReaction.faceCount;
+    synthetic.fluidRegionCount = 1;
+    synthetic.finite = true;
+    synthetic.faces.reserve(acceptedReaction.faces.size());
+    MovingInterfaceSurfaceDiagnostics surface;
+    surface.stableId = acceptedReaction.surfaceStableId;
+    surface.faceCount = acceptedReaction.faceCount;
+    for (const auto& face : acceptedReaction.faces) {
+        const double pressurePowerWatts = dot(
+            face.pressureForceNewtons,
+            axisVector(face.axis, normalVelocityMetersPerSecond));
+        synthetic.faces.push_back({
+            face.surfaceStableId,
+            face.minusRegionStableId,
+            face.plusRegionStableId,
+            face.axis,
+            face.i,
+            face.j,
+            face.k,
+            face.gridLowerCornerMeters,
+            face.gridUpperCornerMeters,
+            face.areaSquareMeters,
+            normalVelocityMetersPerSecond,
+            face.pressureTractionPascals,
+            face.pressureForceNewtons,
+            pressurePowerWatts,
+            {},
+            face.pressureTractionPascals,
+            face.pressureForceNewtons,
+            pressurePowerWatts,
+        });
+        surface.areaSquareMeters += face.areaSquareMeters;
+        surface.pressureForceNewtons = add(
+            surface.pressureForceNewtons,
+            face.pressureForceNewtons);
+        surface.pressurePowerWatts += pressurePowerWatts;
+        surface.constraintReactionForceNewtons = add(
+            surface.constraintReactionForceNewtons,
+            face.pressureForceNewtons);
+        surface.constraintReactionPowerWatts += pressurePowerWatts;
+    }
+    synthetic.surfaces.push_back(surface);
+
+    auto result = evaluatePlanarCutSurfacePressure(
+        grid, controlVolume, synthetic,
+        surfaceOffsetMeters, physicalPlaneCoordinateMeters, settings);
+    const double forceTolerance = combinedTolerance(
+        settings.absoluteForceToleranceNewtons,
+        settings.relativeForceTolerance,
+        length(result.pressureForceNewtons),
+        length(acceptedReaction.pressureForceNewtons));
+    if (!result.accepted
+        || length(subtract(
+               result.pressureForceNewtons,
+               acceptedReaction.pressureForceNewtons)) > forceTolerance) {
+        throw std::invalid_argument(
+            "resampled cut-surface reaction changed its source force");
+    }
+    result.kinematicsResampled = true;
+    result.reactionSourcePhysicalPlaneCoordinateMeters =
+        acceptedReaction.physicalPlaneCoordinateMeters;
+    result.reactionSourceNormalVelocityMetersPerSecond =
+        acceptedReaction.normalVelocityMetersPerSecond;
+    return result;
 }
 
 } // namespace simwing::fsi::fluid

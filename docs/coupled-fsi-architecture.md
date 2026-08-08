@@ -473,13 +473,18 @@ unchanged, and the old terminal volume must equal the candidate reference
 volume before the caller may commit the new epoch. Skipped planes and collision
 with the resolved opening are rejected. This is a planar topology-epoch
 verification subset, not a general cut-cell pressure or surface-reconstruction
-scheme. Adjacent cell-centre pressure gives
-exact force/impulse/work for the piecewise-constant slab canonical, and the
-accepted diagnostics retain each canonical MAC tile's rectangle, traction,
-force, constrained velocity, and power ledger. This is deliberately not
-presented as arbitrary surface reconstruction, general cut-cell pressure
-geometry, folded/multiple-crossing motion, advection, turbulence, or a
-wing-flow solver.
+scheme. Adjacent cell-centre pressure gives exact pressure force/impulse/work
+for the compatible piecewise-constant slab canonical. When imposing a face
+velocity also changes its predicted MAC degree of freedom, however, pressure
+traction alone is not the coupled load. The complete fluid-on-interface
+reaction on this uniform grid is
+`A*(p_minus-p_plus)*n - rho*V_face*(U-u*)/dt`. Both terms remain explicit; the
+second is exactly zero when the predicted velocity already meets the
+constraint. Accepted diagnostics retain each canonical MAC tile's rectangle,
+pressure traction, direct-enforcement force, complete reaction, constrained
+velocity, impulse, and power ledger. This is deliberately not presented as
+arbitrary surface reconstruction, general cut-cell pressure geometry,
+folded/multiple-crossing motion, advection, turbulence, or a wing-flow solver.
 
 The companion planar cut-surface operator now gives the accepted constraint
 reaction an explicit physical application geometry within that partial cell.
@@ -488,7 +493,11 @@ rectangle to an unwrapped physical plane only when grid-plane plus offset is a
 matching periodic image. Independent face and surface area, force, physical
 moment, and power ledgers must close. This remains the projection's Lagrange
 reaction at a bounded planar cut, not an interpolation of new one-sided cell
-pressures and not general cut-cell reconstruction.
+pressures and not general cut-cell reconstruction. Projection produces that
+constraint reaction as a macro-step average. A separate temporal adapter keeps
+the accepted face force fixed while resampling congruent physical geometry and
+rigid normal velocity at each coupling endpoint, so impulse and work use one
+consistent step-average reaction.
 
 The first structure-side conservative-transfer primitive is also present. A
 canonical stable-ID surface is fingerprint-bound to one immutable structural
@@ -532,8 +541,10 @@ and a separately reported resisting CFD load. Its pressure reaction now crosses
 the moving face-resolved bridge at the structural plate's physical plane rather
 than through a surface-uniform bridge, but only after the fluid-side cut-surface
 area, force, moment, power, and periodic-image ledgers are accepted. Both the
-numerical state and published frame cross accepted boundaries only. On an exact
-cell crossing it also
+numerical state and published frame cross accepted boundaries only. The worker
+also independently closes pressure/internal versus actuator/external impulse
+and work against structure, fluid, and combined momentum and kinetic-energy
+changes. On an exact cell crossing it also
 verifies old/new chamber-volume continuity, remaps the constraint within a
 written velocity budget, and commits the new fluid/control-volume epoch with
 the completed viewer frame. This does not yet implement transverse or
@@ -647,8 +658,10 @@ matching node positions, and matching face/node normal velocities must remain
 exact. Before this bridge transfer, the fluid-side cut-surface canonical checks
 the same three axes and the terminal/rebased periodic images. Its complete
 physical plane retains `16 m^2` area and closes source-versus-cut force and power;
-invalid offsets, noncongruent physical planes, failed projections, corrupted
-aggregates, and altered cut geometry are rejected. The visible
+its step-average reaction resampled from zero to terminal velocity closes the
+analytic plug-flow kinetic-energy change. Invalid offsets, noncongruent physical
+planes, failed projections, corrupted aggregates, and altered cut geometry are
+rejected. The visible
 piston worker repeats the face-resolved full chain at `120 Hz` with a synthetic
 `6000 kg` tributary-mass plate so 600 default frames show about `1.38 m` of
 deterministic translation without leaving the initial viewer scale. The open
@@ -661,7 +674,12 @@ grid plane 6 to 7 with zero volume residual and less than `2e-12 m/s` velocity
 remap; frame 1201 verifies continued partial-cell growth in the new epoch. At
 frame 2400 the physical plate reaches the unwrapped `4.0 m` position while the
 Eulerian plane wraps from index 7 to 0; frame 2401 verifies continued transfer
-and growth after that periodic topology epoch.
+and growth after that periodic topology epoch. On the first acceleration step,
+the `28.8 kg` fluid plug gains `1.44 N*s` and `0.036 J`; the complete reaction
+delivers `-1.44 N*s` and `-0.036 J` to the structure, while the actuator supplies
+`301.44 N*s` and `7.536 J`. Structure, fluid, and combined momentum residuals
+must remain below `1e-8 N*s`, and their kinetic-energy residuals below `2e-9 J`,
+including the two topology crossings.
 
 Work:
 
@@ -696,11 +714,12 @@ rigid normal motion across grid rebases while preserving the transverse material
 patches. The first open volume-changing piston now has one partial-cell geometry
 update, an independently closed surface-sweep/opening-transport GCL ledger,
 accepted physical cut-surface reaction geometry, and exact planar one-face
-topology rebases including periodic wrap. General interpolated cut-cell pressure
-metrics, curved or transversely deforming correspondence, nonplanar or opening
-topology events, sealed deforming chambers, and the complete coupled
-fluid/structure energy ledger remain open, so the full Phase 2 piston gate is
-not yet closed.
+topology rebases including periodic wrap. Its analytic structure/fluid/actuator
+momentum and kinetic-energy ledger is now complete for this driven planar case.
+General interpolated cut-cell pressure metrics, curved or transversely deforming
+correspondence, nonplanar or opening topology events, sealed deforming chambers,
+and a complete coupled energy ledger for those general cases remain open, so the
+full Phase 2 piston gate is not yet closed.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

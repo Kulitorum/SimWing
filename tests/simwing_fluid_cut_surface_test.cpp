@@ -23,6 +23,7 @@ using simwing::fsi::fluid::Vector3;
 using simwing::fsi::fluid::evaluatePlanarCutSurfacePressure;
 using simwing::fsi::fluid::projectVelocityWithMovingInterfaces;
 using simwing::fsi::fluid::rebasePlanarMovingControlVolume;
+using simwing::fsi::fluid::resamplePlanarCutSurfaceReaction;
 
 int failures = 0;
 
@@ -160,6 +161,30 @@ void testAllAxesAndPeriodicImages() {
                   && std::abs(first.powerResidualWatts) < 1.0e-12
                   && first.finite && first.accepted,
               "cut surface: source and physical reaction ledgers close");
+        checkNear(
+            normalCoordinate(first.pressureForceNewtons, axis)
+                * projectionSettings().projection.timeStepSeconds,
+            -9.6, 5.0e-12,
+            "cut surface: complete reaction balances plug momentum on every axis");
+        const auto startSample = resamplePlanarCutSurfaceReaction(
+            grid, controlVolume, first, 0.0, 3.0, 0.0, settings);
+        check(startSample.accepted && startSample.kinematicsResampled
+                  && startSample.pressureForceNewtons
+                      == first.pressureForceNewtons
+                  && startSample.normalVelocityMetersPerSecond == 0.0
+                  && startSample.pressurePowerWatts == 0.0
+                  && startSample.reactionSourcePhysicalPlaneCoordinateMeters
+                      == first.physicalPlaneCoordinateMeters
+                  && startSample.reactionSourceNormalVelocityMetersPerSecond
+                      == first.normalVelocityMetersPerSecond,
+              "cut surface: average reaction resamples start kinematics without changing force");
+        checkNear(
+            fluid.projection.kineticEnergyAfterJoules
+                + 0.5 * (startSample.pressurePowerWatts
+                         + first.pressurePowerWatts)
+                    * projectionSettings().projection.timeStepSeconds,
+            0.0, 2.0e-14,
+            "cut surface: average reaction work balances plug-flow kinetic energy");
         for (const auto& face : first.faces) {
             checkNear(normalCoordinate(
                           face.gridLowerCornerMeters, axis),
@@ -249,26 +274,53 @@ void testStrictValidation() {
         "cut surface validation: duplicate pressure tiles are rejected");
 
     auto corruptedFaceForce = fluid;
-    corruptedFaceForce.faces.front().pressureForceNewtons.x += 1.0;
+    corruptedFaceForce.faces.front()
+        .constraintReactionForceNewtons.x += 1.0;
     expectRejected(
         [&] { static_cast<void>(evaluatePlanarCutSurfacePressure(
             grid, controlVolume, corruptedFaceForce, 0.25, 3.25)); },
         "cut surface validation: local traction and force must agree");
 
     auto corruptedFacePower = fluid;
-    corruptedFacePower.faces.front().pressurePowerWatts += 1.0;
+    corruptedFacePower.faces.front()
+        .constraintReactionPowerWatts += 1.0;
     expectRejected(
         [&] { static_cast<void>(evaluatePlanarCutSurfacePressure(
             grid, controlVolume, corruptedFacePower, 0.25, 3.25)); },
         "cut surface validation: local force and power must agree");
 
+    auto nonrigidVelocity = fluid;
+    auto& changedFace = nonrigidVelocity.faces.front();
+    const double previousPower = changedFace.constraintReactionPowerWatts;
+    changedFace.normalVelocityMetersPerSecond += 0.01;
+    changedFace.constraintReactionPowerWatts =
+        changedFace.constraintReactionForceNewtons.x
+        * changedFace.normalVelocityMetersPerSecond;
+    nonrigidVelocity.surfaces.front().constraintReactionPowerWatts +=
+        changedFace.constraintReactionPowerWatts - previousPower;
+    const auto nonrigid = evaluatePlanarCutSurfacePressure(
+        grid, controlVolume, nonrigidVelocity, 0.25, 3.25);
+    check(nonrigid.finite && !nonrigid.accepted
+              && nonrigid.maximumNormalVelocitySpreadMetersPerSecond > 0.009,
+          "cut surface validation: nonrigid face velocity is not accepted");
+
     auto corruptedAggregate = fluid;
-    corruptedAggregate.surfaces.front().pressureForceNewtons.x += 1.0;
+    corruptedAggregate.surfaces.front()
+        .constraintReactionForceNewtons.x += 1.0;
     const auto corrupted = evaluatePlanarCutSurfacePressure(
         grid, controlVolume, corruptedAggregate, 0.25, 3.25);
     check(corrupted.finite && !corrupted.accepted
               && corrupted.forceResidualNormNewtons > 0.9,
           "cut surface validation: corrupted force aggregates fail acceptance");
+
+    auto unacceptedReaction = evaluatePlanarCutSurfacePressure(
+        grid, controlVolume, fluid, 0.25, 3.25);
+    unacceptedReaction.accepted = false;
+    expectRejected(
+        [&] { static_cast<void>(resamplePlanarCutSurfaceReaction(
+            grid, controlVolume, unacceptedReaction,
+            0.0, 3.0, 0.0)); },
+        "cut surface validation: unaccepted reactions cannot be resampled");
 
     PlanarCutSurfacePressureSettings invalidSettings;
     invalidSettings.relativePowerTolerance = -1.0;
