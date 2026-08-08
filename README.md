@@ -302,8 +302,12 @@ it. A separate composite rollback owner now binds that algorithm checkpoint to
 one real `Structure` checkpoint and one accepted moving-interface fluid epoch.
 It prebuilds and validates all three replacements, then commits them through
 no-throw moves, so a foreign or corrupt member changes none of the owners and a
-valid restore replays the exact next mutation. This is the retry state boundary;
-the repeated fluid/Structure solve still remains to be wired. The
+valid restore replays the exact next mutation. A bounded macro-step retry
+policy now distinguishes the active attempt, an explicit restore-before-retry
+handshake, acceptance, and terminal failure. Exhaustion reduces the step by a
+configured factor down to a hard minimum and retry-count budget; its
+definition-bound checkpoint reproduces the exact pending or terminal decision.
+The repeated fluid/Structure solve still remains to be wired. The
 macro-step surface supplies the residual norms from
 stable-ID-bound baseline/previous/current kinematics and consecutive nodal
 traction results. It uses maximum physical nodal updates, references motion to

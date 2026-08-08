@@ -243,11 +243,143 @@ void testCompositeRestoreIsTransactional() {
           "rollback: iteration rejection preserves every owner");
 }
 
+void testMacroStepRetryPolicyAndReplay() {
+    constexpr std::uint64_t fingerprint = 0x5c03'0001ULL;
+    CouplingMacroStepRetrySettings settings;
+    settings.maximumRetries = 4;
+    settings.reductionFactor = 0.5;
+    settings.minimumTimeStepSeconds = 0.01;
+    CouplingMacroStepRetry retry(fingerprint, 0.08, settings);
+
+    const auto pending = retry.reportIteration(
+        StrongCouplingIterationStatus::Exhausted);
+    check(pending.status == CouplingMacroStepRetryStatus::RetryPending
+              && pending.attemptNumber == 1
+              && pending.retryCount == 0
+              && pending.timeStepSeconds == 0.08
+              && pending.pendingTimeStepSeconds == 0.04,
+          "retry: exhaustion proposes one bounded smaller macro-step");
+    const auto savedPending = retry.checkpoint();
+    const auto secondAttempt = retry.beginRetry();
+    check(secondAttempt.status == CouplingMacroStepRetryStatus::Attempting
+              && secondAttempt.attemptNumber == 2
+              && secondAttempt.retryCount == 1
+              && secondAttempt.timeStepSeconds == 0.04
+              && secondAttempt.pendingTimeStepSeconds == 0.0,
+          "retry: explicit acknowledgement activates the pending step");
+
+    static_cast<void>(retry.reportIteration(
+        StrongCouplingIterationStatus::Exhausted));
+    static_cast<void>(retry.beginRetry());
+    static_cast<void>(retry.reportIteration(
+        StrongCouplingIterationStatus::Exhausted));
+    static_cast<void>(retry.beginRetry());
+    check(retry.timeStepSeconds() == settings.minimumTimeStepSeconds
+              && retry.retryCount() == 3,
+          "retry: reduction clamps exactly at the minimum step");
+    const auto failed = retry.reportIteration(
+        StrongCouplingIterationStatus::Exhausted);
+    check(failed.status == CouplingMacroStepRetryStatus::Failed
+              && failed.timeStepSeconds
+                  == settings.minimumTimeStepSeconds
+              && failed.pendingTimeStepSeconds == 0.0,
+          "retry: exhaustion at the minimum is terminal failure");
+
+    retry.restore(savedPending);
+    check(retry.checkpoint() == savedPending,
+          "retry: pending restore reproduces the exact handshake state");
+    const auto replaySecond = retry.beginRetry();
+    check(replaySecond == secondAttempt,
+          "retry: restored pending state replays the next attempt exactly");
+    const auto accepted = retry.reportIteration(
+        StrongCouplingIterationStatus::Converged);
+    check(accepted.status == CouplingMacroStepRetryStatus::Accepted
+              && accepted.timeStepSeconds == 0.04,
+          "retry: converged iteration accepts its active reduced step");
+
+    const auto terminal = retry.checkpoint();
+    bool terminalRejected = false;
+    try {
+        static_cast<void>(retry.reportIteration(
+            StrongCouplingIterationStatus::Converged));
+    } catch (const std::logic_error&) {
+        terminalRejected = true;
+    }
+    check(terminalRejected && retry.checkpoint() == terminal,
+          "retry: accepted state is terminal and immutable");
+}
+
+void testMacroStepRetryValidationIsTransactional() {
+    constexpr std::uint64_t fingerprint = 0x5c03'0002ULL;
+    CouplingMacroStepRetrySettings settings;
+    settings.maximumRetries = 1;
+    settings.reductionFactor = 0.5;
+    settings.minimumTimeStepSeconds = 0.01;
+    CouplingMacroStepRetry retry(fingerprint, 0.08, settings);
+    const auto initial = retry.checkpoint();
+
+    bool activeRejected = false;
+    try {
+        static_cast<void>(retry.beginRetry());
+    } catch (const std::logic_error&) {
+        activeRejected = true;
+    }
+    expectRejected(
+        [&] {
+            static_cast<void>(retry.reportIteration(
+                StrongCouplingIterationStatus::Iterating));
+        },
+        "retry: a nonterminal strong iteration cannot finish an attempt");
+    check(activeRejected && retry.checkpoint() == initial,
+          "retry: invalid sequencing preserves policy state");
+
+    static_cast<void>(retry.reportIteration(
+        StrongCouplingIterationStatus::Exhausted));
+    static_cast<void>(retry.beginRetry());
+    const auto failed = retry.reportIteration(
+        StrongCouplingIterationStatus::Exhausted);
+    check(failed.status == CouplingMacroStepRetryStatus::Failed
+              && failed.retryCount == settings.maximumRetries,
+          "retry: the configured retry count is a hard terminal budget");
+    const auto terminal = retry.checkpoint();
+
+    auto corrupt = terminal;
+    ++corrupt.macroStepDefinitionFingerprint;
+    expectRejected(
+        [&] { retry.restore(corrupt); },
+        "retry: foreign policy identity is rejected");
+    corrupt = terminal;
+    corrupt.timeStepSeconds *= 0.75;
+    expectRejected(
+        [&] { retry.restore(corrupt); },
+        "retry: a step inconsistent with retry history is rejected");
+    corrupt = terminal;
+    corrupt.status = CouplingMacroStepRetryStatus::RetryPending;
+    corrupt.pendingTimeStepSeconds = settings.minimumTimeStepSeconds;
+    expectRejected(
+        [&] { retry.restore(corrupt); },
+        "retry: a pending step beyond the retry budget is rejected");
+    check(retry.checkpoint() == terminal,
+          "retry: rejected restores preserve terminal policy state");
+
+    auto invalidSettings = settings;
+    invalidSettings.maximumRetries =
+        maximumCouplingMacroStepRetries + 1;
+    expectRejected(
+        [&] {
+            CouplingMacroStepRetry invalid(
+                fingerprint, 0.08, invalidSettings);
+        },
+        "retry: excessive retry bounds are rejected");
+}
+
 } // namespace
 
 int main() {
     testCompositeRollbackAndReplay();
     testCompositeRestoreIsTransactional();
+    testMacroStepRetryPolicyAndReplay();
+    testMacroStepRetryValidationIsTransactional();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d strong-coupling rollback check(s) failed\n",

@@ -409,7 +409,7 @@ src/fsi/
     structure.*             adapter around softwing_core
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
-    coupled_state.*         composite Structure/fluid/iteration rollback owner
+    coupled_state.*         composite rollback and bounded macro-step retries
     piston_case.*           sealed fixed-topology worker canonical
     porous_sheet_case.*     coupled midpoint porous-sheet oracle
     porous_sheet_checkpoint_persistence.* bounded composite restart codec
@@ -748,7 +748,12 @@ accepted moving-interface fluid epoch: it preconstructs and validates complete
 replacement owners, then atomically commits Structure, fluid, and algorithm
 state through no-throw moves. Foreign/corrupt members leave all live owners
 unchanged, while a valid restore reproduces the next mutation exactly. The
-repeated solver loop and macro-step reduction policy remain future worker work.
+adjacent macro-step retry policy is likewise definition-bound and
+checkpointable. An exhausted iteration first enters an explicit pending state,
+so the caller restores that composite baseline before acknowledging and
+activating the reduced step. Reduction is bounded by a hard minimum step and
+retry count, and convergence, retry, and terminal failure remain distinct.
+The repeated solver loop remains future worker work.
 The topology-bound
 macro-step surface computes the decision's
 inputs from saved-baseline, previous, and current stable-ID kinematics plus two
@@ -1311,8 +1316,10 @@ coupling. A matching global lift coefficient alone is insufficient.
 Work:
 
 - compose the checkpointable iteration owner with fluid and Structure rollback
-  into a complete repeated solver loop, then add IQN-ILS;
-- add adaptive macro-step control and coupled residual budgets;
+  and the bounded retry handshake into a complete repeated solver loop, then
+  add IQN-ILS;
+- drive adaptive macro-step control from the existing retry policy and coupled
+  residual budgets;
 - validate static inflation and steady deformed trim before maneuvers;
 - compare structural strain, pressure, cell shape, line loads, and pilot motion.
 
