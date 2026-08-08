@@ -291,7 +291,11 @@ and dynamic factors are explicitly bounded, degenerate residual changes fall
 back deterministically, and an in-memory checkpoint restores the exact
 iteration history without accepting foreign vector definitions. This is the
 rollback primitive for future repeated fluid/structure iterations, not yet a
-strong-coupled worker. Alongside the strict
+strong-coupled worker. A companion convergence decision requires displacement,
+velocity, and traction to each pass both an absolute tolerance and a
+floor-stabilized relative tolerance, enforces minimum/maximum iteration counts,
+and reports exhaustion separately so a future coordinator can roll back and
+reduce the macro-step. Alongside the strict
 uniform fluid-to-structure subset, a planar face-resolved bridge clips canonical
 MAC tiles against structural triangles and conservatively maps nonuniform face
 traction while closing per-face and aggregate area, force, moment, and power

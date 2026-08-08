@@ -15,6 +15,8 @@ using simwing::fsi::ConservativeTransferResult;
 using simwing::fsi::ConservativeTransferSettings;
 using simwing::fsi::AitkenInterfaceRelaxation;
 using simwing::fsi::AitkenRelaxationSettings;
+using simwing::fsi::CouplingConvergenceSettings;
+using simwing::fsi::CouplingResidualNorms;
 using simwing::fsi::CouplingNodeKinematics;
 using simwing::fsi::CouplingSurfaceNodeDefinition;
 using simwing::fsi::CouplingSurfaceTriangleDefinition;
@@ -539,6 +541,111 @@ void testAitkenVectorCheckpointAndTransactionalFailure() {
         "Aitken: zero interface identities are rejected");
 }
 
+void testCouplingConvergenceDecision() {
+    CouplingConvergenceSettings settings;
+    settings.minimumIterations = 2;
+    settings.maximumIterations = 4;
+    settings.absoluteDisplacementToleranceMetres = 1.0e-4;
+    settings.relativeDisplacementTolerance = 1.0e-2;
+    settings.displacementReferenceFloorMetres = 1.0e-2;
+    settings.absoluteVelocityToleranceMetersPerSecond = 2.0e-4;
+    settings.relativeVelocityTolerance = 2.0e-2;
+    settings.velocityReferenceFloorMetersPerSecond = 1.0e-2;
+    settings.absoluteTractionToleranceNewtons = 0.5;
+    settings.relativeTractionTolerance = 1.0e-2;
+    settings.tractionReferenceFloorNewtons = 10.0;
+    const CouplingResidualNorms convergedResiduals{
+        5.0e-5, 2.0e-2,
+        1.0e-4, 1.0e-2,
+        0.25, 50.0,
+    };
+
+    const auto tooEarly = simwing::fsi::evaluateCouplingConvergence(
+        1, convergedResiduals, settings);
+    check(tooEarly.displacementConverged
+              && tooEarly.velocityConverged
+              && tooEarly.tractionConverged
+              && !tooEarly.minimumIterationsSatisfied
+              && !tooEarly.converged
+              && !tooEarly.iterationLimitReached,
+          "convergence: all residuals cannot bypass the minimum iteration count");
+
+    const auto accepted = simwing::fsi::evaluateCouplingConvergence(
+        2, convergedResiduals, settings);
+    checkNear(accepted.relativeDisplacement, 2.5e-3, 1.0e-18,
+              "convergence: displacement relative residual uses its reference");
+    checkNear(accepted.relativeVelocity, 1.0e-2, 2.0e-18,
+              "convergence: velocity relative residual uses its floor");
+    checkNear(accepted.relativeTraction, 5.0e-3, 1.0e-18,
+              "convergence: traction relative residual uses its reference");
+    check(accepted.iteration == 2
+              && accepted.residuals == convergedResiduals
+              && accepted.displacementConverged
+              && accepted.velocityConverged
+              && accepted.tractionConverged
+              && accepted.minimumIterationsSatisfied
+              && accepted.converged
+              && !accepted.iterationLimitReached
+              && accepted.finite
+              && accepted
+                  == simwing::fsi::evaluateCouplingConvergence(
+                      2, convergedResiduals, settings),
+          "convergence: all absolute and relative channels accept deterministically");
+
+    auto oneAbsoluteFailure = convergedResiduals;
+    oneAbsoluteFailure.displacementMetres = 1.5e-4;
+    oneAbsoluteFailure.displacementReferenceMetres = 1.0;
+    const auto absoluteFailure =
+        simwing::fsi::evaluateCouplingConvergence(
+            2, oneAbsoluteFailure, settings);
+    check(absoluteFailure.relativeDisplacement
+              < settings.relativeDisplacementTolerance
+              && !absoluteFailure.displacementConverged
+              && !absoluteFailure.converged,
+          "convergence: a relative pass cannot hide an absolute displacement failure");
+
+    auto oneRelativeFailure = convergedResiduals;
+    oneRelativeFailure.tractionNewtons = 0.2;
+    oneRelativeFailure.tractionReferenceNewtons = 10.0;
+    const auto relativeFailure =
+        simwing::fsi::evaluateCouplingConvergence(
+            settings.maximumIterations,
+            oneRelativeFailure,
+            settings);
+    check(oneRelativeFailure.tractionNewtons
+              < settings.absoluteTractionToleranceNewtons
+              && relativeFailure.relativeTraction
+                  > settings.relativeTractionTolerance
+              && !relativeFailure.tractionConverged
+              && !relativeFailure.converged
+              && relativeFailure.iterationLimitReached,
+          "convergence: a lone relative traction failure exhausts the iteration budget");
+
+    auto invalidResiduals = convergedResiduals;
+    invalidResiduals.velocityMetersPerSecond =
+        std::numeric_limits<double>::quiet_NaN();
+    expectRejected(
+        [&] {
+            static_cast<void>(simwing::fsi::evaluateCouplingConvergence(
+                2, invalidResiduals, settings));
+        },
+        "convergence: non-finite residuals are rejected");
+    expectRejected(
+        [&] {
+            static_cast<void>(simwing::fsi::evaluateCouplingConvergence(
+                0, convergedResiduals, settings));
+        },
+        "convergence: iteration zero is rejected");
+    auto invalidSettings = settings;
+    invalidSettings.minimumIterations = 5;
+    expectRejected(
+        [&] {
+            static_cast<void>(simwing::fsi::evaluateCouplingConvergence(
+                2, convergedResiduals, invalidSettings));
+        },
+        "convergence: inconsistent iteration limits are rejected");
+}
+
 } // namespace
 
 int main() {
@@ -547,6 +654,7 @@ int main() {
     testValidationAndTransactionalFailure();
     testAitkenLinearFixedPointAndBounds();
     testAitkenVectorCheckpointAndTransactionalFailure();
+    testCouplingConvergenceDecision();
     if (failures != 0) {
         std::fprintf(stderr, "%d SimWing coupling check(s) failed\n", failures);
         return 1;

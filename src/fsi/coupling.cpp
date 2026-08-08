@@ -55,7 +55,95 @@ bool finite(const std::span<const double> values) {
     return true;
 }
 
+bool finiteNonnegative(const double value) {
+    return std::isfinite(value) && value >= 0.0;
+}
+
+bool valid(const CouplingConvergenceSettings& settings) {
+    return settings.minimumIterations > 0
+        && settings.minimumIterations <= settings.maximumIterations
+        && finiteNonnegative(
+            settings.absoluteDisplacementToleranceMetres)
+        && finiteNonnegative(settings.relativeDisplacementTolerance)
+        && std::isfinite(settings.displacementReferenceFloorMetres)
+        && settings.displacementReferenceFloorMetres > 0.0
+        && finiteNonnegative(
+            settings.absoluteVelocityToleranceMetersPerSecond)
+        && finiteNonnegative(settings.relativeVelocityTolerance)
+        && std::isfinite(settings.velocityReferenceFloorMetersPerSecond)
+        && settings.velocityReferenceFloorMetersPerSecond > 0.0
+        && finiteNonnegative(settings.absoluteTractionToleranceNewtons)
+        && finiteNonnegative(settings.relativeTractionTolerance)
+        && std::isfinite(settings.tractionReferenceFloorNewtons)
+        && settings.tractionReferenceFloorNewtons > 0.0;
+}
+
 } // namespace
+
+CouplingConvergenceDecision evaluateCouplingConvergence(
+    const std::uint64_t iteration,
+    const CouplingResidualNorms& residuals,
+    const CouplingConvergenceSettings& settings) {
+    if (!valid(settings)) {
+        throw std::invalid_argument(
+            "coupling convergence iteration and tolerance settings are invalid");
+    }
+    if (iteration == 0 || iteration > settings.maximumIterations
+        || !finiteNonnegative(residuals.displacementMetres)
+        || !finiteNonnegative(residuals.displacementReferenceMetres)
+        || !finiteNonnegative(residuals.velocityMetersPerSecond)
+        || !finiteNonnegative(
+            residuals.velocityReferenceMetersPerSecond)
+        || !finiteNonnegative(residuals.tractionNewtons)
+        || !finiteNonnegative(residuals.tractionReferenceNewtons)) {
+        throw std::invalid_argument(
+            "coupling convergence iteration and residual norms are invalid");
+    }
+
+    CouplingConvergenceDecision decision;
+    decision.iteration = iteration;
+    decision.residuals = residuals;
+    decision.relativeDisplacement = residuals.displacementMetres
+        / std::max(residuals.displacementReferenceMetres,
+                   settings.displacementReferenceFloorMetres);
+    decision.relativeVelocity = residuals.velocityMetersPerSecond
+        / std::max(residuals.velocityReferenceMetersPerSecond,
+                   settings.velocityReferenceFloorMetersPerSecond);
+    decision.relativeTraction = residuals.tractionNewtons
+        / std::max(residuals.tractionReferenceNewtons,
+                   settings.tractionReferenceFloorNewtons);
+    decision.finite = std::isfinite(decision.relativeDisplacement)
+        && std::isfinite(decision.relativeVelocity)
+        && std::isfinite(decision.relativeTraction);
+    if (!decision.finite) {
+        throw std::overflow_error(
+            "coupling convergence relative residual overflowed");
+    }
+    decision.displacementConverged =
+        residuals.displacementMetres
+            <= settings.absoluteDisplacementToleranceMetres
+        && decision.relativeDisplacement
+            <= settings.relativeDisplacementTolerance;
+    decision.velocityConverged =
+        residuals.velocityMetersPerSecond
+            <= settings.absoluteVelocityToleranceMetersPerSecond
+        && decision.relativeVelocity
+            <= settings.relativeVelocityTolerance;
+    decision.tractionConverged =
+        residuals.tractionNewtons
+            <= settings.absoluteTractionToleranceNewtons
+        && decision.relativeTraction
+            <= settings.relativeTractionTolerance;
+    decision.minimumIterationsSatisfied =
+        iteration >= settings.minimumIterations;
+    decision.converged = decision.minimumIterationsSatisfied
+        && decision.displacementConverged
+        && decision.velocityConverged
+        && decision.tractionConverged;
+    decision.iterationLimitReached =
+        !decision.converged && iteration == settings.maximumIterations;
+    return decision;
+}
 
 AitkenInterfaceRelaxation::AitkenInterfaceRelaxation(
     const std::uint64_t interfaceDefinitionFingerprint,

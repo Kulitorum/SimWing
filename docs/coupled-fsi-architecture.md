@@ -732,7 +732,12 @@ on the first iteration, retains the prior factor for numerically degenerate
 residual changes, clips finite dynamic updates, and checkpoints the exact prior
 residual/factor/iteration state for rollback. Failed updates and foreign
 checkpoint restores are transactional. No worker repeats the fluid/structure
-solve around this primitive yet. The first stable-ID fluid-to-structure bridge is present for the exact
+solve around this primitive yet. The adjacent convergence decision is likewise
+worker-independent: displacement, velocity, and traction must each satisfy
+both explicit absolute and floor-stabilized relative budgets after the minimum
+iteration count. An unconverged maximum iteration is reported as exhaustion,
+not acceptance, so the future coordinator can restore both solvers and reduce
+the macro-step. The first stable-ID fluid-to-structure bridge is present for the exact
 uniform subset of those operators. It accepts one canonical face-aligned fluid
 surface, requires its facewise pressure-traction deviation to meet an explicit
 budget, reconstructs one uniform world-space traction, and then requires

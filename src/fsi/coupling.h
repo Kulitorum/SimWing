@@ -85,6 +85,61 @@ private:
     std::vector<double> previousResidual_;
 };
 
+struct CouplingResidualNorms {
+    double displacementMetres = 0.0;
+    double displacementReferenceMetres = 0.0;
+    double velocityMetersPerSecond = 0.0;
+    double velocityReferenceMetersPerSecond = 0.0;
+    double tractionNewtons = 0.0;
+    double tractionReferenceNewtons = 0.0;
+
+    bool operator==(const CouplingResidualNorms&) const = default;
+};
+
+struct CouplingConvergenceSettings {
+    std::uint64_t minimumIterations = 2;
+    std::uint64_t maximumIterations = 25;
+    double absoluteDisplacementToleranceMetres = 1.0e-6;
+    double relativeDisplacementTolerance = 1.0e-3;
+    double displacementReferenceFloorMetres = 1.0e-3;
+    double absoluteVelocityToleranceMetersPerSecond = 1.0e-5;
+    double relativeVelocityTolerance = 1.0e-3;
+    double velocityReferenceFloorMetersPerSecond = 1.0e-2;
+    double absoluteTractionToleranceNewtons = 1.0e-3;
+    double relativeTractionTolerance = 1.0e-3;
+    double tractionReferenceFloorNewtons = 1.0;
+
+    bool operator==(const CouplingConvergenceSettings&) const = default;
+};
+
+struct CouplingConvergenceDecision {
+    std::uint64_t iteration = 0;
+    CouplingResidualNorms residuals;
+    double relativeDisplacement = 0.0;
+    double relativeVelocity = 0.0;
+    double relativeTraction = 0.0;
+    bool displacementConverged = false;
+    bool velocityConverged = false;
+    bool tractionConverged = false;
+    bool minimumIterationsSatisfied = false;
+    bool converged = false;
+    bool iterationLimitReached = false;
+    bool finite = true;
+
+    bool operator==(const CouplingConvergenceDecision&) const = default;
+};
+
+// Evaluates an already reduced interface residual set. Every displacement,
+// velocity, and traction channel must pass both its absolute and relative
+// tolerance; no single convenient residual can accept the iteration. Relative
+// references use explicit positive floors. Reaching the maximum iteration is
+// reported independently from convergence so the caller can roll back and
+// reduce the macro-step.
+[[nodiscard]] CouplingConvergenceDecision evaluateCouplingConvergence(
+    std::uint64_t iteration,
+    const CouplingResidualNorms& residuals,
+    const CouplingConvergenceSettings& settings = {});
+
 struct CouplingNodeImpulse {
     std::uint64_t stableId = 0;
     std::size_t structureNode = 0;
