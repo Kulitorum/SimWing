@@ -8,26 +8,28 @@
 
 namespace simwing::fsi {
 
-inline constexpr char clampedHemisphereCaseChecksum[] =
-    "sha256:simwing-clamped-hemisphere-case-v1";
-inline constexpr char clampedHemisphereCaseSolverId[] =
-    "simwing-fsi-clamped-hemisphere-worker-v1";
-inline constexpr std::size_t clampedHemisphereRadialSegments = 32;
-inline constexpr std::size_t clampedHemisphereLatitudeSegments = 10;
+inline constexpr char anchoredHemisphereCaseChecksum[] =
+    "sha256:simwing-three-point-anchored-hemisphere-case-v2";
+inline constexpr char anchoredHemisphereCaseSolverId[] =
+    "simwing-fsi-three-point-anchored-hemisphere-worker-v2";
+inline constexpr std::size_t hemisphereRadialSegments = 36;
+inline constexpr std::size_t hemisphereLatitudeSegments = 10;
+inline constexpr std::size_t hemisphereAnchorCount = 3;
+static_assert(hemisphereRadialSegments % hemisphereAnchorCount == 0);
 
-// A pressure-loaded fabric hemisphere with its complete equatorial ring fixed.
-// The case exercises a curved membrane, signed bending hinges, live follower
-// pressure, and a many-element immutable viewer frame without introducing a
-// synthetic fluid claim. Pressure traction is integrated on the accepted
-// surface geometry and conservatively shared by each triangle's three nodes.
-class ClampedHemisphereCase final {
+// A pressure-loaded fabric hemisphere held by three equally spaced points on
+// its equator. The free rim exposes the dynamic membrane modes hidden by the
+// original fully clamped boundary. Pressure traction is integrated on the
+// accepted surface geometry and conservatively shared by each triangle's three
+// nodes; it remains an analytic structural case rather than a CFD claim.
+class AnchoredHemisphereCase final {
 public:
-    ClampedHemisphereCase();
+    AnchoredHemisphereCase();
 
-    ClampedHemisphereCase(const ClampedHemisphereCase&) = delete;
-    ClampedHemisphereCase& operator=(const ClampedHemisphereCase&) = delete;
-    ClampedHemisphereCase(ClampedHemisphereCase&&) = delete;
-    ClampedHemisphereCase& operator=(ClampedHemisphereCase&&) = delete;
+    AnchoredHemisphereCase(const AnchoredHemisphereCase&) = delete;
+    AnchoredHemisphereCase& operator=(const AnchoredHemisphereCase&) = delete;
+    AnchoredHemisphereCase(AnchoredHemisphereCase&&) = delete;
+    AnchoredHemisphereCase& operator=(AnchoredHemisphereCase&&) = delete;
 
     [[nodiscard]] viewer::TraceHeader traceHeader() const;
     [[nodiscard]] viewer::DiagnosticFrame advance();
@@ -36,6 +38,7 @@ public:
     [[nodiscard]] const StructureStepSettings& stepSettings() const noexcept;
     [[nodiscard]] double pressurePascals() const noexcept;
     [[nodiscard]] double apexRadialDisplacementMeters() const;
+    [[nodiscard]] double maximumFreeRimDisplacementMeters() const;
 
 private:
     Structure structure_;

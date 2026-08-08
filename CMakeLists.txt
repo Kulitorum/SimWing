@@ -1753,7 +1753,7 @@ add_test(NAME simwing_fsi_hemisphere_headless
         --no-viewer
         --trace "${CMAKE_BINARY_DIR}/simwing-hemisphere-headless.swtrace")
 set_tests_properties(simwing_fsi_hemisphere_headless PROPERTIES
-    PASS_REGULAR_EXPRESSION "completed 8 step\\(s\\)")
+    PASS_REGULAR_EXPRESSION "completed 8 hemisphere step\\(s\\)")
 add_test(NAME simwing_fsi_piston_headless
     COMMAND simwing-fsi
         --case piston

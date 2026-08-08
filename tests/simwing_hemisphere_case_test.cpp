@@ -29,24 +29,24 @@ std::vector<std::uint8_t> serialized(
 }
 
 void testTopologyAndBoundary() {
-    fsi::ClampedHemisphereCase simulation;
+    fsi::AnchoredHemisphereCase simulation;
     const fsi::StructureDefinition& definition =
         simulation.structure().definition();
     constexpr std::size_t expectedNodes = 1
-        + fsi::clampedHemisphereLatitudeSegments
-              * fsi::clampedHemisphereRadialSegments;
+        + fsi::hemisphereLatitudeSegments
+              * fsi::hemisphereRadialSegments;
     constexpr std::size_t expectedTriangles =
-        fsi::clampedHemisphereRadialSegments
-        * (2 * fsi::clampedHemisphereLatitudeSegments - 1);
+        fsi::hemisphereRadialSegments
+        * (2 * fsi::hemisphereLatitudeSegments - 1);
     constexpr std::size_t expectedInteriorEdges =
         expectedNodes + expectedTriangles - 1
-        - fsi::clampedHemisphereRadialSegments;
+        - fsi::hemisphereRadialSegments;
     check(definition.nodes.size() == expectedNodes
               && definition.triangles.size() == expectedTriangles
               && definition.membranes.size() == expectedTriangles
               && definition.dihedrals.size() == expectedInteriorEdges
               && definition.constraints.size()
-                     == fsi::clampedHemisphereRadialSegments,
+                     == fsi::hemisphereRadialSegments,
           "hemisphere topology contains the complete membrane disk");
 
     std::size_t fixedNodes = 0;
@@ -57,13 +57,13 @@ void testTopologyAndBoundary() {
                   "only equatorial nodes are fixed");
         }
     }
-    check(fixedNodes == fsi::clampedHemisphereRadialSegments,
-          "the complete equatorial ring is clamped");
+    check(fixedNodes == fsi::hemisphereAnchorCount,
+          "exactly three equally spaced equatorial points are anchored");
 }
 
 void testDeterministicPressureMotion() {
-    fsi::ClampedHemisphereCase first;
-    fsi::ClampedHemisphereCase second;
+    fsi::AnchoredHemisphereCase first;
+    fsi::AnchoredHemisphereCase second;
     const auto initial = first.structure().checkpoint();
     viewer::DiagnosticFrame frame;
     for (std::size_t step = 0; step < 180; ++step) {
@@ -78,11 +78,11 @@ void testDeterministicPressureMotion() {
               && frame.triangles.size()
                      == first.structure().definition().triangles.size()
               && frame.lines.size()
-                     == fsi::clampedHemisphereRadialSegments
+                     == fsi::hemisphereRadialSegments
               && frame.sceneChecksum
-                     == fsi::clampedHemisphereCaseChecksum
+                     == fsi::anchoredHemisphereCaseChecksum
               && frame.solverCommit
-                     == fsi::clampedHemisphereCaseSolverId,
+                     == fsi::anchoredHemisphereCaseSolverId,
           "hemisphere frame publishes the complete accepted surface");
     check(std::abs(first.apexRadialDisplacementMeters()) > 1.0e-3
               && first.pressurePascals() > 0.0
@@ -90,18 +90,42 @@ void testDeterministicPressureMotion() {
           "pulsed follower pressure produces finite visible dome motion");
 
     const std::size_t boundaryBegin = 1
-        + (fsi::clampedHemisphereLatitudeSegments - 1)
-              * fsi::clampedHemisphereRadialSegments;
-    bool boundaryUnchanged = true;
+        + (fsi::hemisphereLatitudeSegments - 1)
+              * fsi::hemisphereRadialSegments;
+    bool anchorsUnchanged = true;
+    double maximumFreeBoundaryMotion = 0.0;
     for (std::size_t node = boundaryBegin; node < final.nodes.size(); ++node) {
-        boundaryUnchanged = boundaryUnchanged
-            && final.nodes[node].positionMeters
-                   == initial.nodes[node].positionMeters
-            && final.nodes[node].velocityMetersPerSecond
-                   == fsi::StructureVector3{};
+        const std::size_t longitude = node - boundaryBegin;
+        const bool anchored = longitude
+                % (fsi::hemisphereRadialSegments
+                   / fsi::hemisphereAnchorCount) == 0;
+        if (anchored) {
+            anchorsUnchanged = anchorsUnchanged
+                && final.nodes[node].positionMeters
+                       == initial.nodes[node].positionMeters
+                && final.nodes[node].velocityMetersPerSecond
+                       == fsi::StructureVector3{};
+        } else {
+            const fsi::StructureVector3 delta{
+                final.nodes[node].positionMeters.x
+                    - initial.nodes[node].positionMeters.x,
+                final.nodes[node].positionMeters.y
+                    - initial.nodes[node].positionMeters.y,
+                final.nodes[node].positionMeters.z
+                    - initial.nodes[node].positionMeters.z};
+            maximumFreeBoundaryMotion = std::max(
+                maximumFreeBoundaryMotion,
+                std::sqrt(delta.x * delta.x + delta.y * delta.y
+                          + delta.z * delta.z));
+        }
     }
-    check(boundaryUnchanged,
-          "pressure motion preserves the clamped equatorial ring exactly");
+    check(anchorsUnchanged,
+          "pressure motion preserves all three anchors exactly");
+    check(maximumFreeBoundaryMotion > 1.0e-3,
+          "pressure motion visibly frees the unanchored equatorial rim");
+    check(first.maximumFreeRimDisplacementMeters()
+              == maximumFreeBoundaryMotion,
+          "reported free-rim motion matches the accepted structure state");
 
     const auto radialField = std::find_if(
         frame.scalarFields.begin(), frame.scalarFields.end(),

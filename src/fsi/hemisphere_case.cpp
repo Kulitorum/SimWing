@@ -48,8 +48,8 @@ constexpr double pressureFrequencyHertz = 0.4;
 
 [[nodiscard]] std::size_t ringNode(std::size_t latitude,
                                    std::size_t longitude) {
-    return 1 + (latitude - 1) * clampedHemisphereRadialSegments
-        + longitude % clampedHemisphereRadialSegments;
+    return 1 + (latitude - 1) * hemisphereRadialSegments
+        + longitude % hemisphereRadialSegments;
 }
 
 [[nodiscard]] StructureMembraneMaterial membraneMaterial() {
@@ -113,7 +113,7 @@ void addRestShapeDihedrals(StructureDefinition& definition) {
             || adjacent[0].from != adjacent[1].to
             || adjacent[0].to != adjacent[1].from) {
             throw std::logic_error(
-                "clamped hemisphere mesh is not an oriented manifold");
+                "anchored hemisphere mesh is not an oriented manifold");
         }
 
         const EdgeIncidence& first = adjacent[0];
@@ -150,25 +150,26 @@ void addRestShapeDihedrals(StructureDefinition& definition) {
 [[nodiscard]] StructureDefinition makeDefinition() {
     StructureDefinition definition;
     definition.nodes.reserve(
-        1 + clampedHemisphereLatitudeSegments
-                * clampedHemisphereRadialSegments);
+        1 + hemisphereLatitudeSegments * hemisphereRadialSegments);
     definition.nodes.push_back(
         {{0.0, 0.0, radiusMeters}, 0.0, false});
     for (std::size_t latitude = 1;
-         latitude <= clampedHemisphereLatitudeSegments;
+         latitude <= hemisphereLatitudeSegments;
          ++latitude) {
         const double polarAngle =
             0.5 * std::numbers::pi * static_cast<double>(latitude)
-            / static_cast<double>(clampedHemisphereLatitudeSegments);
+            / static_cast<double>(hemisphereLatitudeSegments);
         const double radialDistance = radiusMeters * std::sin(polarAngle);
         const double z = radiusMeters * std::cos(polarAngle);
-        const bool fixed = latitude == clampedHemisphereLatitudeSegments;
         for (std::size_t longitude = 0;
-             longitude < clampedHemisphereRadialSegments;
+             longitude < hemisphereRadialSegments;
              ++longitude) {
             const double azimuth =
                 2.0 * std::numbers::pi * static_cast<double>(longitude)
-                / static_cast<double>(clampedHemisphereRadialSegments);
+                / static_cast<double>(hemisphereRadialSegments);
+            const bool fixed = latitude == hemisphereLatitudeSegments
+                && longitude % (hemisphereRadialSegments
+                                / hemisphereAnchorCount) == 0;
             definition.nodes.push_back(
                 {{radialDistance * std::cos(azimuth),
                   radialDistance * std::sin(azimuth),
@@ -179,10 +180,10 @@ void addRestShapeDihedrals(StructureDefinition& definition) {
     }
 
     definition.triangles.reserve(
-        clampedHemisphereRadialSegments
-        * (2 * clampedHemisphereLatitudeSegments - 1));
+        hemisphereRadialSegments
+        * (2 * hemisphereLatitudeSegments - 1));
     for (std::size_t longitude = 0;
-         longitude < clampedHemisphereRadialSegments;
+         longitude < hemisphereRadialSegments;
          ++longitude) {
         definition.triangles.push_back(
             {{0,
@@ -190,10 +191,10 @@ void addRestShapeDihedrals(StructureDefinition& definition) {
               ringNode(1, longitude + 1)}});
     }
     for (std::size_t latitude = 1;
-         latitude < clampedHemisphereLatitudeSegments;
+         latitude < hemisphereLatitudeSegments;
          ++latitude) {
         for (std::size_t longitude = 0;
-             longitude < clampedHemisphereRadialSegments;
+             longitude < hemisphereRadialSegments;
              ++longitude) {
             const std::size_t upper = ringNode(latitude, longitude);
             const std::size_t upperNext = ringNode(latitude, longitude + 1);
@@ -233,10 +234,10 @@ void addRestShapeDihedrals(StructureDefinition& definition) {
              StructureMaterialRole::Bulk});
     }
 
-    const std::size_t boundaryLatitude = clampedHemisphereLatitudeSegments;
-    definition.constraints.reserve(clampedHemisphereRadialSegments);
+    const std::size_t boundaryLatitude = hemisphereLatitudeSegments;
+    definition.constraints.reserve(hemisphereRadialSegments);
     for (std::size_t longitude = 0;
-         longitude < clampedHemisphereRadialSegments;
+         longitude < hemisphereRadialSegments;
          ++longitude) {
         const std::size_t first = ringNode(boundaryLatitude, longitude);
         const std::size_t second = ringNode(boundaryLatitude, longitude + 1);
@@ -255,23 +256,22 @@ void addRestShapeDihedrals(StructureDefinition& definition) {
 [[nodiscard]] viewer::StructureFrameMappingDefinition makeFrameMapping() {
     viewer::StructureFrameMappingDefinition mapping;
     mapping.vertexStableIds.reserve(
-        1 + clampedHemisphereLatitudeSegments
-                * clampedHemisphereRadialSegments);
+        1 + hemisphereLatitudeSegments * hemisphereRadialSegments);
     for (std::size_t index = 0;
-         index < 1 + clampedHemisphereLatitudeSegments
-                       * clampedHemisphereRadialSegments;
+         index < 1 + hemisphereLatitudeSegments
+                       * hemisphereRadialSegments;
          ++index) {
         mapping.vertexStableIds.push_back(100'000 + index);
     }
-    const std::size_t triangleCount = clampedHemisphereRadialSegments
-        * (2 * clampedHemisphereLatitudeSegments - 1);
+    const std::size_t triangleCount = hemisphereRadialSegments
+        * (2 * hemisphereLatitudeSegments - 1);
     mapping.triangles.reserve(triangleCount);
     for (std::size_t index = 0; index < triangleCount; ++index) {
         mapping.triangles.push_back({200'000 + index, 1, 2});
     }
-    mapping.lines.reserve(clampedHemisphereRadialSegments);
+    mapping.lines.reserve(hemisphereRadialSegments);
     for (std::size_t index = 0;
-         index < clampedHemisphereRadialSegments;
+         index < hemisphereRadialSegments;
          ++index) {
         mapping.lines.push_back(
             {300'000 + index,
@@ -295,16 +295,16 @@ void addRestShapeDihedrals(StructureDefinition& definition) {
 
 } // namespace
 
-ClampedHemisphereCase::ClampedHemisphereCase()
+AnchoredHemisphereCase::AnchoredHemisphereCase()
     : structure_(makeDefinition()),
       frameMapping_(structure_, makeFrameMapping()),
       stepSettings_(makeStepSettings()) {}
 
-viewer::TraceHeader ClampedHemisphereCase::traceHeader() const {
-    return {clampedHemisphereCaseChecksum, clampedHemisphereCaseSolverId};
+viewer::TraceHeader AnchoredHemisphereCase::traceHeader() const {
+    return {anchoredHemisphereCaseChecksum, anchoredHemisphereCaseSolverId};
 }
 
-viewer::DiagnosticFrame ClampedHemisphereCase::advance() {
+viewer::DiagnosticFrame AnchoredHemisphereCase::advance() {
     const double loadTime = structure_.simulationTimeSeconds();
     pressurePascals_ = basePressurePascals
         + pressureAmplitudePascals
@@ -334,12 +334,12 @@ viewer::DiagnosticFrame ClampedHemisphereCase::advance() {
     const StructureDiagnostics diagnostics = structure_.step(stepSettings_);
     if (!diagnostics.finite) {
         throw std::runtime_error(
-            "clamped hemisphere step produced non-finite diagnostics");
+            "anchored hemisphere step produced non-finite diagnostics");
     }
 
     viewer::StructureFrameContext context;
-    context.sceneChecksum = clampedHemisphereCaseChecksum;
-    context.solverCommit = clampedHemisphereCaseSolverId;
+    context.sceneChecksum = anchoredHemisphereCaseChecksum;
+    context.solverCommit = anchoredHemisphereCaseSolverId;
     context.timeStepSeconds = stepSettings_.timeStepSeconds;
     context.couplingIteration = 0;
     context.couplingResiduals.structure =
@@ -379,26 +379,44 @@ viewer::DiagnosticFrame ClampedHemisphereCase::advance() {
     viewer::ProtocolError error;
     if (!viewer::validateFrame(frame, &error)) {
         throw std::logic_error(
-            "clamped hemisphere frame is invalid: " + error.message);
+            "anchored hemisphere frame is invalid: " + error.message);
     }
     return frame;
 }
 
-const Structure& ClampedHemisphereCase::structure() const noexcept {
+const Structure& AnchoredHemisphereCase::structure() const noexcept {
     return structure_;
 }
 
-const StructureStepSettings& ClampedHemisphereCase::stepSettings() const
+const StructureStepSettings& AnchoredHemisphereCase::stepSettings() const
     noexcept {
     return stepSettings_;
 }
 
-double ClampedHemisphereCase::pressurePascals() const noexcept {
+double AnchoredHemisphereCase::pressurePascals() const noexcept {
     return pressurePascals_;
 }
 
-double ClampedHemisphereCase::apexRadialDisplacementMeters() const {
+double AnchoredHemisphereCase::apexRadialDisplacementMeters() const {
     return structure_.nodeStates().front().positionMeters.z - radiusMeters;
+}
+
+double AnchoredHemisphereCase::maximumFreeRimDisplacementMeters() const {
+    const StructureDefinition& definition = structure_.definition();
+    const std::vector<StructureNodeState> states = structure_.nodeStates();
+    const std::size_t boundaryBegin = 1
+        + (hemisphereLatitudeSegments - 1) * hemisphereRadialSegments;
+    double maximum = 0.0;
+    for (std::size_t node = boundaryBegin; node < states.size(); ++node) {
+        if (definition.nodes[node].fixed) {
+            continue;
+        }
+        maximum = std::max(
+            maximum,
+            length(subtract(states[node].positionMeters,
+                            definition.nodes[node].positionMeters)));
+    }
+    return maximum;
 }
 
 } // namespace simwing::fsi

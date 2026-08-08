@@ -99,7 +99,7 @@ void printUsage(FILE* stream) {
         "\n"
         "Runs a canonical Qt-free numerical case and writes a completed diagnostic\n"
         "trace. 'structural' is the original analytic XPBD harness; 'hemisphere'\n"
-        "runs a pressure-loaded fabric dome with its equatorial ring clamped;\n"
+        "runs a pressure-loaded fabric dome held at three equatorial points;\n"
         "'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
         "'strong-piston' strongly iterates that chain for a light added-mass plate;\n"
@@ -1441,6 +1441,25 @@ int main(int argc, char* argv[]) {
                         static_cast<unsigned long long>(
                             checkpointWriteCount),
                         options.tracePath.string().c_str());
+                } else if constexpr (std::is_same_v<
+                                         Simulation,
+                                         simwing::fsi::AnchoredHemisphereCase>) {
+                    std::printf(
+                        "simwing-fsi completed %llu hemisphere step(s), "
+                        "t=%.9g s, pressure=%.6g Pa, apex-motion=%.6g m, "
+                        "free-rim-motion=%.6g m, "
+                        "bounds=[%.6g %.6g %.6g]-[%.6g %.6g %.6g] m, "
+                        "max-strain=%.6g, trace=%s\n",
+                        static_cast<unsigned long long>(
+                            checkpoint.acceptedStepCount),
+                        checkpoint.simulationTimeSeconds,
+                        simulation.pressurePascals(),
+                        simulation.apexRadialDisplacementMeters(),
+                        simulation.maximumFreeRimDisplacementMeters(),
+                        minimum.x, minimum.y, minimum.z,
+                        maximum.x, maximum.y, maximum.z,
+                        diagnostics.maximumAbsoluteMembraneStrain,
+                        options.tracePath.string().c_str());
                 } else {
                     std::printf(
                         "simwing-fsi completed %llu step(s), t=%.9g s, "
@@ -1577,7 +1596,7 @@ int main(int argc, char* argv[]) {
             return run(simulation);
         }
         if (options.workerCase == WorkerCase::Hemisphere) {
-            simwing::fsi::ClampedHemisphereCase simulation;
+            simwing::fsi::AnchoredHemisphereCase simulation;
             return run(simulation);
         }
         simwing::fsi::CanonicalStructuralCase simulation;
