@@ -14,6 +14,7 @@ namespace simwing::fsi::fluid {
 
 inline constexpr std::uint32_t periodicFlowStepVersion = 4;
 inline constexpr std::uint32_t periodicFlowStrangSspRk2Version = 1;
+inline constexpr std::uint32_t porousPeriodicFlowStrangSspRk2Version = 1;
 inline constexpr std::uint32_t periodicFlowStrangSubcyclingVersion = 1;
 inline constexpr std::size_t periodicFlowStrangMaximumSubsteps = 4096;
 
@@ -212,6 +213,68 @@ advancePeriodicFlowStrangSspRk2(
     MacVelocityField& velocityMetersPerSecond,
     CellScalarField& pressurePascals,
     const SharpPressureJumpField& pressureJumps,
+    const PeriodicFlowStrangSspRk2Settings& settings = {});
+
+enum class PorousPeriodicFlowStrangFailureStage : std::uint8_t {
+    None = 0,
+    FirstHalfPorous = 1,
+    BulkFlow = 2,
+    SecondHalfPorous = 3,
+    Conservation = 4,
+};
+
+struct PorousPeriodicFlowStrangSspRk2Diagnostics {
+    std::uint32_t version = porousPeriodicFlowStrangSspRk2Version;
+    PorousProjectionDiagnostics firstHalfPorous;
+    PeriodicFlowStrangSspRk2Diagnostics bulkFlow;
+    PorousProjectionDiagnostics secondHalfPorous;
+    Vector3 pressureJumpImpulseOnFluidNewtonSeconds;
+    double pressureJumpWorkToFluidJoules = 0.0;
+    double porousDissipationJoules = 0.0;
+    Vector3 momentumBeforeNewtonSeconds;
+    Vector3 momentumAfterNewtonSeconds;
+    Vector3 momentumResidualNewtonSeconds;
+    double momentumResidualNormNewtonSeconds = 0.0;
+    double kineticEnergyBeforeJoules = 0.0;
+    double kineticEnergyAfterJoules = 0.0;
+    double totalEnergyLossJoules = 0.0;
+    double maximumVelocityChangeMetersPerSecond = 0.0;
+    double initialDivergenceL2PerSecond = 0.0;
+    double finalDivergenceL2PerSecond = 0.0;
+    PorousPeriodicFlowStrangFailureStage failureStage =
+        PorousPeriodicFlowStrangFailureStage::None;
+    bool finite = true;
+    bool accepted = false;
+
+    bool operator==(
+        const PorousPeriodicFlowStrangSspRk2Diagnostics&) const = default;
+};
+
+// Second-order symmetric fixed-grid coupling between a nonlinear porous
+// pressure source and the complete bulk Strang/SSPRK2 flow step. An
+// implicit-midpoint porous projection advances each outer half step; the
+// existing viscosity/transport/viscosity composition advances the full bulk
+// step between them. Surface-normal velocity is understood at each porous
+// half-step midpoint. The aggregate ledger admits only diagnosed jump impulse
+// and work, and all fields commit together after every stage accepts. Moving
+// cut-cell topology remains outside this boundary.
+[[nodiscard]] PorousPeriodicFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const PorousIterationSettings& porousIteration,
+    const PeriodicFlowStrangSspRk2Settings& settings = {});
+
+[[nodiscard]] PorousPeriodicFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField& prescribedPressureJumps,
+    const PorousIterationSettings& porousIteration,
     const PeriodicFlowStrangSspRk2Settings& settings = {});
 
 enum class PeriodicFlowStrangSubcyclingFailureStage : std::uint8_t {

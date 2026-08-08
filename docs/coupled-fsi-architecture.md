@@ -903,9 +903,14 @@ aggregate momentum subtracts jump impulse and its energy ceiling includes jump
 work. Its uniform midpoint driven acceleration and unforced porous decay close
 analytically, an exhausted nonlinear solve rolls back advection and diffusion as
 well as projection, and empty topology preserves the original arithmetic
-bit-for-bit. It is not moving cut-cell topology, and midpoint pressure coupling
-is not yet carried through both projections of the complete second-order
-general flow step.
+bit-for-bit. A complete fixed-grid second-order path now applies an
+implicit-midpoint porous half-step on each side of the existing full
+viscosity/transport/viscosity Strang step. The symmetric wrapper exactly matches
+that three-operator composition, sums both jump impulse/work ledgers, keeps
+porous dissipation separate, rolls back earlier operators after a later failure,
+and observes second-order temporal refinement for the driven uniform canonical.
+Empty topology delegates to the original bulk path without changing its fields
+or nested diagnostics. Moving cut-cell topology remains open.
 A pressure-driven uniform-plug companion uses the exact nonlinear implicit
 midpoint to close pressure impulse and the
 driving-work/porous-dissipation/kinetic-energy identity on every step. Its

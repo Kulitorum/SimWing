@@ -1,6 +1,7 @@
 #include "fluid/evolution.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -30,6 +31,7 @@ using simwing::fsi::fluid::ProjectionSettings;
 using simwing::fsi::fluid::PorousConstitutiveEvaluation;
 using simwing::fsi::fluid::PorousGridFaceCrossing;
 using simwing::fsi::fluid::PorousIterationSettings;
+using simwing::fsi::fluid::PorousPeriodicFlowStrangFailureStage;
 using simwing::fsi::fluid::PorousProjectionSettings;
 using simwing::fsi::fluid::SharpPressureJumpField;
 using simwing::fsi::fluid::UniformMacAdvectionSettings;
@@ -38,6 +40,8 @@ using simwing::fsi::fluid::VariableMacReconstruction;
 using simwing::fsi::fluid::advancePeriodicFlow;
 using simwing::fsi::fluid::advancePeriodicFlowStrangSspRk2;
 using simwing::fsi::fluid::advancePeriodicFlowStrangSspRk2Subcycled;
+using simwing::fsi::fluid::
+    advancePeriodicFlowStrangSspRk2WithPorousInterfaces;
 using simwing::fsi::fluid::advectVelocityProjectedSspRk2;
 using simwing::fsi::fluid::advectVelocityByMacFlow;
 using simwing::fsi::fluid::advectVelocityByUniformFlow;
@@ -1271,6 +1275,40 @@ PeriodicFlowSettings composedPorousFlowSettings() {
     return result;
 }
 
+PeriodicFlowStrangSspRk2Settings composedPorousStrangSettings() {
+    PeriodicFlowStrangSspRk2Settings result;
+    result.densityKgPerCubicMeter = 1.0;
+    result.kinematicViscositySquareMetersPerSecond = 0.0;
+    result.timeStepSeconds = 0.1;
+    result.advectionReconstruction =
+        VariableMacReconstruction::DonorCell;
+    result.projectionAbsoluteResidualTolerance = 1.0e-12;
+    result.projectionRelativeResidualTolerance = 1.0e-13;
+    result.projectionMaximumIterations = 1000;
+    result.absoluteMomentumToleranceNewtonSeconds = 2.0e-10;
+    result.relativeMomentumTolerance = 1.0e-12;
+    result.absoluteEnergyToleranceJoules = 2.0e-10;
+    result.relativeEnergyTolerance = 1.0e-12;
+    return result;
+}
+
+PorousProjectionSettings composedPorousHalfProjectionSettings(
+    const PorousIterationSettings& iteration,
+    const PeriodicFlowStrangSspRk2Settings& flow) {
+    PorousProjectionSettings result;
+    result.iteration = iteration;
+    result.projection.densityKgPerCubicMeter =
+        flow.densityKgPerCubicMeter;
+    result.projection.timeStepSeconds = 0.5 * flow.timeStepSeconds;
+    result.projection.absoluteResidualTolerance =
+        flow.projectionAbsoluteResidualTolerance;
+    result.projection.relativeResidualTolerance =
+        flow.projectionRelativeResidualTolerance;
+    result.projection.maximumIterations =
+        flow.projectionMaximumIterations;
+    return result;
+}
+
 void testPorousProjectionAcrossCompleteFlow() {
     const PeriodicCartesianGrid grid(
         {4, 3, 2}, {}, {4.0, 3.0, 2.0});
@@ -1405,6 +1443,217 @@ void testPorousProjectionAcrossCompleteFlow() {
           "porous full flow: nonlinear failure rolls back the complete composed step");
 }
 
+void testPorousStrangSymmetricComposition() {
+    const PeriodicCartesianGrid grid(
+        {4, 3, 2}, {}, {4.0, 3.0, 2.0});
+    const auto porous = composedPorousPlane(grid);
+    const auto driving = composedDrivingPlane(grid);
+    const auto iteration = composedPorousIteration();
+    const auto flowSettings = composedPorousStrangSettings();
+
+    MacVelocityField velocity(grid);
+    CellScalarField pressure(grid);
+    const auto diagnostics =
+        advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
+            grid, velocity, pressure, porous, driving,
+            iteration, flowSettings);
+    MacVelocityField replayVelocity(grid);
+    CellScalarField replayPressure(grid);
+    const auto replay =
+        advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
+            grid, replayVelocity, replayPressure, porous, driving,
+            iteration, flowSettings);
+
+    const double halfStep = 0.5 * flowSettings.timeStepSeconds;
+    const double midpointCoefficient =
+        halfStep * 10.0 / (2.0 * 4.0);
+    const auto porousHalfStep = [=](const double oldVelocity) {
+        return ((1.0 - midpointCoefficient) * oldVelocity
+                + halfStep * 20.0 / 4.0)
+            / (1.0 + midpointCoefficient);
+    };
+    const double expectedVelocity =
+        porousHalfStep(porousHalfStep(0.0));
+    double maximumVelocityError = 0.0;
+    for (std::size_t face = 0; face < grid.cellCount(); ++face) {
+        maximumVelocityError = std::max({
+            maximumVelocityError,
+            std::abs(velocity.xFaces()[face] - expectedVelocity),
+            std::abs(velocity.yFaces()[face]),
+            std::abs(velocity.zFaces()[face]),
+        });
+    }
+    check(diagnostics.version
+              == simwing::fsi::fluid::
+                  porousPeriodicFlowStrangSspRk2Version
+              && diagnostics.accepted
+              && diagnostics.failureStage
+                  == PorousPeriodicFlowStrangFailureStage::None
+              && diagnostics.firstHalfPorous.accepted
+              && diagnostics.bulkFlow.accepted
+              && diagnostics.secondHalfPorous.accepted,
+          "porous Strang: both interface halves, bulk flow, and aggregate ledger accept");
+    check(velocity == replayVelocity
+              && pressure == replayPressure
+              && diagnostics == replay,
+          "porous Strang: identical symmetric steps replay bit-for-bit");
+    check(maximumVelocityError < 3.0e-13,
+          "porous Strang: two midpoint half steps reach the analytic driven endpoint");
+    check(diagnostics.momentumResidualNormNewtonSeconds < 3.0e-11,
+          "porous Strang: summed half-step jump impulse closes aggregate momentum");
+    check(std::abs(diagnostics.totalEnergyLossJoules) < 3.0e-11,
+          "porous Strang: midpoint jump work closes aggregate kinetic energy");
+    check(diagnostics.porousDissipationJoules > 0.0,
+          "porous Strang: the two half steps retain positive porous dissipation");
+
+    MacVelocityField manualVelocity(grid);
+    CellScalarField manualPressure(grid);
+    const auto halfProjectionSettings =
+        composedPorousHalfProjectionSettings(iteration, flowSettings);
+    const auto manualFirst = projectVelocityWithPorousInterfaces(
+        grid, manualVelocity, manualPressure, porous, driving,
+        halfProjectionSettings);
+    const auto manualBulk = advancePeriodicFlowStrangSspRk2(
+        grid, manualVelocity, manualPressure, flowSettings);
+    const auto manualSecond = projectVelocityWithPorousInterfaces(
+        grid, manualVelocity, manualPressure, porous, driving,
+        halfProjectionSettings);
+    check(velocity == manualVelocity
+              && pressure == manualPressure
+              && diagnostics.firstHalfPorous == manualFirst
+              && diagnostics.bulkFlow == manualBulk
+              && diagnostics.secondHalfPorous == manualSecond,
+          "porous Strang: public step is the exact documented three-operator composition");
+
+    MacVelocityField decayingVelocity(grid);
+    std::ranges::fill(decayingVelocity.xFaces(), 1.0);
+    CellScalarField decayingPressure(grid);
+    const auto decay =
+        advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
+            grid, decayingVelocity, decayingPressure,
+            porous, iteration, flowSettings);
+    const double expectedDecay =
+        std::pow((1.0 - midpointCoefficient)
+                     / (1.0 + midpointCoefficient),
+                 2.0);
+    check(decay.accepted
+              && std::abs(decayingVelocity.xFaces().front()
+                          - expectedDecay) < 3.0e-13,
+          "porous Strang: unforced drag composes two analytic midpoint half steps");
+    check(std::abs(decay.pressureJumpWorkToFluidJoules
+                   + decay.porousDissipationJoules) < 3.0e-11,
+          "porous Strang: stationary porous work equals negative dissipation");
+    check(std::abs(decay.totalEnergyLossJoules) < 3.0e-11,
+          "porous Strang: unforced decay closes the aggregate energy ledger");
+
+    MacVelocityField legacyVelocity(grid);
+    MacVelocityField emptyVelocity(grid);
+    CellScalarField legacyPressure(grid);
+    CellScalarField emptyPressure(grid);
+    const std::vector<PorousGridFaceCrossing> empty;
+    const auto legacy = advancePeriodicFlowStrangSspRk2(
+        grid, legacyVelocity, legacyPressure, flowSettings);
+    const auto withEmpty =
+        advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
+            grid, emptyVelocity, emptyPressure, empty,
+            iteration, flowSettings);
+    check(withEmpty.bulkFlow == legacy
+              && withEmpty.accepted == legacy.accepted
+              && legacyVelocity == emptyVelocity
+              && legacyPressure == emptyPressure,
+          "porous Strang: empty topology delegates fields and bulk diagnostics bit-exactly");
+
+    auto endpoint = iteration;
+    endpoint.constitutiveEvaluation =
+        PorousConstitutiveEvaluation::Endpoint;
+    MacVelocityField rejectedVelocity(grid);
+    CellScalarField rejectedPressure(grid, 3.0);
+    const auto originalRejectedVelocity = rejectedVelocity;
+    const auto originalRejectedPressure = rejectedPressure;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
+                    grid, rejectedVelocity, rejectedPressure,
+                    porous, endpoint, flowSettings));
+        },
+        "porous Strang: non-midpoint constitutive sampling is rejected");
+    check(rejectedVelocity == originalRejectedVelocity
+              && rejectedPressure == originalRejectedPressure,
+          "porous Strang: invalid constitutive mode mutates neither field");
+
+    auto truncated = iteration;
+    truncated.maximumNonlinearIterations = 1;
+    truncated.absoluteNormalVelocityToleranceMetersPerSecond = 1.0e-30;
+    truncated.relativeNormalVelocityTolerance = 0.0;
+    truncated.absolutePressureJumpTolerancePascals = 1.0e-30;
+    truncated.relativePressureJumpTolerance = 0.0;
+    const auto failed =
+        advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
+            grid, rejectedVelocity, rejectedPressure,
+            porous, driving, truncated, flowSettings);
+    check(!failed.accepted
+              && failed.failureStage
+                  == PorousPeriodicFlowStrangFailureStage::FirstHalfPorous,
+          "porous Strang: exhausted first interface solve reports its stage");
+    check(rejectedVelocity == originalRejectedVelocity
+              && rejectedPressure == originalRejectedPressure,
+          "porous Strang: first interface failure rolls back both caller fields");
+
+    auto unstableFlow = flowSettings;
+    unstableFlow.kinematicViscositySquareMetersPerSecond = 100.0;
+    const auto failedBulk =
+        advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
+            grid, rejectedVelocity, rejectedPressure,
+            porous, driving, iteration, unstableFlow);
+    check(!failedBulk.accepted
+              && failedBulk.firstHalfPorous.accepted
+              && failedBulk.failureStage
+                  == PorousPeriodicFlowStrangFailureStage::BulkFlow,
+          "porous Strang: bulk failure after an accepted interface half step is reported");
+    check(rejectedVelocity == originalRejectedVelocity
+              && rejectedPressure == originalRejectedPressure,
+          "porous Strang: later bulk failure rolls back the prior interface update");
+}
+
+void testPorousStrangSecondOrderTemporalRefinement() {
+    const PeriodicCartesianGrid grid(
+        {4, 3, 2}, {}, {4.0, 3.0, 2.0});
+    const auto porous = composedPorousPlane(grid);
+    const auto driving = composedDrivingPlane(grid);
+    const auto iteration = composedPorousIteration();
+    constexpr double finalTimeSeconds = 0.4;
+    std::array<double, 3> errors{};
+    const std::array timeSteps{0.1, 0.05, 0.025};
+    for (std::size_t level = 0; level < timeSteps.size(); ++level) {
+        auto flowSettings = composedPorousStrangSettings();
+        flowSettings.timeStepSeconds = timeSteps[level];
+        MacVelocityField velocity(grid);
+        CellScalarField pressure(grid);
+        const auto stepCount = static_cast<std::size_t>(
+            std::llround(finalTimeSeconds / timeSteps[level]));
+        bool accepted = true;
+        for (std::size_t step = 0; step < stepCount; ++step) {
+            const auto diagnostics =
+                advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
+                    grid, velocity, pressure, porous, driving,
+                    iteration, flowSettings);
+            accepted = accepted && diagnostics.accepted;
+        }
+        const double exactVelocity =
+            2.0 * (1.0 - std::exp(-2.5 * finalTimeSeconds));
+        errors[level] =
+            std::abs(velocity.xFaces().front() - exactVelocity);
+        check(accepted,
+              "porous Strang refinement: every private temporal step accepts");
+    }
+    const double coarseRatio = errors[0] / errors[1];
+    const double fineRatio = errors[1] / errors[2];
+    check(coarseRatio > 3.8 && coarseRatio < 4.2
+              && fineRatio > 3.8 && fineRatio < 4.2,
+          "porous Strang refinement: fixed-grid driven flow is second order in time");
+}
+
 } // namespace
 
 int main() {
@@ -1422,6 +1671,8 @@ int main() {
     testInvalidInputsAreTransactional();
     testStaticJumpsAcrossCompleteFlowPaths();
     testPorousProjectionAcrossCompleteFlow();
+    testPorousStrangSymmetricComposition();
+    testPorousStrangSecondOrderTemporalRefinement();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing fluid evolution check(s) failed\n",

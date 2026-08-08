@@ -795,8 +795,12 @@ makes this a certified aerodynamic solver.
   subtracts diagnosed jump impulse, and its energy ceiling includes diagnosed
   jump work. Midpoint driven acceleration and unforced porous decay close those
   ledgers; nonlinear failure rolls back every prior stage and empty topology
-  delegates bit-for-bit to the original path. The two-stage Strang path does
-  not yet perform nonlinear porous updates.
+  delegates bit-for-bit to the original path. A separate second-order
+  fixed-grid wrapper symmetrically composes midpoint porous half-step, complete
+  bulk Strang/SSPRK2 step, and midpoint porous half-step. It sums both interface
+  impulse/work ledgers, retains porous dissipation, rolls back all operators on
+  failure, and delegates empty topology to the original bulk path without
+  changing its fields or nested diagnostics.
 - `src/fsi/fluid/checkpoint.{h,cpp}` owns the versioned in-memory checkpoint for
   one accepted moving-interface fluid epoch. Its immutable payload includes
   pressure, velocity, exact interface kinematics, and projection diagnostics;
@@ -825,9 +829,9 @@ makes this a certified aerodynamic solver.
   nonlinear plug oracle and closes its pressure-work/dissipation/kinetic-energy
   identity. Accepted diagnostics sum all porous and prescribed oriented jumps
   into explicit fluid force/impulse and power/work ledgers while keeping porous
-  dissipation separate. It is composed into the first periodic macro-step, but
-  not moving cut-cell topology or yet both stages of the complete second-order
-  coupled flow integrator.
+  dissipation separate. It is composed into both the first periodic macro-step
+  and the symmetric porous-half/bulk-Strang/porous-half second-order fixed-grid
+  integrator. Moving cut-cell topology remains outside this boundary.
 - `src/fsi/fluid/porous_flow.{h,cpp}` owns the pressure-driven uniform-plug
   midpoint oracle. It solves the nonlinear Darcy-Forchheimer response exactly
   for each time step and independently closes pressure impulse and
@@ -944,6 +948,10 @@ makes this a certified aerodynamic solver.
 There are 83 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
+For second-order fixed-grid porous evolution, `simwing_fluid_evolution` must
+also preserve exact porous-half/bulk-Strang/porous-half composition, summed
+interface ledgers, later-stage rollback, bit-exact empty-topology bulk
+delegation, and the driven-flow temporal-refinement ratios in `[3.8, 4.2]`.
 
 | Change area | Minimum relevant checks |
 |---|---|

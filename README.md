@@ -184,15 +184,22 @@ interface-driven momentum and energy without weakening its conservation gate:
 the uniform midpoint drive and unforced decay both close analytically, failed
 nonlinear projection rolls back the whole step, and empty porous topology is
 bit-exact to the original evolution path.
+A second-order fixed-grid path now symmetrically brackets the complete
+viscosity/transport/viscosity Strang step with two implicit-midpoint porous
+half-steps. It closes the summed interface impulse/work ledger, retains porous
+dissipation separately, matches the exact documented three-operator
+composition, rolls back all prior operators on a later failure, and observes
+second-order temporal refinement for the uniform driven canonical. Empty
+topology delegates to the original bulk Strang path without changing its
+fields or nested diagnostics.
 A pressure-driven companion advances a uniform fluid plug with an
 implicit-midpoint nonlinear solve; every step independently closes pressure
 impulse, driving work, porous dissipation, and kinetic energy.
 Its viewable worker converges to the analytic `1.74165739 m/s` speed and `250 Pa`
 loss while carrying its endpoint interfaces through both pressure stages of a
-complete Strang/SSPRK2 step. The grid iteration is first-order endpoint
-coupling by default and exposes a verified midpoint pressure impulse; moving
-cut-cell topology and its composition through both stages of the complete
-second-order general flow step remain future work.
+complete Strang/SSPRK2 step. The grid iteration still offers first-order
+endpoint coupling for comparison and a verified midpoint pressure impulse;
+moving cut-cell topology remains future work.
 Face-aligned moving membranes can now partition stable fluid regions, impose
 an exact normal MAC velocity, and project each region transactionally while
 retaining its prior pressure gauge. A translating sealed-slab canonical closes

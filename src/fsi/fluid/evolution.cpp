@@ -303,6 +303,16 @@ advancePeriodicFlowStrangSspRk2Impl(
     const SharpPressureJumpField* pressureJumps,
     const PeriodicFlowStrangSspRk2Settings& settings);
 
+PorousPeriodicFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField* prescribedPressureJumps,
+    const PorousIterationSettings& porousIteration,
+    const PeriodicFlowStrangSspRk2Settings& settings);
+
 PeriodicFlowStrangSubcyclingDiagnostics
 advancePeriodicFlowStrangSspRk2SubcycledImpl(
     const PeriodicCartesianGrid& grid,
@@ -894,7 +904,254 @@ advancePeriodicFlowStrangSspRk2Impl(
     return diagnostics;
 }
 
+PorousPeriodicFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField* prescribedPressureJumps,
+    const PorousIterationSettings& porousIteration,
+    const PeriodicFlowStrangSspRk2Settings& settings) {
+    validateSettings(settings);
+    if (!velocityMetersPerSecond.matches(grid)
+        || !pressurePascals.matches(grid)
+        || (prescribedPressureJumps != nullptr
+            && !prescribedPressureJumps->matches(grid))) {
+        throw std::invalid_argument(
+            "periodic porous Strang fields or pressure jumps do not match their grid");
+    }
+    if (!isFinite(velocityMetersPerSecond) || !isFinite(pressurePascals)) {
+        throw std::invalid_argument(
+            "periodic porous Strang fields must be finite");
+    }
+
+    PorousPeriodicFlowStrangSspRk2Diagnostics diagnostics;
+    if (porousCrossings.empty()
+        && (prescribedPressureJumps == nullptr
+            || prescribedPressureJumps->empty())) {
+        diagnostics.bulkFlow = advancePeriodicFlowStrangSspRk2(
+            grid, velocityMetersPerSecond, pressurePascals, settings);
+        diagnostics.momentumBeforeNewtonSeconds =
+            diagnostics.bulkFlow.momentumBeforeNewtonSeconds;
+        diagnostics.momentumAfterNewtonSeconds =
+            diagnostics.bulkFlow.momentumAfterNewtonSeconds;
+        diagnostics.momentumResidualNewtonSeconds =
+            diagnostics.bulkFlow.momentumResidualNewtonSeconds;
+        diagnostics.momentumResidualNormNewtonSeconds =
+            diagnostics.bulkFlow.momentumResidualNormNewtonSeconds;
+        diagnostics.kineticEnergyBeforeJoules =
+            diagnostics.bulkFlow.kineticEnergyBeforeJoules;
+        diagnostics.kineticEnergyAfterJoules =
+            diagnostics.bulkFlow.kineticEnergyAfterJoules;
+        diagnostics.totalEnergyLossJoules =
+            diagnostics.bulkFlow.totalEnergyLossJoules;
+        diagnostics.maximumVelocityChangeMetersPerSecond =
+            diagnostics.bulkFlow.maximumVelocityChangeMetersPerSecond;
+        diagnostics.initialDivergenceL2PerSecond =
+            diagnostics.bulkFlow.initialDivergenceL2PerSecond;
+        diagnostics.finalDivergenceL2PerSecond =
+            diagnostics.bulkFlow.finalDivergenceL2PerSecond;
+        diagnostics.finite = diagnostics.bulkFlow.finite;
+        diagnostics.accepted = diagnostics.bulkFlow.accepted;
+        if (!diagnostics.accepted) {
+            diagnostics.failureStage =
+                PorousPeriodicFlowStrangFailureStage::BulkFlow;
+        }
+        return diagnostics;
+    }
+    if (porousIteration.constitutiveEvaluation
+        != PorousConstitutiveEvaluation::Midpoint) {
+        throw std::invalid_argument(
+            "periodic porous Strang coupling requires midpoint constitutive evaluation");
+    }
+
+    diagnostics.momentumBeforeNewtonSeconds = momentumNewtonSeconds(
+        grid, velocityMetersPerSecond, settings.densityKgPerCubicMeter);
+    diagnostics.momentumAfterNewtonSeconds =
+        diagnostics.momentumBeforeNewtonSeconds;
+    diagnostics.kineticEnergyBeforeJoules = kineticEnergyJoules(
+        grid, velocityMetersPerSecond, settings.densityKgPerCubicMeter);
+    diagnostics.kineticEnergyAfterJoules =
+        diagnostics.kineticEnergyBeforeJoules;
+    CellScalarField initialDivergence(grid);
+    computeDivergence(
+        grid, velocityMetersPerSecond, initialDivergence);
+    diagnostics.initialDivergenceL2PerSecond = l2Norm(initialDivergence);
+
+    PorousProjectionSettings halfPorousSettings;
+    halfPorousSettings.iteration = porousIteration;
+    halfPorousSettings.projection.densityKgPerCubicMeter =
+        settings.densityKgPerCubicMeter;
+    halfPorousSettings.projection.timeStepSeconds =
+        0.5 * settings.timeStepSeconds;
+    halfPorousSettings.projection.absoluteResidualTolerance =
+        settings.projectionAbsoluteResidualTolerance;
+    halfPorousSettings.projection.relativeResidualTolerance =
+        settings.projectionRelativeResidualTolerance;
+    halfPorousSettings.projection.maximumIterations =
+        settings.projectionMaximumIterations;
+
+    auto candidateVelocity = velocityMetersPerSecond;
+    auto candidatePressure = pressurePascals;
+    diagnostics.firstHalfPorous = prescribedPressureJumps == nullptr
+        ? projectVelocityWithPorousInterfaces(
+            grid, candidateVelocity, candidatePressure,
+            porousCrossings, halfPorousSettings)
+        : projectVelocityWithPorousInterfaces(
+            grid, candidateVelocity, candidatePressure,
+            porousCrossings, *prescribedPressureJumps,
+            halfPorousSettings);
+    if (!diagnostics.firstHalfPorous.accepted) {
+        diagnostics.failureStage =
+            PorousPeriodicFlowStrangFailureStage::FirstHalfPorous;
+        diagnostics.finite = diagnostics.firstHalfPorous.finite;
+        return diagnostics;
+    }
+
+    diagnostics.bulkFlow = advancePeriodicFlowStrangSspRk2(
+        grid, candidateVelocity, candidatePressure, settings);
+    if (!diagnostics.bulkFlow.accepted) {
+        diagnostics.failureStage =
+            PorousPeriodicFlowStrangFailureStage::BulkFlow;
+        diagnostics.finite = diagnostics.firstHalfPorous.finite
+            && diagnostics.bulkFlow.finite;
+        return diagnostics;
+    }
+
+    diagnostics.secondHalfPorous = prescribedPressureJumps == nullptr
+        ? projectVelocityWithPorousInterfaces(
+            grid, candidateVelocity, candidatePressure,
+            porousCrossings, halfPorousSettings)
+        : projectVelocityWithPorousInterfaces(
+            grid, candidateVelocity, candidatePressure,
+            porousCrossings, *prescribedPressureJumps,
+            halfPorousSettings);
+    if (!diagnostics.secondHalfPorous.accepted) {
+        diagnostics.failureStage =
+            PorousPeriodicFlowStrangFailureStage::SecondHalfPorous;
+        diagnostics.finite = diagnostics.firstHalfPorous.finite
+            && diagnostics.bulkFlow.finite
+            && diagnostics.secondHalfPorous.finite;
+        return diagnostics;
+    }
+
+    diagnostics.pressureJumpImpulseOnFluidNewtonSeconds = add(
+        diagnostics.firstHalfPorous
+            .totalPressureJumpImpulseOnFluidNewtonSeconds,
+        diagnostics.secondHalfPorous
+            .totalPressureJumpImpulseOnFluidNewtonSeconds);
+    diagnostics.pressureJumpWorkToFluidJoules =
+        diagnostics.firstHalfPorous.totalPressureJumpWorkToFluidJoules
+        + diagnostics.secondHalfPorous.totalPressureJumpWorkToFluidJoules;
+    diagnostics.porousDissipationJoules =
+        diagnostics.firstHalfPorous.totalPorousDissipationJoules
+        + diagnostics.secondHalfPorous.totalPorousDissipationJoules;
+    diagnostics.momentumAfterNewtonSeconds = momentumNewtonSeconds(
+        grid, candidateVelocity, settings.densityKgPerCubicMeter);
+    diagnostics.momentumResidualNewtonSeconds = subtract(
+        diagnostics.momentumAfterNewtonSeconds,
+        add(diagnostics.momentumBeforeNewtonSeconds,
+            diagnostics.pressureJumpImpulseOnFluidNewtonSeconds));
+    diagnostics.momentumResidualNormNewtonSeconds = length(
+        diagnostics.momentumResidualNewtonSeconds);
+    diagnostics.kineticEnergyAfterJoules = kineticEnergyJoules(
+        grid, candidateVelocity, settings.densityKgPerCubicMeter);
+    diagnostics.totalEnergyLossJoules =
+        diagnostics.kineticEnergyBeforeJoules
+        + diagnostics.pressureJumpWorkToFluidJoules
+        - diagnostics.kineticEnergyAfterJoules;
+    diagnostics.maximumVelocityChangeMetersPerSecond = std::max({
+        maximumDifference(
+            velocityMetersPerSecond.xFaces(), candidateVelocity.xFaces()),
+        maximumDifference(
+            velocityMetersPerSecond.yFaces(), candidateVelocity.yFaces()),
+        maximumDifference(
+            velocityMetersPerSecond.zFaces(), candidateVelocity.zFaces()),
+    });
+    CellScalarField finalDivergence(grid);
+    computeDivergence(grid, candidateVelocity, finalDivergence);
+    diagnostics.finalDivergenceL2PerSecond = l2Norm(finalDivergence);
+
+    diagnostics.finite = diagnostics.firstHalfPorous.finite
+        && diagnostics.bulkFlow.finite
+        && diagnostics.secondHalfPorous.finite
+        && isFinite(candidateVelocity) && isFinite(candidatePressure)
+        && finite(diagnostics.pressureJumpImpulseOnFluidNewtonSeconds)
+        && std::isfinite(diagnostics.pressureJumpWorkToFluidJoules)
+        && std::isfinite(diagnostics.porousDissipationJoules)
+        && finite(diagnostics.momentumBeforeNewtonSeconds)
+        && finite(diagnostics.momentumAfterNewtonSeconds)
+        && finite(diagnostics.momentumResidualNewtonSeconds)
+        && std::isfinite(
+            diagnostics.momentumResidualNormNewtonSeconds)
+        && std::isfinite(diagnostics.kineticEnergyBeforeJoules)
+        && std::isfinite(diagnostics.kineticEnergyAfterJoules)
+        && std::isfinite(diagnostics.totalEnergyLossJoules)
+        && std::isfinite(
+            diagnostics.maximumVelocityChangeMetersPerSecond)
+        && std::isfinite(diagnostics.initialDivergenceL2PerSecond)
+        && std::isfinite(diagnostics.finalDivergenceL2PerSecond);
+    const double momentumTolerance = combinedTolerance(
+        settings.absoluteMomentumToleranceNewtonSeconds,
+        settings.relativeMomentumTolerance,
+        length(add(
+            diagnostics.momentumBeforeNewtonSeconds,
+            diagnostics.pressureJumpImpulseOnFluidNewtonSeconds)),
+        length(diagnostics.momentumAfterNewtonSeconds));
+    const double energyTolerance = combinedTolerance(
+        settings.absoluteEnergyToleranceJoules,
+        settings.relativeEnergyTolerance,
+        std::abs(diagnostics.kineticEnergyBeforeJoules
+                 + diagnostics.pressureJumpWorkToFluidJoules),
+        std::abs(diagnostics.kineticEnergyAfterJoules));
+    diagnostics.accepted = diagnostics.finite
+        && diagnostics.momentumResidualNormNewtonSeconds
+            <= momentumTolerance
+        && diagnostics.kineticEnergyAfterJoules
+            <= diagnostics.kineticEnergyBeforeJoules
+                + diagnostics.pressureJumpWorkToFluidJoules
+                + energyTolerance;
+    if (!diagnostics.accepted) {
+        diagnostics.failureStage =
+            PorousPeriodicFlowStrangFailureStage::Conservation;
+        return diagnostics;
+    }
+
+    velocityMetersPerSecond = std::move(candidateVelocity);
+    pressurePascals = std::move(candidatePressure);
+    return diagnostics;
+}
+
 } // namespace
+
+PorousPeriodicFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const PorousIterationSettings& porousIteration,
+    const PeriodicFlowStrangSspRk2Settings& settings) {
+    return advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
+        grid, velocityMetersPerSecond, pressurePascals,
+        porousCrossings, nullptr, porousIteration, settings);
+}
+
+PorousPeriodicFlowStrangSspRk2Diagnostics
+advancePeriodicFlowStrangSspRk2WithPorousInterfaces(
+    const PeriodicCartesianGrid& grid,
+    MacVelocityField& velocityMetersPerSecond,
+    CellScalarField& pressurePascals,
+    const std::vector<PorousGridFaceCrossing>& porousCrossings,
+    const SharpPressureJumpField& prescribedPressureJumps,
+    const PorousIterationSettings& porousIteration,
+    const PeriodicFlowStrangSspRk2Settings& settings) {
+    return advancePeriodicFlowStrangSspRk2WithPorousInterfacesImpl(
+        grid, velocityMetersPerSecond, pressurePascals,
+        porousCrossings, &prescribedPressureJumps,
+        porousIteration, settings);
+}
 
 PeriodicFlowStrangSubcyclingDiagnostics
 advancePeriodicFlowStrangSspRk2Subcycled(
