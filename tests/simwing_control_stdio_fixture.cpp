@@ -8,6 +8,7 @@
 
 #include <charconv>
 #include <cstdio>
+#include <exception>
 #include <fstream>
 #include <limits>
 #include <span>
@@ -152,19 +153,29 @@ std::vector<std::uint8_t> serializedFrame(
 }
 
 int writeCommands(const std::string& path,
-                  const std::uint64_t advanceStepCount) {
+                  const std::uint64_t advanceStepCount,
+                  const std::uint64_t failureAdvanceStepCount) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     if (!output) {
         std::fprintf(stderr, "cannot create command fixture: %s\n",
                      path.c_str());
         return 1;
     }
-    const std::vector<fsi::WorkerControlCommand> commands{
+    std::vector<fsi::WorkerControlCommand> commands{
         {fsi::WorkerControlCommandKind::Advance, 101, advanceStepCount},
         {fsi::WorkerControlCommandKind::Checkpoint, 102, 0},
         {fsi::WorkerControlCommandKind::Advance, 103, 1},
-        {fsi::WorkerControlCommandKind::Stop, 104, 0},
     };
+    if (failureAdvanceStepCount != 0) {
+        commands.push_back({
+            fsi::WorkerControlCommandKind::Advance, 104,
+            failureAdvanceStepCount});
+        commands.push_back({
+            fsi::WorkerControlCommandKind::Stop, 105, 0});
+    } else {
+        commands.push_back({
+            fsi::WorkerControlCommandKind::Stop, 104, 0});
+    }
     fsi::WorkerControlStreamError error;
     for (const auto& command : commands) {
         if (!fsi::writeWorkerControlCommand(output, command, &error)) {
@@ -480,26 +491,7 @@ int verifyPorousSheetResponses(
     for (std::uint64_t step = 0; step < checkpointStep; ++step) {
         timeAtCheckpoint += stepSeconds;
     }
-    const double timeAtFinal = timeAtCheckpoint + stepSeconds;
-    const std::vector<fsi::WorkerControlResponse> expected{
-        {fsi::WorkerControlResponseKind::Ready, 0, 0, 0.0, 0,
-         fsi::WorkerControlFailureCode::None, {}},
-        {fsi::WorkerControlResponseKind::Advanced, 101, checkpointStep,
-         timeAtCheckpoint, checkpointStep,
-         fsi::WorkerControlFailureCode::None, {}},
-        {fsi::WorkerControlResponseKind::Checkpointed, 102, checkpointStep,
-         timeAtCheckpoint, 0,
-         fsi::WorkerControlFailureCode::None, {}},
-        {fsi::WorkerControlResponseKind::Advanced, 103, finalStep,
-         timeAtFinal, 1,
-         fsi::WorkerControlFailureCode::None, {}},
-        {fsi::WorkerControlResponseKind::Stopped, 104, finalStep,
-         timeAtFinal, 0,
-         fsi::WorkerControlFailureCode::None, {}},
-    };
-    if (!verifyResponseFile(responsePath, expected)) {
-        return 1;
-    }
+    const double timeAtContinuation = timeAtCheckpoint + stepSeconds;
 
     fsi::CoupledPorousSheetCheckpoint checkpoint;
     if (!readPorousSheetCheckpoint(checkpointPath, checkpoint)) {
@@ -511,6 +503,56 @@ int verifyPorousSheetResponses(
         || checkpoint.porousFaceCoordinate != 4) {
         std::fprintf(stderr,
                      "porous-sheet control checkpoint is not the rebased safe point\n");
+        return 1;
+    }
+
+    fsi::CoupledPorousSheetCase collisionReplay;
+    collisionReplay.restore(checkpoint);
+    viewer::DiagnosticFrame lastAcceptedCollisionFrame;
+    std::string collisionError;
+    for (std::uint64_t attempt = 0;
+         attempt < 1000 && collisionError.empty(); ++attempt) {
+        try {
+            lastAcceptedCollisionFrame = collisionReplay.advance();
+        } catch (const std::exception& exception) {
+            collisionError = exception.what();
+        }
+    }
+    const std::uint64_t collisionSafeStep =
+        collisionReplay.acceptedStepCount();
+    const double collisionSafeTime =
+        collisionReplay.simulationTimeSeconds();
+    if (collisionSafeStep <= checkpointStep + 1
+        || collisionReplay.topologyRebaseCount() != 1
+        || collisionReplay.porousFaceCoordinate() != 4
+        || collisionError
+            != "coupled porous sheet reached the pump-surface topology") {
+        std::fprintf(stderr,
+                     "porous-sheet collision oracle did not reach its safe point\n");
+        return 1;
+    }
+
+    const std::vector<fsi::WorkerControlResponse> expected{
+        {fsi::WorkerControlResponseKind::Ready, 0, 0, 0.0, 0,
+         fsi::WorkerControlFailureCode::None, {}},
+        {fsi::WorkerControlResponseKind::Advanced, 101, checkpointStep,
+         timeAtCheckpoint, checkpointStep,
+         fsi::WorkerControlFailureCode::None, {}},
+        {fsi::WorkerControlResponseKind::Checkpointed, 102, checkpointStep,
+         timeAtCheckpoint, 0,
+         fsi::WorkerControlFailureCode::None, {}},
+        {fsi::WorkerControlResponseKind::Advanced, 103,
+         checkpointStep + 1, timeAtContinuation, 1,
+         fsi::WorkerControlFailureCode::None, {}},
+        {fsi::WorkerControlResponseKind::Error, 104,
+         collisionSafeStep, collisionSafeTime, 0,
+         fsi::WorkerControlFailureCode::NumericalFailure,
+         "worker advance failed: " + collisionError},
+        {fsi::WorkerControlResponseKind::Stopped, 105,
+         collisionSafeStep, collisionSafeTime, 0,
+         fsi::WorkerControlFailureCode::None, {}},
+    };
+    if (!verifyResponseFile(responsePath, expected)) {
         return 1;
     }
 
@@ -544,22 +586,24 @@ int verifyPorousSheetResponses(
             return 1;
         }
     }
-    if (frames.size() != finalStep
+    if (frames.size() != collisionSafeStep
         || frames[0].step != 1
         || frames[checkpointStep - 1].step != checkpointStep
-        || frames.back().step != finalStep
+        || frames.back().step != collisionSafeStep
         || frames[checkpointStep - 1].simulationTimeSeconds
             != timeAtCheckpoint
-        || frames.back().simulationTimeSeconds != timeAtFinal) {
+        || frames.back().simulationTimeSeconds != collisionSafeTime
+        || serializedFrame(frames.back())
+            != serializedFrame(lastAcceptedCollisionFrame)) {
         std::fprintf(stderr,
-                     "porous-sheet control trace lacks the accepted rebased sequence\n");
+                     "porous-sheet control trace crossed its collision safe point\n");
         return 1;
     }
 
     fsi::CoupledPorousSheetCase resumed;
     resumed.restore(checkpoint);
     if (serializedFrame(resumed.advance())
-        != serializedFrame(frames.back())) {
+        != serializedFrame(frames[checkpointStep])) {
         std::fprintf(stderr,
                      "porous-sheet checkpoint does not replay the next trace step\n");
         return 1;
@@ -620,23 +664,36 @@ int verifyPorousSheetResume(
 } // namespace
 
 int main(int argc, char* argv[]) {
-    if ((argc == 3 || argc == 4)
+    if ((argc >= 3 && argc <= 5)
         && std::string_view(argv[1]) == "write") {
         std::uint64_t advanceStepCount = 2;
-        if (argc == 4) {
-            const std::string_view text(argv[3]);
+        std::uint64_t failureAdvanceStepCount = 0;
+        const auto parsePositive = [](const std::string_view text,
+                                      std::uint64_t& value) {
             const auto parsed = std::from_chars(
-                text.data(), text.data() + text.size(),
-                advanceStepCount);
-            if (parsed.ec != std::errc{}
-                || parsed.ptr != text.data() + text.size()
-                || advanceStepCount == 0) {
+                text.data(), text.data() + text.size(), value);
+            return parsed.ec == std::errc{}
+                && parsed.ptr == text.data() + text.size()
+                && value != 0;
+        };
+        if (argc >= 4) {
+            const std::string_view text(argv[3]);
+            if (!parsePositive(text, advanceStepCount)) {
                 std::fprintf(stderr,
                              "write advance count must be a positive integer\n");
                 return 2;
             }
         }
-        return writeCommands(argv[2], advanceStepCount);
+        if (argc == 5) {
+            const std::string_view text(argv[4]);
+            if (!parsePositive(text, failureAdvanceStepCount)) {
+                std::fprintf(stderr,
+                             "write failure advance count must be a positive integer\n");
+                return 2;
+            }
+        }
+        return writeCommands(
+            argv[2], advanceStepCount, failureAdvanceStepCount);
     }
     if (argc == 3 && std::string_view(argv[1]) == "write-resume") {
         return writeResumeCommands(argv[2]);
@@ -663,7 +720,8 @@ int main(int argc, char* argv[]) {
     }
     std::fprintf(stderr,
                  "usage: simwing-control-stdio-fixture "
-                 "write COMMANDS [ADVANCE_STEPS] | write-resume COMMANDS | "
+                 "write COMMANDS [ADVANCE_STEPS [FAILURE_STEPS]] | "
+                 "write-resume COMMANDS | "
                  "verify RESPONSES CHECKPOINT TRACE | "
                  "verify-resume RESPONSES CHECKPOINT TRACE | "
                  "verify-open RESPONSES CHECKPOINT TRACE | "

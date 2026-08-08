@@ -126,7 +126,10 @@ Supplying `--checkpoint-in` makes the initial Ready response expose the restored
 absolute step/time; the new trace starts with the next accepted frame rather
 than replaying earlier frames. The porous-sheet end-to-end control regression
 checkpoints its rebased step 330 and verifies exact step-331 continuation in
-both the original and resumed traces.
+both the original and resumed traces, then drives the original worker to its
+pump-collision rejection and proves that only preceding accepted frames were
+published. The terminal accepted endpoint is itself persistable even when it
+has moved beyond the face segment used by that step's constitutive midpoint.
 Ordinary step-driven CLI behavior is unchanged.
 Both the projected transport and Strang flow paths select donor-cell or limited
 monotonized-central reconstruction explicitly; donor-cell remains the default.
@@ -256,7 +259,9 @@ the prescribed pump surface. Its in-memory composite checkpoint restores the
 complete accepted state with exact next-frame replay;
 the checksummed persistent form reuses Structure's codec, stores the topology
 epoch and MAC fields, and validates them against bounded deterministic replay
-before decode.
+before decode. Checkpoint topology is validated at the accepted constitutive
+midpoint, so the last accepted endpoint before pump collision can be persisted
+and deterministically repeats the same transactional rejection after restore.
 The
 `simwing-fsi --case open-piston` harness drives a `6000 kg` plate at
 `0.05 m/s`, exposes the resisting CFD pressure separately from its actuator,

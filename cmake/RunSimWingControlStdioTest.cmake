@@ -24,6 +24,11 @@ endif()
 if(NOT "${ADVANCE_STEP_COUNT}" MATCHES "^[1-9][0-9]*$")
     message(FATAL_ERROR "ADVANCE_STEP_COUNT must be a positive integer")
 endif()
+if(DEFINED FAILURE_ADVANCE_STEP_COUNT
+        AND NOT "${FAILURE_ADVANCE_STEP_COUNT}" MATCHES "^[1-9][0-9]*$")
+    message(FATAL_ERROR
+        "FAILURE_ADVANCE_STEP_COUNT must be a positive integer")
+endif()
 
 file(REMOVE
     "${COMMAND_FILE}"
@@ -36,9 +41,14 @@ file(REMOVE
     "${RESUME_TRACE_FILE}"
     "${RESUME_ERROR_FILE}")
 
+set(write_command
+    "${CONTROL_FIXTURE}" write "${COMMAND_FILE}" "${ADVANCE_STEP_COUNT}")
+if(DEFINED FAILURE_ADVANCE_STEP_COUNT)
+    list(APPEND write_command "${FAILURE_ADVANCE_STEP_COUNT}")
+endif()
+
 execute_process(
-    COMMAND "${CONTROL_FIXTURE}" write "${COMMAND_FILE}"
-        "${ADVANCE_STEP_COUNT}"
+    COMMAND ${write_command}
     RESULT_VARIABLE write_result
     OUTPUT_VARIABLE write_output
     ERROR_VARIABLE write_error

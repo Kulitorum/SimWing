@@ -529,7 +529,10 @@ trace before acknowledging stop. A restored worker reports its checkpoint's
 absolute step/time in Ready and writes only newly accepted frames to its trace.
 The porous-sheet stdio regression advances through its first topology rebase,
 persists accepted step 330, reproduces step 331 in the original run, and emits
-that same single next frame after a restored Ready response.
+that same single next frame after a restored Ready response. The original run
+then reaches the prescribed-pump collision, reports a numerical failure at the
+last accepted absolute state, publishes no rejected frame, and still stops
+cleanly.
 The exact-model capture now exports validated scene-v2.1 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical
@@ -1172,7 +1175,10 @@ the porous adapter excludes that pump from material traction, the bridge maps
 only the sheet reaction, and XPBD receives the same impulse and work. Its first
 MAC-face topology rebase, rebased checkpoint replay, and later explicit
 pump-collision rejection remain intentionally smaller gates than general
-moving porous topology.
+moving porous topology. Checkpoint topology belongs to the accepted
+constitutive midpoint rather than the possibly farther endpoint; this permits
+the terminal accepted state to persist and reproduce the same collision
+transactionally after restore.
 General interpolated cut-cell pressure metrics, curved or transversely deforming
 correspondence, nonplanar or opening topology events, sealed deforming chambers,
 a complete coupled energy ledger for those general cases, and richer

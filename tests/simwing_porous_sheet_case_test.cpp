@@ -9,6 +9,7 @@
 #include <exception>
 #include <ranges>
 #include <sstream>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -597,6 +598,75 @@ void testPersistentCheckpoint() {
         "porous-sheet persistence validation: recomputed field corruption cannot evade replay");
 }
 
+void testTerminalSafePointPersistence() {
+    fsi::CoupledPorousSheetCase owner;
+    std::string collisionError;
+    for (std::uint64_t attempt = 0;
+         attempt < 1000 && collisionError.empty(); ++attempt) {
+        try {
+            static_cast<void>(owner.advance());
+        } catch (const std::exception& exception) {
+            collisionError = exception.what();
+        }
+    }
+    const auto terminal = owner.checkpoint();
+    check(collisionError
+              == "coupled porous sheet reached the pump-surface topology"
+              && terminal.acceptedStepCount > 350
+              && terminal.topologyRebaseCount == 1
+              && terminal.porousFaceCoordinate == 4,
+          "porous-sheet terminal checkpoint: collision leaves an accepted safe point");
+
+    const auto bytes = encodeCheckpoint(owner, terminal);
+    fsi::CoupledPorousSheetCheckpoint decoded;
+    fsi::CoupledPorousSheetCheckpointPersistenceError error;
+    check(fsi::deserializeCoupledPorousSheetCheckpoint(
+              bytes, owner, decoded, &error)
+              && decoded.acceptedStepCount == terminal.acceptedStepCount
+              && decoded.simulationTimeSeconds
+                  == terminal.simulationTimeSeconds
+              && decoded.topologyRebaseCount == terminal.topologyRebaseCount
+              && decoded.porousFaceCoordinate
+                  == terminal.porousFaceCoordinate,
+          "porous-sheet terminal checkpoint: accepted endpoint persists exactly");
+
+    const auto verifyRepeatedCollision = [](const auto& checkpoint,
+                                            const char* message) {
+        fsi::CoupledPorousSheetCase replay;
+        replay.restore(checkpoint);
+        const auto structureBefore = replay.structure().checkpoint();
+        const auto velocityBefore = replay.velocity();
+        const auto pressureBefore = replay.pressure();
+        const auto diagnosticsBefore = replay.diagnostics();
+        bool rejected = false;
+        try {
+            static_cast<void>(replay.advance());
+        } catch (const std::exception& exception) {
+            rejected = std::string(exception.what())
+                == "coupled porous sheet reached the pump-surface topology";
+        }
+        const auto structureAfter = replay.structure().checkpoint();
+        check(rejected
+                  && structureAfter.acceptedStepCount
+                      == structureBefore.acceptedStepCount
+                  && structureAfter.simulationTimeSeconds
+                      == structureBefore.simulationTimeSeconds
+                  && structureAfter.nodes == structureBefore.nodes
+                  && replay.velocity() == velocityBefore
+                  && replay.pressure() == pressureBefore
+                  && replay.diagnostics() == diagnosticsBefore,
+              message);
+    };
+    verifyRepeatedCollision(
+        terminal,
+        "porous-sheet terminal checkpoint: in-memory restore repeats collision transactionally");
+    verifyRepeatedCollision(
+        decoded,
+        "porous-sheet terminal checkpoint: persisted restore repeats collision transactionally");
+    check(encodeCheckpoint(owner, decoded) == bytes,
+          "porous-sheet terminal checkpoint: decode and re-encode preserve bytes");
+}
+
 } // namespace
 
 int main() {
@@ -605,6 +675,7 @@ int main() {
     testTopologyRebaseAndCollisionRollback();
     testCheckpointReplayAndValidation();
     testPersistentCheckpoint();
+    testTerminalSafePointPersistence();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing coupled porous-sheet check(s) failed\n",

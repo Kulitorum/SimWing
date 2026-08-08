@@ -760,11 +760,19 @@ void CoupledPorousSheetCase::restore(
     double fluidUniformity = 0.0;
     const double fluidVelocity = uniformFluidVelocity(
         detail.velocity, fluidUniformity);
+    // The accepted fluid/traction topology is evaluated at the constitutive
+    // midpoint. A fast-moving sheet endpoint may already lie beyond that
+    // segment while the accepted step is still valid; restoring such a
+    // terminal safe point must reproduce the next topology rejection.
+    const double topologyPosition =
+        checkpointValue.acceptedStepCount == 0
+        ? sheetPosition
+        : detail.diagnostics.sheetPositionAtConstitutiveTimeMeters;
     bool canonicalTopologyPosition = true;
     try {
         static_cast<void>(crossingFraction(
             grid_, checkpointValue.porousFaceCoordinate,
-            sheetPosition));
+            topologyPosition));
     } catch (const std::exception&) {
         canonicalTopologyPosition = false;
     }
