@@ -488,7 +488,7 @@ intermediate exception is explicit in diagnostics and does not relax the
 committed step: the aggregate still enforces original component bounds, component
 momentum, finite state, and non-increasing energy. A discontinuous pulse remains
 bounded, while smooth uniform full-period transport shows near-second-order L1
-refinement. General nonlinear spatial order remains an open acceptance item.
+refinement. Nonlinear spatial behavior requires the projected enclosure below.
 A pressure-projected nonlinear SSPRK2 operator now keeps every intermediate
 incompressible before it can become its own advector: stage one selected
 transport is projected, stage two self-advects from that accepted field, the
@@ -497,8 +497,13 @@ result is projected again. Both pressure and velocity remain private until all
 four stages and the aggregate momentum/energy/continuity ledger pass. Exact
 manual-stage composition, repeated-step eligibility, and a fixed-grid vortical
 refinement show deterministic second-order temporal behavior. Donor remains
-the default; limited MC is selectable. A symmetric second-order temporal flow
-path now reconciles its internal pressure stages with viscosity: half-step
+the default; limited MC is selectable. A Galilean-translated Taylor-Green
+vortex supplies the first analytic nonlinear spatial canonical. Scaling `dt`
+with `h^2` suppresses the SSPRK2 time error; 16/32/64-grid L1 refinement is
+first order for donor reconstruction and near second order for limited MC.
+This smooth periodic result does not establish cut-cell or moving-interface
+accuracy. A symmetric second-order temporal flow path now reconciles its
+internal pressure stages with viscosity: half-step
 SSPRK2 diffusion, full projected nonlinear SSPRK2 transport, and the matching
 viscous half step.
 Every sub-integrator works on the same private candidate, their individual
@@ -695,7 +700,9 @@ acceptance of the non-amplifying diffusion-number `0.5` boundary, no
 kinetic-energy increase for every committed transport aggregate, donor-cell
 full-period error ratios in `[1.7, 2.2]` then `[1.8, 2.1]`, limited-MC L1
 full-period error ratios in `[3.1, 4.8]` over two successive resolution
-doublings, exact bounded CFL-one translation, and periodic
+doublings, projected translating-Taylor-Green donor L1 ratios in `[1.7, 2.2]`
+and limited-MC ratios in `[3.0, 5.0]` across 16/32/64 grids with `dt`
+proportional to `h^2`, exact bounded CFL-one translation, and periodic
 component-momentum sums preserved within `5e-14` in the projection mixed-mode
 case; viscous physical-momentum residual stays below `2e-12 N*s`. The
 static 250 Pa slab must retain its two pressure levels within `2e-12 Pa` and

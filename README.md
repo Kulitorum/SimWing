@@ -58,16 +58,19 @@ those same shared faces. Its forward-Euler stages may add the expected
 second-order-in-time energy defect only while private inside SSPRK2; the
 committed convex update rechecks original component bounds, momentum, and
 non-increasing energy. A discontinuous pulse remains bounded and smooth
-uniform-flow L1 refinement approaches second order. General nonlinear spatial
-order remains to be established.
+uniform-flow L1 refinement approaches second order.
 A pressure-projected nonlinear SSPRK2 operator now uses two self-advection
 stages without feeding a divergent intermediate field back as its own
 advector. It projects stage one, advances stage two, convexly averages that
 prediction with the old field, and projects the result. All four candidates
 remain private until pressure, velocity, momentum, energy, and continuity pass;
-a fixed-grid vortical refinement observes second-order temporal behavior while
-the donor-cell spatial reconstruction remains first order. A symmetric full
-flow path now reconciles those pressure stages with viscosity: SSPRK2 diffusion
+a fixed-grid vortical refinement observes second-order temporal behavior. A
+Galilean-translated Taylor-Green vortex, run with `dt` proportional to `h^2`,
+separates that temporal error and observes first-order donor-cell versus
+near-second-order limited-MC L1 spatial refinement on 16/32/64 grids. This is a
+smooth periodic nonlinear canonical, not yet a cut-cell or moving-interface
+accuracy claim. A symmetric full flow path now reconciles those pressure stages
+with viscosity: SSPRK2 diffusion
 advances half a step on each side of the full projected nonlinear transport
 step. The resulting Strang composition is transactional across all three
 sub-integrators, closes their energy-loss sum, and observes second-order

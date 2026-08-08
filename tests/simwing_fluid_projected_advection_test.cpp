@@ -80,6 +80,33 @@ MacVelocityField vorticalVelocity(
     return result;
 }
 
+MacVelocityField translatingTaylorGreenVelocity(
+    const PeriodicCartesianGrid& grid,
+    const double timeSeconds) {
+    constexpr double backgroundX = 0.35;
+    constexpr double backgroundY = -0.2;
+    MacVelocityField result(grid);
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                const std::size_t index = grid.cellIndex(i, j, k);
+                const auto xFace = grid.xFaceCenterMeters(i, j, k);
+                const auto yFace = grid.yFaceCenterMeters(i, j, k);
+                result.xFaces()[index] =
+                    backgroundX
+                    + std::sin(xFace.x - backgroundX * timeSeconds)
+                        * std::cos(xFace.y - backgroundY * timeSeconds);
+                result.yFaces()[index] =
+                    backgroundY
+                    - std::cos(yFace.x - backgroundX * timeSeconds)
+                        * std::sin(yFace.y - backgroundY * timeSeconds);
+            }
+        }
+    }
+    return result;
+}
+
 ProjectedMacAdvectionSspRk2Settings settings() {
     ProjectedMacAdvectionSspRk2Settings result;
     result.densityKgPerCubicMeter = 1.2;
@@ -348,6 +375,108 @@ void testObservedSecondOrderTemporalRefinement() {
           "temporal refinement: refined nonlinear SSPRK2 ratio remains second order");
 }
 
+double translatingTaylorGreenError(
+    const std::size_t resolution,
+    const VariableMacReconstruction reconstruction) {
+    const double twoPi = 2.0 * std::numbers::pi;
+    const PeriodicCartesianGrid grid(
+        {resolution, resolution, 2}, {}, {twoPi, twoPi, 1.0});
+    constexpr double finalTime = 0.08;
+    const auto expected = translatingTaylorGreenVelocity(grid, finalTime);
+    auto velocity = translatingTaylorGreenVelocity(grid, 0.0);
+    CellScalarField pressure(grid);
+    const double spacing = grid.cellSpacingMeters().x;
+    // dt scales with h^2 so the SSPRK2 temporal error is fourth order in h
+    // and cannot masquerade as the measured spatial convergence.
+    const double requestedTimeStep = 0.12 * spacing * spacing;
+    const std::size_t steps = static_cast<std::size_t>(
+        std::ceil(finalTime / requestedTimeStep));
+    auto integrationSettings = settings();
+    integrationSettings.reconstruction = reconstruction;
+    integrationSettings.timeStepSeconds =
+        finalTime / static_cast<double>(steps);
+    integrationSettings.projectionAbsoluteResidualTolerance = 1.0e-10;
+    integrationSettings.projectionRelativeResidualTolerance = 1.0e-12;
+    for (std::size_t step = 0; step < steps; ++step) {
+        const auto diagnostics = advectVelocityProjectedSspRk2(
+            grid, velocity, pressure, integrationSettings);
+        check(diagnostics.accepted,
+              "spatial refinement: every projected Taylor-Green step is accepted");
+        if (!diagnostics.accepted) {
+            std::fprintf(
+                stderr,
+                "Taylor-Green rejection n=%zu step=%zu stage=%u "
+                "adv=%d/%d proj=%d/%d energy=%.17g -> %.17g "
+                "momentum=%.17g div=%.17g\n",
+                resolution, step,
+                static_cast<unsigned int>(diagnostics.failureStage),
+                diagnostics.firstAdvection.accepted ? 1 : 0,
+                diagnostics.secondAdvection.accepted ? 1 : 0,
+                diagnostics.firstProjection.converged ? 1 : 0,
+                diagnostics.secondProjection.converged ? 1 : 0,
+                diagnostics.kineticEnergyBeforeJoules,
+                diagnostics.kineticEnergyAfterJoules,
+                diagnostics.momentumResidualNormNewtonSeconds,
+                diagnostics.finalDivergenceL2PerSecond);
+            break;
+        }
+    }
+    double absoluteError = 0.0;
+    for (std::size_t index = 0; index < grid.cellCount(); ++index) {
+        absoluteError += std::abs(
+            velocity.xFaces()[index] - expected.xFaces()[index]);
+        absoluteError += std::abs(
+            velocity.yFaces()[index] - expected.yFaces()[index]);
+    }
+    return absoluteError
+        / static_cast<double>(2 * grid.cellCount());
+}
+
+void testObservedNonlinearSpatialRefinement() {
+    const double donorCoarse = translatingTaylorGreenError(
+        16, VariableMacReconstruction::DonorCell);
+    const double donorMedium = translatingTaylorGreenError(
+        32, VariableMacReconstruction::DonorCell);
+    const double donorFine = translatingTaylorGreenError(
+        64, VariableMacReconstruction::DonorCell);
+    const double musclCoarse = translatingTaylorGreenError(
+        16, VariableMacReconstruction::MonotonizedCentral);
+    const double musclMedium = translatingTaylorGreenError(
+        32, VariableMacReconstruction::MonotonizedCentral);
+    const double musclFine = translatingTaylorGreenError(
+        64, VariableMacReconstruction::MonotonizedCentral);
+    const double donorCoarseRatio = donorCoarse / donorMedium;
+    const double donorFineRatio = donorMedium / donorFine;
+    const double musclCoarseRatio = musclCoarse / musclMedium;
+    const double musclFineRatio = musclMedium / musclFine;
+    if (!(donorCoarseRatio > 1.7 && donorCoarseRatio < 2.2)
+        || !(donorFineRatio > 1.7 && donorFineRatio < 2.2)
+        || !(musclCoarseRatio > 3.0 && musclCoarseRatio < 5.0)
+        || !(musclFineRatio > 3.0 && musclFineRatio < 5.0)
+        || !(musclFine < donorFine)) {
+        std::fprintf(
+            stderr,
+            "translating Taylor-Green spatial: donor %.17g %.17g "
+            "(%.17g %.17g %.17g), MC %.17g %.17g "
+            "(%.17g %.17g %.17g)\n",
+            donorCoarseRatio, donorFineRatio,
+            donorCoarse, donorMedium, donorFine,
+            musclCoarseRatio, musclFineRatio,
+            musclCoarse, musclMedium, musclFine);
+    }
+    check(donorCoarseRatio > 1.7 && donorCoarseRatio < 2.2,
+          "spatial refinement: translating-vortex donor transport is first order");
+    check(donorFineRatio > 1.7 && donorFineRatio < 2.2,
+          "spatial refinement: refined translating-vortex donor transport "
+          "remains first order");
+    check(musclCoarseRatio > 3.0 && musclCoarseRatio < 5.0,
+          "spatial refinement: first nonlinear MC ratio approaches second order");
+    check(musclFineRatio > 3.0 && musclFineRatio < 5.0,
+          "spatial refinement: refined nonlinear MC ratio remains near second order");
+    check(musclFine < donorFine,
+          "spatial refinement: limited MC improves the fine nonlinear solution");
+}
+
 void testTransactionalRejection() {
     const double twoPi = 2.0 * std::numbers::pi;
     const PeriodicCartesianGrid grid(
@@ -428,6 +557,7 @@ int main() {
     testUniformNoOpAndRepeatedEligibility();
     testLimitedReconstructionNonlinearPath();
     testObservedSecondOrderTemporalRefinement();
+    testObservedNonlinearSpatialRefinement();
     testTransactionalRejection();
     if (failures != 0) {
         std::fprintf(stderr,
