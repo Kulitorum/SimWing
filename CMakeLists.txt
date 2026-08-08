@@ -288,6 +288,8 @@ target_link_libraries(simwing_canonical_case PUBLIC
 )
 
 add_library(simwing_fluid STATIC
+    src/fsi/fluid/checkpoint.cpp
+    src/fsi/fluid/checkpoint.h
     src/fsi/fluid/grid.cpp
     src/fsi/fluid/grid.h
     src/fsi/fluid/interface_jump.cpp
@@ -655,6 +657,11 @@ add_executable(simwing-fluid-cut-surface-test
 )
 target_link_libraries(simwing-fluid-cut-surface-test PRIVATE simwing_fluid)
 
+add_executable(simwing-fluid-checkpoint-test
+    tests/simwing_fluid_checkpoint_test.cpp
+)
+target_link_libraries(simwing-fluid-checkpoint-test PRIVATE simwing_fluid)
+
 add_executable(simwing-transfer-test
     tests/simwing_transfer_test.cpp
 )
@@ -854,6 +861,7 @@ set_target_properties(
     simwing-fluid-moving-interface-test
     simwing-fluid-control-volume-test
     simwing-fluid-cut-surface-test
+    simwing-fluid-checkpoint-test
     simwing-transfer-test
     simwing-coupling-test
     simwing-fluid-structure-bridge-test
@@ -901,6 +909,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-fluid-moving-interface-test
         simwing-fluid-control-volume-test
         simwing-fluid-cut-surface-test
+        simwing-fluid-checkpoint-test
         simwing-transfer-test
         simwing-coupling-test
         simwing-fluid-structure-bridge-test
@@ -1040,6 +1049,8 @@ add_test(NAME simwing_fluid_control_volume
     COMMAND simwing-fluid-control-volume-test)
 add_test(NAME simwing_fluid_cut_surface
     COMMAND simwing-fluid-cut-surface-test)
+add_test(NAME simwing_fluid_checkpoint
+    COMMAND simwing-fluid-checkpoint-test)
 add_test(NAME simwing_transfer COMMAND simwing-transfer-test)
 add_test(NAME simwing_coupling COMMAND simwing-coupling-test)
 add_test(NAME simwing_fluid_structure_bridge

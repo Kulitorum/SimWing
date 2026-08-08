@@ -2,21 +2,26 @@
 
 #include "coupling.h"
 #include "face_resolved_bridge.h"
+#include "fluid/checkpoint.h"
 #include "fluid/moving_control_volume.h"
 #include "structure_frame.h"
 #include "viewer_protocol.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t openPistonConservationVersion = 1;
+inline constexpr std::uint32_t openPistonCaseCheckpointVersion = 1;
+inline constexpr std::uint64_t openPistonCaseDefinitionFingerprint =
+    0x6f70656e70737436ull;
 
 inline constexpr char openPistonCaseChecksum[] =
-    "sha256:simwing-open-control-volume-piston-case-v5";
+    "sha256:simwing-open-control-volume-piston-case-v6";
 inline constexpr char openPistonCaseSolverId[] =
-    "simwing-fsi-open-control-volume-piston-worker-v5";
+    "simwing-fsi-open-control-volume-piston-worker-v6";
 
 struct OpenPistonConservationDiagnostics {
     std::uint32_t version = openPistonConservationVersion;
@@ -44,6 +49,26 @@ struct OpenPistonConservationDiagnostics {
         const OpenPistonConservationDiagnostics&) const = default;
 };
 
+// Composite accepted macro-step checkpoint. The public epoch metadata lets a
+// worker persist and route checkpoints without exposing mutable numerical
+// payloads. The private payload composes the complete Structure checkpoint
+// with a topology-bound moving-interface fluid checkpoint and every committed
+// open-piston diagnostic/accounting value.
+struct OpenPistonCaseCheckpoint {
+    std::uint32_t version = openPistonCaseCheckpointVersion;
+    std::uint64_t caseDefinitionFingerprint =
+        openPistonCaseDefinitionFingerprint;
+    std::uint64_t acceptedStepCount = 0;
+    std::uint64_t topologyRebaseCount = 0;
+    std::size_t movingPlaneCoordinate = 0;
+    double surfaceOffsetMeters = 0.0;
+
+private:
+    friend class OpenPistonCase;
+    struct Detail;
+    std::shared_ptr<const Detail> detail;
+};
+
 // Visible verification harness for an accelerating planar piston in one
 // connected periodic fluid region. A complete moving sheet is nonseparating:
 // fluid is projected around the remaining grid path and crosses an explicit
@@ -69,6 +94,8 @@ public:
 
     [[nodiscard]] viewer::TraceHeader traceHeader() const;
     [[nodiscard]] viewer::DiagnosticFrame advance();
+    [[nodiscard]] OpenPistonCaseCheckpoint checkpoint() const;
+    void restore(const OpenPistonCaseCheckpoint& checkpoint);
 
     [[nodiscard]] const Structure& structure() const noexcept;
     [[nodiscard]] const StructureStepSettings& stepSettings() const noexcept;
@@ -90,6 +117,7 @@ public:
 
 private:
     fluid::PeriodicCartesianGrid grid_;
+    fluid::FaceAlignedMovingInterface interfaces_;
     fluid::MacVelocityField fluidVelocity_;
     fluid::CellScalarField fluidPressure_;
     fluid::MovingInterfaceProjectionDiagnostics fluidDiagnostics_;

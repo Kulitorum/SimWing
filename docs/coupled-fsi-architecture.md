@@ -393,6 +393,7 @@ src/fsi/
         interface_jump.*
         moving_interface.*  grid-face constraints and region topology
         moving_control_volume.* open planar GCL and topology epochs
+        checkpoint.*        accepted fluid/topology epoch checkpoint
         turbulence.*
         boundaries.*
 
@@ -552,6 +553,18 @@ non-rigid surface deformation, curved correspondence, general cut-cell pressure
 metrics, nonplanar topology events, fluid/structure iteration, or a
 strong-coupling convergence decision.
 
+The first fluid checkpoint boundary is now implemented for an accepted
+face-aligned moving-interface epoch. It captures pressure, velocity, exact
+interface kinematics, and the complete projection diagnostics in an immutable
+in-memory payload. Restore rebinds exact grid metadata and a deterministic
+topology fingerprint before returning a candidate state. The open-piston worker
+composes that payload with the complete Structure checkpoint, partial-cell
+offset/topology epoch, and committed coupling/conservation diagnostics. An
+ordinary continuation and the first steps after both a normal and periodic
+plane rebase replay bit-for-bit in the same or an equivalent rebuilt worker.
+This is a transactional numerical boundary, not yet persistent checkpoint-file
+serialization or a worker control protocol.
+
 ### Phase 0 — Establish the remake boundary
 
 Work:
@@ -599,7 +612,9 @@ constraints, plus the first open planar one-partial-cell control-volume
 operator, its exact next-plane topology rebase, and the bounded physical
 cut-surface reaction geometry described above. On solve failure it preserves
 the input pressure and velocity bit-for-bit so future macro-step retry can be
-transactional. It also owns a canonical single-crossing sharp pressure-jump
+transactional. Accepted moving-interface state now also has a versioned,
+immutable in-memory checkpoint bound to exact grid geometry and a stable
+topology fingerprint. It also owns a canonical single-crossing sharp pressure-jump
 field with explicit surface and two-sided region identity; duplicate crossings
 on one grid face are rejected rather than merged. The regression budgets are:
 gradient/divergence adjoint error at or below `2e-14` in the canonical
@@ -688,7 +703,8 @@ Work:
 - in parallel conceptually, use IBAMR or OpenFOAM/preCICE as an external
   reference for selected canonical cases, not as a required GUI dependency;
 - implement arbitrary moving-interface/jump conditions, curved/changing
-  paired grid-side correspondence, refinement, and fluid checkpoints;
+  paired grid-side correspondence, refinement, and persistent fluid-checkpoint
+  serialization/control messages;
 - add rate-limited AMR, pressure, velocity, divergence, traction, and
   pressure-jump viewer layers as each field becomes available;
 - verify CPU first, then add GPU kernels behind identical numerical tests.
@@ -716,9 +732,12 @@ update, an independently closed surface-sweep/opening-transport GCL ledger,
 accepted physical cut-surface reaction geometry, and exact planar one-face
 topology rebases including periodic wrap. Its analytic structure/fluid/actuator
 momentum and kinetic-energy ledger is now complete for this driven planar case.
+Its accepted fluid and structural state can also resume bit-identically from a
+composite in-memory checkpoint before or after a topology rebase.
 General interpolated cut-cell pressure metrics, curved or transversely deforming
 correspondence, nonplanar or opening topology events, sealed deforming chambers,
-and a complete coupled energy ledger for those general cases remain open, so the
+checkpoint-file persistence, and a complete coupled energy ledger for those
+general cases remain open, so the
 full Phase 2 piston gate is not yet closed.
 
 Gate: observed convergence is consistent with the intended order away from

@@ -83,7 +83,13 @@ step 1200 it crosses its first `0.5 m` cell, rebases without a chamber-volume
 jump, and continues in the new topology. At step 2400 it crosses the periodic
 boundary while retaining an unwrapped `4 m` physical position. Its accepted
 cut-surface pressure loads use the moving face-resolved bridge rather than the
-uniform-only subset. A real 3.28 fixture
+uniform-only subset. A versioned in-memory fluid checkpoint binds accepted
+pressure, velocity, projection diagnostics, grid geometry, and interface
+topology behind an immutable payload. The open-piston worker composes it with
+the full XPBD checkpoint, partial-cell epoch, and conservation ledgers; an
+equivalent rebuilt worker resumes bit-for-bit, including immediately after
+both ordinary and periodic topology rebases. Persistent checkpoint files and
+worker control messages remain future protocol work. A real 3.28 fixture
 also crosses export, structural assembly, one coupled pilot/suspension step,
 checkpoint replay, and completed trace using synthetic physical settings.
 Export still requires explicit physical material/pilot settings;

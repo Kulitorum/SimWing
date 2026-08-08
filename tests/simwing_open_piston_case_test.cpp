@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <ranges>
+#include <stdexcept>
 #include <string_view>
 #include <vector>
 
@@ -30,6 +31,17 @@ void checkNear(const double actual,
                      message, actual, expected, tolerance);
         ++failures;
     }
+}
+
+template<typename Callback>
+void expectRejected(Callback&& callback, const char* message) {
+    bool rejected = false;
+    try {
+        callback();
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected, message);
 }
 
 std::vector<std::uint8_t> serialized(
@@ -293,10 +305,15 @@ void testAcceptedTopologyRebase() {
               && crossingVelocityResidual->values.front() < 2.0e-12,
           "rebase: crossing frame exposes volume and velocity residuals");
 
+    const auto firstRebaseCheckpoint = first.checkpoint();
+    const auto expectedContinuedFrame = first.advance();
+    first.restore(firstRebaseCheckpoint);
     const auto continuedFrame = first.advance();
     const auto replayContinuedFrame = second.advance();
-    check(serialized(continuedFrame) == serialized(replayContinuedFrame),
-          "rebase: the first partial-cell step in the new epoch replays");
+    check(serialized(expectedContinuedFrame) == serialized(continuedFrame)
+              && serialized(continuedFrame)
+                  == serialized(replayContinuedFrame),
+          "rebase: a restored first partial-cell step replays bit-for-bit");
     const double nextOffset = 0.05
         * first.stepSettings().timeStepSeconds;
     check(first.topologyRebaseCount() == 1
@@ -380,10 +397,14 @@ void testAcceptedTopologyRebase() {
               4.0, 3.0e-13,
               "rebase: terminal cut pressure position remains unwrapped");
 
+    const auto periodicRebaseCheckpoint = first.checkpoint();
+    const auto expectedWrappedContinued = first.advance();
+    first.restore(periodicRebaseCheckpoint);
     const auto wrappedContinued = first.advance();
     const auto wrappedReplay = second.advance();
-    check(serialized(wrappedContinued) == serialized(wrappedReplay),
-          "rebase: first step after periodic wrap replays bit-for-bit");
+    check(serialized(expectedWrappedContinued) == serialized(wrappedContinued)
+              && serialized(wrappedContinued) == serialized(wrappedReplay),
+          "rebase: restored first step after periodic wrap replays bit-for-bit");
     checkNear(first.bridgeDiagnostics().gridPlaneCoordinateMeters,
               0.0, 0.0,
               "rebase: continued transfer uses wrapped Eulerian plane zero");
@@ -412,11 +433,100 @@ void testAcceptedTopologyRebase() {
               "rebase: wrapped cut pressure retains the unwrapped position");
 }
 
+void testCompositeCheckpointValidationAndReplay() {
+    fsi::OpenPistonCase piston;
+    constexpr std::uint64_t savedSteps = 37;
+    for (std::uint64_t step = 0; step < savedSteps; ++step) {
+        static_cast<void>(piston.advance());
+    }
+    const auto saved = piston.checkpoint();
+    const auto savedStructure = piston.structure().checkpoint();
+    const auto savedControl = piston.controlVolumeDiagnostics();
+    const auto savedCut = piston.cutSurfaceDiagnostics();
+    const auto savedBridge = piston.bridgeDiagnostics();
+    const auto savedConservation = piston.conservationDiagnostics();
+    const auto expectedNext = piston.advance();
+    for (std::uint64_t step = 0; step < 9; ++step) {
+        static_cast<void>(piston.advance());
+    }
+    piston.restore(saved);
+    const auto restoredStructure = piston.structure().checkpoint();
+    check(saved.version == fsi::openPistonCaseCheckpointVersion
+              && saved.caseDefinitionFingerprint
+                  == fsi::openPistonCaseDefinitionFingerprint
+              && saved.acceptedStepCount == savedSteps
+              && saved.topologyRebaseCount == 0
+              && saved.movingPlaneCoordinate == 6
+              && saved.surfaceOffsetMeters == piston.surfaceOffsetMeters(),
+          "checkpoint: public worker step and topology epoch are explicit");
+    check(restoredStructure.acceptedStepCount
+                  == savedStructure.acceptedStepCount
+              && restoredStructure.simulationTimeSeconds
+                  == savedStructure.simulationTimeSeconds
+              && restoredStructure.nodes == savedStructure.nodes
+              && piston.controlVolumeDiagnostics() == savedControl
+              && piston.cutSurfaceDiagnostics() == savedCut
+              && piston.bridgeDiagnostics() == savedBridge
+              && piston.conservationDiagnostics() == savedConservation,
+          "checkpoint: composite structure, fluid, and ledger state restores exactly");
+    const auto restoredNext = piston.advance();
+    check(serialized(expectedNext) == serialized(restoredNext),
+          "checkpoint: ordinary coupled continuation replays bit-for-bit");
+    fsi::OpenPistonCase resumedWorker;
+    resumedWorker.restore(saved);
+    const auto resumedNext = resumedWorker.advance();
+    check(serialized(expectedNext) == serialized(resumedNext),
+          "checkpoint: an equivalent rebuilt worker resumes bit-for-bit");
+
+    const auto beforeInvalid = piston.structure().checkpoint();
+    const auto beforeInvalidOffset = piston.surfaceOffsetMeters();
+    const auto beforeInvalidPlane = piston.movingPlaneCoordinate();
+    const auto beforeInvalidRebases = piston.topologyRebaseCount();
+    auto wrongVersion = saved;
+    ++wrongVersion.version;
+    expectRejected(
+        [&] { piston.restore(wrongVersion); },
+        "checkpoint validation: unsupported worker version is rejected");
+    auto wrongDefinition = saved;
+    ++wrongDefinition.caseDefinitionFingerprint;
+    expectRejected(
+        [&] { piston.restore(wrongDefinition); },
+        "checkpoint validation: foreign case definition is rejected");
+    auto wrongStep = saved;
+    ++wrongStep.acceptedStepCount;
+    expectRejected(
+        [&] { piston.restore(wrongStep); },
+        "checkpoint validation: corrupted accepted step is rejected");
+    auto wrongPlane = saved;
+    wrongPlane.movingPlaneCoordinate = 7;
+    expectRejected(
+        [&] { piston.restore(wrongPlane); },
+        "checkpoint validation: corrupted topology plane is rejected");
+    auto wrongEpoch = saved;
+    ++wrongEpoch.topologyRebaseCount;
+    expectRejected(
+        [&] { piston.restore(wrongEpoch); },
+        "checkpoint validation: corrupted topology epoch is rejected");
+    auto wrongOffset = saved;
+    wrongOffset.surfaceOffsetMeters = -0.01;
+    expectRejected(
+        [&] { piston.restore(wrongOffset); },
+        "checkpoint validation: out-of-cell offset is rejected");
+    const auto afterInvalid = piston.structure().checkpoint();
+    check(afterInvalid.acceptedStepCount == beforeInvalid.acceptedStepCount
+              && afterInvalid.nodes == beforeInvalid.nodes
+              && piston.surfaceOffsetMeters() == beforeInvalidOffset
+              && piston.movingPlaneCoordinate() == beforeInvalidPlane
+              && piston.topologyRebaseCount() == beforeInvalidRebases,
+          "checkpoint validation: rejected restore leaves the worker untouched");
+}
+
 } // namespace
 
 int main() {
     testVisibleOpenPistonAndDeterminism();
     testAcceptedTopologyRebase();
+    testCompositeCheckpointValidationAndReplay();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d SimWing open piston case check(s) failed\n",

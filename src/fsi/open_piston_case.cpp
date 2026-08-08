@@ -121,8 +121,8 @@ fluid::MovingInterfaceProjectionDiagnostics initializeFluid(
     const fluid::PeriodicCartesianGrid& grid,
     fluid::MacVelocityField& velocity,
     fluid::CellScalarField& pressure,
+    const fluid::FaceAlignedMovingInterface& interfaces,
     const double timeStepSeconds) {
-    const auto interfaces = makeInterfaces(grid, 0.0);
     const auto diagnostics = fluid::projectVelocityWithMovingInterfaces(
         grid, velocity, pressure, interfaces,
         projectionSettings(timeStepSeconds));
@@ -496,12 +496,27 @@ void appendFields(
 
 } // namespace
 
+struct OpenPistonCaseCheckpoint::Detail {
+    StructureCheckpoint structure;
+    fluid::MovingInterfaceFluidCheckpoint fluid;
+    fluid::PlanarControlVolumeDiagnostics controlVolumeDiagnostics;
+    fluid::PlanarControlVolumeRebaseDiagnostics lastRebaseDiagnostics;
+    fluid::PlanarCutSurfacePressureDiagnostics cutSurfaceDiagnostics;
+    PlanarFaceResolvedBridgeDiagnostics bridgeDiagnostics;
+    OpenPistonConservationDiagnostics conservationDiagnostics;
+    double lastRebaseVelocityResidualMetersPerSecond = 0.0;
+    std::uint64_t topologyRebaseCount = 0;
+    std::size_t movingPlaneCoordinate = 0;
+    double surfaceOffsetMeters = 0.0;
+};
+
 OpenPistonCase::OpenPistonCase()
     : grid_(makeGrid()),
+      interfaces_(makeInterfaces(grid_, 0.0)),
       fluidVelocity_(grid_),
       fluidPressure_(grid_),
       fluidDiagnostics_(initializeFluid(
-          grid_, fluidVelocity_, fluidPressure_,
+          grid_, fluidVelocity_, fluidPressure_, interfaces_,
           makeStepSettings().timeStepSeconds)),
       structure_(makeDefinition()),
       bridge_(structure_, pistonSurfaceStableId,
@@ -510,7 +525,7 @@ OpenPistonCase::OpenPistonCase()
       coupling_(bridge_.transfer()),
       frameMapping_(structure_, makeFrameMapping()),
       stepSettings_(makeStepSettings()),
-      controlVolume_(grid_, makeInterfaces(grid_, 0.0),
+      controlVolume_(grid_, interfaces_,
                      pistonSurfaceStableId, 2) {}
 
 viewer::TraceHeader OpenPistonCase::traceHeader() const {
@@ -554,6 +569,7 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
     auto candidatePressure = fluidPressure_;
     const auto endInterfaces = makeInterfaces(
         grid_, endSpeed, controlVolume_.movingPlaneCoordinate());
+    auto acceptedInterfaces = endInterfaces;
     const auto endFluid = fluid::projectVelocityWithMovingInterfaces(
         grid_, candidateVelocity, candidatePressure, endInterfaces,
         projectionSettings(timeStep));
@@ -609,6 +625,7 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
         candidateVelocity = std::move(rebasedVelocity);
         candidatePressure = std::move(rebasedPressure);
         acceptedFluid = rebasedFluid;
+        acceptedInterfaces = rebasedInterfaces;
     }
 
     const auto startKinematics = bridge_.transfer().captureKinematics(
@@ -766,6 +783,7 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
 
     fluidVelocity_ = std::move(candidateVelocity);
     fluidPressure_ = std::move(candidatePressure);
+    interfaces_ = std::move(acceptedInterfaces);
     fluidDiagnostics_ = acceptedFluid;
     controlVolumeDiagnostics_ = controlDiagnostics;
     cutSurfaceDiagnostics_ = endCutSurface;
@@ -782,6 +800,148 @@ viewer::DiagnosticFrame OpenPistonCase::advance() {
         surfaceOffsetMeters_ = endOffset;
     }
     return frame;
+}
+
+OpenPistonCaseCheckpoint OpenPistonCase::checkpoint() const {
+    OpenPistonCaseCheckpoint result;
+    const StructureCheckpoint structureCheckpoint = structure_.checkpoint();
+    result.acceptedStepCount = structureCheckpoint.acceptedStepCount;
+    result.topologyRebaseCount = topologyRebaseCount_;
+    result.movingPlaneCoordinate = controlVolume_.movingPlaneCoordinate();
+    result.surfaceOffsetMeters = surfaceOffsetMeters_;
+    auto detail = std::make_shared<OpenPistonCaseCheckpoint::Detail>(
+        OpenPistonCaseCheckpoint::Detail{
+            structureCheckpoint,
+            fluid::checkpointMovingInterfaceFluidState(
+                grid_, fluidVelocity_, fluidPressure_,
+                interfaces_, fluidDiagnostics_),
+            controlVolumeDiagnostics_,
+            lastRebaseDiagnostics_,
+            cutSurfaceDiagnostics_,
+            bridgeDiagnostics_,
+            conservationDiagnostics_,
+            lastRebaseVelocityResidualMetersPerSecond_,
+            topologyRebaseCount_,
+            controlVolume_.movingPlaneCoordinate(),
+            surfaceOffsetMeters_,
+        });
+    result.detail = std::move(detail);
+    return result;
+}
+
+void OpenPistonCase::restore(
+    const OpenPistonCaseCheckpoint& checkpointValue) {
+    if (checkpointValue.version != openPistonCaseCheckpointVersion
+        || checkpointValue.caseDefinitionFingerprint
+            != openPistonCaseDefinitionFingerprint
+        || !checkpointValue.detail
+        || checkpointValue.acceptedStepCount
+            != checkpointValue.detail->structure.acceptedStepCount
+        || checkpointValue.topologyRebaseCount
+            != checkpointValue.detail->topologyRebaseCount
+        || checkpointValue.movingPlaneCoordinate
+            != checkpointValue.detail->movingPlaneCoordinate
+        || checkpointValue.surfaceOffsetMeters
+            != checkpointValue.detail->surfaceOffsetMeters
+        || checkpointValue.surfaceOffsetMeters < 0.0
+        || checkpointValue.surfaceOffsetMeters
+            >= controlVolume_.normalCellSpacingMeters()) {
+        throw std::invalid_argument(
+            "open piston checkpoint metadata is invalid");
+    }
+
+    auto candidateFluid = fluid::restoreMovingInterfaceFluidState(
+        grid_, checkpointValue.detail->fluid);
+    fluid::PlanarMovingControlVolume candidateControlVolume(
+        grid_, candidateFluid.interfaces,
+        pistonSurfaceStableId, 2);
+    const std::size_t expectedPlane = static_cast<std::size_t>(
+        (6 + checkpointValue.topologyRebaseCount)
+        % grid_.cellCounts().x);
+    const double cellSpacing =
+        candidateControlVolume.normalCellSpacingMeters();
+    const double expectedPhysicalPlane = 3.0
+        + static_cast<double>(checkpointValue.topologyRebaseCount)
+            * cellSpacing
+        + checkpointValue.surfaceOffsetMeters;
+    const auto& structureCheckpoint = checkpointValue.detail->structure;
+    bool structureMatchesEpoch =
+        structureCheckpoint.version == structureCheckpointVersion
+        && structureCheckpoint.definitionFingerprint
+            == structure_.definitionFingerprint()
+        && structureCheckpoint.nodes.size()
+            == structure_.definition().nodes.size()
+        && std::abs(
+            structureCheckpoint.simulationTimeSeconds
+            - static_cast<double>(structureCheckpoint.acceptedStepCount)
+                * stepSettings_.timeStepSeconds) <= 1.0e-12;
+    double structuralSpeed = 0.0;
+    if (!structureCheckpoint.nodes.empty()) {
+        structuralSpeed = structureCheckpoint.nodes.front()
+            .velocityMetersPerSecond.x;
+    }
+    for (const auto& node : structureCheckpoint.nodes) {
+        structureMatchesEpoch = structureMatchesEpoch
+            && std::abs(node.positionMeters.x - expectedPhysicalPlane)
+                <= 2.0e-12
+            && std::abs(
+                node.velocityMetersPerSecond.x - structuralSpeed)
+                <= 1.0e-12
+            && std::abs(node.velocityMetersPerSecond.y) <= 1.0e-12
+            && std::abs(node.velocityMetersPerSecond.z) <= 1.0e-12;
+    }
+    bool interfacesMatchEpoch = candidateFluid.interfaces.faceCount() == 6;
+    for (const auto& face : candidateFluid.interfaces.faces()) {
+        interfacesMatchEpoch = interfacesMatchEpoch
+            && face.surfaceStableId == pistonSurfaceStableId
+            && face.minusRegionStableId == connectedFluidRegionStableId
+            && face.plusRegionStableId == connectedFluidRegionStableId
+            && face.axis == fluid::GridFaceAxis::X
+            && face.i == expectedPlane
+            && std::abs(
+                face.normalVelocityMetersPerSecond - structuralSpeed)
+                <= 1.0e-12;
+    }
+    if (checkpointValue.movingPlaneCoordinate != expectedPlane
+        || candidateControlVolume.movingPlaneCoordinate() != expectedPlane
+        || candidateControlVolume.fluidRegionStableId()
+            != connectedFluidRegionStableId
+        || candidateControlVolume.openingPlaneCoordinate() != 2
+        || checkpointValue.detail->lastRebaseVelocityResidualMetersPerSecond
+            < 0.0
+        || !std::isfinite(
+            checkpointValue.detail
+                ->lastRebaseVelocityResidualMetersPerSecond)
+        || !structureMatchesEpoch || !interfacesMatchEpoch) {
+        throw std::invalid_argument(
+            "open piston checkpoint does not match its topology epoch");
+    }
+
+    auto controlDiagnostics =
+        checkpointValue.detail->controlVolumeDiagnostics;
+    auto rebaseDiagnostics =
+        checkpointValue.detail->lastRebaseDiagnostics;
+    auto cutDiagnostics = checkpointValue.detail->cutSurfaceDiagnostics;
+    auto bridgeDiagnostics = checkpointValue.detail->bridgeDiagnostics;
+    auto conservationDiagnostics =
+        checkpointValue.detail->conservationDiagnostics;
+    const double rebaseVelocityResidual = checkpointValue.detail
+        ->lastRebaseVelocityResidualMetersPerSecond;
+
+    structure_.restore(structureCheckpoint);
+    fluidVelocity_ = std::move(candidateFluid.velocityMetersPerSecond);
+    fluidPressure_ = std::move(candidateFluid.pressurePascals);
+    interfaces_ = std::move(candidateFluid.interfaces);
+    fluidDiagnostics_ = std::move(candidateFluid.diagnostics);
+    controlVolume_ = std::move(candidateControlVolume);
+    controlVolumeDiagnostics_ = std::move(controlDiagnostics);
+    lastRebaseDiagnostics_ = std::move(rebaseDiagnostics);
+    cutSurfaceDiagnostics_ = std::move(cutDiagnostics);
+    bridgeDiagnostics_ = std::move(bridgeDiagnostics);
+    conservationDiagnostics_ = std::move(conservationDiagnostics);
+    surfaceOffsetMeters_ = checkpointValue.surfaceOffsetMeters;
+    lastRebaseVelocityResidualMetersPerSecond_ = rebaseVelocityResidual;
+    topologyRebaseCount_ = checkpointValue.topologyRebaseCount;
 }
 
 const Structure& OpenPistonCase::structure() const noexcept {

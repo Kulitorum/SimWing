@@ -182,7 +182,7 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
 - `simwing_open_piston_case`: Qt-free driven open-piston harness crossing a
   connected-fluid projection, partial-cell control-volume geometry, opening
   transport, exact planar topology rebasing, CFD reaction, XPBD acceptance,
-  and immutable viewer frames.
+  composite structure/fluid checkpoint replay, and immutable viewer frames.
 - `simwing_scene_structure`: deterministic scene-v2 membrane, per-sheet
   bending, junction, and cable assembly into `simwing_structure`.
 - `simwing_fluid`: Qt-free periodic staggered-grid field operators and
@@ -195,6 +195,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   projection's face-resolved complete constraint reaction on the congruent
   physical plane, can resample that macro-step-average reaction at endpoint
   kinematics, and closes area, force, moment, power, and periodic-image ledgers.
+  Its in-memory checkpoint captures accepted pressure, velocity, interface
+  topology, and diagnostics behind an immutable, grid/fingerprint-bound payload.
   It has no Playground dependency and is not yet an arbitrary/multiple-crossing
   or whole-wing flow solver.
 - `simwing_viewer_protocol`: Qt-free immutable diagnostic-frame and trace
@@ -534,13 +536,22 @@ makes this a certified aerodynamic solver.
   periodic-image closure, plus correspondence residuals remain explicit in
   every frame. The projection reaction is treated as a macro-step average and
   sampled at both endpoint velocities; structure, fluid, actuator, and total
-  momentum/kinetic-energy ledgers must close before commit.
+  momentum/kinetic-energy ledgers must close before commit. Its composite
+  checkpoint restores the full Structure state, accepted fluid fields and
+  topology epoch, partial-cell offset, and committed ledgers; continuation must
+  replay bit-for-bit in the same or an equivalent rebuilt worker.
 - `src/fsi/fluid/grid.{h,cpp}` owns the uniform periodic Cartesian grid,
   cell-centred scalar fields, unique periodic MAC face velocities, and the
   paired finite-volume divergence/gradient operators.
 - `src/fsi/fluid/projection.{h,cpp}` owns the deterministic zero-mean periodic
   pressure solve. It commits pressure and velocity together only on
   convergence; failure leaves both inputs bit-identical for later step retry.
+- `src/fsi/fluid/checkpoint.{h,cpp}` owns the versioned in-memory checkpoint for
+  one accepted moving-interface fluid epoch. Its immutable payload includes
+  pressure, velocity, exact interface kinematics, and projection diagnostics;
+  public grid metadata and a stable topology fingerprint are rebound before a
+  restore candidate is returned. Persistent checkpoint serialization remains a
+  future worker-protocol layer.
 - `src/fsi/fluid/interface_jump.{h,cpp}` owns canonical grid-face crossings,
   signed two-region pressure jumps, the jump-corrected gradient, and its paired
   Poisson source. It rejects multiple crossings on one face until the folded
@@ -634,7 +645,7 @@ makes this a certified aerodynamic solver.
 
 ## Verification matrix
 
-There are 51 configured tests on Windows. The Fortran-reference test is
+There are 52 configured tests on Windows. The Fortran-reference test is
 Windows-only; local `gui_smoke` and `studio_model_smoke` exercise display/model
 paths that release CI deliberately excludes from its offscreen test command.
 
@@ -650,10 +661,10 @@ paths that release CI deliberately excludes from its offscreen test command.
 | Playground body/pressure/cells/material | `playground_pressure_solve`, `playground_cells`, `playground_metrics`, `playground_material`, `softwing_material`, and the deterministic bench guards below |
 | Playground contact | `playground_contact`, `playground_contact_integration`, plus a relevant bench/GUI scenario |
 | SimWing scene/structure/viewer foundations | `simwing_scene`, `simwing_model_scene_export`, `simwing_model_scene_real_export`, `simwing_structure`, `simwing_scene_structure`, `simwing_viewer_protocol`, `simwing_structure_frame`, plus `softwing_material`/`softwing_cell_volume` when core primitives change and `softwing_suspension_checkpoint` for payload/suspension state |
-| SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`, `simwing_fluid_moving_interface`, `simwing_fluid_control_volume`, `simwing_fluid_cut_surface`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing no-jump projection energy, transactional failure, deterministic replay, Taylor-Green invariance, manufactured second-order pressure convergence, stable region/interface orientation, static sharp-jump balance, exact X/Y/Z face constraints, separate adjacent-pressure and complete direct-enforcement reaction ledgers, canonical face-tile geometry/traction ledgers, per-region compatibility/gauges, analytic translating-slab pressure impulse/work, open-piston partial-cell/surface-sweep/opening-flux GCL closure, exact X/Y/Z one-plane rebase volume continuity, and accepted physical cut-plane area/force/moment/power, macro-step-average endpoint resampling, plus periodic-image closure |
+| SimWing fluid grid/projection/interface | `simwing_fluid_projection`, `simwing_fluid_interface_jump`, `simwing_fluid_moving_interface`, `simwing_fluid_control_volume`, `simwing_fluid_cut_surface`, `simwing_fluid_checkpoint`; preserve discrete gradient/divergence adjointness, periodic momentum, non-increasing no-jump projection energy, transactional failure, deterministic replay, Taylor-Green invariance, manufactured second-order pressure convergence, stable region/interface orientation, static sharp-jump balance, exact X/Y/Z face constraints, separate adjacent-pressure and complete direct-enforcement reaction ledgers, canonical face-tile geometry/traction ledgers, per-region compatibility/gauges, analytic translating-slab pressure impulse/work, open-piston partial-cell/surface-sweep/opening-flux GCL closure, exact X/Y/Z one-plane rebase volume continuity, accepted physical cut-plane area/force/moment/power, macro-step-average endpoint resampling, periodic-image closure, and immutable grid/topology-bound accepted-state checkpoint replay |
 | SimWing conservative transfer | `simwing_transfer`; preserve stable topology/Structure binding, analytic uniform and barycentric-quadrature area/force/moment, rigid translation/rotation power, independent ledger closure, additive nodal load application, and rejection before mutation for foreign results/structures |
 | SimWing macro-step coupling | `simwing_coupling`; preserve strictly ordered local sample time, topology/duration binding, analytic moving-piston impulse and pressure-volume work, independent temporal ledger closure, momentum delivery through XPBD, deterministic replay, and pre-load checkpoint rollback on failure |
-| SimWing fluid/structure bridge and piston workers | `simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing_open_piston_case`, `simwing_fsi_piston_headless`, `simwing_fsi_open_piston_headless`, `simwing_fsi_open_piston_rebase_headless`; preserve the strict uniform subset, planar face-resolved nonuniform transfer, stable surface/geometry binding, complete nonoverlapping coverage, per-face and aggregate area/force/moment/power closure, rigid-normal X/Y/Z grid/physical-plane correspondence and velocity binding, analytic impulse delivery, explicit actuator-versus-complete-CFD reaction, bit-identical replay through periodic topology crossings, open-piston structure/fluid/actuator/system momentum residual below `1e-8 N*s` and energy residual below `2e-9 J`, accepted-only frames, and Qt-free headless execution |
+| SimWing fluid/structure bridge and piston workers | `simwing_fluid_structure_bridge`, `simwing_piston_case`, `simwing_open_piston_case`, `simwing_fsi_piston_headless`, `simwing_fsi_open_piston_headless`, `simwing_fsi_open_piston_rebase_headless`; preserve the strict uniform subset, planar face-resolved nonuniform transfer, stable surface/geometry binding, complete nonoverlapping coverage, per-face and aggregate area/force/moment/power closure, rigid-normal X/Y/Z grid/physical-plane correspondence and velocity binding, analytic impulse delivery, explicit actuator-versus-complete-CFD reaction, bit-identical replay through periodic topology crossings and composite checkpoint restore, open-piston structure/fluid/actuator/system momentum residual below `1e-8 N*s` and energy residual below `2e-9 J`, accepted-only frames, and Qt-free headless execution |
 | packaging/resources/CMake | configure from clean metadata, build Release, and run the full suite |
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
