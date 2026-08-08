@@ -1260,6 +1260,10 @@ add_test(NAME simwing_fsi_control_stdio
         "-DCHECKPOINT_FILE=${CMAKE_BINARY_DIR}/simwing-control-checkpoint.swpc"
         "-DTRACE_FILE=${CMAKE_BINARY_DIR}/simwing-control.swtrace"
         "-DERROR_FILE=${CMAKE_BINARY_DIR}/simwing-control-stderr.txt"
+        "-DRESUME_COMMAND_FILE=${CMAKE_BINARY_DIR}/simwing-control-resume-commands.swcc"
+        "-DRESUME_RESPONSE_FILE=${CMAKE_BINARY_DIR}/simwing-control-resume-responses.swcr"
+        "-DRESUME_TRACE_FILE=${CMAKE_BINARY_DIR}/simwing-control-resume.swtrace"
+        "-DRESUME_ERROR_FILE=${CMAKE_BINARY_DIR}/simwing-control-resume-stderr.txt"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/RunSimWingControlStdioTest.cmake")
 set_tests_properties(simwing_fsi_control_stdio PROPERTIES TIMEOUT 45)
 add_test(NAME simwing_fsi_control_requires_periodic

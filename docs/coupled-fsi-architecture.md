@@ -478,7 +478,8 @@ the numerical worker. A bounded self-framing stream adapter now reads the
 envelope payload length without a host-native prefix and flushes every response.
 `simwing-fsi --control-stdio` binds that stream to binary stdin/stdout for the
 periodic case, suppresses viewer launch and textual stdout, and completes the
-trace before acknowledging stop.
+trace before acknowledging stop. A restored worker reports its checkpoint's
+absolute step/time in Ready and writes only newly accepted frames to its trace.
 The exact-model capture now exports validated scene-v2.1 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical
@@ -815,7 +816,10 @@ The stdio integration sends advance-two, checkpoint, advance-one, and stop to a
 separate worker process. It requires an exact ready/advanced/checkpointed/
 advanced/stopped response stream with no trailing stdout, a completed
 three-frame trace, and a step-two checkpoint whose next frame is byte-identical
-to trace step three. Control mode is rejected for non-periodic cases.
+to trace step three. A second process restores that checkpoint, reports Ready at
+step two, advances once, and produces a completed one-frame trace whose step
+three is byte-identical to independent replay. Control mode is rejected for
+non-periodic cases.
 The Qt-free viewer-geometry regression separately requires exact arrow shaft
 direction and relative magnitude, one shaft plus two arrowhead segments per
 retained nonzero vector, dimensional automatic scaling, owning deterministic

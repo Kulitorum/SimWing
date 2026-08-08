@@ -5,7 +5,11 @@ foreach(required
         RESPONSE_FILE
         CHECKPOINT_FILE
         TRACE_FILE
-        ERROR_FILE)
+        ERROR_FILE
+        RESUME_COMMAND_FILE
+        RESUME_RESPONSE_FILE
+        RESUME_TRACE_FILE
+        RESUME_ERROR_FILE)
     if(NOT DEFINED ${required} OR "${${required}}" STREQUAL "")
         message(FATAL_ERROR "${required} is required")
     endif()
@@ -16,7 +20,11 @@ file(REMOVE
     "${RESPONSE_FILE}"
     "${CHECKPOINT_FILE}"
     "${TRACE_FILE}"
-    "${ERROR_FILE}")
+    "${ERROR_FILE}"
+    "${RESUME_COMMAND_FILE}"
+    "${RESUME_RESPONSE_FILE}"
+    "${RESUME_TRACE_FILE}"
+    "${RESUME_ERROR_FILE}")
 
 execute_process(
     COMMAND "${CONTROL_FIXTURE}" write "${COMMAND_FILE}"
@@ -81,4 +89,54 @@ if(NOT verify_result EQUAL 0)
     message(FATAL_ERROR
         "control response fixture failed (${verify_result}):\n"
         "${verify_output}${verify_error}\nworker stderr:\n${worker_error}")
+endif()
+
+execute_process(
+    COMMAND "${CONTROL_FIXTURE}" write-resume "${RESUME_COMMAND_FILE}"
+    RESULT_VARIABLE resume_write_result
+    OUTPUT_VARIABLE resume_write_output
+    ERROR_VARIABLE resume_write_error
+    TIMEOUT 15
+)
+if(NOT resume_write_result EQUAL 0)
+    message(FATAL_ERROR
+        "resume command fixture failed (${resume_write_result}):\n"
+        "${resume_write_output}${resume_write_error}")
+endif()
+
+execute_process(
+    COMMAND "${SIMWING_FSI}"
+        --case periodic-flow
+        --control-stdio
+        --checkpoint-in "${CHECKPOINT_FILE}"
+        --trace "${RESUME_TRACE_FILE}"
+    INPUT_FILE "${RESUME_COMMAND_FILE}"
+    OUTPUT_FILE "${RESUME_RESPONSE_FILE}"
+    ERROR_FILE "${RESUME_ERROR_FILE}"
+    RESULT_VARIABLE resume_worker_result
+    TIMEOUT 30
+)
+if(NOT resume_worker_result EQUAL 0)
+    file(READ "${RESUME_ERROR_FILE}" resume_worker_error)
+    message(FATAL_ERROR
+        "resumed controlled worker failed (${resume_worker_result}):\n"
+        "${resume_worker_error}")
+endif()
+
+execute_process(
+    COMMAND "${CONTROL_FIXTURE}" verify-resume
+        "${RESUME_RESPONSE_FILE}"
+        "${CHECKPOINT_FILE}"
+        "${RESUME_TRACE_FILE}"
+    RESULT_VARIABLE resume_verify_result
+    OUTPUT_VARIABLE resume_verify_output
+    ERROR_VARIABLE resume_verify_error
+    TIMEOUT 15
+)
+if(NOT resume_verify_result EQUAL 0)
+    file(READ "${RESUME_ERROR_FILE}" resume_worker_error)
+    message(FATAL_ERROR
+        "resumed control response fixture failed (${resume_verify_result}):\n"
+        "${resume_verify_output}${resume_verify_error}\n"
+        "worker stderr:\n${resume_worker_error}")
 endif()

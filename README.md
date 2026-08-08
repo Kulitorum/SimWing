@@ -120,6 +120,9 @@ terminal. `simwing-fsi --case periodic-flow --control-stdio` exposes the same
 boundary as self-framed binary stdin/stdout messages. It launches no viewer,
 puts no human-readable text on protocol stdout, completes the trace before the
 stopped response, and uses `--checkpoint-out` as the checkpoint-command target.
+Supplying `--checkpoint-in` makes the initial Ready response expose the restored
+absolute step/time; the new trace starts with the next accepted frame rather
+than replaying earlier frames.
 Ordinary step-driven CLI behavior is unchanged.
 Both the projected transport and Strang flow paths select donor-cell or limited
 monotonized-central reconstruction explicitly; donor-cell remains the default.
