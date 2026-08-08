@@ -10,6 +10,8 @@
 
 namespace simwing::fsi {
 
+struct MovingPorousFlowCaseCheckpointCodecAccess;
+
 inline constexpr char movingPorousFlowCaseChecksum[] =
     "sha256:simwing-moving-planar-porous-flow-case-v1";
 inline constexpr char movingPorousFlowCaseSolverId[] =
@@ -42,6 +44,7 @@ struct MovingPorousFlowCaseCheckpoint {
 
 private:
     friend class MovingPorousFlowCase;
+    friend struct MovingPorousFlowCaseCheckpointCodecAccess;
     struct Detail;
     std::shared_ptr<const Detail> detail;
 };

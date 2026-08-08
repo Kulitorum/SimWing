@@ -1,4 +1,5 @@
 #include "moving_porous_flow_case.h"
+#include "moving_porous_flow_checkpoint_persistence.h"
 #include "viewer_protocol.h"
 
 #include <cmath>
@@ -38,6 +39,35 @@ std::vector<std::uint8_t> serialized(
     check(viewer::serializeFrame(frame, bytes, &error),
           "moving porous-flow frame serializes");
     return bytes;
+}
+
+std::vector<std::uint8_t> encodedCheckpoint(
+    const fsi::MovingPorousFlowCaseCheckpoint& checkpoint) {
+    std::vector<std::uint8_t> bytes;
+    fsi::MovingPorousFlowCaseCheckpointPersistenceError error;
+    check(fsi::serializeMovingPorousFlowCaseCheckpoint(
+              checkpoint, bytes, &error),
+          "moving porous-flow checkpoint serializes");
+    check(!error,
+          "successful moving porous-flow checkpoint encoding clears error");
+    return bytes;
+}
+
+void refreshCheckpointChecksum(std::vector<std::uint8_t>& bytes) {
+    constexpr std::size_t envelopeBytes = 16;
+    constexpr std::size_t checksumBytes = 8;
+    constexpr std::uint64_t offsetBasis = 14695981039346656037ULL;
+    constexpr std::uint64_t prime = 1099511628211ULL;
+    std::uint64_t checksum = offsetBasis;
+    for (std::size_t index = envelopeBytes;
+         index < bytes.size() - checksumBytes; ++index) {
+        checksum ^= bytes[index];
+        checksum *= prime;
+    }
+    for (unsigned shift = 0; shift < 64; shift += 8) {
+        bytes[bytes.size() - checksumBytes + shift / 8] =
+            static_cast<std::uint8_t>(checksum >> shift);
+    }
 }
 
 const viewer::ScalarField* scalarField(
@@ -277,11 +307,234 @@ void testCheckpointReplayAndValidation() {
           "rejected moving porous-flow checkpoints leave state untouched");
 }
 
+void testPersistentCheckpoint() {
+    fsi::MovingPorousFlowCase owner;
+    constexpr std::uint64_t savedSteps = 37;
+    for (std::uint64_t step = 0; step < savedSteps; ++step) {
+        static_cast<void>(owner.advance());
+    }
+    const auto saved = owner.checkpoint();
+    const auto firstEncoding = encodedCheckpoint(saved);
+    check(!firstEncoding.empty()
+              && firstEncoding == encodedCheckpoint(saved),
+          "moving porous-flow checkpoint encoding is deterministic");
+
+    fsi::MovingPorousFlowCaseCheckpointPersistenceError error;
+    fsi::MovingPorousFlowCaseCheckpoint decoded;
+    check(fsi::deserializeMovingPorousFlowCaseCheckpoint(
+              firstEncoding, decoded, &error)
+              && !error
+              && encodedCheckpoint(decoded) == firstEncoding,
+          "moving porous-flow checkpoint decode and re-encode preserves bytes");
+    fsi::MovingPorousFlowCase replay;
+    replay.restore(decoded);
+    const auto expectedNext = owner.advance();
+    check(decoded.acceptedStepCount == savedSteps
+              && decoded.simulationTimeSeconds
+                  == saved.simulationTimeSeconds
+              && decoded.sheetPositionMeters == saved.sheetPositionMeters
+              && decoded.topologyRebaseCount == saved.topologyRebaseCount
+              && decoded.porousTopology == saved.porousTopology
+              && serialized(replay.advance()) == serialized(expectedNext),
+          "decoded moving porous-flow checkpoint continues bit-for-bit");
+
+    fsi::MovingPorousFlowCase initialOwner;
+    const auto initialBytes = encodedCheckpoint(initialOwner.checkpoint());
+    fsi::MovingPorousFlowCaseCheckpoint decodedInitial;
+    check(fsi::deserializeMovingPorousFlowCaseCheckpoint(
+              initialBytes, decodedInitial, &error),
+          "initial moving porous-flow checkpoint decodes");
+    const auto expectedFirst = initialOwner.advance();
+    fsi::MovingPorousFlowCase initialReplay;
+    initialReplay.restore(decodedInitial);
+    check(serialized(initialReplay.advance()) == serialized(expectedFirst),
+          "persisted initial moving porous-flow state replays the first wrap");
+
+    fsi::MovingPorousFlowCase wrappedOwner;
+    for (std::uint64_t step = 0; step < 101; ++step) {
+        static_cast<void>(wrappedOwner.advance());
+    }
+    const auto wrappedBytes = encodedCheckpoint(wrappedOwner.checkpoint());
+    fsi::MovingPorousFlowCaseCheckpoint decodedWrapped;
+    check(fsi::deserializeMovingPorousFlowCaseCheckpoint(
+              wrappedBytes, decodedWrapped, &error),
+          "second-wrap moving porous-flow checkpoint decodes");
+    const auto expectedWrappedNext = wrappedOwner.advance();
+    fsi::MovingPorousFlowCase wrappedReplay;
+    wrappedReplay.restore(decodedWrapped);
+    check(decodedWrapped.topologyRebaseCount == 5
+              && decodedWrapped.porousTopology.faceCoordinate == 0
+              && decodedWrapped.porousTopology.periodicImage == 2
+              && serialized(wrappedReplay.advance())
+                  == serialized(expectedWrappedNext),
+          "persisted moving porous-flow second wrap continues bit-for-bit");
+
+    fsi::MovingPorousFlowCase preservedOwner;
+    static_cast<void>(preservedOwner.advance());
+    fsi::MovingPorousFlowCaseCheckpoint output =
+        preservedOwner.checkpoint();
+    const auto preservedEncoding = encodedCheckpoint(output);
+    const auto expectDecodeRejected = [&output, &error, &preservedEncoding](
+        const std::vector<std::uint8_t>& candidate,
+        const fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode code,
+        const fsi::MovingPorousFlowCaseCheckpointPersistenceLimits& limits,
+        const char* message) {
+        error = {};
+        check(!fsi::deserializeMovingPorousFlowCaseCheckpoint(
+                  candidate, output, &error, limits)
+                  && error.code == code
+                  && encodedCheckpoint(output) == preservedEncoding,
+              message);
+    };
+
+    auto corrupt = firstEncoding;
+    corrupt[0] ^= 0xffU;
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::InvalidMagic,
+        {}, "moving porous-flow checkpoint rejects invalid magic");
+    corrupt = firstEncoding;
+    ++corrupt[4];
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::UnsupportedVersion,
+        {}, "moving porous-flow checkpoint rejects wire versions");
+    corrupt = firstEncoding;
+    corrupt[6] = 1;
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::InvalidData,
+        {}, "moving porous-flow checkpoint rejects reserved bits");
+    corrupt = firstEncoding;
+    corrupt[180] ^= 0x01U;
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::ChecksumMismatch,
+        {}, "moving porous-flow checkpoint rejects checksum corruption");
+    corrupt = firstEncoding;
+    corrupt.pop_back();
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::Truncated,
+        {}, "moving porous-flow checkpoint rejects truncation");
+    corrupt = firstEncoding;
+    corrupt.push_back(0);
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::TrailingData,
+        {}, "moving porous-flow checkpoint rejects trailing data");
+    corrupt = firstEncoding;
+    ++corrupt[16];
+    refreshCheckpointChecksum(corrupt);
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::UnsupportedVersion,
+        {}, "moving porous-flow checkpoint rejects state versions");
+    corrupt = firstEncoding;
+    corrupt[20] ^= 0x01U;
+    refreshCheckpointChecksum(corrupt);
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::InvalidData,
+        {}, "moving porous-flow checkpoint rejects foreign definitions");
+    corrupt = firstEncoding;
+    corrupt[28] ^= 0x01U;
+    refreshCheckpointChecksum(corrupt);
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::InvalidData,
+        {}, "moving porous-flow checkpoint rejects foreign grids");
+    corrupt = firstEncoding;
+    corrupt[116] ^= 0x01U;
+    refreshCheckpointChecksum(corrupt);
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::InvalidData,
+        {}, "moving porous-flow checkpoint rejects inconsistent steps");
+    corrupt = firstEncoding;
+    corrupt[160] = 1;
+    refreshCheckpointChecksum(corrupt);
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::InvalidData,
+        {}, "moving porous-flow checkpoint rejects inconsistent topology");
+    corrupt = firstEncoding;
+    corrupt[180] ^= 0x01U;
+    refreshCheckpointChecksum(corrupt);
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::InvalidData,
+        {}, "moving porous-flow checkpoint rejects inconsistent fluid fields");
+    constexpr std::size_t firstJumpReservedOffset = 976;
+    corrupt = firstEncoding;
+    corrupt[firstJumpReservedOffset] = 1;
+    refreshCheckpointChecksum(corrupt);
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::InvalidData,
+        {}, "moving porous-flow checkpoint rejects crossing reserved bits");
+    constexpr std::size_t firstJumpPressureOffset = 1004;
+    corrupt = firstEncoding;
+    corrupt[firstJumpPressureOffset] ^= 0x01U;
+    refreshCheckpointChecksum(corrupt);
+    expectDecodeRejected(
+        corrupt,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::InvalidData,
+        {}, "moving porous-flow checkpoint rejects inconsistent crossings");
+
+    auto limited = fsi::MovingPorousFlowCaseCheckpointPersistenceLimits{};
+    limited.maximumEncodedBytes = firstEncoding.size() - 1;
+    expectDecodeRejected(
+        firstEncoding,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::LimitExceeded,
+        limited, "moving porous-flow checkpoint enforces byte limits");
+    limited = {};
+    limited.maximumScalarSamples = 95;
+    expectDecodeRejected(
+        firstEncoding,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::LimitExceeded,
+        limited, "moving porous-flow checkpoint enforces sample limits");
+    limited = {};
+    limited.maximumPressureJumpFaces = 11;
+    expectDecodeRejected(
+        firstEncoding,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::LimitExceeded,
+        limited, "moving porous-flow checkpoint enforces crossing limits");
+    limited = {};
+    limited.maximumReplaySteps = savedSteps - 1;
+    expectDecodeRejected(
+        firstEncoding,
+        fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::LimitExceeded,
+        limited, "moving porous-flow checkpoint bounds deterministic replay");
+
+    std::vector<std::uint8_t> preservedBytes{1, 2, 3};
+    auto invalidCheckpoint = saved;
+    ++invalidCheckpoint.version;
+    error = {};
+    check(!fsi::serializeMovingPorousFlowCaseCheckpoint(
+              invalidCheckpoint, preservedBytes, &error)
+              && error.code
+                  == fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::InvalidData
+              && preservedBytes == std::vector<std::uint8_t>({1, 2, 3}),
+          "moving porous-flow checkpoint failed encoding preserves output");
+    preservedBytes = {4, 5, 6};
+    limited = {};
+    limited.maximumEncodedBytes = firstEncoding.size() - 1;
+    error = {};
+    check(!fsi::serializeMovingPorousFlowCaseCheckpoint(
+              saved, preservedBytes, &error, limited)
+              && error.code
+                  == fsi::MovingPorousFlowCaseCheckpointPersistenceErrorCode::LimitExceeded
+              && preservedBytes == std::vector<std::uint8_t>({4, 5, 6}),
+          "moving porous-flow checkpoint encoding enforces bytes transactionally");
+}
+
 } // namespace
 
 int main() {
     testMovingPorousWorker();
     testCheckpointReplayAndValidation();
+    testPersistentCheckpoint();
     if (failures != 0) {
         std::fprintf(
             stderr,

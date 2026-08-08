@@ -378,6 +378,9 @@ target_link_libraries(simwing_porous_flow_case PUBLIC
 add_library(simwing_moving_porous_flow_case STATIC
     src/fsi/moving_porous_flow_case.cpp
     src/fsi/moving_porous_flow_case.h
+    src/fsi/moving_porous_flow_checkpoint_detail.h
+    src/fsi/moving_porous_flow_checkpoint_persistence.cpp
+    src/fsi/moving_porous_flow_checkpoint_persistence.h
 )
 target_include_directories(simwing_moving_porous_flow_case PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"

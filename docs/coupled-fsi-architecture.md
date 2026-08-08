@@ -986,7 +986,10 @@ dissipation, work, momentum, and energy diagnostics. The Qt-free
 completed trace headlessly. Its immutable in-memory checkpoint binds public
 case/grid/step/kinematic/topology metadata to a private owning payload and
 replays the initial, ordinary, and second-wrap epochs bit-identically; rejected
-restore is transactional. Persistent restart and coupled structure remain open.
+restore is transactional. The bounded/checksummed `SWMF` persistence format
+stores all fluid fields and sharp crossings explicitly and regenerates the
+accepted diagnostic through bounded canonical replay before publication. CLI
+checkpoint flags and coupled structure remain open.
 A pressure-driven uniform-plug companion uses the exact nonlinear implicit
 midpoint to close pressure impulse and the
 driving-work/porous-dissipation/kinetic-energy identity on every step. Its
