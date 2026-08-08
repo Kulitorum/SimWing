@@ -434,7 +434,8 @@ src/fsi/
     scenarios.*             tunnel, glide, inflation, collapse definitions
     fluid/
         grid.*              block hierarchy and field storage
-        geometry.*          discrete surface and region reconstruction
+        scene_surface_geometry.* accepted triangle/cell broad phase
+        geometry.*          exact surface and region reconstruction
         advection.*         bounded donor/limited-MC MAC transport
         projected_advection.* projected nonlinear SSPRK2 transport
         diffusion.*         bounded periodic MAC viscosity verification
@@ -472,6 +473,7 @@ tools/
 Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_scene_structure`, `simwing_scene_fluid_surface`,
 `simwing_scene_fluid_surface_transfer`,
+`simwing_scene_fluid_geometry`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
 `simwing_coupled_state`,
 `simwing_fluid_structure_bridge`, `simwing_piston_case`,
@@ -499,7 +501,13 @@ authored winding, side regions, porous material, and opening order, but does
 not yet classify grid crossings or cut cells; it rejects opening-only vertices
 until their structural motion is defined. Its conservative-transfer binding
 validates the scene and Structure identities again before uniform or
-face-resolved barycentric traction can reach XPBD loads. A canonical Qt-free structural worker now
+face-resolved barycentric traction can reach XPBD loads. The first grid-facing
+stage conservatively bins padded current-triangle AABBs into canonical
+cell-major candidates bound to the complete accepted-state fingerprint. It
+handles internal grid-plane ambiguity by retaining both adjacent cells and
+rejects out-of-domain geometry, while exact intersections, volume fractions,
+face crossings, and region reconstruction remain open. A canonical Qt-free
+structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.
 The same worker can now select a smooth periodic Taylor-Green CFD case. Its

@@ -1,19 +1,9 @@
 #include "scene_fluid_surface_transfer.h"
 
-#include <cmath>
 #include <stdexcept>
 #include <utility>
 
 namespace simwing::fsi {
-namespace {
-
-bool finite(const Vec3& value) {
-    return std::isfinite(value.x)
-        && std::isfinite(value.y)
-        && std::isfinite(value.z);
-}
-
-} // namespace
 
 SceneFluidSurfaceTransfer::Topology SceneFluidSurfaceTransfer::makeTopology(
     const SceneFluidSurfaceDefinition& surface,
@@ -96,12 +86,10 @@ SceneFluidSurfaceTransfer::triangles() const noexcept {
 
 std::vector<CouplingNodeKinematics> SceneFluidSurfaceTransfer::kinematics(
     const SceneFluidSurfaceState& state) const {
-    if (state.version != sceneFluidSurfaceStateVersion
-        || state.definitionFingerprint != surfaceDefinitionFingerprint_
+    validateSceneFluidSurfaceState(state);
+    if (state.definitionFingerprint != surfaceDefinitionFingerprint_
         || state.structureDefinitionFingerprint
             != transfer_.targetDefinitionFingerprint()
-        || !std::isfinite(state.simulationTimeSeconds)
-        || state.simulationTimeSeconds < 0.0
         || state.vertices.size() != transfer_.nodes().size()) {
         throw std::invalid_argument(
             "scene fluid coupling state identity is invalid");
@@ -111,9 +99,7 @@ std::vector<CouplingNodeKinematics> SceneFluidSurfaceTransfer::kinematics(
     result.reserve(state.vertices.size());
     for (std::size_t index = 0; index < state.vertices.size(); ++index) {
         const auto& source = state.vertices[index];
-        if (source.id != transfer_.nodes()[index].stableId
-            || !finite(source.positionMeters)
-            || !finite(source.velocityMetersPerSecond)) {
+        if (source.id != transfer_.nodes()[index].stableId) {
             throw std::invalid_argument(
                 "scene fluid coupling kinematics are non-finite or out of order");
         }

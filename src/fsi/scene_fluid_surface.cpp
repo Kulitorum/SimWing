@@ -172,6 +172,26 @@ std::uint64_t definitionFingerprint(
     return fingerprint.value();
 }
 
+std::uint64_t stateFingerprint(const SceneFluidSurfaceState& state) {
+    Fingerprint fingerprint;
+    fingerprint.integer(state.version);
+    fingerprint.integer(state.definitionFingerprint);
+    fingerprint.integer(state.structureDefinitionFingerprint);
+    fingerprint.integer(state.acceptedStepCount);
+    fingerprint.real(state.simulationTimeSeconds);
+    fingerprint.integer(static_cast<std::uint64_t>(state.vertices.size()));
+    for (const auto& vertex : state.vertices) {
+        fingerprint.integer(vertex.id);
+        fingerprint.real(vertex.positionMeters.x);
+        fingerprint.real(vertex.positionMeters.y);
+        fingerprint.real(vertex.positionMeters.z);
+        fingerprint.real(vertex.velocityMetersPerSecond.x);
+        fingerprint.real(vertex.velocityMetersPerSecond.y);
+        fingerprint.real(vertex.velocityMetersPerSecond.z);
+    }
+    return fingerprint.value();
+}
+
 template<typename Entity>
 bool idsMatch(const std::vector<Entity>& entities,
               const std::vector<StableId>& ids) {
@@ -198,7 +218,7 @@ bool validStableIds(const std::vector<StableId>& ids) {
     return true;
 }
 
-void validateDefinition(const SceneFluidSurfaceDefinition& definition) {
+void validateDefinitionImpl(const SceneFluidSurfaceDefinition& definition) {
     if (definition.version != sceneFluidSurfaceDefinitionVersion
         || definition.fingerprint == 0
         || !idsMatch(definition.regions, definition.mappings.regionIds)
@@ -262,6 +282,59 @@ SceneFluidSurfaceAssembly failedAssembly(
 }
 
 } // namespace
+
+void validateSceneFluidSurfaceDefinition(
+    const SceneFluidSurfaceDefinition& definition) {
+    validateDefinitionImpl(definition);
+}
+
+void validateSceneFluidSurfaceState(const SceneFluidSurfaceState& state) {
+    if (state.version != sceneFluidSurfaceStateVersion
+        || state.fingerprint == 0
+        || state.definitionFingerprint == 0
+        || state.structureDefinitionFingerprint == 0
+        || !std::isfinite(state.simulationTimeSeconds)
+        || state.simulationTimeSeconds < 0.0) {
+        throw std::invalid_argument(
+            "scene fluid-surface state identity is invalid");
+    }
+    StableId previousId = invalidStableId;
+    for (const auto& vertex : state.vertices) {
+        if (vertex.id == invalidStableId || vertex.id <= previousId
+            || !std::isfinite(vertex.positionMeters.x)
+            || !std::isfinite(vertex.positionMeters.y)
+            || !std::isfinite(vertex.positionMeters.z)
+            || !std::isfinite(vertex.velocityMetersPerSecond.x)
+            || !std::isfinite(vertex.velocityMetersPerSecond.y)
+            || !std::isfinite(vertex.velocityMetersPerSecond.z)) {
+            throw std::invalid_argument(
+                "scene fluid-surface state vertices are invalid");
+        }
+        previousId = vertex.id;
+    }
+    if (state.fingerprint != stateFingerprint(state)) {
+        throw std::invalid_argument(
+            "scene fluid-surface state fingerprint does not match its payload");
+    }
+}
+
+void validateSceneFluidSurfaceState(
+    const SceneFluidSurfaceDefinition& definition,
+    const SceneFluidSurfaceState& state) {
+    validateSceneFluidSurfaceDefinition(definition);
+    validateSceneFluidSurfaceState(state);
+    if (state.definitionFingerprint != definition.fingerprint
+        || state.vertices.size() != definition.vertices.size()) {
+        throw std::invalid_argument(
+            "scene fluid-surface state does not match its definition");
+    }
+    for (std::size_t index = 0; index < state.vertices.size(); ++index) {
+        if (state.vertices[index].id != definition.vertices[index].id) {
+            throw std::invalid_argument(
+                "scene fluid-surface state vertex order does not match its definition");
+        }
+    }
+}
 
 std::optional<std::size_t> SceneFluidSurfaceMappings::regionIndex(
     const StableId id) const noexcept {
@@ -493,7 +566,7 @@ SceneFluidSurfaceAssembly assembleSceneFluidSurfaceImpl(
         definition.mappings.openingIds.push_back(source->id);
     }
     definition.fingerprint = definitionFingerprint(definition);
-    validateDefinition(definition);
+    validateSceneFluidSurfaceDefinition(definition);
 
     SceneFluidSurfaceAssembly result;
     result.assembled = true;
@@ -523,7 +596,7 @@ SceneFluidSurfaceState captureSceneFluidSurfaceState(
     const SceneFluidSurfaceDefinition& definition,
     const SceneStructureMappings& structureMappings,
     const Structure& structure) {
-    validateDefinition(definition);
+    validateSceneFluidSurfaceDefinition(definition);
     const StructureDefinition& structureDefinition = structure.definition();
     std::size_t mappedNodeCount = structureMappings.nodeVertexIds.size();
     if (!validStableIds(structureMappings.nodeVertexIds)
@@ -616,6 +689,8 @@ SceneFluidSurfaceState captureSceneFluidSurfaceState(
              node.velocityMetersPerSecond.z},
         });
     }
+    result.fingerprint = stateFingerprint(result);
+    validateSceneFluidSurfaceState(definition, result);
     return result;
 }
 

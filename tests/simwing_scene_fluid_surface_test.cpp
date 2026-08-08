@@ -136,6 +136,7 @@ void testAcceptedStructureCapture() {
     const auto initial = captureSceneFluidSurfaceState(
         fluidAssembly.definition, structureAssembly.mappings, structure);
     check(initial.version == sceneFluidSurfaceStateVersion
+              && initial.fingerprint != 0
               && initial.definitionFingerprint
                   == fluidAssembly.definition.fingerprint
               && initial.structureDefinitionFingerprint
@@ -144,6 +145,7 @@ void testAcceptedStructureCapture() {
               && initial.simulationTimeSeconds == 0.0
               && initial.vertices.size() == 4,
           "scene fluid state: initial accepted epoch binds both definitions");
+    validateSceneFluidSurfaceState(fluidAssembly.definition, initial);
 
     for (std::size_t index = 0;
          index < structureAssembly.definition.nodes.size(); ++index) {
@@ -193,6 +195,12 @@ void testAcceptedStructureCapture() {
           "scene fluid state: accepted epoch follows Structure time");
     check(matchesNodes,
           "scene fluid state: accepted Structure motion is captured exactly in stable order");
+    auto corruptState = captured;
+    corruptState.vertices.front().positionMeters.x += 0.01;
+    expectRejected(
+        [&] { validateSceneFluidSurfaceState(
+            fluidAssembly.definition, corruptState); },
+        "scene fluid state: payload corruption invalidates its epoch fingerprint");
 
     auto corruptDefinition = fluidAssembly.definition;
     ++corruptDefinition.fingerprint;

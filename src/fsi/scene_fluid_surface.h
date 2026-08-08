@@ -13,7 +13,7 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t sceneFluidSurfaceDefinitionVersion = 1;
-inline constexpr std::uint32_t sceneFluidSurfaceStateVersion = 1;
+inline constexpr std::uint32_t sceneFluidSurfaceStateVersion = 2;
 
 struct SceneFluidSurfaceLimits {
     std::size_t maximumRegions = 1'000'000;
@@ -163,6 +163,7 @@ struct SceneFluidSurfaceVertexState {
 
 struct SceneFluidSurfaceState {
     std::uint32_t version = sceneFluidSurfaceStateVersion;
+    std::uint64_t fingerprint = 0;
     std::uint64_t definitionFingerprint = 0;
     std::uint64_t structureDefinitionFingerprint = 0;
     std::uint64_t acceptedStepCount = 0;
@@ -171,6 +172,16 @@ struct SceneFluidSurfaceState {
 
     bool operator==(const SceneFluidSurfaceState&) const = default;
 };
+
+// These throw std::invalid_argument and leave caller-owned values untouched.
+// State validation is available both as a self-contained wire/adapter check
+// and with the exact canonical surface definition it must represent.
+void validateSceneFluidSurfaceDefinition(
+    const SceneFluidSurfaceDefinition& definition);
+void validateSceneFluidSurfaceState(const SceneFluidSurfaceState& state);
+void validateSceneFluidSurfaceState(
+    const SceneFluidSurfaceDefinition& definition,
+    const SceneFluidSurfaceState& state);
 
 // Captures one immutable accepted Structure epoch in the definition's stable
 // vertex order. The scene-to-Structure mapping is checked in full before any
