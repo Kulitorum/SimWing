@@ -470,8 +470,11 @@ recomputes shared-edge intersections canonically, and keeps opening-boundary
 and grid-edge endpoints explicit. Degree-two components are now extracted as
 winding-directed open chains or closed loops only when their authored region
 pair stays consistent; branches and conflicts are rejected. Open chains are
-not falsely treated as closed regions. Cut-cell volume fractions and
-fluid-region reconstruction remain open.
+not falsely treated as closed regions. Simple closed loops now carry signed
+area, centroid, and winding-derived enclosed/exterior region identity;
+self-intersections and degenerate loops reject, while nested loops remain
+separate rather than becoming a false union. Cut-cell volume fractions and
+complete fluid-region reconstruction remain open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,
