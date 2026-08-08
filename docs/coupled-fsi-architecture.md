@@ -725,7 +725,14 @@ immutable nodal impulses and independent surface/nodal impulse, angular
 impulse, and work ledgers. Its acceptance boundary requires the exact exchange
 duration, applies the equivalent average force through Structure's internal
 XPBD substeps, and restores the checkpoint from before load application on any
-failure. The first stable-ID fluid-to-structure bridge is present for the exact
+failure. That layer also now contains the first strong-iteration primitive: a
+definition-bound vector Aitken delta-squared state with explicit initial,
+minimum, and maximum relaxation factors. It uses a deterministic fixed factor
+on the first iteration, retains the prior factor for numerically degenerate
+residual changes, clips finite dynamic updates, and checkpoints the exact prior
+residual/factor/iteration state for rollback. Failed updates and foreign
+checkpoint restores are transactional. No worker repeats the fluid/structure
+solve around this primitive yet. The first stable-ID fluid-to-structure bridge is present for the exact
 uniform subset of those operators. It accepts one canonical face-aligned fluid
 surface, requires its facewise pressure-traction deviation to meet an explicit
 budget, reconstructs one uniform world-space traction, and then requires
@@ -1279,7 +1286,8 @@ coupling. A matching global lift coefficient alone is insufficient.
 
 Work:
 
-- implement rollback-capable Aitken coupling, then IQN-ILS;
+- compose the checkpointable Aitken relaxation primitive into a complete
+  rollback-capable fluid/structure iteration, then add IQN-ILS;
 - add adaptive macro-step control and coupled residual budgets;
 - validate static inflation and steady deformed trim before maneuvers;
 - compare structural strain, pressure, cell shape, line loads, and pilot motion.

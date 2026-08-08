@@ -1,7 +1,10 @@
 #include "coupling.h"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace simwing::fsi {
 namespace {
@@ -34,7 +37,195 @@ double norm(const StructureVector3& value) {
     return std::hypot(value.x, value.y, value.z);
 }
 
+bool valid(const AitkenRelaxationSettings& settings) {
+    return std::isfinite(settings.initialRelaxation)
+        && std::isfinite(settings.minimumRelaxation)
+        && std::isfinite(settings.maximumRelaxation)
+        && settings.minimumRelaxation > 0.0
+        && settings.initialRelaxation >= settings.minimumRelaxation
+        && settings.initialRelaxation <= settings.maximumRelaxation;
+}
+
+bool finite(const std::span<const double> values) {
+    for (const double value : values) {
+        if (!std::isfinite(value)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
+
+AitkenInterfaceRelaxation::AitkenInterfaceRelaxation(
+    const std::uint64_t interfaceDefinitionFingerprint,
+    const std::size_t valueCount,
+    const AitkenRelaxationSettings& settings)
+    : interfaceDefinitionFingerprint_(interfaceDefinitionFingerprint),
+      valueCount_(valueCount),
+      settings_(settings),
+      relaxation_(settings.initialRelaxation) {
+    if (interfaceDefinitionFingerprint_ == 0
+        || valueCount_ == 0 || !valid(settings_)) {
+        throw std::invalid_argument(
+            "Aitken relaxation identity, size, and factor bounds must be valid");
+    }
+}
+
+std::uint64_t AitkenInterfaceRelaxation::
+interfaceDefinitionFingerprint() const noexcept {
+    return interfaceDefinitionFingerprint_;
+}
+
+std::size_t AitkenInterfaceRelaxation::valueCount() const noexcept {
+    return valueCount_;
+}
+
+const AitkenRelaxationSettings&
+AitkenInterfaceRelaxation::settings() const noexcept {
+    return settings_;
+}
+
+std::uint64_t
+AitkenInterfaceRelaxation::completedIterationCount() const noexcept {
+    return completedIterationCount_;
+}
+
+double AitkenInterfaceRelaxation::relaxation() const noexcept {
+    return relaxation_;
+}
+
+AitkenRelaxationCheckpoint
+AitkenInterfaceRelaxation::checkpoint() const {
+    AitkenRelaxationCheckpoint result;
+    result.interfaceDefinitionFingerprint = interfaceDefinitionFingerprint_;
+    result.valueCount = valueCount_;
+    result.settings = settings_;
+    result.completedIterationCount = completedIterationCount_;
+    result.relaxation = relaxation_;
+    result.previousResidual = previousResidual_;
+    return result;
+}
+
+void AitkenInterfaceRelaxation::restore(
+    const AitkenRelaxationCheckpoint& checkpoint) {
+    const bool initial = checkpoint.completedIterationCount == 0;
+    if (checkpoint.version != aitkenRelaxationCheckpointVersion
+        || checkpoint.interfaceDefinitionFingerprint
+            != interfaceDefinitionFingerprint_
+        || checkpoint.valueCount != valueCount_
+        || checkpoint.settings != settings_
+        || !std::isfinite(checkpoint.relaxation)
+        || checkpoint.relaxation < settings_.minimumRelaxation
+        || checkpoint.relaxation > settings_.maximumRelaxation
+        || (initial
+            && (checkpoint.relaxation != settings_.initialRelaxation
+                || !checkpoint.previousResidual.empty()))
+        || (!initial
+            && (checkpoint.previousResidual.size() != valueCount_
+                || !finite(checkpoint.previousResidual)))) {
+        throw std::invalid_argument(
+            "Aitken relaxation checkpoint is incompatible or invalid");
+    }
+
+    std::vector<double> restoredResidual = checkpoint.previousResidual;
+    completedIterationCount_ = checkpoint.completedIterationCount;
+    relaxation_ = checkpoint.relaxation;
+    previousResidual_.swap(restoredResidual);
+}
+
+void AitkenInterfaceRelaxation::reset() noexcept {
+    completedIterationCount_ = 0;
+    relaxation_ = settings_.initialRelaxation;
+    previousResidual_.clear();
+}
+
+AitkenRelaxationDiagnostics AitkenInterfaceRelaxation::relax(
+    const std::span<const double> current,
+    const std::span<const double> candidate,
+    std::vector<double>& relaxed) {
+    if (current.size() != valueCount_
+        || candidate.size() != valueCount_
+        || !finite(current) || !finite(candidate)) {
+        throw std::invalid_argument(
+            "Aitken relaxation vectors must match and contain finite values");
+    }
+    if (completedIterationCount_
+        == std::numeric_limits<std::uint64_t>::max()) {
+        throw std::overflow_error(
+            "Aitken relaxation iteration counter overflowed");
+    }
+
+    std::vector<double> residual(valueCount_);
+    double residualSquared = 0.0;
+    for (std::size_t index = 0; index < valueCount_; ++index) {
+        residual[index] = candidate[index] - current[index];
+        residualSquared += residual[index] * residual[index];
+    }
+
+    double nextRelaxation = relaxation_;
+    double residualChangeSquared = 0.0;
+    double denominator = 0.0;
+    bool usedDynamic = false;
+    bool clipped = false;
+    if (completedIterationCount_ != 0) {
+        double previousResidualSquared = 0.0;
+        double numerator = 0.0;
+        for (std::size_t index = 0; index < valueCount_; ++index) {
+            const double change = residual[index] - previousResidual_[index];
+            residualChangeSquared += change * change;
+            numerator += previousResidual_[index] * change;
+            previousResidualSquared +=
+                previousResidual_[index] * previousResidual_[index];
+        }
+        denominator = residualChangeSquared;
+        const double scaleSquared = std::max(
+            residualSquared, previousResidualSquared);
+        constexpr double reliableDifferenceFactor =
+            64.0 * std::numeric_limits<double>::epsilon();
+        if (denominator > reliableDifferenceFactor * scaleSquared) {
+            const double unbounded = -relaxation_ * numerator / denominator;
+            if (!std::isfinite(unbounded)) {
+                throw std::overflow_error(
+                    "Aitken relaxation factor became non-finite");
+            }
+            nextRelaxation = std::clamp(
+                unbounded,
+                settings_.minimumRelaxation,
+                settings_.maximumRelaxation);
+            usedDynamic = true;
+            clipped = nextRelaxation != unbounded;
+        }
+    }
+
+    std::vector<double> next(valueCount_);
+    for (std::size_t index = 0; index < valueCount_; ++index) {
+        next[index] = current[index] + nextRelaxation * residual[index];
+    }
+    const double residualL2 = std::sqrt(residualSquared);
+    const double residualChangeL2 = std::sqrt(residualChangeSquared);
+    if (!finite(next) || !std::isfinite(residualL2)
+        || !std::isfinite(residualChangeL2)
+        || !std::isfinite(denominator)) {
+        throw std::overflow_error(
+            "Aitken relaxation produced non-finite state");
+    }
+
+    relaxed.swap(next);
+    previousResidual_ = std::move(residual);
+    relaxation_ = nextRelaxation;
+    ++completedIterationCount_;
+    return {
+        completedIterationCount_,
+        relaxation_,
+        residualL2,
+        residualChangeL2,
+        denominator,
+        usedDynamic,
+        clipped,
+        true,
+    };
+}
 
 std::uint32_t TimeIntegratedTransferResult::version() const noexcept {
     return version_;

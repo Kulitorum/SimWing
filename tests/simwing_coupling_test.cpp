@@ -13,6 +13,8 @@ using simwing::fsi::ConservativeMacroStepCoupling;
 using simwing::fsi::ConservativeSurfaceTransfer;
 using simwing::fsi::ConservativeTransferResult;
 using simwing::fsi::ConservativeTransferSettings;
+using simwing::fsi::AitkenInterfaceRelaxation;
+using simwing::fsi::AitkenRelaxationSettings;
 using simwing::fsi::CouplingNodeKinematics;
 using simwing::fsi::CouplingSurfaceNodeDefinition;
 using simwing::fsi::CouplingSurfaceTriangleDefinition;
@@ -373,12 +375,178 @@ void testValidationAndTransactionalFailure() {
           "validation: foreign Structure rejection is transactional");
 }
 
+void testAitkenLinearFixedPointAndBounds() {
+    constexpr std::uint64_t definitionFingerprint = 0xa17e'0001ULL;
+    AitkenRelaxationSettings settings;
+    settings.initialRelaxation = 0.5;
+    settings.minimumRelaxation = 0.1;
+    settings.maximumRelaxation = 2.0;
+    AitkenInterfaceRelaxation relaxation(
+        definitionFingerprint, 1, settings);
+    std::vector<double> iterate{0.0};
+    const std::array<double, 1> firstCandidate{1.0};
+    auto diagnostics = relaxation.relax(iterate, firstCandidate, iterate);
+    checkNear(iterate.front(), 0.5, 0.0,
+              "Aitken: first update uses the configured fixed factor");
+    check(diagnostics.completedIterationCount == 1
+              && diagnostics.relaxation == 0.5
+              && diagnostics.residualL2 == 1.0
+              && !diagnostics.usedDynamicRelaxation
+              && !diagnostics.relaxationWasClipped
+              && diagnostics.finite,
+          "Aitken: first update reports its complete accepted state");
+
+    const std::vector<double> secondCandidate{1.0 + 0.5 * iterate.front()};
+    diagnostics = relaxation.relax(iterate, secondCandidate, iterate);
+    checkNear(iterate.front(), 2.0, 0.0,
+              "Aitken: scalar affine fixed point converges on the second update");
+    check(diagnostics.completedIterationCount == 2
+              && diagnostics.relaxation == 2.0
+              && diagnostics.residualL2 == 0.75
+              && diagnostics.residualChangeL2 == 0.25
+              && diagnostics.denominator == 0.0625
+              && diagnostics.usedDynamicRelaxation
+              && !diagnostics.relaxationWasClipped,
+          "Aitken: vector delta-squared diagnostics match the analytic update");
+
+    AitkenRelaxationSettings boundedSettings;
+    boundedSettings.initialRelaxation = 0.5;
+    boundedSettings.minimumRelaxation = 0.1;
+    boundedSettings.maximumRelaxation = 1.0;
+    AitkenInterfaceRelaxation bounded(
+        definitionFingerprint, 1, boundedSettings);
+    std::vector<double> boundedIterate;
+    const std::array<double, 1> zero{0.0};
+    const std::array<double, 1> one{1.0};
+    const std::array<double, 1> almostOneCandidate{1.49};
+    static_cast<void>(bounded.relax(zero, one, boundedIterate));
+    diagnostics = bounded.relax(
+        boundedIterate, almostOneCandidate, boundedIterate);
+    check(diagnostics.relaxation == 1.0
+              && diagnostics.usedDynamicRelaxation
+              && diagnostics.relaxationWasClipped
+              && boundedIterate == std::vector<double>{1.49},
+          "Aitken: a near-stationary residual clips the dynamic factor");
+
+    AitkenInterfaceRelaxation degenerate(
+        definitionFingerprint, 1, boundedSettings);
+    std::vector<double> degenerateIterate;
+    static_cast<void>(degenerate.relax(zero, one, degenerateIterate));
+    const std::array<double, 1> repeatedResidualCandidate{1.5};
+    diagnostics = degenerate.relax(
+        degenerateIterate,
+        repeatedResidualCandidate,
+        degenerateIterate);
+    check(diagnostics.relaxation == boundedSettings.initialRelaxation
+              && diagnostics.residualChangeL2 == 0.0
+              && diagnostics.denominator == 0.0
+              && !diagnostics.usedDynamicRelaxation
+              && !diagnostics.relaxationWasClipped
+              && degenerateIterate == std::vector<double>{1.0},
+          "Aitken: an unchanged residual deterministically retains its factor");
+}
+
+void testAitkenVectorCheckpointAndTransactionalFailure() {
+    constexpr std::uint64_t definitionFingerprint = 0xa17e'0003ULL;
+    AitkenRelaxationSettings settings;
+    settings.initialRelaxation = 0.4;
+    settings.minimumRelaxation = 0.05;
+    settings.maximumRelaxation = 1.5;
+    AitkenInterfaceRelaxation owner(
+        definitionFingerprint, 3, settings);
+    std::vector<double> first;
+    const std::array<double, 3> initialCurrent{0.0, 1.0, -2.0};
+    const std::array<double, 3> initialCandidate{1.0, 0.0, 2.0};
+    const auto firstDiagnostics = owner.relax(
+        initialCurrent, initialCandidate, first);
+    const auto saved = owner.checkpoint();
+    const std::array<double, 3> secondCandidate{1.2, 0.2, 1.5};
+    std::vector<double> expected;
+    const auto expectedDiagnostics = owner.relax(
+        first, secondCandidate, expected);
+
+    owner.restore(saved);
+    std::vector<double> replay;
+    const auto replayDiagnostics = owner.relax(
+        first, secondCandidate, replay);
+    check(saved.version
+              == simwing::fsi::aitkenRelaxationCheckpointVersion
+              && saved.interfaceDefinitionFingerprint
+                  == definitionFingerprint
+              && saved.valueCount == 3
+              && saved.settings == settings
+              && saved.completedIterationCount == 1
+              && saved.relaxation == firstDiagnostics.relaxation
+              && saved.previousResidual
+                  == std::vector<double>({1.0, -1.0, 4.0})
+              && replay == expected
+              && replayDiagnostics == expectedDiagnostics,
+          "Aitken: checkpoint restore reproduces the next vector update exactly");
+
+    const auto beforeFailure = owner.checkpoint();
+    std::vector<double> preserved{7.0, 8.0};
+    const std::array<double, 3> nonfiniteCandidate{
+        1.2, std::numeric_limits<double>::quiet_NaN(), 1.5};
+    expectRejected(
+        [&] {
+            static_cast<void>(owner.relax(
+                first, nonfiniteCandidate, preserved));
+        },
+        "Aitken: non-finite candidates are rejected");
+    check(owner.checkpoint() == beforeFailure
+              && preserved == std::vector<double>({7.0, 8.0}),
+          "Aitken: rejected updates preserve state and output");
+
+    auto foreign = saved;
+    ++foreign.interfaceDefinitionFingerprint;
+    const auto beforeRestore = owner.checkpoint();
+    expectRejected(
+        [&] { owner.restore(foreign); },
+        "Aitken: foreign interface checkpoints are rejected");
+    foreign = saved;
+    ++foreign.valueCount;
+    expectRejected(
+        [&] { owner.restore(foreign); },
+        "Aitken: foreign checkpoint dimensions are rejected");
+    foreign = saved;
+    foreign.previousResidual.pop_back();
+    expectRejected(
+        [&] { owner.restore(foreign); },
+        "Aitken: truncated checkpoint residuals are rejected");
+    check(owner.checkpoint() == beforeRestore,
+          "Aitken: rejected checkpoint restores are transactional");
+
+    owner.reset();
+    const auto reset = owner.checkpoint();
+    check(reset.completedIterationCount == 0
+              && reset.relaxation == settings.initialRelaxation
+              && reset.previousResidual.empty(),
+          "Aitken: reset returns to the exact initial iteration state");
+
+    expectRejected(
+        [=] { AitkenInterfaceRelaxation invalid(definitionFingerprint, 0); },
+        "Aitken: empty interface vectors are rejected");
+    auto invalidSettings = settings;
+    invalidSettings.minimumRelaxation = 0.0;
+    expectRejected(
+        [&] {
+            AitkenInterfaceRelaxation invalid(
+                definitionFingerprint, 3, invalidSettings);
+        },
+        "Aitken: non-positive relaxation bounds are rejected");
+    expectRejected(
+        [] { AitkenInterfaceRelaxation invalid(0, 3); },
+        "Aitken: zero interface identities are rejected");
+}
+
 } // namespace
 
 int main() {
     testMovingPistonImpulseVolumeAndWork();
     testAcceptedImpulseReachesStructure();
     testValidationAndTransactionalFailure();
+    testAitkenLinearFixedPointAndBounds();
+    testAitkenVectorCheckpointAndTransactionalFailure();
     if (failures != 0) {
         std::fprintf(stderr, "%d SimWing coupling check(s) failed\n", failures);
         return 1;

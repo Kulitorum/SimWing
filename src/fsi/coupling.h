@@ -10,6 +10,80 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t interfaceImpulseExchangeVersion = 1;
+inline constexpr std::uint32_t aitkenRelaxationCheckpointVersion = 1;
+
+struct AitkenRelaxationSettings {
+    double initialRelaxation = 0.5;
+    double minimumRelaxation = 0.05;
+    double maximumRelaxation = 1.0;
+
+    bool operator==(const AitkenRelaxationSettings&) const = default;
+};
+
+struct AitkenRelaxationDiagnostics {
+    std::uint64_t completedIterationCount = 0;
+    double relaxation = 0.0;
+    double residualL2 = 0.0;
+    double residualChangeL2 = 0.0;
+    double denominator = 0.0;
+    bool usedDynamicRelaxation = false;
+    bool relaxationWasClipped = false;
+    bool finite = true;
+
+    bool operator==(const AitkenRelaxationDiagnostics&) const = default;
+};
+
+struct AitkenRelaxationCheckpoint {
+    std::uint32_t version = aitkenRelaxationCheckpointVersion;
+    std::uint64_t interfaceDefinitionFingerprint = 0;
+    std::size_t valueCount = 0;
+    AitkenRelaxationSettings settings;
+    std::uint64_t completedIterationCount = 0;
+    double relaxation = 0.0;
+    std::vector<double> previousResidual;
+
+    bool operator==(const AitkenRelaxationCheckpoint&) const = default;
+};
+
+// Stateful dynamic relaxation for one consistently scaled interface vector.
+// The nonzero definition fingerprint binds the caller's component ordering and
+// scaling contract, not merely its value count.
+// The caller supplies the current relaxed iterate and the newly solved
+// unrelaxed candidate. The first update uses the configured fixed factor;
+// later updates use the vector Aitken delta-squared factor, clipped to explicit
+// bounds. Checkpoints make macro-step iteration rollback exact. Invalid inputs
+// and incompatible restores mutate neither the state nor the output vector.
+class AitkenInterfaceRelaxation final {
+public:
+    explicit AitkenInterfaceRelaxation(
+        std::uint64_t interfaceDefinitionFingerprint,
+        std::size_t valueCount,
+        const AitkenRelaxationSettings& settings = {});
+
+    [[nodiscard]] std::uint64_t
+    interfaceDefinitionFingerprint() const noexcept;
+    [[nodiscard]] std::size_t valueCount() const noexcept;
+    [[nodiscard]] const AitkenRelaxationSettings& settings() const noexcept;
+    [[nodiscard]] std::uint64_t completedIterationCount() const noexcept;
+    [[nodiscard]] double relaxation() const noexcept;
+    [[nodiscard]] AitkenRelaxationCheckpoint checkpoint() const;
+
+    void restore(const AitkenRelaxationCheckpoint& checkpoint);
+    void reset() noexcept;
+
+    [[nodiscard]] AitkenRelaxationDiagnostics relax(
+        std::span<const double> current,
+        std::span<const double> candidate,
+        std::vector<double>& relaxed);
+
+private:
+    std::uint64_t interfaceDefinitionFingerprint_ = 0;
+    std::size_t valueCount_ = 0;
+    AitkenRelaxationSettings settings_;
+    std::uint64_t completedIterationCount_ = 0;
+    double relaxation_ = 0.0;
+    std::vector<double> previousResidual_;
+};
 
 struct CouplingNodeImpulse {
     std::uint64_t stableId = 0;
