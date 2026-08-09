@@ -24,6 +24,7 @@ inline constexpr char scenePressureCellRefinementChecksum[] =
     const Scene& scene);
 
 [[nodiscard]] fluid::PeriodicCartesianGrid makeScenePressureCellGrid(
-    fluid::GridCellCounts cellCounts = {4, 4, 4});
+    fluid::GridCellCounts cellCounts = {4, 4, 4},
+    fluid::Vector3 lowerMeters = {});
 
 } // namespace simwing::fsi

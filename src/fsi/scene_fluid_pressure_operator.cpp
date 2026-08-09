@@ -315,8 +315,17 @@ SceneFluidPressureOperator buildOperator(
             + faceLinks.resolvedPartitionFaceCount
             + faceLinks.resolvedOpeningFaceCount
             != faceLinks.faces.size()) {
-        throw std::invalid_argument(
-            "scene fluid pressure operator requires complete face ownership");
+        throw SceneFluidPressureIncompleteFaceOwnershipError({
+            faceLinks.faces.size(),
+            faceLinks.resolvedFullFaceCount,
+            faceLinks.resolvedPartitionFaceCount,
+            faceLinks.resolvedOpeningFaceCount,
+            faceLinks.unresolvedActiveFaceCount,
+            faceLinks.unresolvedCappedFaceCount,
+            faceLinks.unresolvedAmbiguousFaceCount,
+            faceLinks.unresolvedOpeningFaceCount,
+            faceLinks.unresolvedEmbeddedOpeningPatchCount,
+        });
     }
     if (pressureVolumes.fingerprint
             != faceLinks.pressureControlVolumeFingerprint

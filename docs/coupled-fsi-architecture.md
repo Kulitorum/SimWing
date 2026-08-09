@@ -438,6 +438,7 @@ src/fsi/
     scene_fluid_pressure_coupling.* strong pressure/shear feedback
     scene_pressure_cell_geometry.* shared visible/refinement tetrahedra
     scene_pressure_cell_case.* visible open-cell pressure-feedback canonical
+    scene_pressure_cell_operator_phase_audit.h fixed-grid placement spectrum
     scene_pressure_cell_operator_refinement_audit.* skew-intake grid spectrum
     scene_pressure_cell_checkpoint_persistence.* bounded canonical restart
     transfer.*              conservative traction/motion exchange
@@ -1310,6 +1311,31 @@ physically authoritative. They do rule out using the graph result as the
 reference merely because it is the current production path. Live arithmetic
 therefore remains unchanged while a stronger manufactured continuum oracle is
 developed.
+
+The companion fixed-resolution phase audit holds the `4^3` spacing and skew
+tetrahedron fixed, then translates the Cartesian lower corner by every
+combination of zero and negative half a cell. Its signed phase range is
+`[-0.5, 0.5)` so the complete diagnostic geometry stays inside the `4 m`
+domain even on the coarsest supported grid. Each accepted phase owns a full
+one-sample refinement/response product; an incomplete graph instead retains a
+typed `SceneFluidPressureIncompleteFaceOwnership` record, never an exception
+message classification.
+
+| Fixed-`4^3` phase result | Count / range | Mean | Population coefficient of variation |
+|---|---:|---:|---:|
+| Complete graph + shadow products | `6 / 8` | - | - |
+| Incomplete face ownership | `2 / 8` | one and two unresolved embedded intake patches | - |
+| Normalized graph conductance | `2.55750` - `13.9854` | `6.25249` | `0.77175` |
+| Normalized shadow conductance | `0.136954` - `0.408781` | `0.269088` | `0.34030` |
+
+Both rejected phases have all 192 Cartesian faces assigned (`188 + 4` and
+`180 + 12` full/partition faces), but one or two cell-owned embedded intake
+patches remain unresolved, so pressure-operator assembly correctly refuses to
+treat them as sealed walls. The graph coefficient is more than twice as
+variable as the shadow coefficient in this deliberately small ensemble. This
+strengthens the grid-placement diagnosis and quantifies topology yield; it is
+not a statistical convergence study, does not repair unresolved ownership,
+and does not promote the shadow operator into live coupling.
 
 The experiment is exposed as `simwing-fsi --case pressure-cell
 --mimetic-pressure-audit` and reports control/trace counts plus iteration and

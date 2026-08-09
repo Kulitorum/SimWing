@@ -5,11 +5,45 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t sceneFluidPressureOperatorVersion = 1;
+
+struct SceneFluidPressureIncompleteFaceOwnership {
+    std::size_t faceCount = 0;
+    std::size_t resolvedFullFaceCount = 0;
+    std::size_t resolvedPartitionFaceCount = 0;
+    std::size_t resolvedOpeningFaceCount = 0;
+    std::size_t unresolvedActiveFaceCount = 0;
+    std::size_t unresolvedCappedFaceCount = 0;
+    std::size_t unresolvedAmbiguousFaceCount = 0;
+    std::size_t unresolvedOpeningFaceCount = 0;
+    std::size_t unresolvedEmbeddedOpeningPatchCount = 0;
+
+    bool operator==(
+        const SceneFluidPressureIncompleteFaceOwnership&) const = default;
+};
+
+class SceneFluidPressureIncompleteFaceOwnershipError final
+    : public std::invalid_argument {
+public:
+    explicit SceneFluidPressureIncompleteFaceOwnershipError(
+        SceneFluidPressureIncompleteFaceOwnership diagnostics)
+        : std::invalid_argument(
+              "scene fluid pressure operator requires complete face ownership"),
+          diagnostics_(diagnostics) {}
+
+    [[nodiscard]] const SceneFluidPressureIncompleteFaceOwnership&
+    diagnostics() const noexcept {
+        return diagnostics_;
+    }
+
+private:
+    SceneFluidPressureIncompleteFaceOwnership diagnostics_;
+};
 
 struct SceneFluidPressureOperatorLimits {
     std::size_t maximumRows = 50'000'000;

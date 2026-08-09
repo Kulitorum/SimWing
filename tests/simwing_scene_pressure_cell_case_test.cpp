@@ -1,5 +1,6 @@
 #include "scene_pressure_cell_case.h"
 #include "scene_pressure_cell_checkpoint_persistence.h"
+#include "scene_pressure_cell_operator_phase_audit.h"
 #include "scene_pressure_cell_operator_refinement_audit.h"
 #include "scene_fluid_pressure_operator_response_audit.h"
 #include "viewer_protocol.h"
@@ -952,6 +953,188 @@ void testRestOperatorRefinementAudit() {
           "rest pressure-cell refinement audit enforces its grid-cell limit before assembly");
 }
 
+void testRestOperatorPhaseAudit() {
+    const std::vector<fsi::fluid::Vector3> phases{
+        {0.0, 0.0, 0.0},
+        {-0.5, 0.0, 0.0},
+        {0.0, -0.5, 0.0},
+        {0.0, 0.0, -0.5},
+        {-0.5, -0.5, 0.0},
+        {-0.5, 0.0, -0.5},
+        {0.0, -0.5, -0.5},
+        {-0.5, -0.5, -0.5},
+    };
+    fsi::ScenePressureCellOperatorPhaseAuditSettings phaseSettings;
+    phaseSettings.response.graphSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-10;
+    phaseSettings.response.graphSolve.relativeResidualTolerance = 1.0e-11;
+    phaseSettings.response.graphSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    phaseSettings.response.shadowSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-10;
+    phaseSettings.response.shadowSolve.relativeResidualTolerance = 1.0e-11;
+    phaseSettings.response.shadowSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    const auto phaseAudit =
+        fsi::auditScenePressureCellOperatorGridPhases(
+            phases, phaseSettings);
+    const auto repeated =
+        fsi::auditScenePressureCellOperatorGridPhases(
+            phases, phaseSettings);
+    fsi::validateScenePressureCellOperatorPhaseAuditIntegrity(phaseAudit);
+    check(phaseAudit == repeated
+              && phaseAudit.samples.size() == phases.size()
+              && phaseAudit.structureDefinitionFingerprint != 0
+              && phaseAudit.ownedStorageBytes > 0,
+          "fixed-grid phase audit is deterministic and self-contained");
+    check(phaseAudit.statistics.acceptedSampleCount == 6
+              && phaseAudit.statistics
+                  .rejectedIncompleteFaceOwnershipSampleCount == 2
+              && std::abs(
+                  phaseAudit.statistics.minimumNormalizedGraphConductance
+                  - 2.5574976589654592) < 1.0e-10
+              && std::abs(
+                  phaseAudit.statistics.maximumNormalizedGraphConductance
+                  - 13.985353433666207) < 1.0e-10
+              && std::abs(
+                  phaseAudit.statistics.meanNormalizedGraphConductance
+                  - 6.2524874416504694) < 1.0e-10
+              && std::abs(
+                  phaseAudit.statistics.graphCoefficientOfVariation
+                  - 0.77175443562108292) < 1.0e-10
+              && std::abs(
+                  phaseAudit.statistics.minimumNormalizedShadowConductance
+                  - 0.13695429534604528) < 1.0e-10
+              && std::abs(
+                  phaseAudit.statistics.maximumNormalizedShadowConductance
+                  - 0.40878148469499564) < 1.0e-10
+              && std::abs(
+                  phaseAudit.statistics.meanNormalizedShadowConductance
+                  - 0.2690883993497567) < 1.0e-10
+              && std::abs(
+                  phaseAudit.statistics.shadowCoefficientOfVariation
+                  - 0.34030273798624311) < 1.0e-10,
+          "fixed-grid phase audit locks topology yield and graph/shadow placement spectra");
+    constexpr std::size_t rejectedIndices[] = {2, 6};
+    constexpr std::size_t expectedResolvedFull[] = {188, 180};
+    constexpr std::size_t expectedResolvedPartition[] = {4, 12};
+    constexpr std::size_t expectedUnresolvedOpeningPatch[] = {1, 2};
+    for (std::size_t index = 0; index < 2; ++index) {
+        const std::size_t rejectedIndex = rejectedIndices[index];
+        const auto& sample = phaseAudit.samples[rejectedIndex];
+        check(sample.status
+                      == fsi::ScenePressureCellOperatorPhaseSampleStatus::
+                          RejectedIncompleteFaceOwnership
+                  && sample.faceOwnershipRejection.has_value()
+                  && !sample.acceptedAudit.has_value(),
+              "phase audit preserves typed incomplete-face topology rejection");
+        if (sample.faceOwnershipRejection.has_value()) {
+            const auto& rejection = *sample.faceOwnershipRejection;
+            check(rejection.faceCount == 192
+                      && rejection.resolvedFullFaceCount
+                          == expectedResolvedFull[index]
+                      && rejection.resolvedPartitionFaceCount
+                          == expectedResolvedPartition[index]
+                      && rejection.resolvedOpeningFaceCount == 0
+                      && rejection.unresolvedActiveFaceCount == 0
+                      && rejection.unresolvedCappedFaceCount == 0
+                      && rejection.unresolvedAmbiguousFaceCount == 0
+                      && rejection.unresolvedOpeningFaceCount == 0
+                      && rejection.unresolvedEmbeddedOpeningPatchCount
+                          == expectedUnresolvedOpeningPatch[index],
+                  "phase audit retains exact unresolved embedded-opening diagnostics");
+        }
+    }
+
+    auto corrupt = phaseAudit;
+    corrupt.statistics.graphCoefficientOfVariation += 0.01;
+    bool rejected = false;
+    try {
+        fsi::validateScenePressureCellOperatorPhaseAuditIntegrity(corrupt);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected,
+          "phase audit rejects aggregate-statistic corruption");
+
+    corrupt = phaseAudit;
+    corrupt.samples[rejectedIndices[0]].faceOwnershipRejection
+        ->unresolvedEmbeddedOpeningPatchCount = 0;
+    rejected = false;
+    try {
+        fsi::validateScenePressureCellOperatorPhaseAuditIntegrity(corrupt);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected,
+          "phase audit rejects a falsely complete ownership rejection");
+
+    const std::vector<fsi::fluid::Vector3> invalidPhase{{1.0, 0.0, 0.0}};
+    rejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditScenePressureCellOperatorGridPhases(
+                invalidPhase, phaseSettings));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected,
+          "phase audit rejects a non-canonical unit-cell phase");
+
+    const std::vector<fsi::fluid::Vector3> duplicatePhases{
+        {0.25, 0.25, 0.25}, {0.25, 0.25, 0.25},
+    };
+    rejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditScenePressureCellOperatorGridPhases(
+                duplicatePhases, phaseSettings));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected,
+          "phase audit rejects duplicate placement samples");
+
+    fsi::ScenePressureCellOperatorPhaseAuditLimits limited;
+    limited.maximumGridCellsPerSample = 63;
+    rejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditScenePressureCellOperatorGridPhases(
+                std::span(phases).first(1), phaseSettings, limited));
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected,
+          "phase audit enforces its grid limit before topology assembly");
+
+    limited = {};
+    limited.maximumOwnedBytes = 0;
+    rejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditScenePressureCellOperatorGridPhases(
+                std::span(phases).first(1), phaseSettings, limited));
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected,
+          "phase audit enforces its aggregate byte limit before publication");
+
+    limited = {};
+    limited.maximumSamples = 0;
+    rejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditScenePressureCellOperatorGridPhases(
+                std::span(phases).first(1), phaseSettings, limited));
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected,
+          "phase audit enforces its sample limit before assembly");
+}
+
 void testPersistentMimeticPressureAuditRestart() {
     fsi::ScenePressureCellCase initial(true);
     const auto initialCheckpoint = initial.checkpoint();
@@ -1073,6 +1256,7 @@ int main() {
         testOptInMimeticPressureAuditIsShadowOnly();
         testManufacturedPressureOperatorResponses();
         testRestOperatorRefinementAudit();
+        testRestOperatorPhaseAudit();
         testPersistentMimeticPressureAuditRestart();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

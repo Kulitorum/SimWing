@@ -838,6 +838,17 @@ area, the shadow sequence rises smoothly from `0.102` through `0.358` to
 This demonstrates strong grid sensitivity in the embedded two-point graph
 coefficient. It is not a convergence proof for the shadow method, so live
 loads remain on the established graph path.
+A fixed-`4^3` grid-placement audit reaches the same conclusion independently.
+It moves the grid through all eight combinations of zero and negative
+half-cell phase while keeping the skew tetrahedron fixed. Six phases assemble
+complete operators; two are rejected with typed diagnostics because one and
+two embedded intake patches, respectively, have no complete pressure-face
+ownership. Over the six accepted placements, normalized graph conductance
+ranges from `2.5575` to `13.9854` with population coefficient of variation
+`0.77175`; the shadow response ranges from `0.13695` to `0.40878` with
+coefficient `0.34030`. The shadow result is less placement-sensitive in this
+small coarse ensemble, but it remains an offline comparator rather than the
+live pressure owner or a demonstrated continuum oracle.
 Its checkpoint also stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and

@@ -102,8 +102,15 @@ SceneStructureAssembly makeScenePressureCellAssembly(const Scene& scene) {
 }
 
 fluid::PeriodicCartesianGrid makeScenePressureCellGrid(
-    const fluid::GridCellCounts cellCounts) {
-    return {cellCounts, {}, {4.0, 4.0, 4.0}};
+    const fluid::GridCellCounts cellCounts,
+    const fluid::Vector3 lowerMeters) {
+    return {
+        cellCounts,
+        lowerMeters,
+        {lowerMeters.x + 4.0,
+         lowerMeters.y + 4.0,
+         lowerMeters.z + 4.0},
+    };
 }
 
 } // namespace simwing::fsi

@@ -10,10 +10,13 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t
-    scenePressureCellOperatorRefinementAuditVersion = 1;
+    scenePressureCellOperatorRefinementAuditVersion = 2;
 
 struct ScenePressureCellOperatorRefinementAuditSettings {
     SceneFluidPressureOperatorResponseAuditSettings response;
+    // Signed fraction in [-0.5, 0.5) by which the periodic grid lower corner
+    // is moved along each axis. Zero preserves the visible worker's grid.
+    fluid::Vector3 gridPhaseFraction;
 
     bool operator==(
         const ScenePressureCellOperatorRefinementAuditSettings&) const =
@@ -31,6 +34,7 @@ struct ScenePressureCellOperatorRefinementSample {
     std::size_t sampleIndex = 0;
     fluid::GridCellCounts cellCounts;
     std::size_t gridCellCount = 0;
+    fluid::Vector3 gridLowerMeters;
     fluid::Vector3 cellSpacingMeters;
     double intakeAreaSquareMeters = 0.0;
     std::size_t controlVolumeCount = 0;
