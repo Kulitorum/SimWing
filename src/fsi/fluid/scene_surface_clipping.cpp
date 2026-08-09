@@ -198,11 +198,6 @@ void clipAgainstPlane(
     polygon = std::move(clipped);
 }
 
-struct ClippedPatch {
-    SceneFluidCellPatch patch;
-    std::vector<SceneFluidClippedVertex> vertices;
-};
-
 std::uint8_t coincidentBoundaryPlanes(
     const std::vector<SceneFluidClippedVertex>& vertices,
     const Vec3& lower,
@@ -236,16 +231,16 @@ std::uint8_t coincidentBoundaryPlanes(
     return result;
 }
 
-void measurePatch(ClippedPatch& result) {
+void measurePatch(SceneFluidTriangleBoxClip& result) {
     const auto& vertices = result.vertices;
     if (vertices.empty()) {
         throw std::runtime_error(
             "scene fluid exact intersection clipped to an empty patch");
     }
     if (vertices.size() == 1) {
-        result.patch.dimension = SceneFluidPatchDimension::Point;
-        result.patch.centroidMeters = vertices.front().positionMeters;
-        result.patch.centroidBarycentricCoordinates =
+        result.dimension = SceneFluidPatchDimension::Point;
+        result.centroidMeters = vertices.front().positionMeters;
+        result.centroidBarycentricCoordinates =
             vertices.front().barycentricCoordinates;
         return;
     }
@@ -283,33 +278,38 @@ void measurePatch(ClippedPatch& result) {
         area += triangleArea;
     }
     if (area > 0.0) {
-        result.patch.dimension = SceneFluidPatchDimension::Area;
-        result.patch.areaSquareMeters = area;
-        result.patch.centroidMeters = scale(weightedCentroid, 1.0 / area);
+        result.dimension = SceneFluidPatchDimension::Area;
+        result.areaSquareMeters = area;
+        result.centroidMeters = scale(weightedCentroid, 1.0 / area);
         for (std::size_t corner = 0; corner < 3; ++corner) {
-            result.patch.centroidBarycentricCoordinates[corner] =
+            result.centroidBarycentricCoordinates[corner] =
                 weightedBarycentric[corner] / area;
         }
         return;
     }
 
-    result.patch.dimension = SceneFluidPatchDimension::Segment;
+    result.dimension = SceneFluidPatchDimension::Segment;
     for (const auto& vertex : vertices) {
-        result.patch.centroidMeters = add(
-            result.patch.centroidMeters, vertex.positionMeters);
+        result.centroidMeters = add(
+            result.centroidMeters, vertex.positionMeters);
         for (std::size_t corner = 0; corner < 3; ++corner) {
-            result.patch.centroidBarycentricCoordinates[corner] +=
+            result.centroidBarycentricCoordinates[corner] +=
                 vertex.barycentricCoordinates[corner];
         }
     }
     const double inverseCount = 1.0 / static_cast<double>(vertices.size());
-    result.patch.centroidMeters = scale(
-        result.patch.centroidMeters, inverseCount);
+    result.centroidMeters = scale(
+        result.centroidMeters, inverseCount);
     for (double& coordinateValue :
-         result.patch.centroidBarycentricCoordinates) {
+         result.centroidBarycentricCoordinates) {
         coordinateValue *= inverseCount;
     }
 }
+
+struct ClippedPatch {
+    SceneFluidCellPatch patch;
+    std::vector<SceneFluidClippedVertex> vertices;
+};
 
 ClippedPatch clippedPatch(
     const SceneFluidSurfaceDefinition& surface,
@@ -322,13 +322,10 @@ ClippedPatch clippedPatch(
     result.patch.cell = intersection.cell;
     result.patch.triangleIndex = intersection.triangleIndex;
     result.patch.triangleId = intersection.triangleId;
-    result.vertices.reserve(9);
+    std::array<Vec3, 3> positions;
     for (std::size_t corner = 0; corner < 3; ++corner) {
-        SceneFluidClippedVertex vertex;
-        vertex.positionMeters =
+        positions[corner] =
             state.vertices[triangle.vertexIndices[corner]].positionMeters;
-        vertex.barycentricCoordinates[corner] = 1.0;
-        result.vertices.push_back(vertex);
     }
 
     const Vector3 gridLower = grid.lowerMeters();
@@ -343,17 +340,21 @@ ClippedPatch clippedPatch(
         lower.y + spacing.y,
         lower.z + spacing.z,
     };
-    for (std::size_t axis = 0; axis < 3; ++axis) {
-        clipAgainstPlane(
-            result.vertices, axis, coordinate(lower, axis), true);
-        clipAgainstPlane(
-            result.vertices, axis, coordinate(upper, axis), false);
+    auto clipped = clipSceneFluidTriangleToAxisAlignedBox(
+        positions, lower, upper);
+    if (!clipped) {
+        throw std::runtime_error(
+            "scene fluid exact intersection clipped to an empty patch");
     }
-    removeConsecutiveDuplicates(result.vertices);
-    measurePatch(result);
+    result.patch.dimension = clipped->dimension;
+    result.patch.coincidentBoundaryPlanes =
+        clipped->coincidentBoundaryPlanes;
+    result.patch.areaSquareMeters = clipped->areaSquareMeters;
+    result.patch.centroidMeters = clipped->centroidMeters;
+    result.patch.centroidBarycentricCoordinates =
+        clipped->centroidBarycentricCoordinates;
+    result.vertices = std::move(clipped->vertices);
     result.patch.vertexCount = result.vertices.size();
-    result.patch.coincidentBoundaryPlanes = coincidentBoundaryPlanes(
-        result.vertices, lower, upper);
     return result;
 }
 
@@ -399,6 +400,51 @@ std::uint64_t patchFingerprint(const SceneFluidGridPatchSet& patches) {
 }
 
 } // namespace
+
+std::optional<SceneFluidTriangleBoxClip>
+clipSceneFluidTriangleToAxisAlignedBox(
+    const std::array<Vec3, 3>& triangle,
+    const Vec3& lowerMeters,
+    const Vec3& upperMeters) {
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        const double lower = coordinate(lowerMeters, axis);
+        const double upper = coordinate(upperMeters, axis);
+        if (!std::isfinite(lower) || !std::isfinite(upper)
+            || !(lower < upper)) {
+            throw std::invalid_argument(
+                "scene fluid triangle clip box is invalid");
+        }
+        for (const Vec3& vertex : triangle) {
+            if (!std::isfinite(coordinate(vertex, axis))) {
+                throw std::invalid_argument(
+                    "scene fluid triangle clip input is not finite");
+            }
+        }
+    }
+
+    SceneFluidTriangleBoxClip result;
+    result.vertices.reserve(9);
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+        SceneFluidClippedVertex vertex;
+        vertex.positionMeters = triangle[corner];
+        vertex.barycentricCoordinates[corner] = 1.0;
+        result.vertices.push_back(vertex);
+    }
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        clipAgainstPlane(
+            result.vertices, axis, coordinate(lowerMeters, axis), true);
+        clipAgainstPlane(
+            result.vertices, axis, coordinate(upperMeters, axis), false);
+    }
+    removeConsecutiveDuplicates(result.vertices);
+    if (result.vertices.empty()) {
+        return std::nullopt;
+    }
+    measurePatch(result);
+    result.coincidentBoundaryPlanes = coincidentBoundaryPlanes(
+        result.vertices, lowerMeters, upperMeters);
+    return result;
+}
 
 std::span<const SceneFluidCellPatch>
 SceneFluidGridPatchSet::patchesForCell(

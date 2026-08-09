@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -39,6 +40,25 @@ struct SceneFluidClippedVertex {
             && barycentricCoordinates == other.barycentricCoordinates;
     }
 };
+
+// Exact convex clipping primitive shared by material-surface and virtual
+// opening geometry. It carries source-triangle barycentric coordinates so a
+// caller can integrate accepted piecewise-linear kinematics without inventing
+// a second interpolation rule.
+struct SceneFluidTriangleBoxClip {
+    SceneFluidPatchDimension dimension = SceneFluidPatchDimension::Point;
+    std::uint8_t coincidentBoundaryPlanes = CellBoundaryNone;
+    double areaSquareMeters = 0.0;
+    Vec3 centroidMeters;
+    std::array<double, 3> centroidBarycentricCoordinates{};
+    std::vector<SceneFluidClippedVertex> vertices;
+};
+
+[[nodiscard]] std::optional<SceneFluidTriangleBoxClip>
+clipSceneFluidTriangleToAxisAlignedBox(
+    const std::array<Vec3, 3>& triangle,
+    const Vec3& lowerMeters,
+    const Vec3& upperMeters);
 
 struct SceneFluidCellPatch {
     std::size_t cellIndex = 0;

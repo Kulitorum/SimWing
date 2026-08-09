@@ -1,5 +1,6 @@
 #include "fluid/scene_surface_clipping.h"
 
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
@@ -106,6 +107,33 @@ struct Pipeline {
           intersections(intersectSceneFluidSurfaceWithGrid(
               surface.definition, state, grid(), candidates)) {}
 };
+
+void testReusableTriangleBoxPrimitive() {
+    const std::array<Vec3, 3> triangle{{
+        {0.0, 0.0, 0.5}, {1.0, 0.0, 0.5}, {0.0, 1.0, 0.5},
+    }};
+    const auto clipped = clipSceneFluidTriangleToAxisAlignedBox(
+        triangle, {0.0, 0.0, 0.0}, {1.0, 1.0, 1.0});
+    check(clipped
+              && clipped->dimension == SceneFluidPatchDimension::Area
+              && clipped->vertices.size() == 3
+              && clipped->coincidentBoundaryPlanes == CellBoundaryNone,
+          "triangle-box primitive preserves an interior area triangle");
+    checkNear(clipped ? clipped->areaSquareMeters : 0.0, 0.5, 0.0,
+              "triangle-box primitive preserves analytic area");
+    checkNear(clipped ? clipped->centroidMeters.x : 0.0,
+              1.0 / 3.0, 0.0,
+              "triangle-box primitive preserves analytic centroid");
+
+    const auto disjoint = clipSceneFluidTriangleToAxisAlignedBox(
+        triangle, {2.0, 2.0, 2.0}, {3.0, 3.0, 3.0});
+    check(!disjoint,
+          "triangle-box primitive reports a disjoint box without geometry");
+    expectInvalid(
+        [&] { static_cast<void>(clipSceneFluidTriangleToAxisAlignedBox(
+            triangle, {1.0, 0.0, 0.0}, {1.0, 1.0, 1.0})); },
+        "triangle-box primitive rejects a degenerate box");
+}
 
 void testExactClippedPatches() {
     Pipeline pipeline(triangleScene());
@@ -296,6 +324,7 @@ void testToleranceAndTransactionalLimits() {
 } // namespace
 
 int main() {
+    testReusableTriangleBoxPrimitive();
     testExactClippedPatches();
     testContactDimensionAndBoundaryAmbiguity();
     testToleranceAndTransactionalLimits();
