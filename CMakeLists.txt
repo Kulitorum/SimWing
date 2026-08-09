@@ -366,6 +366,8 @@ add_library(simwing_scene_fluid_cell_volume STATIC
     src/fsi/scene_fluid_cell_volume.h
     src/fsi/scene_fluid_mimetic_control_cell.cpp
     src/fsi/scene_fluid_mimetic_control_cell.h
+    src/fsi/scene_fluid_mimetic_trace_system.cpp
+    src/fsi/scene_fluid_mimetic_trace_system.h
     src/fsi/scene_fluid_region_continuity.cpp
     src/fsi/scene_fluid_region_continuity.h
     src/fsi/scene_fluid_region_connectivity.cpp
@@ -403,6 +405,7 @@ target_include_directories(simwing_scene_fluid_cell_volume PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
 )
 target_link_libraries(simwing_scene_fluid_cell_volume PUBLIC
+    simwing_fluid
     simwing_scene_fluid_grid_epoch
     simwing_scene_fluid_opening_cap
 )
@@ -1162,6 +1165,12 @@ add_executable(simwing-scene-fluid-mimetic-control-cell-test
 )
 target_link_libraries(simwing-scene-fluid-mimetic-control-cell-test
     PRIVATE simwing_scene_fluid_cell_volume simwing_scene_structure simwing_fluid)
+
+add_executable(simwing-scene-fluid-mimetic-trace-system-test
+    tests/simwing_scene_fluid_mimetic_trace_system_test.cpp
+)
+target_link_libraries(simwing-scene-fluid-mimetic-trace-system-test
+    PRIVATE simwing_scene_fluid_cell_volume simwing_scene_structure)
 
 add_executable(simwing-scene-fluid-pressure-operator-test
     tests/simwing_scene_fluid_pressure_operator_test.cpp
@@ -1961,6 +1970,8 @@ add_test(NAME simwing_scene_fluid_pressure_face_link
     COMMAND simwing-scene-fluid-pressure-face-link-test)
 add_test(NAME simwing_scene_fluid_mimetic_control_cell
     COMMAND simwing-scene-fluid-mimetic-control-cell-test)
+add_test(NAME simwing_scene_fluid_mimetic_trace_system
+    COMMAND simwing-scene-fluid-mimetic-trace-system-test)
 add_test(NAME simwing_scene_fluid_pressure_operator
     COMMAND simwing-scene-fluid-pressure-operator-test)
 add_test(NAME simwing_scene_fluid_pressure_solve

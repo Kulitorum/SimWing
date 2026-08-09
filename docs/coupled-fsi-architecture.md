@@ -1037,6 +1037,21 @@ operator stores the exact formula as seven doubles per half-face plus fixed
 three-by-three factors and applies it matrix-free; no dense local `n x n`
 matrix is retained.
 
+`src/fsi/scene_fluid_mimetic_trace_system.*` now assembles the first global
+audit operator over those local kernels. Stable Cartesian and
+authored-opening identities create exactly one two-incidence shared trace;
+each impermeable material half-face creates a unique one-incidence wall trace
+whose equation is zero normal flux. The cell scalar is eliminated by exact
+integrated conservation during every matrix-free application. The published
+positive operator is symmetric positive semidefinite, retains one exact
+component-constant null mode, stores a deterministic trace gauge and Jacobi
+diagonal per component/row, and derives a compatible trace right-hand side
+from integrated cell sources. All topology, local kernels, limits, and nested
+fingerprints remain immutable and independently validated. A pressure
+component whose controls are disconnected through shared traces rejects rather
+than retaining more null modes than its one authored gauge. No global matrix is
+stored.
+
 The first immutable scene adapter now assembles each sparse cell/region's
 unwrapped half-face shell from exact Cartesian region subfaces, cell- and
 face-owned material quadrature, and embedded or face-aligned opening-cap
@@ -1062,9 +1077,11 @@ impermeable-wall sides, not missing shared traces. No authored-opening side is
 missing. The refined shell set retains 95,984 paired opening half-faces and at
 most 2,947 total half-faces in one control, exposing the future dense-local-
 matrix cost without paying it: every coarse real-wing shell builds the compact
-linear-storage local factorization. A bounded global trace system
-still remains to be assembled; the current graph operator and all worker
-arithmetic are unchanged.
+linear-storage local factorization. The global coarse audit contains 191,579
+trace unknowns and 13,132,336 bytes of compact local factor data, and its full
+component-constant matrix-free action is roundoff-null. A bounded gauge-fixed
+iterative solve and production integration remain open; the current graph
+operator and all worker arithmetic are unchanged.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy

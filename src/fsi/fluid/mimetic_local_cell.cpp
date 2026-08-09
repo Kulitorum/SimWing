@@ -542,6 +542,34 @@ std::vector<double> applyMimeticInverseFluxInnerProduct(
     return applyCompactInverseFluxInnerProduct(localOperator, values);
 }
 
+std::vector<double> mimeticInverseFluxInnerProductDiagonal(
+    const MimeticLocalCellOperator& localOperator) {
+    validateMimeticLocalCellOperator(localOperator);
+    std::vector<double> result(localOperator.halfFaceCount, 0.0);
+    for (std::size_t face = 0;
+         face < localOperator.halfFaceCount; ++face) {
+        std::array<double, 3> consistency{};
+        std::array<double, 3> normal{};
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            consistency[axis] =
+                localOperator.consistencyRows[face * 3 + axis];
+            normal[axis] = localOperator.normalRows[face * 3 + axis];
+        }
+        result[face] = bilinear3(
+            normal, localOperator.inverseConsistencyGeometry, normal)
+            + localOperator.stabilizationScaleInverseCubicMeters
+                * (1.0 - bilinear3(
+                    consistency,
+                    localOperator.inverseConsistencyGram,
+                    consistency));
+        if (!std::isfinite(result[face]) || result[face] <= 0.0) {
+            throw std::invalid_argument(
+                "invalid mimetic inverse-flux diagonal");
+        }
+    }
+    return result;
+}
+
 std::vector<double> applyMimeticLocalNormalFlux(
     const MimeticLocalCellOperator& localOperator,
     const double cellScalar,

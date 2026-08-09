@@ -1,10 +1,10 @@
 #include "engine_paths.h"
-#include "fluid/mimetic_local_cell.h"
 #include "input_migration.h"
 #include "nurbs_model.h"
 #include "scene_fluid_cell_volume.h"
 #include "scene_fluid_capped_face_partition.h"
 #include "scene_fluid_mimetic_control_cell.h"
+#include "scene_fluid_mimetic_trace_system.h"
 #include "scene_fluid_opening_cap.h"
 #include "scene_fluid_opening_face_crossing.h"
 #include "scene_fluid_pressure_control_volume.h"
@@ -487,30 +487,22 @@ void testRealDesignCapture(const std::filesystem::path &input,
         openingPatches.patches,
         simwing::fsi::SceneFluidOpeningPatchOwnerKind::Cell,
         &simwing::fsi::SceneFluidOpeningGridPatch::ownerKind);
-    bool compactLocalOperatorsBuilt = true;
-    std::size_t compactLocalOperatorBytes = 0;
-    for (const auto& cell : mimeticControlCells.controlCells) {
-        simwing::fsi::fluid::MimeticLocalCellGeometry geometry;
-        geometry.volumeCubicMeters = cell.volumeCubicMeters;
-        geometry.centroidMeters = cell.centroidMeters;
-        geometry.halfFaces.reserve(cell.halfFaceCount);
-        for (std::size_t offset = 0; offset < cell.halfFaceCount; ++offset) {
-            const auto& halfFace = mimeticControlCells.halfFaces[
-                cell.firstHalfFace + offset];
-            geometry.halfFaces.push_back({
-                halfFace.areaSquareMeters,
-                halfFace.centroidMeters,
-                halfFace.outwardUnitNormal,
-            });
-        }
-        try {
-            const auto localOperator =
-                simwing::fsi::fluid::buildMimeticLocalCellOperator(
-                    geometry);
-            compactLocalOperatorBytes += localOperator.ownedStorageBytes;
-        } catch (const std::exception&) {
-            compactLocalOperatorsBuilt = false;
-        }
+    const simwing::fsi::SceneFluidMimeticTraceSystem mimeticTraceSystem =
+        simwing::fsi::buildSceneFluidMimeticTraceSystem(
+            mimeticControlCells);
+    std::vector<double> componentConstantTraces(
+        mimeticTraceSystem.traces.size(), 0.0);
+    for (const auto& trace : mimeticTraceSystem.traces) {
+        componentConstantTraces[trace.traceIndex] =
+            1.0 + static_cast<double>(trace.componentIndex);
+    }
+    const auto constantTraceAction =
+        simwing::fsi::applySceneFluidMimeticTraceOperator(
+            mimeticTraceSystem, componentConstantTraces);
+    double maximumConstantTraceAction = 0.0;
+    for (const double value : constantTraceAction) {
+        maximumConstantTraceAction = std::max(
+            maximumConstantTraceAction, std::abs(value));
     }
     const bool mimeticAuditMatches =
         mimeticControlCells.readyControlCellCount
@@ -524,13 +516,20 @@ void testRealDesignCapture(const std::filesystem::path &input,
         && mimeticControlCells.missingOpeningControlSideCount == 0
         && mimeticControlCells.openingHalfFaceCount
             == 2 * cellOwnedOpeningPatchCount
-        && compactLocalOperatorsBuilt
-        && compactLocalOperatorBytes
-            == 7 * mimeticControlCells.halfFaces.size() * sizeof(double);
+        && mimeticTraceSystem.localOperators.size()
+            == mimeticControlCells.controlCells.size()
+        && mimeticTraceSystem.incidences.size()
+            == mimeticControlCells.halfFaces.size()
+        && 2 * mimeticTraceSystem.sharedTraceCount
+                + mimeticTraceSystem.materialWallTraceCount
+            == mimeticTraceSystem.incidences.size()
+        && mimeticTraceSystem.localOperatorStorageBytes
+            == 7 * mimeticControlCells.halfFaces.size() * sizeof(double)
+        && maximumConstantTraceAction < 1.0e-9;
     if (!mimeticAuditMatches) {
         std::fprintf(
             stderr,
-            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu classified=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu compact-bytes=%zu max-area=%.17g max-moment=%.17g\n",
+            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu classified=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu traces=%zu compact-bytes=%zu max-null=%.17g max-area=%.17g max-moment=%.17g\n",
             mimeticControlCells.readyControlCellCount,
             mimeticControlCells.controlCells.size(),
             mimeticControlCells.incompleteTopologyControlCellCount,
@@ -545,7 +544,9 @@ void testRealDesignCapture(const std::filesystem::path &input,
             mimeticControlCells.missingOpeningControlSideCount,
             mimeticControlCells.openingHalfFaceCount,
             mimeticControlCells.maximumHalfFaceCountPerControl,
-            compactLocalOperatorBytes,
+            mimeticTraceSystem.traces.size(),
+            mimeticTraceSystem.localOperatorStorageBytes,
+            maximumConstantTraceAction,
             mimeticControlCells.maximumAreaClosureErrorSquareMeters,
             mimeticControlCells.maximumDivergenceTheoremErrorCubicMeters);
         for (const auto& cell : mimeticControlCells.controlCells) {

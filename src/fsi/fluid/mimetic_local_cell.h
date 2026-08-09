@@ -94,6 +94,10 @@ void validateMimeticLocalCellOperator(
     const MimeticLocalCellOperator& localOperator,
     std::span<const double> values);
 
+// Extracts diag(W) in linear work for Jacobi scaling and trace condensation.
+[[nodiscard]] std::vector<double> mimeticInverseFluxInnerProductDiagonal(
+    const MimeticLocalCellOperator& localOperator);
+
 [[nodiscard]] std::vector<double> applyMimeticLocalNormalFlux(
     const MimeticLocalCellOperator& localOperator,
     double cellScalar,

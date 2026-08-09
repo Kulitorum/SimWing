@@ -835,6 +835,15 @@ half-face shells from Cartesian traces, two-sided material-wall quadrature, and
 cell-owned opening patches. Nested, face-aligned-opening, and deliberately
 two-point-rejected embedded-opening fixtures close every area vector and
 `N^T R = volume I`; every completed shell builds the generic SPD kernel.
+The same audit path now assembles one bounded, fingerprinted global
+mixed-hybrid trace system. Shared Cartesian and authored-opening half-faces
+pair into two-incidence traces, every impermeable material side owns a
+one-incidence zero-flux wall trace, and one deterministic gauge is retained
+per pressure component after rejecting disconnected component topology. Its
+matrix-free condensed action is symmetric
+positive semidefinite, preserves one exact constant null mode per component,
+and builds a source-compatible right-hand side without materializing either a
+global matrix or dense local matrices.
 
 The coarse real-wing audit now closes all 138 sparse cell/region shells. Ten
 untouched Cartesian faces whose adjacent cells share many authored region IDs
@@ -848,10 +857,11 @@ and closes all 358 controls. It safely omits 240 material quadrature sides
 whose corresponding cell/region volume is exactly absent, misses no opening
 side, retains 95,984 paired opening half-faces, and reaches 2,947 total
 half-faces in its largest control. Every coarse real-wing shell now also builds
-that compact local factorization within the linear storage bound. Assembling
-and solving the bounded global
-trace system remains open; the production graph operator and worker are
-unchanged.
+that compact local factorization within the linear storage bound. The complete
+coarse system has 191,579 trace unknowns and retains 13,132,336 bytes of compact
+local factors; its full matrix-free component-constant action is roundoff-null.
+A bounded gauge-fixed trace solve and production integration remain open; the
+production graph operator and worker are unchanged.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

@@ -237,7 +237,11 @@ void testCartesianEquivalence() {
           "Cartesian local operator is linear-storage, bounded, and SPD");
     const double expectedDiagonal = 2.0 / geometry.volumeCubicMeters;
     const auto matrix = denseMatrix(localOperator);
+    const auto compactDiagonal =
+        mimeticInverseFluxInnerProductDiagonal(localOperator);
     for (std::size_t row = 0; row < 6; ++row) {
+        checkNear(compactDiagonal[row], expectedDiagonal, 2.0e-16,
+                  "compact mimetic diagonal matches its Cartesian oracle");
         for (std::size_t column = 0; column < 6; ++column) {
             checkNear(
                 matrix[row * 6 + column],
