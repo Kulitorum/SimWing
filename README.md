@@ -524,10 +524,13 @@ owner now closes an explicitly authored planar, strictly convex intake or
 crossport loop for volume accounting only. Its winding comes from the adjacent
 fabric boundary, follows accepted Structure motion, and never becomes fabric or
 traction. The analytic open-tetrahedron regression therefore has a finite cell
-volume and retains its mouth area for a later flux operator. Nonplanar/concave
-openings, surface junctions, periodic-boundary ambiguity, and general moving-
-boundary fluid equations still reject or remain open; the grid epoch itself
-continues to own geometry and transfer only.
+volume. Stable one-point triangle samples now exactly integrate the accepted
+piecewise-linear cap velocity into per-opening surface-sweep rates; a rigid
+material-plus-cap surface closes that geometric ledger. Grid-resolved fluid
+velocity and opening mass flux remain separate future operators. Nonplanar or
+concave openings, surface junctions, periodic-boundary ambiguity, and general
+moving-boundary fluid equations still reject or remain open; the grid epoch
+itself continues to own geometry and transfer only.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

@@ -414,6 +414,7 @@ src/fsi/
     scene_fluid_pressure_traction.* one-sided pressure to normal traction
     scene_fluid_grid_epoch.* accepted full geometry/quadrature remap
     scene_fluid_opening_cap.* topology-only planar opening closure
+    scene_fluid_opening_quadrature.* accepted cap motion/surface sweep
     scene_fluid_cell_volume.* signed-chain sparse region volumes
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
@@ -577,11 +578,14 @@ authored planar strictly convex loop by matching every edge to one separating
 surface boundary, deriving winding from the adjacent fabric, and triangulating
 the accepted moving geometry without creating Structure or traction entities.
 The capped open-tetrahedron regression closes analytic volume and exposes its
-mouth area for a later mass-flux operator. Nonplanar/concave openings, surface
+mouth area. A second immutable opening epoch gives every cap triangle a stable
+centroid sample, interpolates the accepted piecewise-linear vertex velocity,
+and retains per-point/per-opening normal surface-sweep rates. Its square-mouth
+regression closes rigid material-plus-cap sweep exactly. It does not sample the
+Eulerian velocity or claim mass flux. Nonplanar/concave openings, surface
 junctions, inconsistent winding, and periodic-boundary ambiguity reject;
-general opening flux and moving-boundary fluid equations remain open. A canonical
-Qt-free
-structural worker now
+general opening flux and moving-boundary fluid equations remain open. A
+canonical Qt-free structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.
 The same worker can now select a smooth periodic Taylor-Green CFD case. Its
