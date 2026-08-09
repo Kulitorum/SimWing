@@ -478,6 +478,17 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   stable control pressures and shared trace pressures with complete
   control/full/condensed/source provenance, count/byte bounds, and fingerprinted
   corruption rejection. The coarse real source solve now crosses this boundary.
+- `scene_fluid_mimetic_pressure_state_persistence.{h,cpp}` owns the deterministic
+  `SWMP` little-endian restart envelope for that endpoint. It encodes the
+  complete stable control/shared-trace rows, state/source/topology provenance,
+  derived summaries, FNV-64 payload checksum, protocol/state versions, and
+  reserved fields under independent byte/control/trace limits. Decode receives
+  trusted rebuilt mimetic control/full/condensed topology, rejects foreign
+  identity before publication, and then runs the complete state validator.
+  Repeated and decode/re-encode bytes are identical; magic/version/reserved,
+  checksum, truncation, trailing data, record limits, and a foreign topology
+  leave the caller's destination unchanged. The coarse real-wing state also
+  round-trips exactly.
 - `scene_fluid_mimetic_pressure_warm_start.{h,cpp}` maps that accepted state
   across exactly one fingerprinted pressure-topology transition without
   mutating either epoch. Retained controls follow stable identity, appeared
@@ -1853,6 +1864,8 @@ bounded fingerprinted storage, direct atomic-solve consumption, exact
 cell/region side sampling, shared-component gauge safety, and conservative
 force/moment transfer. Atomic epoch changes must additionally preserve
 bootstrap/consecutive identity, nested limits, and diagnostics-only rollback.
+Persistent-state changes must preserve `SWMP` deterministic round trips,
+transactional corruption/limit rejection, and trusted-topology rebinding.
 
 | Change area | Minimum relevant checks |
 |---|---|

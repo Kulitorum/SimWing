@@ -8,6 +8,7 @@
 #include "scene_fluid_mimetic_pressure_sampling.h"
 #include "scene_fluid_mimetic_pressure_solve.h"
 #include "scene_fluid_mimetic_pressure_state.h"
+#include "scene_fluid_mimetic_pressure_state_persistence.h"
 #include "scene_fluid_mimetic_trace_flow.h"
 #include "scene_fluid_mimetic_trace_solve.h"
 #include "scene_fluid_mimetic_trace_system.h"
@@ -711,6 +712,7 @@ void testRealDesignCapture(const std::filesystem::path &input,
     simwing::fsi::SceneFluidMimeticPressureState realPressureState;
     simwing::fsi::SceneFluidMimeticPressureSampleSet realPressureSamples;
     bool realPressureTransferCloses = false;
+    bool realPressureStatePersists = false;
     if (sourceReceiver < realPredictedContinuityRates.size()) {
         simwing::fsi::SceneFluidMimeticPressureSourceSettings
             realSourceSettings;
@@ -754,6 +756,20 @@ void testRealDesignCapture(const std::filesystem::path &input,
                     .forceResidualNormNewtons < 1.0e-9
             && realPressureTransfer.diagnostics()
                     .momentResidualNormNewtonMeters < 1.0e-9;
+        std::vector<std::uint8_t> encodedRealPressureState;
+        simwing::fsi::SceneFluidMimeticPressureState decodedRealPressureState;
+        simwing::fsi::SceneFluidMimeticPressureStatePersistenceError
+            pressurePersistenceError;
+        realPressureStatePersists =
+            simwing::fsi::serializeSceneFluidMimeticPressureState(
+                realPressureState, mimeticControlCells,
+                mimeticTraceSystem, condensedTraceSystem,
+                encodedRealPressureState, &pressurePersistenceError)
+            && simwing::fsi::deserializeSceneFluidMimeticPressureState(
+                encodedRealPressureState, mimeticControlCells,
+                mimeticTraceSystem, condensedTraceSystem,
+                decodedRealPressureState, &pressurePersistenceError)
+            && decodedRealPressureState == realPressureState;
     }
     const bool mimeticAuditMatches =
         mimeticControlCells.readyControlCellCount
@@ -849,7 +865,8 @@ void testRealDesignCapture(const std::filesystem::path &input,
             == fluidEpoch.quadrature.points.size()
         && realPressureSamples.pressures.size()
             == fluidEpoch.quadrature.points.size()
-        && realPressureTransferCloses;
+        && realPressureTransferCloses
+        && realPressureStatePersists;
     if (!mimeticAuditMatches) {
         std::fprintf(
             stderr,

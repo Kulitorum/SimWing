@@ -1126,6 +1126,19 @@ a raw-source solve, a foreign topology, or an unnormalized gauge cannot become
 persistent state. The 191,579-row real balanced-source solve crosses this
 capture boundary as well.
 
+`src/fsi/scene_fluid_mimetic_pressure_state_persistence.*` makes that endpoint
+restartable without weakening its ownership boundary. The `SWMP` envelope is
+bounded, checksummed with FNV-64, protocol/versioned, little-endian, and stores
+the complete stable control and shared-trace rows plus every state/source/
+topology fingerprint and derived summary. Decode is given the trusted rebuilt
+control/full/condensed topology, checks counts and identity before publication,
+then invokes the full accepted-state validator so stable rows, zero gauges,
+epoch, summaries, and fingerprint must all agree. Repeated serialization and
+decode/re-encode are byte-identical. Bad magic/version/reserved bits, payload
+corruption, truncation, trailing data, byte/record limits, and foreign topology
+all preserve the caller's prior state. The coarse real-wing 42,927-shared-trace
+endpoint round-trips exactly through the same codec.
+
 `src/fsi/scene_fluid_mimetic_pressure_warm_start.*` now owns the next
 consecutive-epoch lifecycle stage. It accepts one immutable pressure state,
 the previous/current full and condensed mimetic topologies, and the same

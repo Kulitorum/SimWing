@@ -2,6 +2,7 @@
 #include "scene_fluid_mimetic_condensed_trace_system.h"
 #include "scene_fluid_mimetic_pressure_solve.h"
 #include "scene_fluid_mimetic_pressure_state.h"
+#include "scene_fluid_mimetic_pressure_state_persistence.h"
 #include "scene_fluid_mimetic_trace_flow.h"
 #include "scene_fluid_mimetic_trace_solve.h"
 #include "scene_structure.h"
@@ -854,6 +855,128 @@ void testSourceDrivenTraceBalance() {
           "accepted mimetic pressure state captures exact source-bound control and shared-trace pressures");
     validateSceneFluidMimeticPressureState(
         acceptedState, shells, system, condensed);
+    std::vector<std::uint8_t> acceptedStateBytes;
+    std::vector<std::uint8_t> repeatedAcceptedStateBytes;
+    SceneFluidMimeticPressureStatePersistenceError persistenceError;
+    check(serializeSceneFluidMimeticPressureState(
+              acceptedState, shells, system, condensed,
+              acceptedStateBytes, &persistenceError)
+              && serializeSceneFluidMimeticPressureState(
+                  acceptedState, shells, system, condensed,
+                  repeatedAcceptedStateBytes, &persistenceError)
+              && acceptedStateBytes == repeatedAcceptedStateBytes
+              && acceptedStateBytes.size() > 24,
+          "accepted mimetic pressure state serializes byte-deterministically");
+    SceneFluidMimeticPressureState decodedAcceptedState;
+    std::vector<std::uint8_t> reencodedAcceptedStateBytes;
+    check(deserializeSceneFluidMimeticPressureState(
+              acceptedStateBytes, shells, system, condensed,
+              decodedAcceptedState, &persistenceError)
+              && decodedAcceptedState == acceptedState
+              && serializeSceneFluidMimeticPressureState(
+                  decodedAcceptedState, shells, system, condensed,
+                  reencodedAcceptedStateBytes, &persistenceError)
+              && reencodedAcceptedStateBytes == acceptedStateBytes,
+          "accepted mimetic pressure state round-trips and re-encodes exactly");
+
+    const auto rejectsPersistentState =
+        [&](std::vector<std::uint8_t> bytes,
+            const SceneFluidMimeticPressureStatePersistenceErrorCode code,
+            const char* message) {
+            auto destination = acceptedState;
+            SceneFluidMimeticPressureStatePersistenceError error;
+            check(!deserializeSceneFluidMimeticPressureState(
+                      bytes, shells, system, condensed, destination, &error)
+                      && error.code == code
+                      && destination == acceptedState,
+                  message);
+        };
+    auto badMagic = acceptedStateBytes;
+    badMagic.front() ^= 0x01U;
+    rejectsPersistentState(
+        badMagic,
+        SceneFluidMimeticPressureStatePersistenceErrorCode::InvalidMagic,
+        "persistent mimetic pressure state rejects bad magic without mutation");
+    auto badProtocol = acceptedStateBytes;
+    badProtocol[4] = 0xffU;
+    rejectsPersistentState(
+        badProtocol,
+        SceneFluidMimeticPressureStatePersistenceErrorCode::
+            UnsupportedVersion,
+        "persistent mimetic pressure state rejects protocol version without mutation");
+    auto badReserved = acceptedStateBytes;
+    badReserved[6] = 0x01U;
+    rejectsPersistentState(
+        badReserved,
+        SceneFluidMimeticPressureStatePersistenceErrorCode::InvalidData,
+        "persistent mimetic pressure state rejects envelope reserved bits");
+    auto badChecksum = acceptedStateBytes;
+    badChecksum.back() ^= 0x01U;
+    rejectsPersistentState(
+        badChecksum,
+        SceneFluidMimeticPressureStatePersistenceErrorCode::ChecksumMismatch,
+        "persistent mimetic pressure state rejects checksum corruption without mutation");
+    auto truncatedState = acceptedStateBytes;
+    truncatedState.pop_back();
+    rejectsPersistentState(
+        truncatedState,
+        SceneFluidMimeticPressureStatePersistenceErrorCode::Truncated,
+        "persistent mimetic pressure state rejects truncation without mutation");
+    auto trailingState = acceptedStateBytes;
+    trailingState.push_back(0);
+    rejectsPersistentState(
+        trailingState,
+        SceneFluidMimeticPressureStatePersistenceErrorCode::TrailingData,
+        "persistent mimetic pressure state rejects trailing data without mutation");
+
+    Fixture foreignFixture(tiltedOpenScene());
+    const auto foreignShells = foreignFixture.shells();
+    const auto foreignSystem =
+        buildSceneFluidMimeticTraceSystem(foreignShells);
+    const auto foreignCondensed =
+        buildSceneFluidMimeticCondensedTraceSystem(foreignSystem);
+    auto foreignDestination = acceptedState;
+    check(!deserializeSceneFluidMimeticPressureState(
+              acceptedStateBytes, foreignShells, foreignSystem,
+              foreignCondensed, foreignDestination, &persistenceError)
+              && persistenceError.code
+                  == SceneFluidMimeticPressureStatePersistenceErrorCode::
+                      TopologyMismatch
+              && foreignDestination == acceptedState,
+          "persistent mimetic pressure state rejects a foreign rebuilt topology transactionally");
+
+    SceneFluidMimeticPressureStatePersistenceLimits persistenceLimits;
+    persistenceLimits.maximumEncodedBytes = acceptedStateBytes.size() - 1;
+    std::vector<std::uint8_t> preservedBytes{0x7aU};
+    check(!serializeSceneFluidMimeticPressureState(
+              acceptedState, shells, system, condensed, preservedBytes,
+              &persistenceError, persistenceLimits)
+              && persistenceError.code
+                  == SceneFluidMimeticPressureStatePersistenceErrorCode::
+                      LimitExceeded
+              && preservedBytes == std::vector<std::uint8_t>{0x7aU},
+          "persistent mimetic pressure state bounds encoded bytes without output mutation");
+    persistenceLimits = {};
+    persistenceLimits.maximumControlCells =
+        acceptedState.controls.size() - 1;
+    check(!serializeSceneFluidMimeticPressureState(
+              acceptedState, shells, system, condensed, preservedBytes,
+              &persistenceError, persistenceLimits)
+              && persistenceError.code
+                  == SceneFluidMimeticPressureStatePersistenceErrorCode::
+                      LimitExceeded,
+          "persistent mimetic pressure state bounds control rows");
+    persistenceLimits = {};
+    persistenceLimits.maximumReducedTraces =
+        acceptedState.traces.size() - 1;
+    check(!deserializeSceneFluidMimeticPressureState(
+              acceptedStateBytes, shells, system, condensed,
+              foreignDestination, &persistenceError, persistenceLimits)
+              && persistenceError.code
+                  == SceneFluidMimeticPressureStatePersistenceErrorCode::
+                      LimitExceeded
+              && foreignDestination == acceptedState,
+          "persistent mimetic pressure state bounds trace rows before publication");
     auto corruptAcceptedState = acceptedState;
     corruptAcceptedState.traces.front().pressurePascals += 0.01;
     expectInvalid(
