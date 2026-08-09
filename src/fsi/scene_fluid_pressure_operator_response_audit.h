@@ -11,7 +11,7 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t
-    sceneFluidPressureOperatorResponseAuditVersion = 1;
+    sceneFluidPressureOperatorResponseAuditVersion = 2;
 
 enum class SceneFluidPressureOperatorResponseModeKind : std::uint8_t {
     AcceptedSource = 1,
@@ -20,6 +20,7 @@ enum class SceneFluidPressureOperatorResponseModeKind : std::uint8_t {
     CoordinateZ = 4,
     MixedCoordinate = 5,
     StableIdPattern = 6,
+    RegionContrast = 7,
 };
 
 struct SceneFluidPressureOperatorResponseAuditSettings {
@@ -85,9 +86,9 @@ struct SceneFluidPressureOperatorResponseModeDiagnostics {
 };
 
 // Offline, immutable inverse-response comparison on one already accepted
-// cut-cell topology. The optional accepted source is audited first; five
+// cut-cell topology. The optional accepted source is audited first; six
 // deterministic, component-compatible manufactured pressure modes then span
-// smooth coordinate and high-frequency directions. Each graph and mimetic
+// smooth coordinate, high-frequency, and authored-region directions. Each
 // solve is independent, gauge aligned per component, and retained without
 // changing either live pressure owner or Structure loads.
 struct SceneFluidPressureOperatorResponseAudit {

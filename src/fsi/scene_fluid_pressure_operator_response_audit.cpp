@@ -248,6 +248,9 @@ double manufacturedValue(
         return centroid.x * centroid.y + 0.37 * centroid.z;
     case SceneFluidPressureOperatorResponseModeKind::StableIdPattern:
         return static_cast<double>(control.stableId % 31U) - 15.0;
+    case SceneFluidPressureOperatorResponseModeKind::RegionContrast:
+        return static_cast<double>(
+            (control.regionId ^ (control.regionId >> 32U)) & 0xffffU);
     case SceneFluidPressureOperatorResponseModeKind::AcceptedSource:
         break;
     }
@@ -363,7 +366,7 @@ auditSceneFluidPressureOperatorResponses(
     const std::size_t componentCount = graphOperator.components.size();
     const bool includesAcceptedSource =
         !acceptedIntegratedSourcePascalsMeters.empty();
-    const std::size_t modeCount = includesAcceptedSource ? 6 : 5;
+    const std::size_t modeCount = includesAcceptedSource ? 7 : 6;
     if (graphOperator.fingerprint == 0
         || controlCount == 0
         || graphOperator.rows.size() != controlCount
@@ -447,6 +450,7 @@ auditSceneFluidPressureOperatorResponses(
         SceneFluidPressureOperatorResponseModeKind::CoordinateZ,
         SceneFluidPressureOperatorResponseModeKind::MixedCoordinate,
         SceneFluidPressureOperatorResponseModeKind::StableIdPattern,
+        SceneFluidPressureOperatorResponseModeKind::RegionContrast,
     });
 
     for (std::size_t modeIndex = 0; modeIndex < kinds.size(); ++modeIndex) {
@@ -546,7 +550,7 @@ void validateSceneFluidPressureOperatorResponseAuditIntegrity(
         || audit.structureDefinitionFingerprint == 0
         || !std::isfinite(audit.simulationTimeSeconds)
         || audit.controlVolumeCount == 0 || audit.componentCount == 0
-        || audit.modes.size() != (audit.includesAcceptedSource ? 6U : 5U)
+        || audit.modes.size() != (audit.includesAcceptedSource ? 7U : 6U)
         || audit.controlVolumeCount
             > std::numeric_limits<std::size_t>::max() / audit.modes.size()
         || audit.responses.size()

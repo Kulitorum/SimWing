@@ -705,9 +705,9 @@ void testManufacturedPressureOperatorResponses() {
         endpoint->condensedTraceSystem, acceptedSource, settings);
     fsi::validateSceneFluidPressureOperatorResponseAuditIntegrity(audit);
     check(audit == repeated && audit.includesAcceptedSource
-              && audit.modes.size() == 6
+              && audit.modes.size() == 7
               && audit.responses.size()
-                  == 6 * endpoint->controlCells.controlCells.size()
+                  == 7 * endpoint->controlCells.controlCells.size()
               && audit.modes[0].bestFitShadowPressureScale > 2.0
               && audit.modes[0].bestFitShadowPressureScale < 3.0
               && std::abs(
@@ -733,7 +733,7 @@ void testManufacturedPressureOperatorResponses() {
         0.037803572674267,
         0.164611785658836,
     };
-    for (std::size_t mode = 1; mode < audit.modes.size(); ++mode) {
+    for (std::size_t mode = 1; mode + 1 < audit.modes.size(); ++mode) {
         check(audit.modes[mode].finite
                   && audit.modes[mode].bestFitShadowPressureScale > 0.9
                   && audit.modes[mode].bestFitShadowPressureScale < 1.1
@@ -748,13 +748,28 @@ void testManufacturedPressureOperatorResponses() {
                       < 1.0e-9,
               "independent manufactured pressure modes remain near unit gain with bounded shape disagreement");
     }
+    const auto& regionContrast = audit.modes.back();
+    check(regionContrast.kind
+              == fsi::SceneFluidPressureOperatorResponseModeKind::
+                  RegionContrast
+              && regionContrast.finite
+              && std::abs(
+                     regionContrast.bestFitShadowPressureScale
+                     - 2.56237302967949)
+                  < 1.0e-9
+              && std::abs(
+                     regionContrast.relativeBestFitShapeResidualL2
+                     - 0.0198229425861661)
+                  < 1.0e-9
+              && regionContrast.pressureCosineSimilarity > 0.9998,
+          "authored-region contrast isolates the same high-gain response to intake-only graph sources");
     const auto manufacturedOnly =
         fsi::auditSceneFluidPressureOperatorResponses(
             simulation.acceptedPressureEpoch().pressureOperator,
             endpoint->controlCells, endpoint->fullTraceSystem,
             endpoint->condensedTraceSystem, {}, settings);
     check(!manufacturedOnly.includesAcceptedSource
-              && manufacturedOnly.modes.size() == 5
+              && manufacturedOnly.modes.size() == 6
               && manufacturedOnly.modes.front().kind
                   == fsi::SceneFluidPressureOperatorResponseModeKind::
                       CoordinateX,
@@ -773,7 +788,7 @@ void testManufacturedPressureOperatorResponses() {
           "operator-response audit rejects response corruption");
 
     fsi::SceneFluidPressureOperatorResponseAuditLimits limited;
-    limited.maximumModes = 5;
+    limited.maximumModes = 6;
     rejected = false;
     try {
         static_cast<void>(fsi::auditSceneFluidPressureOperatorResponses(

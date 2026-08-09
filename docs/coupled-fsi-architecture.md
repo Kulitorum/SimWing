@@ -1249,9 +1249,10 @@ or the mixed-hybrid response should own production loads.
 
 `src/fsi/scene_fluid_pressure_operator_response_audit.*` provides that next
 offline layer without entering the worker loop. A bounded fingerprinted audit
-uses one accepted integrated source when supplied, then constructs five
-deterministic component-compatible graph-pressure modes from control centroids
-and stable IDs. It applies the graph operator to manufacture each source,
+uses one accepted integrated source when supplied, then constructs six
+deterministic component-compatible graph-pressure modes from control centroids,
+stable IDs, and authored regions. It applies the graph operator to manufacture
+each source,
 solves both inverse problems independently, removes one arithmetic pressure
 gauge per component, and retains every source, graph response, shadow response,
 and post-fit residual. Solver iterations and final residuals are part of the
@@ -1264,8 +1265,13 @@ stable-ID modes produce gains `0.9991`, `1.0049`, `1.0072`, `0.9997`, and
 `1.0047`; their relative shape residuals are `8.66%`, `1.23%`, `4.44%`,
 `3.78%`, and `16.46%`. Thus the surface pressure-jump result looks almost like
 a pure scale only because the current symmetric pump excites a special
-operator direction. No global correction is admissible, and neither response
-is yet declared physically authoritative on general cut cells.
+operator direction. The sixth manufactured pressure is constant within each
+authored region, so its graph source is identically zero on all same-region
+links and supported only by the intake. It yields `2.56237` shadow gain,
+`1.982%` relative residual, and `0.999804` cosine similarity, reproducing the
+accepted outlier and localizing it to authored-opening/interface conductance.
+No global correction is admissible, and neither opening response is yet
+declared physically authoritative.
 
 The experiment is exposed as `simwing-fsi --case pressure-cell
 --mimetic-pressure-audit` and reports control/trace counts plus iteration and
