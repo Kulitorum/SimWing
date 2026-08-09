@@ -1157,6 +1157,22 @@ force and moment transfer, and the coarse real-wing accepted state now samples
 every material quadrature point through the same boundary. The production
 worker still selects the graph pressure operator.
 
+`src/fsi/scene_fluid_mimetic_pressure_epoch.*` composes the isolated acceptance
+path into one transaction. It starts from an already bounded, fingerprinted
+physical source product so predictor-flow and consecutive `dV/dt` ownership
+remain visible upstream. Bootstrap uses a bounded zero reduced field; the
+moving overload derives the reduced field from the prior accepted state and
+the shared topology transition. The transaction then runs the atomic
+condensed solve, independently captures accepted pressure state, and samples
+all material sides. Only that complete state-plus-sample pair is published.
+An incompatible or deliberately exhausted solve returns its diagnostics with
+both accepted payloads empty. Analytic regressions require the bootstrap result
+to equal the independently assembled state/samples exactly, require the moving
+result to reproduce the explicit warm-remap path across a control appearance,
+and require nested corruption and bootstrap allocation limits to reject. This
+is the rollback-safe boundary needed for a future opt-in worker experiment;
+the current worker remains on the graph operator.
+
 `src/fsi/scene_fluid_mimetic_pressure_source.*` owns the physical-unit source
 conversion shared with the production projection convention. For each mimetic
 control it accepts predicted net-outward volume flow and optional moving-volume

@@ -1,5 +1,6 @@
 #include "scene_fluid_pressure_epoch.h"
 #include "scene_fluid_pressure_sampling.h"
+#include "scene_fluid_mimetic_pressure_epoch.h"
 #include "scene_fluid_mimetic_pressure_sampling.h"
 #include "scene_fluid_mimetic_pressure_warm_start.h"
 #include "scene_fluid_region_rebase.h"
@@ -691,6 +692,75 @@ void testAppearedControlRegionRebase() {
             previousMimeticCondensed, previousMimeticState,
             mimeticSamplingLimits)); },
         "mimetic pressure sampling bounds owned storage");
+    const auto previousMimeticEpoch =
+        acceptSceneFluidMimeticPressureEpoch(
+            previousEpoch.gridEpoch.quadrature,
+            previousEpoch.pressureControlVolumes,
+            previousMimeticControls, previousMimeticFull,
+            previousMimeticCondensed, previousMimeticSources,
+            mimeticSolveSettings);
+    const auto repeatedPreviousMimeticEpoch =
+        acceptSceneFluidMimeticPressureEpoch(
+            previousEpoch.gridEpoch.quadrature,
+            previousEpoch.pressureControlVolumes,
+            previousMimeticControls, previousMimeticFull,
+            previousMimeticCondensed, previousMimeticSources,
+            mimeticSolveSettings);
+    check(previousMimeticEpoch == repeatedPreviousMimeticEpoch
+              && previousMimeticEpoch.diagnostics.accepted
+              && !previousMimeticEpoch.diagnostics
+                    .usedConsecutiveWarmStart
+              && previousMimeticEpoch.warmStartFingerprint == 0
+              && previousMimeticEpoch.topologyTransitionFingerprint == 0
+              && previousMimeticEpoch.acceptedPressureState
+                  == previousMimeticState
+              && previousMimeticEpoch.acceptedPressureSamples
+                  == previousMimeticSamples,
+          "bootstrap mimetic pressure epoch atomically publishes the independently captured and sampled state");
+    validateSceneFluidMimeticPressureEpochResult(
+        previousMimeticEpoch,
+        previousEpoch.gridEpoch.quadrature,
+        previousEpoch.pressureControlVolumes,
+        previousMimeticControls, previousMimeticFull,
+        previousMimeticCondensed, previousMimeticSources);
+    auto rejectedMimeticSolveSettings = mimeticSolveSettings;
+    rejectedMimeticSolveSettings
+        .absoluteResidualTolerancePascalsMeters = 1.0e-30;
+    rejectedMimeticSolveSettings.relativeResidualTolerance = 0.0;
+    rejectedMimeticSolveSettings.maximumIterations = 0;
+    const auto rejectedMimeticEpoch =
+        acceptSceneFluidMimeticPressureEpoch(
+            previousEpoch.gridEpoch.quadrature,
+            previousEpoch.pressureControlVolumes,
+            previousMimeticControls, previousMimeticFull,
+            previousMimeticCondensed, previousMimeticSources,
+            rejectedMimeticSolveSettings);
+    check(!rejectedMimeticEpoch.diagnostics.accepted
+              && rejectedMimeticEpoch.diagnostics.failureStage
+                  == SceneFluidMimeticPressureEpochFailureStage::
+                      PressureSolve
+              && rejectedMimeticEpoch.acceptedPressureState.fingerprint == 0
+              && rejectedMimeticEpoch.acceptedPressureState.controls.empty()
+              && rejectedMimeticEpoch.acceptedPressureSamples.fingerprint == 0
+              && rejectedMimeticEpoch.acceptedPressureSamples.bindings.empty(),
+          "rejected mimetic pressure epoch publishes diagnostics without state or load samples");
+    validateSceneFluidMimeticPressureEpochResult(
+        rejectedMimeticEpoch,
+        previousEpoch.gridEpoch.quadrature,
+        previousEpoch.pressureControlVolumes,
+        previousMimeticControls, previousMimeticFull,
+        previousMimeticCondensed, previousMimeticSources);
+    SceneFluidMimeticPressureEpochLimits mimeticEpochLimits;
+    mimeticEpochLimits.maximumBootstrapWarmStartBytes =
+        previousMimeticCondensed.traces.size() * sizeof(double) - 1;
+    expectLimited(
+        [&] { static_cast<void>(acceptSceneFluidMimeticPressureEpoch(
+            previousEpoch.gridEpoch.quadrature,
+            previousEpoch.pressureControlVolumes,
+            previousMimeticControls, previousMimeticFull,
+            previousMimeticCondensed, previousMimeticSources,
+            mimeticSolveSettings, mimeticEpochLimits)); },
+        "bootstrap mimetic pressure epoch bounds its zero warm field");
     fluid::MacVelocityField velocity(grid());
     std::ranges::fill(velocity.yFaces(), 0.4);
     std::ranges::fill(velocity.zFaces(), -0.2);
@@ -862,6 +932,50 @@ void testAppearedControlRegionRebase() {
             mimeticSolveSettings);
     check(warmStartedCurrentPressure.diagnostics.accepted,
           "atomic mimetic pressure solve consumes the consecutive-epoch warm start");
+    const auto acceptedCurrentMimeticState =
+        captureSceneFluidMimeticPressureState(
+            currentMimeticControls, currentMimeticFull,
+            currentMimeticCondensed, zeroCurrentMimeticSources,
+            warmStartedCurrentPressure);
+    const auto acceptedCurrentMimeticSamples =
+        sampleSceneFluidMimeticPressure(
+            currentEpoch.gridEpoch.quadrature,
+            currentEpoch.pressureControlVolumes,
+            currentMimeticControls, currentMimeticFull,
+            currentMimeticCondensed, acceptedCurrentMimeticState);
+    const auto currentMimeticEpoch =
+        acceptSceneFluidMimeticPressureEpoch(
+            currentEpoch.gridEpoch.quadrature,
+            currentEpoch.pressureControlVolumes,
+            currentMimeticControls, currentMimeticFull,
+            currentMimeticCondensed, zeroCurrentMimeticSources,
+            previousMimeticState, previousMimeticControls,
+            previousMimeticFull, previousMimeticCondensed,
+            topologyTransition, mimeticSolveSettings);
+    check(currentMimeticEpoch.diagnostics.accepted
+              && currentMimeticEpoch.diagnostics
+                    .usedConsecutiveWarmStart
+              && currentMimeticEpoch.warmStartFingerprint
+                  == mimeticWarm.fingerprint
+              && currentMimeticEpoch.topologyTransitionFingerprint
+                  == topologyTransition.fingerprint
+              && currentMimeticEpoch.acceptedPressureState
+                  == acceptedCurrentMimeticState
+              && currentMimeticEpoch.acceptedPressureSamples
+                  == acceptedCurrentMimeticSamples,
+          "consecutive mimetic pressure epoch composes warm remap, solve, accepted capture, and load sampling atomically");
+    validateSceneFluidMimeticPressureEpochResult(
+        currentMimeticEpoch, currentEpoch.gridEpoch.quadrature,
+        currentEpoch.pressureControlVolumes, currentMimeticControls,
+        currentMimeticFull, currentMimeticCondensed,
+        zeroCurrentMimeticSources);
+    auto corruptCurrentMimeticEpoch = currentMimeticEpoch;
+    corruptCurrentMimeticEpoch.acceptedPressureSamples.bindings.front()
+        .pressureDifferencePascals += 0.01;
+    expectInvalid(
+        [&] { validateSceneFluidMimeticPressureEpochResultIntegrity(
+            corruptCurrentMimeticEpoch); },
+        "mimetic pressure epoch rejects nested accepted-load corruption");
     auto corruptMimeticWarm = mimeticWarm;
     corruptMimeticWarm.reducedTracePascals.back() += 0.01;
     expectInvalid(

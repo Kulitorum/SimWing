@@ -499,6 +499,17 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   transfer without another force path. Analytic and coarse real-wing tests
   require exact one-sided values plus force/moment closure; production worker
   selection is still unchanged.
+- `scene_fluid_mimetic_pressure_epoch.{h,cpp}` is the first atomic acceptance
+  boundary over the isolated mimetic pressure path. Bootstrap allocates a
+  bounded zero reduced field; the consecutive overload consumes the exact
+  fingerprinted warm remap. Both solve the source-bound condensed system,
+  independently capture accepted state, and sample every material pressure
+  side before publication. Exhaustion or incompatibility returns solve
+  diagnostics with no state or sample payload. The result retains complete
+  current topology/source/quadrature provenance plus optional warm/transition
+  fingerprints and nested bounds. It accepts an already assembled physical
+  source product; trace-flow and `dV/dt` ownership remain explicit upstream.
+  Production worker selection is still unchanged.
 - `scene_fluid_mimetic_pressure_source.{h,cpp}` is the immutable physical-unit
   bridge from per-control predicted net-outward flow plus optional `dV/dt` to
   the integrated source `-(rho/dt)*(dV/dt + net_outward)` in `Pa*m`. It is
@@ -1840,7 +1851,8 @@ capture, stable control/trace retention, same-region appearance donors,
 new-trace endpoint initialization, trace retirement, exact current gauges,
 bounded fingerprinted storage, direct atomic-solve consumption, exact
 cell/region side sampling, shared-component gauge safety, and conservative
-force/moment transfer.
+force/moment transfer. Atomic epoch changes must additionally preserve
+bootstrap/consecutive identity, nested limits, and diagnostics-only rollback.
 
 | Change area | Minimum relevant checks |
 |---|---|
