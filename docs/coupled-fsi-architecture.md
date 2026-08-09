@@ -623,6 +623,10 @@ and retains per-point/per-opening normal surface-sweep rates. Its square-mouth
 regression closes rigid material-plus-cap sweep exactly. It does not sample the
 Eulerian velocity or claim mass flux. The material clipper now exposes its
 exact barycentric triangle/box primitive to a bounded opening-patch owner.
+Both material and cap clipping derive every lower and upper cell plane directly
+as `gridLower + faceIndex * spacing`; they never reach a shared upper plane by
+adding one spacing to the preceding lower coordinate. This preserves bit-exact
+adjacent-plane identity even when floating-point addition is non-associative.
 Positive cap area is retained once per cell, or deduplicated from paired
 coincident cell clips into one canonical non-periodic grid face. A square mouth
 closes area and sweep both while grid-aligned and after accepted off-face

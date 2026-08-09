@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
+#include <utility>
 
 namespace {
 
@@ -137,6 +138,24 @@ fluid::PeriodicCartesianGrid grid() {
     return {{4, 4, 4}, {}, {4.0, 4.0, 4.0}};
 }
 
+fluid::PeriodicCartesianGrid nonAssociativePlaneGrid() {
+    constexpr double plane = 2.8991341562581114;
+    return {{4, 4, 4}, {-2.0 * plane, 0.0, 0.0},
+            {2.0 * plane, 4.0, 4.0}};
+}
+
+Scene nonAssociativePlaneOpening() {
+    constexpr double plane = 2.8991341562581114;
+    Scene scene = openingTetrahedron(MouthGeometry::Transverse);
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-opening-non-associative-plane";
+    scene.vertices[0].positionMeters.x = plane - 0.5;
+    scene.vertices[1].positionMeters.x = plane - 0.005;
+    scene.vertices[2].positionMeters.x = plane + 0.005;
+    scene.vertices[3].positionMeters.x = plane + 0.005;
+    return scene;
+}
+
 SceneFluidSurfaceAssembly checkedSurface(const Scene& scene) {
     auto result = assembleSceneFluidSurface(scene);
     if (!result.ok()) {
@@ -150,6 +169,7 @@ SceneFluidSurfaceAssembly checkedSurface(const Scene& scene) {
 
 struct Fixture {
     Scene scene;
+    fluid::PeriodicCartesianGrid fluidGrid;
     SceneFluidSurfaceAssembly surface;
     SceneStructureAssembly structureAssembly;
     Structure structure;
@@ -159,7 +179,11 @@ struct Fixture {
     SceneFluidOpeningGridPatchSet patches;
 
     explicit Fixture(const MouthGeometry geometry)
-        : scene(openingTetrahedron(geometry)),
+        : Fixture(openingTetrahedron(geometry), grid()) {}
+
+    Fixture(Scene source, fluid::PeriodicCartesianGrid sourceGrid)
+        : scene(std::move(source)),
+          fluidGrid(std::move(sourceGrid)),
           surface(checkedSurface(scene)),
           structureAssembly(assembleSceneStructure(scene)),
           structure(structureAssembly.definition),
@@ -169,15 +193,41 @@ struct Fixture {
           quadrature(buildSceneFluidOpeningQuadrature(
               surface.definition, state, caps)),
           patches(buildSceneFluidOpeningGridPatches(
-              surface.definition, state, caps, quadrature, grid())) {}
+              surface.definition, state, caps, quadrature, fluidGrid)) {}
 
     SceneFluidOpeningFaceCrossingSet crossings(
         const SceneFluidOpeningFaceCrossingLimits& limits = {}) const {
         return buildSceneFluidOpeningFaceCrossings(
             surface.definition, state, caps, quadrature, patches,
-            grid(), limits);
+            fluidGrid, limits);
     }
 };
+
+void testCanonicalAdjacentPlaneCoordinate() {
+    const auto offsetGrid = nonAssociativePlaneGrid();
+    const auto lower = offsetGrid.lowerMeters();
+    const auto spacing = offsetGrid.cellSpacingMeters();
+    const double directPlane = lower.x + 3.0 * spacing.x;
+    const double steppedPlane =
+        (lower.x + 2.0 * spacing.x) + spacing.x;
+    check(directPlane != steppedPlane,
+          "opening-face fixture exercises non-associative grid-plane arithmetic");
+
+    Fixture fixture(nonAssociativePlaneOpening(), offsetGrid);
+    const auto result = fixture.crossings();
+    check(result.candidateSegmentCount == 2
+              && result.unpairedContactSegmentCount == 0
+              && result.crossings.size() == 1,
+          "opening cap clips share one canonical adjacent grid plane");
+    if (result.crossings.size() == 1) {
+        const auto& crossing = result.crossings.front();
+        check(crossing.axis == fluid::GridFaceAxis::X
+                  && crossing.i == 3
+                  && crossing.first.positionMeters.x == directPlane
+                  && crossing.second.positionMeters.x == directPlane,
+              "opening cap crossing retains the canonical plane exactly");
+    }
+}
 
 void testTransverseOpeningCrossing() {
     Fixture fixture(MouthGeometry::Transverse);
@@ -237,7 +287,7 @@ void testTransverseOpeningCrossing() {
               "cap crossing direction preserves projected normal z");
     validateSceneFluidOpeningFaceCrossings(
         first, fixture.surface.definition, fixture.state, fixture.caps,
-        fixture.quadrature, fixture.patches, grid());
+        fixture.quadrature, fixture.patches, fixture.fluidGrid);
 }
 
 void testFaceAreaAndGridEdgeOwnership() {
@@ -270,7 +320,8 @@ void testCorruptionAndLimits() {
     expectInvalid(
         [&] { validateSceneFluidOpeningFaceCrossings(
             corrupt, fixture.surface.definition, fixture.state,
-            fixture.caps, fixture.quadrature, fixture.patches, grid()); },
+            fixture.caps, fixture.quadrature, fixture.patches,
+            fixture.fluidGrid); },
         "opening-face-crossing validation rejects payload corruption");
 
     SceneFluidOpeningFaceCrossingLimits limits;
@@ -295,6 +346,7 @@ void testCorruptionAndLimits() {
 int main() {
     try {
         testTransverseOpeningCrossing();
+        testCanonicalAdjacentPlaneCoordinate();
         testFaceAreaAndGridEdgeOwnership();
         testCorruptionAndLimits();
     } catch (const std::exception& exception) {

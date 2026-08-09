@@ -550,9 +550,12 @@ SceneFluidOpeningGridPatchSet buildPatches(
                             * spacing.z,
                     };
                     const Vec3 upper{
-                        lower.x + spacing.x,
-                        lower.y + spacing.y,
-                        lower.z + spacing.z,
+                        result.lowerMeters.x
+                            + static_cast<double>(i + 1) * spacing.x,
+                        result.lowerMeters.y
+                            + static_cast<double>(j + 1) * spacing.y,
+                        result.lowerMeters.z
+                            + static_cast<double>(k + 1) * spacing.z,
                     };
                     auto clip = fluid::clipSceneFluidTriangleToAxisAlignedBox(
                         positions, lower, upper);

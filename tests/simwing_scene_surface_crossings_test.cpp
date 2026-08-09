@@ -103,8 +103,29 @@ PeriodicCartesianGrid grid() {
     return PeriodicCartesianGrid({4, 4, 4}, {}, {4.0, 4.0, 4.0});
 }
 
+PeriodicCartesianGrid nonAssociativePlaneGrid() {
+    constexpr double plane = 2.8991341562581114;
+    return PeriodicCartesianGrid(
+        {4, 4, 4}, {-2.0 * plane, 0.0, 0.0},
+        {2.0 * plane, 4.0, 4.0});
+}
+
+Scene nonAssociativePlaneScene() {
+    constexpr double plane = 2.8991341562581114;
+    Scene scene = transverseScene();
+    scene.metadata.designChecksum =
+        "sha256:scene-surface-crossings-non-associative-plane";
+    scene.vertices = {
+        {10, {plane - 0.005, 1.2, 1.2}},
+        {11, {plane + 0.005, 1.2, 1.2}},
+        {12, {plane - 0.005, 1.8, 1.8}},
+    };
+    return scene;
+}
+
 struct Pipeline {
     Scene scene;
+    PeriodicCartesianGrid fluidGrid;
     SceneFluidSurfaceAssembly surface;
     SceneStructureAssembly structureAssembly;
     Structure structure;
@@ -114,27 +135,29 @@ struct Pipeline {
     SceneFluidGridPatchSet patches;
     SceneFluidPatchOwnership ownership;
 
-    explicit Pipeline(Scene source)
+    explicit Pipeline(Scene source,
+                      PeriodicCartesianGrid sourceGrid = grid())
         : scene(std::move(source)),
+          fluidGrid(std::move(sourceGrid)),
           surface(assembleSceneFluidSurface(scene)),
           structureAssembly(assembleSceneStructure(scene)),
           structure(structureAssembly.definition),
           state(captureSceneFluidSurfaceState(
               surface.definition, structureAssembly.mappings, structure)),
           candidates(buildSceneFluidGridCandidates(
-              surface.definition, state, grid())),
+              surface.definition, state, fluidGrid)),
           intersections(intersectSceneFluidSurfaceWithGrid(
-              surface.definition, state, grid(), candidates)),
+              surface.definition, state, fluidGrid, candidates)),
           patches(clipSceneFluidSurfaceToCells(
               surface.definition,
               state,
-              grid(),
+              fluidGrid,
               candidates,
               intersections)),
           ownership(ownSceneFluidSurfacePatches(
               surface.definition,
               state,
-              grid(),
+              fluidGrid,
               candidates,
               intersections,
               patches)) {}
@@ -145,12 +168,38 @@ SceneFluidFaceCrossingSet crossings(const Pipeline& pipeline,
     return buildSceneFluidFaceCrossings(
         pipeline.surface.definition,
         pipeline.state,
-        grid(),
+        pipeline.fluidGrid,
         pipeline.candidates,
         pipeline.intersections,
         pipeline.patches,
         pipeline.ownership,
         limits);
+}
+
+void testCanonicalAdjacentPlaneCoordinate() {
+    const auto offsetGrid = nonAssociativePlaneGrid();
+    const auto lower = offsetGrid.lowerMeters();
+    const auto spacing = offsetGrid.cellSpacingMeters();
+    const double directPlane = lower.x + 3.0 * spacing.x;
+    const double steppedPlane =
+        (lower.x + 2.0 * spacing.x) + spacing.x;
+    check(directPlane != steppedPlane,
+          "scene face crossings: fixture exercises non-associative grid-plane arithmetic");
+
+    Pipeline pipeline(nonAssociativePlaneScene(), offsetGrid);
+    const auto result = crossings(pipeline);
+    check(result.candidateSegmentCount == 2
+              && result.unpairedContactSegmentCount == 0
+              && result.crossings.size() == 1,
+          "scene face crossings: adjacent cells share one canonical grid plane");
+    if (result.crossings.size() == 1) {
+        const auto& crossing = result.crossings.front();
+        check(crossing.axis == GridFaceAxis::X
+                  && crossing.i == 3
+                  && crossing.first.positionMeters.x == directPlane
+                  && crossing.second.positionMeters.x == directPlane,
+              "scene face crossings: canonical plane survives both cell clips exactly");
+    }
 }
 
 void testTransverseCrossing() {
@@ -196,7 +245,7 @@ void testTransverseCrossing() {
         first,
         pipeline.surface.definition,
         pipeline.state,
-        grid(),
+        pipeline.fluidGrid,
         pipeline.candidates,
         pipeline.intersections,
         pipeline.patches,
@@ -258,7 +307,7 @@ void testLimitsAndTransactionalValidation() {
             corrupt,
             pipeline.surface.definition,
             pipeline.state,
-            grid(),
+            pipeline.fluidGrid,
             pipeline.candidates,
             pipeline.intersections,
             pipeline.patches,
@@ -268,7 +317,7 @@ void testLimitsAndTransactionalValidation() {
         accepted,
         pipeline.surface.definition,
         pipeline.state,
-        grid(),
+        pipeline.fluidGrid,
         pipeline.candidates,
         pipeline.intersections,
         pipeline.patches,
@@ -279,6 +328,7 @@ void testLimitsAndTransactionalValidation() {
 
 int main() {
     testTransverseCrossing();
+    testCanonicalAdjacentPlaneCoordinate();
     testWindingAndContactClassification();
     testLimitsAndTransactionalValidation();
     if (failures != 0) {

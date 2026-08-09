@@ -349,9 +349,12 @@ ClippedPatch clippedPatch(
         gridLower.z + static_cast<double>(intersection.cell.k) * spacing.z,
     };
     const Vec3 upper{
-        lower.x + spacing.x,
-        lower.y + spacing.y,
-        lower.z + spacing.z,
+        gridLower.x
+            + static_cast<double>(intersection.cell.i + 1) * spacing.x,
+        gridLower.y
+            + static_cast<double>(intersection.cell.j + 1) * spacing.y,
+        gridLower.z
+            + static_cast<double>(intersection.cell.k + 1) * spacing.z,
     };
     auto clipped = clipSceneFluidTriangleToAxisAlignedBox(
         positions, lower, upper);

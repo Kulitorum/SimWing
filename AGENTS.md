@@ -1041,9 +1041,12 @@ makes this a certified aerodynamic solver.
   It publishes flattened point/segment/area patches, exact area and centroids,
   and coincident-boundary masks. Coordinates already shared by both endpoints
   remain bit-exact through later-axis interpolation so prior plane identity is
-  not lost. A triangle lying on a shared grid plane stays
-  duplicated and explicitly flagged on both cells; no traction integration may
-  consume both before a unique face-ownership stage. Volume fractions, face
+  not lost. Material and opening-cap clippers derive both sides of every cell
+  directly from `gridLower + faceIndex * spacing`; never form an upper plane as
+  `cellLower + spacing`, because adjacent cells can then disagree through
+  non-associative floating-point addition. A triangle lying on a shared grid
+  plane stays duplicated and explicitly flagged on both cells; no traction
+  integration may consume both before a unique face-ownership stage. Volume fractions, face
   crossings, and region labels remain unassigned.
 - `src/fsi/fluid/scene_surface_ownership.{h,cpp}` retains ordinary positive
   area as cell-owned patches, pairs exact lower/upper duplicates into one

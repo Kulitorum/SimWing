@@ -472,6 +472,10 @@ removes triangle/AABB false positives, retains exact or explicitly tolerated
 contact, and revalidates every expected pair. Exact zero-tolerance pairs are
 now clipped against all six cell planes with original-triangle barycentric
 coordinates, analytic area/centroid data, and explicit point/segment contact.
+Every material and virtual-cap cell bound uses the canonical
+`gridLower + faceIndex * spacing` coordinate, so independently clipped
+adjacent cells cannot acquire different shared planes through non-associative
+floating-point addition.
 Coincident grid-plane area remains duplicated and flagged on both adjacent
 cells in the raw clipping output. A separate ownership stage pairs those exact
 duplicates into one canonical MAC-face area with authored side-region IDs and

@@ -11,7 +11,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidOpeningGridPatchVersion = 1;
+inline constexpr std::uint32_t sceneFluidOpeningGridPatchVersion = 2;
 
 enum class SceneFluidOpeningPatchOwnerKind : std::uint8_t {
     Cell = 1,

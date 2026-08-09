@@ -126,9 +126,12 @@ std::array<BoundaryPlane, 6> boundaryPlanes(
         lowerGrid.z + static_cast<double>(patch.cell.k) * spacing.z,
     };
     const Vec3 upper{
-        lower.x + spacing.x,
-        lower.y + spacing.y,
-        lower.z + spacing.z,
+        lowerGrid.x
+            + static_cast<double>(patch.cell.i + 1) * spacing.x,
+        lowerGrid.y
+            + static_cast<double>(patch.cell.j + 1) * spacing.y,
+        lowerGrid.z
+            + static_cast<double>(patch.cell.k + 1) * spacing.z,
     };
     return {{
         {{fluid::GridFaceAxis::X, patch.cell.i,
