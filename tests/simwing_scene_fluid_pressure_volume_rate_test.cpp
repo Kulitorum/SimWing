@@ -1,10 +1,13 @@
 #include "scene_fluid_pressure_epoch.h"
 #include "scene_fluid_pressure_sampling.h"
+#include "scene_fluid_region_rebase.h"
+#include "scene_fluid_region_wall.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <ranges>
 #include <stdexcept>
 #include <string_view>
@@ -278,11 +281,41 @@ void testStationaryAndTopologyRebase() {
     check(crossingPrevious.volumes.cellRegionVolumes.size()
               != crossingCurrent.volumes.cellRegionVolumes.size(),
           "crossing fixture changes sparse cell-region topology");
+    const auto crossing = buildSceneFluidPressureVolumeRates(
+        crossingPrevious.volumes, crossingCurrent.volumes,
+        crossingCurrent.pressureVolumes);
+    check(crossing.previousControlVolumeCount == 65
+              && crossing.retainedControlVolumeCount == 65
+              && crossing.appearedControlVolumeCount == 1
+              && crossing.controlVolumes.size() == 66,
+          "pressure-volume rate accepts one explicitly marked control appearance");
+    const auto appeared = std::ranges::find_if(
+        crossing.controlVolumes,
+        [](const auto& control) { return control.appearedThisEpoch; });
+    check(appeared != crossing.controlVolumes.end()
+              && appeared->cellIndex == 20
+              && appeared->regionId == 2
+              && appeared->previousVolumeCubicMeters == 0.0
+              && appeared->currentVolumeCubicMeters > 0.0
+              && appeared->volumeChangeCubicMeters
+                  == appeared->currentVolumeCubicMeters,
+          "new pressure control receives an exact zero-volume previous endpoint");
+    checkNear(crossing.globalVolumeChangeCubicMeters, 0.0, 3.0e-12,
+              "control appearance preserves the fixed-domain volume ledger");
+    validateSceneFluidPressureVolumeRates(
+        crossing, crossingPrevious.volumes, crossingCurrent.volumes,
+        crossingCurrent.pressureVolumes);
+
+    advanceApex(crossingFixture, 16.0);
+    const auto retreatCurrent = captureEndpoint(crossingFixture);
+    check(retreatCurrent.pressureVolumes.controlVolumes.size()
+              < crossingCurrent.pressureVolumes.controlVolumes.size(),
+          "reverse crossing fixture removes one sparse pressure control");
     expectInvalid(
         [&] { static_cast<void>(buildSceneFluidPressureVolumeRates(
-            crossingPrevious.volumes, crossingCurrent.volumes,
-            crossingCurrent.pressureVolumes)); },
-        "pressure-volume rate rejects a cell-crossing topology rebase");
+            crossingCurrent.volumes, retreatCurrent.volumes,
+            retreatCurrent.pressureVolumes)); },
+        "pressure-volume rate still rejects a disappearing control");
 }
 
 void testMovingVolumeProjection() {
@@ -496,6 +529,175 @@ void testMovingVolumeProjection() {
         "moving-volume projection rejects a pressure-step duration mismatch");
 }
 
+void testAppearedControlRegionRebase() {
+    Fixture fixture;
+    const auto previousState = captureSceneFluidSurfaceState(
+        fixture.surface.definition,
+        fixture.structureAssembly.mappings,
+        fixture.structure);
+    const auto previousEpoch = buildSceneFluidPressureEpoch(
+        fixture.surface.definition, previousState, grid(), fixture.transfer,
+        fixture.connectivity);
+    fluid::MacVelocityField velocity(grid());
+    std::ranges::fill(velocity.yFaces(), 0.4);
+    std::ranges::fill(velocity.zFaces(), -0.2);
+    const auto previousFlux = evaluateSceneFluidOpeningFlux(
+        fixture.surface.definition, previousState,
+        previousEpoch.openingCaps, previousEpoch.openingQuadrature,
+        previousEpoch.openingPatches, grid(), velocity);
+    SceneFluidPressureProjectionSettings projectionSettings;
+    projectionSettings.timeStepSeconds = 0.25;
+    std::vector<double> warm(
+        previousEpoch.pressureOperator.rows.size(), 0.0);
+    const auto previousProjection = projectSceneFluidPressureLinkFlows(
+        fixture.surface.definition, previousState, grid(), fixture.transfer,
+        previousEpoch.gridEpoch, previousEpoch.openingCaps,
+        previousEpoch.openingQuadrature, previousEpoch.openingPatches,
+        previousFlux, velocity, previousEpoch.cellVolumes,
+        fixture.connectivity, previousEpoch.pressureControlVolumes,
+        previousEpoch.pressureFaceLinks, previousEpoch.pressureOperator,
+        warm, projectionSettings);
+    check(previousProjection.diagnostics.accepted,
+          "region-rebase source pressure projection is accepted");
+    const auto previousMomentum = reconstructSceneFluidRegionMomentumState(
+        grid(), previousEpoch.pressureControlVolumes,
+        previousEpoch.pressureFaceLinks, previousEpoch.openingPatches,
+        previousProjection, velocity);
+    SceneFluidRegionTransportSettings transportSettings;
+    transportSettings.timeStepSeconds = 0.25;
+    const auto transport = advanceSceneFluidRegionMomentum(
+        previousMomentum, previousEpoch.pressureFaceLinks,
+        previousProjection, transportSettings);
+    check(transport.diagnostics.accepted,
+          "region-rebase source momentum transport is accepted");
+
+    advanceApex(fixture, -8.0);
+    const auto currentState = captureSceneFluidSurfaceState(
+        fixture.surface.definition,
+        fixture.structureAssembly.mappings,
+        fixture.structure);
+    const auto currentEpoch = buildSceneFluidPressureEpoch(
+        fixture.surface.definition, currentState, grid(), fixture.transfer,
+        fixture.connectivity);
+    const auto rebase = rebaseSceneFluidRegionTransport(
+        transport, previousEpoch.pressureControlVolumes,
+        currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks);
+    const auto repeated = rebaseSceneFluidRegionTransport(
+        transport, previousEpoch.pressureControlVolumes,
+        currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks);
+    check(rebase == repeated
+              && rebase.diagnostics.previousControlVolumeCount == 65
+              && rebase.diagnostics.currentControlVolumeCount == 66
+              && rebase.diagnostics.retainedControlVolumeCount == 65
+              && rebase.diagnostics.appearedControlVolumeCount == 1
+              && rebase.controlVolumes.size() == 66,
+          "region transport deterministically rebases one appeared control");
+    const auto appeared = std::ranges::find_if(
+        rebase.controlVolumes,
+        [](const auto& control) { return control.appearedThisEpoch; });
+    check(appeared != rebase.controlVolumes.end()
+              && appeared->cellIndex == 20
+              && appeared->regionId == 2
+              && appeared->sourceControlVolumeIndex
+                  == std::numeric_limits<std::size_t>::max()
+              && appeared->donorControlVolumeCount > 0
+              && appeared->donorLinkAreaSquareMeters > 0.0
+              && appeared->velocityMetersPerSecond
+                  == fluid::Vector3{0.0, 0.4, -0.2},
+          "appeared control inherits only retained same-region one-ring velocity");
+    bool retainedVelocityExact = true;
+    for (const auto& control : rebase.controlVolumes) {
+        if (control.appearedThisEpoch) {
+            continue;
+        }
+        retainedVelocityExact = retainedVelocityExact
+            && control.sourceControlVolumeIndex
+                < transport.controlVolumes.size()
+            && control.stableId
+                == transport.controlVolumes[control.sourceControlVolumeIndex]
+                    .stableId
+            && control.velocityMetersPerSecond
+                == transport.controlVolumes[control.sourceControlVolumeIndex]
+                    .velocityMetersPerSecond;
+    }
+    check(retainedVelocityExact,
+          "region rebase preserves every retained stable-ID velocity across index insertion");
+    validateSceneFluidRegionRebase(
+        rebase, transport, previousEpoch.pressureControlVolumes,
+        currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks);
+    std::vector<double> previousWarm(
+        previousEpoch.pressureControlVolumes.controlVolumes.size(), 73.0);
+    const auto currentWarm = rebaseSceneFluidPressureWarmStart(
+        previousEpoch.pressureControlVolumes,
+        currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, previousWarm);
+    check(currentWarm.size()
+              == currentEpoch.pressureControlVolumes.controlVolumes.size()
+              && std::ranges::all_of(
+                  currentWarm,
+                  [](const double pressure) { return pressure == 73.0; }),
+          "pressure warm-start rebase preserves a uniform gauge through control appearance");
+    std::ranges::fill(previousWarm, 0.0);
+    const auto donorPressure = std::ranges::find_if(
+        previousEpoch.pressureControlVolumes.controlVolumes,
+        [](const auto& control) {
+            return control.cellIndex == 21 && control.regionId == 2;
+        });
+    check(donorPressure
+              != previousEpoch.pressureControlVolumes.controlVolumes.end(),
+          "pressure warm-start fixture finds the retained same-region donor");
+    if (donorPressure
+        != previousEpoch.pressureControlVolumes.controlVolumes.end()) {
+        previousWarm[donorPressure->controlVolumeIndex] = 17.0;
+        const auto nonuniformWarm = rebaseSceneFluidPressureWarmStart(
+            previousEpoch.pressureControlVolumes,
+            currentEpoch.pressureControlVolumes,
+            currentEpoch.pressureFaceLinks, previousWarm);
+        check(nonuniformWarm[appeared->controlVolumeIndex] == 17.0,
+              "appeared pressure warm start uses its exact retained same-region donor");
+    }
+    SceneFluidRegionWallSettings wallSettings;
+    wallSettings.timeStepSeconds = 0.25;
+    const auto wall = exchangeSceneFluidRegionWallMomentum(
+        rebase, grid(), currentEpoch.pressureControlVolumes,
+        fixture.surface.definition, currentState,
+        currentEpoch.gridEpoch.quadrature, wallSettings);
+    check(wall.diagnostics.accepted
+              && wall.sourceTransportFingerprint == transport.fingerprint
+              && wall.sourceRegionRebaseFingerprint == rebase.fingerprint
+              && wall.controlVolumes.size()
+                  == currentEpoch.pressureControlVolumes.controlVolumes.size(),
+          "material-wall exchange consumes the rebased current topology with explicit provenance");
+    validateSceneFluidRegionWallExchange(
+        wall, rebase, grid(), currentEpoch.pressureControlVolumes,
+        fixture.surface.definition, currentState,
+        currentEpoch.gridEpoch.quadrature);
+
+    auto corrupt = rebase;
+    corrupt.controlVolumes.back().momentumKilogramMetersPerSecond.x += 1.0;
+    expectInvalid(
+        [&] { validateSceneFluidRegionRebaseIntegrity(corrupt); },
+        "region-rebase integrity rejects momentum corruption");
+    auto corruptLinks = currentEpoch.pressureFaceLinks;
+    corruptLinks.links.front().areaSquareMeters += 0.01;
+    expectInvalid(
+        [&] { static_cast<void>(rebaseSceneFluidRegionTransport(
+            transport, previousEpoch.pressureControlVolumes,
+            currentEpoch.pressureControlVolumes, corruptLinks)); },
+        "region rebase rejects nested face-link corruption");
+    SceneFluidRegionRebaseLimits limits;
+    limits.maximumControlVolumes = rebase.controlVolumes.size() - 1;
+    expectLimited(
+        [&] { static_cast<void>(rebaseSceneFluidRegionTransport(
+            transport, previousEpoch.pressureControlVolumes,
+            currentEpoch.pressureControlVolumes,
+            currentEpoch.pressureFaceLinks, limits)); },
+        "region rebase bounds its current control count");
+}
+
 void testIndependentGaugeSamplingRejection() {
     Fixture fixture(false);
     const auto current = captureEndpoint(fixture);
@@ -638,6 +840,7 @@ int main(const int argc, const char* const argv[]) {
         } else if (argc == 1) {
             testTopologyStableMovingRates();
             testStationaryAndTopologyRebase();
+            testAppearedControlRegionRebase();
             testCorruptionAndLimits();
         } else {
             std::fprintf(stderr, "unexpected test argument\n");

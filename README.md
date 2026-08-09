@@ -584,10 +584,11 @@ consecutive-epoch owner now derives exact per-control-volume `dV/dt` from
 stable cell/region identities. The moving projection overload targets
 `dV/dt + net relative flow = 0`; with zero predicted air velocity, the
 expanding analytic cell develops pressure and draws corrected flow inward
-through its intake. Sparse cell/region appearance or disappearance rejects as
-a topology rebase. Conservative rebase/remap, corrected-MAC reconstruction
-across partitioned faces, off-face opening transmissibility, and general
-moving-boundary projection remain future work.
+through its intake. A newly positive cell/region row is now marked explicitly
+and receives a zero-volume previous endpoint as long as every old row remains;
+disappearance still rejects. General conservative swept-volume remap,
+corrected-MAC reconstruction across partitioned faces, off-face opening
+transmissibility, and general moving-boundary projection remain future work.
 Accepted projection pressure now also returns through the authoritative
 surface path. Quadrature-v2 retains the exact cell owner of each authored
 surface side; a bounded sampler resolves those cell/region pressure unknowns,
@@ -603,7 +604,7 @@ volumes, pressure controls, conservative links, and the ungauged operator all
 share one Structure-state identity and an aggregate storage bound. Downstream
 macro-step code can no longer accidentally mix those products across accepted
 surface states.
-The first topology-stable strong feedback owner now closes that pressure path
+The first strong feedback owner now closes that pressure path
 against XPBD. Each Aitken iteration restores the same structural baseline,
 applies the trapezoidal average of the accepted start pressure load and a
 relaxed end-load guess, rebuilds the pressure epoch, projects moving-volume
@@ -617,8 +618,8 @@ area-collapsed back onto one absolute bulk MAC velocity per Cartesian face,
 including oriented intake-cap sweep. The visible pressure-cell canonical uses
 that field as its next predictor. Region-resolved transport and a local
 material-wall exchange now continue the accepted state after bootstrap;
-general immersed-boundary advection/boundary layers and topology rebasing
-remain later work.
+general immersed-boundary advection/boundary layers and general topology
+rebasing remain later work.
 A separate topology-bound link-flow continuation primitive now proves exactly
 what the collapse loses. It restores accepted opening-cap sweep, carries each
 link's absolute velocity deviation from its previous face mean, recentres those
@@ -650,6 +651,16 @@ moving-epoch adapter then retains transported cell/region velocities while
 remapping momentum to current physical volumes, averages them onto current
 pressure links, subtracts exact opening-cap sweep, and supplies the
 fingerprinted predictor to pressure projection alongside dV/dt.
+A bounded first crossing adapter now handles the appearance-only subset in
+which all accepted controls remain. Retained controls keep transported
+velocity; each newly positive control receives the area-weighted velocity of
+directly linked retained controls in the same authored region. Momentum is
+recomputed from current volume with an explicit geometric-change ledger, and
+the pressure warm start follows the same one-ring donor rule. The strong
+coupling owner composes this rebase with wall exchange and pressure projection
+transactionally. Disappearance, cross-material donation, and appeared clusters
+without a retained one-ring donor still reject; this is not a general
+conservative swept-volume remap.
 A separate material-wall operator remaps that fixed transport to each current
 strong-coupling geometry, applies two-sided tangential viscous exchange at the
 authoritative material quadrature, and returns both adjusted region momentum
@@ -660,7 +671,7 @@ before publication. Pressure remains the sole owner of normal traction. The
 wall-adjusted current-link predictor feeds pressure projection, while the
 combined pressure-plus-shear load follows the existing conservative XPBD
 transfer. This is a local coarse cut-region closure, not a resolved boundary
-layer. Topology rebase remains an explicit next step.
+layer.
 Its in-memory composite checkpoint retains Structure plus the accepted sparse
 pressure projection; restore rebuilds and validates the complete pressure
 epoch and conservative load before committing either owner. Initial and

@@ -133,6 +133,12 @@ buildSceneFluidPressureFaceLinks(
     const SceneFluidPressureFaceLinkSettings& settings = {},
     const SceneFluidPressureFaceLinkLimits& limits = {});
 
+// Lightweight immutable-product check for downstream current-topology
+// adapters that already received an accepted face-link set and must reject
+// accidental nested mutation without rebuilding the complete geometry chain.
+void validateSceneFluidPressureFaceLinkIntegrity(
+    const SceneFluidPressureFaceLinkSet& faceLinks);
+
 void validateSceneFluidPressureFaceLinks(
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidSurfaceDefinition& surface,

@@ -149,10 +149,52 @@ bool finite(const SceneFluidPressureCouplingStepDiagnostics& diagnostics) {
         && (!diagnostics.usesRegionWall
             || (diagnostics.regionWall.finite
                 && diagnostics.regionWall.accepted))
+        && (!diagnostics.usesRegionRebase
+            || diagnostics.regionRebase.finite)
         && diagnostics.pressureTransfer.finite
         && diagnostics.totalFluidTransfer.finite
         && std::isfinite(diagnostics.interfaceForceClosureNewtons)
         && std::isfinite(diagnostics.interfaceForceReferenceNewtons);
+}
+
+bool sameControlTopology(
+    const SceneFluidPressureControlVolumeSet& first,
+    const SceneFluidPressureControlVolumeSet& second) {
+    if (first.controlVolumes.size() != second.controlVolumes.size()) {
+        return false;
+    }
+    for (std::size_t index = 0;
+         index < first.controlVolumes.size(); ++index) {
+        if (first.controlVolumes[index].stableId
+            != second.controlVolumes[index].stableId) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<std::uint64_t> controlStableIds(
+    const SceneFluidPressureControlVolumeSet& controls) {
+    std::vector<std::uint64_t> result;
+    result.reserve(controls.controlVolumes.size());
+    for (const auto& control : controls.controlVolumes) {
+        result.push_back(control.stableId);
+    }
+    return result;
+}
+
+bool sameControlTopology(
+    const std::span<const std::uint64_t> stableIds,
+    const SceneFluidPressureControlVolumeSet& controls) {
+    if (stableIds.size() != controls.controlVolumes.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < stableIds.size(); ++index) {
+        if (stableIds[index] != controls.controlVolumes[index].stableId) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool sameVector(const StructureVector3& first,
@@ -676,6 +718,8 @@ SceneFluidPressureCoupling::advanceImpl(
     ConservativeTransferResult previousTraction =
         *acceptedPressureTransfer_;
     std::vector<double> warmPressure = acceptedPressurePascals_;
+    std::vector<std::uint64_t> warmPressureStableIds = controlStableIds(
+        acceptedPressureEpoch_.pressureControlVolumes);
     StrongCouplingIteration iteration(
         transfer_.couplingSurfaceFingerprint(),
         flattenLoads(*acceptedPressureTransfer_),
@@ -718,16 +762,51 @@ SceneFluidPressureCoupling::advanceImpl(
                 predictedVelocityMetersPerSecond, limits_.openingFlux);
             auto projectionSettings = settings_.pressureProjection;
             projectionSettings.timeStepSeconds = rates.durationSeconds;
+            std::vector<double> rebasedWarmPressure;
+            std::span<const double> projectionWarmPressure = warmPressure;
+            if (!sameControlTopology(
+                    warmPressureStableIds,
+                    currentEpoch.pressureControlVolumes)) {
+                rebasedWarmPressure = rebaseSceneFluidPressureWarmStart(
+                    acceptedPressureEpoch_.pressureControlVolumes,
+                    currentEpoch.pressureControlVolumes,
+                    currentEpoch.pressureFaceLinks,
+                    acceptedPressurePascals_);
+                projectionWarmPressure = rebasedWarmPressure;
+            }
             SceneFluidPressureProjection projection;
             std::optional<SceneFluidRegionWallExchange> wallExchange;
+            std::optional<SceneFluidRegionRebase> regionRebase;
             if (transportedRegionMomentum != nullptr) {
+                if (!sameControlTopology(
+                        acceptedPressureEpoch_.pressureControlVolumes,
+                        currentEpoch.pressureControlVolumes)) {
+                    regionRebase.emplace(rebaseSceneFluidRegionTransport(
+                        *transportedRegionMomentum,
+                        acceptedPressureEpoch_.pressureControlVolumes,
+                        currentEpoch.pressureControlVolumes,
+                        currentEpoch.pressureFaceLinks,
+                        limits_.regionRebase));
+                }
                 auto wallSettings = settings_.regionWall;
                 wallSettings.timeStepSeconds = rates.durationSeconds;
-                wallExchange.emplace(exchangeSceneFluidRegionWallMomentum(
-                    *transportedRegionMomentum, grid_,
-                    currentEpoch.pressureControlVolumes, surface_,
-                    currentState, currentEpoch.gridEpoch.quadrature,
-                    wallSettings, limits_.regionWall));
+                if (regionRebase) {
+                    wallExchange.emplace(
+                        exchangeSceneFluidRegionWallMomentum(
+                            *regionRebase, grid_,
+                            currentEpoch.pressureControlVolumes, surface_,
+                            currentState,
+                            currentEpoch.gridEpoch.quadrature,
+                            wallSettings, limits_.regionWall));
+                } else {
+                    wallExchange.emplace(
+                        exchangeSceneFluidRegionWallMomentum(
+                            *transportedRegionMomentum, grid_,
+                            currentEpoch.pressureControlVolumes, surface_,
+                            currentState,
+                            currentEpoch.gridEpoch.quadrature,
+                            wallSettings, limits_.regionWall));
+                }
                 if (!wallExchange->diagnostics.accepted) {
                     throw std::runtime_error(
                         "scene pressure coupling wall exchange was not accepted");
@@ -747,7 +826,8 @@ SceneFluidPressureCoupling::advanceImpl(
                     currentEpoch.cellVolumes, connectivity_,
                     currentEpoch.pressureControlVolumes,
                     currentEpoch.pressureFaceLinks,
-                    currentEpoch.pressureOperator, rates, warmPressure,
+                    currentEpoch.pressureOperator, rates,
+                    projectionWarmPressure,
                     projectionSettings, limits_.pressureProjection);
             } else {
                 projection = projectSceneFluidPressureLinkFlows(
@@ -759,7 +839,8 @@ SceneFluidPressureCoupling::advanceImpl(
                     currentEpoch.cellVolumes, connectivity_,
                     currentEpoch.pressureControlVolumes,
                     currentEpoch.pressureFaceLinks,
-                    currentEpoch.pressureOperator, rates, warmPressure,
+                    currentEpoch.pressureOperator, rates,
+                    projectionWarmPressure,
                     projectionSettings, limits_.pressureProjection);
             }
             if (!projection.diagnostics.accepted) {
@@ -809,6 +890,10 @@ SceneFluidPressureCoupling::advanceImpl(
             if (wallExchange) {
                 diagnostics.regionWall = wallExchange->diagnostics;
             }
+            diagnostics.usesRegionRebase = regionRebase.has_value();
+            if (regionRebase) {
+                diagnostics.regionRebase = regionRebase->diagnostics;
+            }
             diagnostics.pressureTransfer =
                 pressureOnlyTraction.diagnostics();
             diagnostics.totalFluidTransfer = currentTraction.diagnostics();
@@ -847,6 +932,8 @@ SceneFluidPressureCoupling::advanceImpl(
             previousKinematics = currentKinematics;
             previousTraction = std::move(currentTraction);
             warmPressure = std::move(projection.pressurePascals);
+            warmPressureStableIds = controlStableIds(
+                currentEpoch.pressureControlVolumes);
         }
     } catch (...) {
         target.restore(structureBaseline);

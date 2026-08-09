@@ -39,6 +39,7 @@ struct SceneFluidPressureCouplingLimits {
     SceneFluidPressureProjectionLimits pressureProjection;
     SceneFluidPressureSamplingLimits pressureSampling;
     SceneFluidRegionLinkFlowLimits regionLinkFlow;
+    SceneFluidRegionRebaseLimits regionRebase;
     SceneFluidRegionWallLimits regionWall;
     std::size_t maximumCouplingNodes = 10'000'000;
     std::size_t maximumInterfaceBytes =
@@ -57,6 +58,8 @@ struct SceneFluidPressureCouplingStepDiagnostics {
     SceneFluidPressureProjectionDiagnostics pressureProjection;
     SceneFluidRegionWallDiagnostics regionWall;
     bool usesRegionWall = false;
+    SceneFluidRegionRebaseDiagnostics regionRebase;
+    bool usesRegionRebase = false;
     ConservativeTransferDiagnostics pressureTransfer;
     ConservativeTransferDiagnostics totalFluidTransfer;
     double interfaceForceClosureNewtons = 0.0;
@@ -115,7 +118,7 @@ struct SceneFluidPressureMacVelocityCollapse {
         const SceneFluidPressureMacVelocityCollapse&) const = default;
 };
 
-// First topology-stable strong feedback owner for the scene-v2 pressure path.
+// First strong feedback owner for the scene-v2 pressure path.
 // The interface iterate is the canonical end-of-step total fluid nodal load.
 // Every solve restores the same Structure baseline, applies the trapezoidal
 // average of the accepted start load and relaxed end-load guess, advances
@@ -129,8 +132,10 @@ struct SceneFluidPressureMacVelocityCollapse {
 // The predicted MAC field is held fixed across the nonlinear iteration. The
 // region-transport overload likewise holds one accepted transport fixed,
 // remaps it to every current geometry iterate, exchanges tangential momentum
-// with the material wall, and projects the adjusted link flow. This closes
-// structural pressure/shear feedback without claiming topology rebase.
+// with the material wall, and projects the adjusted link flow. Its bounded
+// first crossing subset admits appeared controls only while every old control
+// remains, using same-region one-ring donors for velocity and pressure warm
+// state. This is not a general swept-volume topology remap.
 class SceneFluidPressureCoupling final {
 public:
     SceneFluidPressureCoupling(

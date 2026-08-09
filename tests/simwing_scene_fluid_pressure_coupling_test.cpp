@@ -349,6 +349,34 @@ void testExhaustionAndProjectionFailureRollback() {
               && failedCoupling.acceptedSurfaceState().acceptedStepCount == 0,
           "projection failure restores the exact Structure and pressure baseline");
 
+    Fixture appearanceFixture;
+    auto appearanceSettings = couplingSettings();
+    appearanceSettings.structure.gravityMetersPerSecondSquared = {
+        -100.0, 0.0, 0.0};
+    appearanceSettings.convergence.minimumIterations = 1;
+    appearanceSettings.convergence.maximumIterations = 1;
+    appearanceSettings.convergence.absoluteDisplacementToleranceMetres =
+        1.0e6;
+    appearanceSettings.convergence.relativeDisplacementTolerance = 1.0e6;
+    appearanceSettings.convergence
+        .absoluteVelocityToleranceMetersPerSecond = 1.0e6;
+    appearanceSettings.convergence.relativeVelocityTolerance = 1.0e6;
+    appearanceSettings.convergence.absoluteTractionToleranceNewtons = 1.0e6;
+    appearanceSettings.convergence.relativeTractionTolerance = 1.0e6;
+    SceneFluidPressureCoupling appearanceCoupling(
+        appearanceFixture.surface.definition,
+        appearanceFixture.assembly.mappings,
+        appearanceFixture.structure, grid, appearanceSettings);
+    const auto appearance = appearanceCoupling.advance(
+        appearanceFixture.structure, velocity);
+    check(appearance.accepted
+              && appearanceCoupling.acceptedPressureEpoch()
+                     .pressureControlVolumes.controlVolumes.size() == 66
+              && appearanceCoupling.acceptedPressureProjection() != nullptr
+              && appearanceCoupling.acceptedPressureProjection()
+                     ->diagnostics.usesMovingVolumeRates,
+          "one-row pressure topology appearance advances through coupling and warm-start rebase");
+
     Fixture topologyFixture;
     auto topologySettings = couplingSettings();
     topologySettings.structure.gravityMetersPerSecondSquared = {
@@ -390,6 +418,61 @@ void testCouplingInterfaceLimits() {
     }
     check(rejected && fixture.structure.acceptedStepCount() == 0,
           "scene pressure coupling bounds its nonlinear interface storage");
+}
+
+void testTransportedTopologyAppearance() {
+    Fixture fixture;
+    auto settings = couplingSettings();
+    settings.structure.gravityMetersPerSecondSquared = {};
+    settings.convergence.minimumIterations = 1;
+    settings.convergence.maximumIterations = 1;
+    settings.convergence.absoluteDisplacementToleranceMetres = 1.0e6;
+    settings.convergence.relativeDisplacementTolerance = 1.0e6;
+    settings.convergence.absoluteVelocityToleranceMetersPerSecond = 1.0e6;
+    settings.convergence.relativeVelocityTolerance = 1.0e6;
+    settings.convergence.absoluteTractionToleranceNewtons = 1.0e6;
+    settings.convergence.relativeTractionTolerance = 1.0e6;
+    const fluid::PeriodicCartesianGrid grid(
+        {4, 4, 4}, {}, {4.0, 4.0, 4.0});
+    SceneFluidPressureCoupling coupling(
+        fixture.surface.definition, fixture.assembly.mappings,
+        fixture.structure, grid, settings);
+    fluid::MacVelocityField velocity(grid);
+    const auto first = coupling.advance(fixture.structure, velocity);
+    check(first.accepted
+              && coupling.acceptedPressureEpoch()
+                     .pressureControlVolumes.controlVolumes.size() == 65,
+          "transported topology fixture first accepts before its cell crossing");
+    if (!first.accepted || coupling.acceptedPressureProjection() == nullptr) {
+        return;
+    }
+    const auto& previousEpoch = coupling.acceptedPressureEpoch();
+    const auto momentum = reconstructSceneFluidRegionMomentumState(
+        grid, previousEpoch.pressureControlVolumes,
+        previousEpoch.pressureFaceLinks, previousEpoch.openingPatches,
+        *coupling.acceptedPressureProjection(), velocity);
+    SceneFluidRegionTransportSettings transportSettings;
+    transportSettings.timeStepSeconds =
+        settings.structure.timeStepSeconds;
+    const auto transport = advanceSceneFluidRegionMomentum(
+        momentum, previousEpoch.pressureFaceLinks,
+        *coupling.acceptedPressureProjection(), transportSettings);
+    check(transport.diagnostics.accepted,
+          "transported topology fixture advances its accepted region momentum");
+    const std::size_t apex = apexNode(fixture);
+    const double apexMass = fixture.structure.definition().nodes[apex].massKg;
+    fixture.structure.addExternalForce(
+        apex, {-100.0 * apexMass, 0.0, 0.0});
+    const auto second = coupling.advance(
+        fixture.structure, velocity, transport);
+    check(second.accepted
+              && second.usesRegionRebase
+              && second.regionRebase.appearedControlVolumeCount == 1
+              && second.usesRegionWall
+              && coupling.acceptedPressureEpoch()
+                     .pressureControlVolumes.controlVolumes.size() == 66
+              && coupling.acceptedPressureProjection() != nullptr,
+          "transported coupling accepts a one-row appearance through region rebase and wall exchange");
 }
 
 void testCheckpointReplayAndTransactionalRejection() {
@@ -517,6 +600,7 @@ int main() {
         testStrongPressureFeedbackConvergesDeterministically();
         testExhaustionAndProjectionFailureRollback();
         testCouplingInterfaceLimits();
+        testTransportedTopologyAppearance();
         testCheckpointReplayAndTransactionalRejection();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

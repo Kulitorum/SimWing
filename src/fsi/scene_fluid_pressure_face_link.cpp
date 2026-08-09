@@ -749,6 +749,21 @@ SceneFluidPressureFaceLinkSet buildSceneFluidPressureFaceLinks(
     return result;
 }
 
+void validateSceneFluidPressureFaceLinkIntegrity(
+    const SceneFluidPressureFaceLinkSet& faceLinks) {
+    if (faceLinks.version != sceneFluidPressureFaceLinkVersion
+        || faceLinks.fingerprint == 0
+        || faceLinks.surfaceDefinitionFingerprint == 0
+        || faceLinks.surfaceStateFingerprint == 0
+        || faceLinks.gridEpochFingerprint == 0
+        || faceLinks.pressureControlVolumeFingerprint == 0
+        || faceLinks.ownedStorageBytes != storageBytes(faceLinks)
+        || faceLinks.fingerprint != faceLinkFingerprint(faceLinks)) {
+        throw std::invalid_argument(
+            "scene fluid pressure-face-link integrity is invalid");
+    }
+}
+
 void validateSceneFluidPressureFaceLinks(
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidSurfaceDefinition& surface,
@@ -769,9 +784,8 @@ void validateSceneFluidPressureFaceLinks(
         volumes, surface, state, grid, transfer, epoch);
     validateSceneFluidPressureControlVolumes(
         pressureVolumes, surface, volumes, connectivity);
-    if (faceLinks.version != sceneFluidPressureFaceLinkVersion
-        || faceLinks.fingerprint == 0
-        || faceLinks.surfaceDefinitionFingerprint != surface.fingerprint
+    validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
+    if (faceLinks.surfaceDefinitionFingerprint != surface.fingerprint
         || faceLinks.surfaceStateFingerprint != state.fingerprint
         || faceLinks.gridEpochFingerprint != epoch.fingerprint
         || faceLinks.openingPatchFingerprint != openingPatches.fingerprint
@@ -788,9 +802,7 @@ void validateSceneFluidPressureFaceLinks(
     const auto expected = buildFaceLinks(
         surface, state, grid, epoch, openingPatches, pressureVolumes,
         faceLinks.settings, unlimited);
-    if (faceLinks != expected
-        || faceLinks.ownedStorageBytes != storageBytes(faceLinks)
-        || faceLinks.fingerprint != faceLinkFingerprint(faceLinks)) {
+    if (faceLinks != expected) {
         throw std::invalid_argument(
             "scene fluid pressure-face-link payload is invalid");
     }

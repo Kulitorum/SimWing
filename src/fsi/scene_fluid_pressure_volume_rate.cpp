@@ -4,6 +4,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <type_traits>
 
@@ -123,6 +124,12 @@ std::uint64_t volumeRateFingerprint(
     fingerprint.integer(static_cast<std::uint64_t>(rates.cellCounts.z));
     fingerprint.integer(static_cast<std::uint64_t>(rates.ownedStorageBytes));
     fingerprint.integer(static_cast<std::uint64_t>(
+        rates.previousControlVolumeCount));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        rates.retainedControlVolumeCount));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        rates.appearedControlVolumeCount));
+    fingerprint.integer(static_cast<std::uint64_t>(
         rates.controlVolumes.size()));
     for (const auto& control : rates.controlVolumes) {
         fingerprint.integer(static_cast<std::uint64_t>(
@@ -132,6 +139,8 @@ std::uint64_t volumeRateFingerprint(
         fingerprint.integer(control.regionId);
         fingerprint.integer(static_cast<std::uint64_t>(
             control.componentIndex));
+        fingerprint.integer(static_cast<std::uint8_t>(
+            control.appearedThisEpoch));
         fingerprint.real(control.previousVolumeCubicMeters);
         fingerprint.real(control.currentVolumeCubicMeters);
         fingerprint.real(control.volumeChangeCubicMeters);
@@ -204,8 +213,6 @@ void validateSources(
         || !sameGrid(previousVolumes, currentVolumes)
         || !sameGrid(currentVolumes, currentPressureVolumes)
         || previousVolumes.cells.size() != currentVolumes.cells.size()
-        || previousVolumes.cellRegionVolumes.size()
-            != currentVolumes.cellRegionVolumes.size()
         || currentVolumes.cellRegionVolumes.size()
             != currentPressureVolumes.controlVolumes.size()) {
         throw std::invalid_argument(
@@ -218,35 +225,52 @@ void validateSources(
         const auto& currentCell = currentVolumes.cells[cellIndex];
         if (previousCell.cellIndex != cellIndex
             || currentCell.cellIndex != cellIndex
-            || previousCell.cell != currentCell.cell
-            || previousCell.firstRegionVolume
-                != currentCell.firstRegionVolume
-            || previousCell.regionVolumeCount
-                != currentCell.regionVolumeCount) {
+            || previousCell.cell != currentCell.cell) {
             throw std::invalid_argument(
-                "scene fluid pressure-volume-rate topology changed between epochs");
+                "scene fluid pressure-volume-rate cell identity changed between epochs");
         }
         for (std::size_t offset = 0;
              offset < currentCell.regionVolumeCount; ++offset) {
             const std::size_t sourceIndex =
                 currentCell.firstRegionVolume + offset;
-            const auto& previous =
-                previousVolumes.cellRegionVolumes[sourceIndex];
             const auto& current =
                 currentVolumes.cellRegionVolumes[sourceIndex];
             const auto& pressure =
                 currentPressureVolumes.controlVolumes[sourceIndex];
-            if (previous.regionId != current.regionId
-                || pressure.controlVolumeIndex != sourceIndex
+            if (pressure.controlVolumeIndex != sourceIndex
                 || pressure.cellIndex != cellIndex
                 || pressure.regionId != current.regionId
                 || pressure.volumeCubicMeters != current.volumeCubicMeters
-                || !std::isfinite(previous.volumeCubicMeters)
                 || !std::isfinite(current.volumeCubicMeters)
-                || !(previous.volumeCubicMeters > 0.0)
                 || !(current.volumeCubicMeters > 0.0)) {
                 throw std::invalid_argument(
                     "scene fluid pressure-volume-rate sparse topology is inconsistent");
+            }
+        }
+    }
+
+    std::map<std::pair<std::size_t, StableId>, double> currentByOwner;
+    for (const auto& pressure : currentPressureVolumes.controlVolumes) {
+        if (!currentByOwner.emplace(
+                std::pair{pressure.cellIndex, pressure.regionId},
+                pressure.volumeCubicMeters).second) {
+            throw std::invalid_argument(
+                "scene fluid pressure-volume-rate current owner is duplicated");
+        }
+    }
+    for (std::size_t cellIndex = 0;
+         cellIndex < previousVolumes.cells.size(); ++cellIndex) {
+        const auto& cell = previousVolumes.cells[cellIndex];
+        for (std::size_t offset = 0;
+             offset < cell.regionVolumeCount; ++offset) {
+            const auto& previous = previousVolumes.cellRegionVolumes[
+                cell.firstRegionVolume + offset];
+            if (!std::isfinite(previous.volumeCubicMeters)
+                || !(previous.volumeCubicMeters > 0.0)
+                || !currentByOwner.contains(
+                    {cellIndex, previous.regionId})) {
+                throw std::invalid_argument(
+                    "scene fluid pressure-volume-rate control disappearance is unsupported");
             }
         }
     }
@@ -297,17 +321,39 @@ SceneFluidPressureVolumeRateSet buildRates(
     result.cellCounts = currentVolumes.cellCounts;
     result.lowerMeters = currentVolumes.lowerMeters;
     result.upperMeters = currentVolumes.upperMeters;
+    result.previousControlVolumeCount =
+        previousVolumes.cellRegionVolumes.size();
+    std::map<std::pair<std::size_t, StableId>, double> previousByOwner;
+    for (std::size_t cellIndex = 0;
+         cellIndex < previousVolumes.cells.size(); ++cellIndex) {
+        const auto& cell = previousVolumes.cells[cellIndex];
+        for (std::size_t offset = 0;
+             offset < cell.regionVolumeCount; ++offset) {
+            const auto& previous = previousVolumes.cellRegionVolumes[
+                cell.firstRegionVolume + offset];
+            previousByOwner.emplace(
+                std::pair{cellIndex, previous.regionId},
+                previous.volumeCubicMeters);
+        }
+    }
     result.controlVolumes.reserve(controlCount);
     for (const auto& pressure : currentPressureVolumes.controlVolumes) {
-        const auto& previous = previousVolumes.cellRegionVolumes[
-            pressure.controlVolumeIndex];
+        const auto previous = previousByOwner.find(
+            {pressure.cellIndex, pressure.regionId});
         SceneFluidPressureControlVolumeRate rate;
         rate.controlVolumeIndex = pressure.controlVolumeIndex;
         rate.stableId = pressure.stableId;
         rate.cellIndex = pressure.cellIndex;
         rate.regionId = pressure.regionId;
         rate.componentIndex = pressure.componentIndex;
-        rate.previousVolumeCubicMeters = previous.volumeCubicMeters;
+        rate.appearedThisEpoch = previous == previousByOwner.end();
+        rate.previousVolumeCubicMeters = rate.appearedThisEpoch
+            ? 0.0 : previous->second;
+        if (rate.appearedThisEpoch) {
+            ++result.appearedControlVolumeCount;
+        } else {
+            ++result.retainedControlVolumeCount;
+        }
         rate.currentVolumeCubicMeters = pressure.volumeCubicMeters;
         rate.volumeChangeCubicMeters = rate.currentVolumeCubicMeters
             - rate.previousVolumeCubicMeters;
@@ -405,6 +451,12 @@ void validateSceneFluidPressureVolumeRateIntegrity(
         || !std::isfinite(rates.durationSeconds)
         || rates.controlVolumes.empty()
         || rates.components.empty()
+        || rates.previousControlVolumeCount == 0
+        || rates.retainedControlVolumeCount
+            != rates.previousControlVolumeCount
+        || rates.retainedControlVolumeCount
+                + rates.appearedControlVolumeCount
+            != rates.controlVolumes.size()
         || rates.ownedStorageBytes != storageBytes(rates)
         || rates.fingerprint != volumeRateFingerprint(rates)) {
         throw std::invalid_argument(

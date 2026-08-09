@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scene_fluid_region_transport.h"
+#include "scene_fluid_region_rebase.h"
 #include "scene_fluid_quadrature.h"
 
 #include <cstddef>
@@ -9,7 +9,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidRegionWallExchangeVersion = 1;
+inline constexpr std::uint32_t sceneFluidRegionWallExchangeVersion = 2;
 inline constexpr std::uint32_t sceneFluidAcceptedWallTractionVersion = 1;
 
 struct SceneFluidRegionWallSettings {
@@ -95,8 +95,9 @@ struct SceneFluidRegionWallDiagnostics {
     bool operator==(const SceneFluidRegionWallDiagnostics&) const = default;
 };
 
-// Two-sided tangential exchange between a transported cell/region state and
-// the current material surface. Each quadrature side uses its exact authored
+// Two-sided tangential exchange between a transported (optionally explicitly
+// rebased) cell/region state and the current material surface. Each
+// quadrature side uses its exact authored
 // cell/region owner. Explicit subcycling bounds the aggregate viscous row per
 // control volume. Fluid impulse and the equal-and-opposite structure traction
 // are published together, with wall work separated from nonnegative viscous
@@ -105,6 +106,7 @@ struct SceneFluidRegionWallExchange {
     std::uint32_t version = sceneFluidRegionWallExchangeVersion;
     std::uint64_t fingerprint = 0;
     std::uint64_t sourceTransportFingerprint = 0;
+    std::uint64_t sourceRegionRebaseFingerprint = 0;
     std::uint64_t currentPressureControlVolumeFingerprint = 0;
     std::uint64_t quadratureFingerprint = 0;
     std::uint64_t surfaceDefinitionFingerprint = 0;
@@ -155,12 +157,32 @@ exchangeSceneFluidRegionWallMomentum(
     const SceneFluidRegionWallSettings& settings = {},
     const SceneFluidRegionWallLimits& limits = {});
 
+[[nodiscard]] SceneFluidRegionWallExchange
+exchangeSceneFluidRegionWallMomentum(
+    const SceneFluidRegionRebase& rebase,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& currentState,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidRegionWallSettings& settings = {},
+    const SceneFluidRegionWallLimits& limits = {});
+
 void validateSceneFluidRegionWallExchangeIntegrity(
     const SceneFluidRegionWallExchange& exchange);
 
 void validateSceneFluidRegionWallExchange(
     const SceneFluidRegionWallExchange& exchange,
     const SceneFluidRegionTransport& transport,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& currentState,
+    const SceneFluidQuadratureDefinition& quadrature);
+
+void validateSceneFluidRegionWallExchange(
+    const SceneFluidRegionWallExchange& exchange,
+    const SceneFluidRegionRebase& rebase,
     const fluid::PeriodicCartesianGrid& grid,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
     const SceneFluidSurfaceDefinition& surface,

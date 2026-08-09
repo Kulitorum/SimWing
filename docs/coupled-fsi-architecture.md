@@ -427,7 +427,12 @@ src/fsi/
     scene_fluid_pressure_volume_rate.* consecutive sparse geometry rates
     scene_fluid_pressure_projection.* link-resolved pressure/flow correction
     scene_fluid_pressure_sampling.* gauge-safe surface pressure return path
-    scene_fluid_pressure_coupling.* topology-stable strong pressure feedback
+    scene_fluid_region_momentum.* accepted collocated region momentum
+    scene_fluid_region_transport.* conservative region-momentum advance
+    scene_fluid_region_rebase.* bounded appearance-only current rebase
+    scene_fluid_region_wall.* two-sided material-wall momentum exchange
+    scene_fluid_region_link_flow.* current-link region predictor
+    scene_fluid_pressure_coupling.* strong pressure/shear feedback
     scene_pressure_cell_case.* visible open-cell pressure-feedback canonical
     scene_pressure_cell_checkpoint_persistence.* bounded canonical restart
     transfer.*              conservative traction/motion exchange
@@ -674,14 +679,15 @@ its `0.18 m²` aperture and `0.82 m²` complement as separate projected flows.
 Rejected solves retain the predicted diagnostic ledger but expose neither
 pressure nor corrected flow. A consecutive-epoch pressure-volume-rate owner
 now matches stable cell/region pressure IDs and publishes exact geometry
-`dV/dt` for every retained unknown plus component/global ledgers. It requires
-identical sparse topology and rejects a cell crossing that creates or removes
-a positive region volume. The moving projection overload adds that rate to
+`dV/dt` for every current unknown plus component/global ledgers. Every old row
+must remain; a newly positive row is marked and receives an exact zero-volume
+previous endpoint, while disappearance still rejects. The moving projection
+overload adds that rate to
 the predicted net outward link flow before RHS assembly and accepts only when
 `dV/dt + corrected net outward flow` closes locally. Starting from zero air
 velocity, the expanding open tetrahedron develops nonzero pressure and draws
 flow inward through its authored intake; omitting the rate remains the exact
-frozen zero-flow baseline. Conservative topology rebase/remap, a unique
+frozen zero-flow baseline. General conservative swept-volume remap, a unique
 corrected MAC reconstruction for partitioned faces, and off-face opening
 transmissibility remain absent. A
 bounded return-path adapter now samples accepted sparse pressure on the
@@ -703,7 +709,7 @@ corruption, a foreign accepted state, and an excessive aggregate payload all
 reject. This is the atomic geometry/operator input for the next transactional
 coupling owner and still samples no velocity, solves no pressure, and applies
 no load. A
-topology-stable strong feedback owner now uses that atomic input in a real
+strong feedback owner now uses that atomic input in a real
 load-based fixed point. Each iteration rewinds Structure to the accepted
 macro-step baseline, advances XPBD under the trapezoidal average of the
 accepted start pressure and relaxed end-pressure load, rebuilds the moving
@@ -711,8 +717,9 @@ pressure epoch, projects `dV/dt + net flow = 0`, and returns the existing
 conservative pressure transfer as the next Aitken candidate. Convergence
 requires displacement, velocity, and the difference between the actually
 applied load guess and newly solved nodal pressure load. Only that converged
-physical iterate commits; exhaustion, a topology rebase, projection failure,
-or an exception restores the exact Structure baseline and leaves accepted
+physical iterate commits; exhaustion, an unsupported topology rebase,
+projection failure, or an exception restores the exact Structure baseline and
+leaves accepted
 pressure ownership unchanged. The analytic open cell deforms less than its
 no-pressure control and repeats its next accepted macro-step bit-for-bit. This
 first feedback owner holds the predicted MAC field fixed across nonlinear
@@ -763,11 +770,20 @@ exchanges tangential momentum on both sides of every authoritative material
 quadrature point. It uses a local half-volume/incident-area distance, bounded
 explicit subcycling, and separate wall-work/dissipation ledgers. The fluid
 impulse and equal-and-opposite Structure traction close before publication;
-normal traction remains pressure-owned. Pressure projection then consumes the
-wall-adjusted link predictor, and the existing conservative transfer applies
-the combined pressure-plus-shear load to XPBD. This is a topology-stable local
-cut-region wall closure, not a resolved immersed-boundary boundary layer.
-Topology rebase remains separate. The
+normal traction remains pressure-owned. A bounded first appearance-only
+crossing adapter sits immediately upstream: every old control must remain,
+retained controls keep transported velocity, and each newly positive control
+receives the area-weighted velocity of directly linked retained controls in
+the same authored region. It recomputes current-volume momentum with an
+explicit geometric-change ledger and applies the identical donor rule to the
+pressure warm start. The strong owner composes that result through wall
+exchange and projection transactionally. Disappearance, cross-material
+donation, and appeared clusters without a retained one-ring donor reject; this
+is not a general conservative swept-volume remap. Pressure projection then
+consumes the wall-adjusted link predictor, and the existing conservative
+transfer applies the combined pressure-plus-shear load to XPBD. This is a
+local cut-region wall closure, not a resolved immersed-boundary boundary
+layer. The
 first composite in-memory checkpoint stores Structure and the accepted sparse
 pressure projection. Restore uses a temporary Structure, rebuilds the entire
 pressure epoch, resamples the validated projection, and reconstructs the

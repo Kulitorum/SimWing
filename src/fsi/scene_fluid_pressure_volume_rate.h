@@ -8,7 +8,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureVolumeRateVersion = 1;
+inline constexpr std::uint32_t sceneFluidPressureVolumeRateVersion = 2;
 
 struct SceneFluidPressureVolumeRateLimits {
     std::size_t maximumControlVolumes = 50'000'000;
@@ -23,6 +23,7 @@ struct SceneFluidPressureControlVolumeRate {
     std::size_t cellIndex = 0;
     StableId regionId = invalidStableId;
     std::size_t componentIndex = 0;
+    bool appearedThisEpoch = false;
     double previousVolumeCubicMeters = 0.0;
     double currentVolumeCubicMeters = 0.0;
     double volumeChangeCubicMeters = 0.0;
@@ -45,12 +46,14 @@ struct SceneFluidPressureComponentVolumeRate {
 };
 
 // Consecutive accepted sparse pressure volumes are reduced to one exact
-// geometry-volume rate per retained cell/region unknown. The cell-major stable
-// IDs, component ownership, and gauge topology must be identical at both
-// endpoints. Appearance/disappearance of a positive cut-cell region is a
-// topology rebase and rejects here until a conservative remap owner exists.
-// This immutable product supplies only dV/dt; it does not sample velocity,
-// construct a pressure RHS, or modify either endpoint.
+// geometry-volume rate per current cell/region unknown. Retained rows preserve
+// their cell-major stable IDs. A newly positive row receives an exact zero
+// previous volume and is marked explicitly, which is sufficient for the
+// current pressure equation when no old row disappears. Disappearance remains
+// an unsupported topology rebase and rejects until a conservative remap can
+// retire its momentum and pressure state. This immutable product supplies only
+// dV/dt; it does not sample velocity, construct a pressure RHS, or modify
+// either endpoint.
 struct SceneFluidPressureVolumeRateSet {
     std::uint32_t version = sceneFluidPressureVolumeRateVersion;
     std::uint64_t fingerprint = 0;
@@ -70,6 +73,9 @@ struct SceneFluidPressureVolumeRateSet {
     fluid::Vector3 lowerMeters;
     fluid::Vector3 upperMeters;
     std::size_t ownedStorageBytes = 0;
+    std::size_t previousControlVolumeCount = 0;
+    std::size_t retainedControlVolumeCount = 0;
+    std::size_t appearedControlVolumeCount = 0;
     double maximumAbsoluteControlVolumeChangeCubicMeters = 0.0;
     double maximumAbsoluteControlVolumeRateCubicMetersPerSecond = 0.0;
     double maximumAbsoluteComponentVolumeRateCubicMetersPerSecond = 0.0;

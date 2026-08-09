@@ -149,6 +149,7 @@ std::uint64_t exchangeFingerprint(
     Fingerprint fingerprint;
     fingerprint.integer(exchange.version);
     fingerprint.integer(exchange.sourceTransportFingerprint);
+    fingerprint.integer(exchange.sourceRegionRebaseFingerprint);
     fingerprint.integer(exchange.currentPressureControlVolumeFingerprint);
     fingerprint.integer(exchange.quadratureFingerprint);
     fingerprint.integer(exchange.surfaceDefinitionFingerprint);
@@ -325,8 +326,9 @@ struct WorkingSample {
 
 } // namespace
 
-SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentum(
-    const SceneFluidRegionTransport& transport,
+static SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentumImpl(
+    const SceneFluidRegionTransport* const transport,
+    const SceneFluidRegionRebase* const rebase,
     const fluid::PeriodicCartesianGrid& grid,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
     const SceneFluidSurfaceDefinition& surface,
@@ -334,12 +336,31 @@ SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentum(
     const SceneFluidQuadratureDefinition& quadrature,
     const SceneFluidRegionWallSettings& settings,
     const SceneFluidRegionWallLimits& limits) {
-    validateSceneFluidRegionTransportIntegrity(transport);
+    const bool usesRebase = rebase != nullptr;
+    if (usesRebase == (transport != nullptr)) {
+        throw std::invalid_argument(
+            "scene fluid region wall source selection is invalid");
+    }
+    if (usesRebase) {
+        validateSceneFluidRegionRebaseIntegrity(*rebase);
+    } else {
+        validateSceneFluidRegionTransportIntegrity(*transport);
+    }
     validateSceneFluidPressureControlVolumeIntegrity(currentPressureVolumes);
     validateSceneFluidSurfaceDefinition(surface);
     validateSceneFluidSurfaceState(surface, currentState);
     validateSceneFluidQuadratureDefinition(quadrature);
-    if (!transport.diagnostics.accepted || !validSettings(settings)
+    const std::size_t sourceControlCount = usesRebase
+        ? rebase->controlVolumes.size() : transport->controlVolumes.size();
+    const std::uint64_t sourceAcceptedStepCount = usesRebase
+        ? rebase->currentAcceptedStepCount : transport->acceptedStepCount + 1;
+    const double sourceSimulationTimeSeconds = usesRebase
+        ? rebase->currentSimulationTimeSeconds
+        : transport->targetSimulationTimeSeconds;
+    const double sourceDensityKgPerCubicMeter = usesRebase
+        ? rebase->densityKgPerCubicMeter : transport->densityKgPerCubicMeter;
+    if ((!usesRebase && !transport->diagnostics.accepted)
+        || !validSettings(settings)
         || grid.cellCounts() != currentPressureVolumes.cellCounts
         || grid.lowerMeters() != currentPressureVolumes.lowerMeters
         || grid.upperMeters() != currentPressureVolumes.upperMeters
@@ -352,19 +373,22 @@ SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentum(
         || quadrature.structureDefinitionFingerprint
             != currentState.structureDefinitionFingerprint
         || currentPressureVolumes.acceptedStepCount
-            != transport.acceptedStepCount + 1
+            != sourceAcceptedStepCount
         || currentState.acceptedStepCount
             != currentPressureVolumes.acceptedStepCount
         || quadrature.acceptedStepCount
             != currentPressureVolumes.acceptedStepCount
         || currentPressureVolumes.simulationTimeSeconds
-            != transport.targetSimulationTimeSeconds
+            != sourceSimulationTimeSeconds
         || currentState.simulationTimeSeconds
             != currentPressureVolumes.simulationTimeSeconds
         || quadrature.simulationTimeSeconds
             != currentPressureVolumes.simulationTimeSeconds
-        || transport.controlVolumes.size()
-            != currentPressureVolumes.controlVolumes.size()) {
+        || sourceControlCount
+            != currentPressureVolumes.controlVolumes.size()
+        || (usesRebase
+            && rebase->currentPressureControlVolumeFingerprint
+                != currentPressureVolumes.fingerprint)) {
         throw std::invalid_argument(
             "scene fluid region wall identity is invalid");
     }
@@ -379,7 +403,10 @@ SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentum(
     }
 
     SceneFluidRegionWallExchange result;
-    result.sourceTransportFingerprint = transport.fingerprint;
+    result.sourceTransportFingerprint = usesRebase
+        ? rebase->sourceTransportFingerprint : transport->fingerprint;
+    result.sourceRegionRebaseFingerprint = usesRebase
+        ? rebase->fingerprint : 0;
     result.currentPressureControlVolumeFingerprint =
         currentPressureVolumes.fingerprint;
     result.quadratureFingerprint = quadrature.fingerprint;
@@ -389,7 +416,7 @@ SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentum(
         currentState.structureDefinitionFingerprint;
     result.acceptedStepCount = currentState.acceptedStepCount;
     result.simulationTimeSeconds = currentState.simulationTimeSeconds;
-    result.densityKgPerCubicMeter = transport.densityKgPerCubicMeter;
+    result.densityKgPerCubicMeter = sourceDensityKgPerCubicMeter;
     result.cellCounts = grid.cellCounts();
     result.lowerMeters = grid.lowerMeters();
     result.upperMeters = grid.upperMeters();
@@ -405,10 +432,18 @@ SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentum(
     for (std::size_t index = 0;
          index < currentPressureVolumes.controlVolumes.size(); ++index) {
         const auto& current = currentPressureVolumes.controlVolumes[index];
-        const auto& source = transport.controlVolumes[index];
+        const auto sourceControlVolumeIndex = usesRebase
+            ? rebase->controlVolumes[index].controlVolumeIndex
+            : transport->controlVolumes[index].controlVolumeIndex;
+        const auto sourceStableId = usesRebase
+            ? rebase->controlVolumes[index].stableId
+            : transport->controlVolumes[index].stableId;
+        const auto sourceVelocity = usesRebase
+            ? rebase->controlVolumes[index].velocityMetersPerSecond
+            : transport->controlVolumes[index].velocityMetersPerSecond;
         if (current.controlVolumeIndex != index
-            || source.controlVolumeIndex != index
-            || current.stableId != source.stableId
+            || sourceControlVolumeIndex != index
+            || current.stableId != sourceStableId
             || !(current.volumeCubicMeters > 0.0)
             || !controlByOwner.emplace(
                     std::pair{current.cellIndex, current.regionId}, index)
@@ -420,8 +455,8 @@ SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentum(
             * current.volumeCubicMeters;
         controls.push_back({
             index, current.stableId, current.volumeCubicMeters, 0.0,
-            source.velocityMetersPerSecond,
-            scale(source.velocityMetersPerSecond, mass),
+            sourceVelocity,
+            scale(sourceVelocity, mass),
         });
     }
 
@@ -685,6 +720,34 @@ SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentum(
     return result;
 }
 
+SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentum(
+    const SceneFluidRegionTransport& transport,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& currentState,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidRegionWallSettings& settings,
+    const SceneFluidRegionWallLimits& limits) {
+    return exchangeSceneFluidRegionWallMomentumImpl(
+        &transport, nullptr, grid, currentPressureVolumes, surface,
+        currentState, quadrature, settings, limits);
+}
+
+SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentum(
+    const SceneFluidRegionRebase& rebase,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& currentState,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidRegionWallSettings& settings,
+    const SceneFluidRegionWallLimits& limits) {
+    return exchangeSceneFluidRegionWallMomentumImpl(
+        nullptr, &rebase, grid, currentPressureVolumes, surface,
+        currentState, quadrature, settings, limits);
+}
+
 void validateSceneFluidRegionWallExchangeIntegrity(
     const SceneFluidRegionWallExchange& exchange) {
     const auto& diagnostics = exchange.diagnostics;
@@ -863,6 +926,7 @@ void validateSceneFluidRegionWallExchange(
     const SceneFluidQuadratureDefinition& quadrature) {
     validateSceneFluidRegionWallExchangeIntegrity(exchange);
     if (exchange.sourceTransportFingerprint != transport.fingerprint
+        || exchange.sourceRegionRebaseFingerprint != 0
         || exchange.currentPressureControlVolumeFingerprint
             != currentPressureVolumes.fingerprint
         || exchange.quadratureFingerprint != quadrature.fingerprint
@@ -879,6 +943,40 @@ void validateSceneFluidRegionWallExchange(
             != transport.densityKgPerCubicMeter) {
         throw std::invalid_argument(
             "scene fluid region wall exchange binding is invalid");
+    }
+}
+
+void validateSceneFluidRegionWallExchange(
+    const SceneFluidRegionWallExchange& exchange,
+    const SceneFluidRegionRebase& rebase,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& currentState,
+    const SceneFluidQuadratureDefinition& quadrature) {
+    validateSceneFluidRegionWallExchangeIntegrity(exchange);
+    validateSceneFluidRegionRebaseIntegrity(rebase);
+    if (exchange.sourceTransportFingerprint
+            != rebase.sourceTransportFingerprint
+        || exchange.sourceRegionRebaseFingerprint != rebase.fingerprint
+        || exchange.currentPressureControlVolumeFingerprint
+            != currentPressureVolumes.fingerprint
+        || rebase.currentPressureControlVolumeFingerprint
+            != currentPressureVolumes.fingerprint
+        || exchange.quadratureFingerprint != quadrature.fingerprint
+        || exchange.surfaceDefinitionFingerprint != surface.fingerprint
+        || exchange.surfaceStateFingerprint != currentState.fingerprint
+        || exchange.structureDefinitionFingerprint
+            != currentState.structureDefinitionFingerprint
+        || exchange.acceptedStepCount != currentState.acceptedStepCount
+        || exchange.simulationTimeSeconds != currentState.simulationTimeSeconds
+        || exchange.cellCounts != grid.cellCounts()
+        || exchange.lowerMeters != grid.lowerMeters()
+        || exchange.upperMeters != grid.upperMeters()
+        || exchange.densityKgPerCubicMeter
+            != rebase.densityKgPerCubicMeter) {
+        throw std::invalid_argument(
+            "scene fluid rebased wall exchange binding is invalid");
     }
 }
 
