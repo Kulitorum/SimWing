@@ -235,6 +235,12 @@ SceneFluidPressureCoupling::acceptedPressureProjection() const noexcept {
         ? &*acceptedPressureProjection_ : nullptr;
 }
 
+const SceneFluidPressureSampleSet*
+SceneFluidPressureCoupling::acceptedPressureSamples() const noexcept {
+    return acceptedPressureSamples_
+        ? &*acceptedPressureSamples_ : nullptr;
+}
+
 const SceneFluidPressureCouplingSettings&
 SceneFluidPressureCoupling::settings() const noexcept {
     return settings_;
@@ -295,6 +301,7 @@ void SceneFluidPressureCoupling::restore(
         restoredEpoch.pressureOperator.rows.size(), 0.0);
     std::optional<ConservativeTransferResult> restoredTransfer;
     std::optional<SceneFluidPressureProjection> restoredProjection;
+    std::optional<SceneFluidPressureSampleSet> restoredSamples;
     if (checkpointValue.pressureProjection) {
         validateSceneFluidPressureProjectionIntegrity(
             *checkpointValue.pressureProjection);
@@ -324,6 +331,7 @@ void SceneFluidPressureCoupling::restore(
                 surface_, restoredState, transfer_,
                 restoredEpoch.gridEpoch.quadrature, samples,
                 settings_.transfer));
+        restoredSamples = std::move(samples);
         restoredPressure =
             checkpointValue.pressureProjection->pressurePascals;
         restoredProjection = checkpointValue.pressureProjection;
@@ -347,6 +355,7 @@ void SceneFluidPressureCoupling::restore(
     acceptedPressurePascals_ = std::move(restoredPressure);
     acceptedPressureTransfer_ = std::move(restoredTransfer);
     acceptedPressureProjection_ = std::move(restoredProjection);
+    acceptedPressureSamples_ = std::move(restoredSamples);
 }
 
 SceneFluidPressureCouplingStepDiagnostics
@@ -407,6 +416,8 @@ SceneFluidPressureCoupling::advance(
                 currentEpoch.openingQuadrature,
                 currentEpoch.openingPatches, grid_,
                 predictedVelocityMetersPerSecond, limits_.openingFlux);
+            auto projectionSettings = settings_.pressureProjection;
+            projectionSettings.timeStepSeconds = rates.durationSeconds;
             auto projection = projectSceneFluidPressureLinkFlows(
                 surface_, currentState, grid_, transfer_,
                 currentEpoch.gridEpoch, currentEpoch.openingCaps,
@@ -416,7 +427,7 @@ SceneFluidPressureCoupling::advance(
                 connectivity_, currentEpoch.pressureControlVolumes,
                 currentEpoch.pressureFaceLinks,
                 currentEpoch.pressureOperator, rates, warmPressure,
-                settings_.pressureProjection,
+                projectionSettings,
                 limits_.pressureProjection);
             if (!projection.diagnostics.accepted) {
                 throw std::runtime_error(
@@ -465,6 +476,7 @@ SceneFluidPressureCoupling::advance(
                 acceptedPressurePascals_ = projection.pressurePascals;
                 acceptedPressureTransfer_ = std::move(currentTraction);
                 acceptedPressureProjection_ = std::move(projection);
+                acceptedPressureSamples_ = std::move(samples);
                 return diagnostics;
             }
             if (iterationResult.status

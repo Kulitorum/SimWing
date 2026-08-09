@@ -619,6 +619,13 @@ epoch and conservative load before committing either owner. Initial and
 post-step checkpoints reproduce the exact next coupled result in the same or
 an equivalent owner, while foreign settings and corrupt or missing accepted
 pressure reject transactionally.
+The selectable `pressure-cell` worker makes this path visible. A soft
+three-panel tetrahedral cell has one triangular intake, three fixed mouth
+vertices, and a sinusoidally driven apex. Its immutable frames publish
+deformation, area-averaged triangle pressure jump, nodal/total pressure force,
+actuator force, and strong-iteration count. A 600-step headless run remains
+topology-stable for 10 simulated seconds and reaches centimetre-scale motion;
+this is a diagnostic of the new feedback path, not wing aerodynamics.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own
@@ -739,6 +746,7 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case open-piston --steps 1200 --no-viewer --checkpoint-out open-piston.swop --checkpoint-every 600
 .\build\bin\Release\simwing-fsi.exe --case open-piston --checkpoint-in open-piston.swop --steps 600 --checkpoint-out open-piston.swop --checkpoint-every 600
 .\build\bin\Release\simwing-fsi.exe --case pressure-jump --steps 4 --no-viewer
+.\build\bin\Release\simwing-fsi.exe --case pressure-cell --steps 600
 .\build\bin\Release\simwing-fsi.exe --case porous-flow --steps 120 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case moving-porous-flow --steps 101 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case moving-porous-flow --steps 101 --no-viewer --checkpoint-out moving-porous-flow.swmf --checkpoint-every 50

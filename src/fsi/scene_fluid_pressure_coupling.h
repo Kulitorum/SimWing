@@ -112,6 +112,8 @@ public:
         const noexcept;
     [[nodiscard]] const SceneFluidPressureProjection*
     acceptedPressureProjection() const noexcept;
+    [[nodiscard]] const SceneFluidPressureSampleSet*
+    acceptedPressureSamples() const noexcept;
     [[nodiscard]] const SceneFluidPressureCouplingSettings& settings()
         const noexcept;
     [[nodiscard]] SceneFluidPressureCouplingCheckpoint checkpoint(
@@ -138,6 +140,7 @@ private:
     std::vector<double> acceptedPressurePascals_;
     std::optional<ConservativeTransferResult> acceptedPressureTransfer_;
     std::optional<SceneFluidPressureProjection> acceptedPressureProjection_;
+    std::optional<SceneFluidPressureSampleSet> acceptedPressureSamples_;
 };
 
 } // namespace simwing::fsi

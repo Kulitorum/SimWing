@@ -397,6 +397,18 @@ target_link_libraries(simwing_scene_fluid_pressure_coupling PUBLIC
     simwing_scene_fluid_cell_volume
 )
 
+add_library(simwing_scene_pressure_cell_case STATIC
+    src/fsi/scene_pressure_cell_case.cpp
+    src/fsi/scene_pressure_cell_case.h
+)
+target_include_directories(simwing_scene_pressure_cell_case PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_scene_pressure_cell_case PUBLIC
+    simwing_scene_fluid_pressure_coupling
+    simwing_structure_frame
+)
+
 add_library(simwing_viewer_protocol STATIC
     src/viewer/viewer_protocol.cpp
     src/viewer/viewer_protocol.h
@@ -1148,6 +1160,12 @@ add_executable(simwing-scene-fluid-pressure-coupling-test
 target_link_libraries(simwing-scene-fluid-pressure-coupling-test
     PRIVATE simwing_scene_fluid_pressure_coupling simwing_scene_structure)
 
+add_executable(simwing-scene-pressure-cell-case-test
+    tests/simwing_scene_pressure_cell_case_test.cpp
+)
+target_link_libraries(simwing-scene-pressure-cell-case-test
+    PRIVATE simwing_scene_pressure_cell_case)
+
 add_executable(simwing-scene-fluid-opening-cap-test
     tests/simwing_scene_fluid_opening_cap_test.cpp
 )
@@ -1473,6 +1491,7 @@ target_link_libraries(simwing-fsi PRIVATE
     simwing_canonical_case
     simwing_projected_flag_case
     simwing_ram_air_cell_case
+    simwing_scene_pressure_cell_case
     simwing_open_piston_control
     simwing_open_piston_case
     simwing_moving_porous_flow_control
@@ -1904,6 +1923,8 @@ add_test(NAME simwing_scene_fluid_pressure_epoch
     COMMAND simwing-scene-fluid-pressure-volume-rate-test --epoch)
 add_test(NAME simwing_scene_fluid_pressure_coupling
     COMMAND simwing-scene-fluid-pressure-coupling-test)
+add_test(NAME simwing_scene_pressure_cell_case
+    COMMAND simwing-scene-pressure-cell-case-test)
 add_test(NAME simwing_scene_fluid_opening_cap
     COMMAND simwing-scene-fluid-opening-cap-test)
 add_test(NAME simwing_scene_fluid_opening_quadrature
@@ -2007,6 +2028,14 @@ add_test(NAME simwing_fsi_ram_cell_headless
         --trace "${CMAKE_BINARY_DIR}/simwing-ram-cell-headless.swtrace")
 set_tests_properties(simwing_fsi_ram_cell_headless PROPERTIES
     PASS_REGULAR_EXPRESSION "completed 8 ram-cell step\\(s\\)")
+add_test(NAME simwing_fsi_pressure_cell_headless
+    COMMAND simwing-fsi
+        --case pressure-cell
+        --steps 8
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-pressure-cell-headless.swtrace")
+set_tests_properties(simwing_fsi_pressure_cell_headless PROPERTIES
+    PASS_REGULAR_EXPRESSION "completed 8 pressure-cell step\\(s\\)")
 add_test(NAME simwing_fsi_piston_headless
     COMMAND simwing-fsi
         --case piston

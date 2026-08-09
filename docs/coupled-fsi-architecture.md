@@ -428,6 +428,7 @@ src/fsi/
     scene_fluid_pressure_projection.* link-resolved pressure/flow correction
     scene_fluid_pressure_sampling.* gauge-safe surface pressure return path
     scene_fluid_pressure_coupling.* topology-stable strong pressure feedback
+    scene_pressure_cell_case.* visible open-cell pressure-feedback canonical
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -722,6 +723,15 @@ conservative baseline load before committing either owner. Both initial and
 accepted checkpoints replay the exact next result in the original or an
 equivalent owner; foreign solver settings, corrupt pressure, and a missing
 noninitial projection leave the current accepted run untouched. A
+selectable `pressure-cell` worker now exercises that owner through the normal
+trace/viewer path. Its soft three-panel tetrahedral cell has one face-aligned
+triangular intake, three fixed mouth vertices, and a sinusoidally driven apex.
+Frames expose deformation, area-averaged triangle pressure jump, nodal and
+total pressure force, actuator force, and strong-iteration count. Two runs are
+byte-deterministic, its in-memory checkpoint reproduces the exact next frame,
+and the default 600-step/10-second headless run remains topology-stable while
+reaching centimetre-scale motion. It is deliberately a visible diagnostic of
+pressure feedback with a fixed MAC predictor, not aerodynamic truth. A
 canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded
