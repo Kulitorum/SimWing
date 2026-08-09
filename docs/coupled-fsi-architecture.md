@@ -418,6 +418,7 @@ src/fsi/
     scene_fluid_opening_patch.* exact grid-resolved opening polygons
     scene_fluid_opening_flux.* read-only relative MAC volume-flow ledger
     scene_fluid_cell_volume.* signed-chain sparse region volumes
+    scene_fluid_region_continuity.* consecutive volume/flux compatibility
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -597,9 +598,17 @@ patch/opening. The same epoch maps those values into equal-and-opposite outward
 balances for the negative- and positive-side regions, including cell-to-cell
 crossports, and verifies exact global cancellation. Partial-face tiles integrate
 analytically, linear off-face flow is recovered, reversed velocity reverses
-sign, and co-moving air/mouth motion has zero relative flux. Nonplanar/concave openings, surface junctions,
-inconsistent winding, and projection-connected opening flow or moving-boundary
-fluid equations remain open. A canonical Qt-free structural worker now
+sign, and co-moving air/mouth motion has zero relative flux.
+Nonplanar/concave openings, surface junctions, inconsistent winding, and
+projection-connected opening flow or moving-boundary fluid equations remain
+open. A bounded two-epoch continuity owner now binds
+consecutive accepted volume and flux products by their exact surface-state and
+producer fingerprints. It trapezoidally integrates endpoint outward relative
+flow and reports `delta volume + integrated flow` per region. An analytically
+driven expanding cell closes with matching intake transport; removing that
+transport produces equal-and-opposite local failures despite a zero global
+residual. This remains diagnostic and does not yet connect openings to the
+projection. A canonical Qt-free structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.
 The same worker can now select a smooth periodic Taylor-Green CFD case. Its

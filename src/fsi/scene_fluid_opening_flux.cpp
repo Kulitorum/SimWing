@@ -325,6 +325,7 @@ std::uint64_t fluxFingerprint(const SceneFluidOpeningFluxSet& flux) {
     Fingerprint fingerprint;
     fingerprint.integer(flux.version);
     fingerprint.integer(flux.surfaceDefinitionFingerprint);
+    fingerprint.integer(flux.surfaceStateFingerprint);
     fingerprint.integer(flux.openingPatchFingerprint);
     fingerprint.integer(flux.velocityFingerprint);
     fingerprint.integer(flux.structureDefinitionFingerprint);
@@ -428,6 +429,7 @@ SceneFluidOpeningFluxSet buildFlux(
 
     SceneFluidOpeningFluxSet result;
     result.surfaceDefinitionFingerprint = surface.fingerprint;
+    result.surfaceStateFingerprint = patches.surfaceStateFingerprint;
     result.openingPatchFingerprint = patches.fingerprint;
     result.velocityFingerprint = velocityFingerprint(grid, velocity);
     result.structureDefinitionFingerprint =
@@ -656,6 +658,17 @@ SceneFluidOpeningFluxSet evaluateSceneFluidOpeningFlux(
     return result;
 }
 
+void validateSceneFluidOpeningFluxIntegrity(
+    const SceneFluidOpeningFluxSet& flux) {
+    if (flux.version != sceneFluidOpeningFluxVersion
+        || flux.fingerprint == 0
+        || flux.ownedStorageBytes != storageBytes(flux)
+        || flux.fingerprint != fluxFingerprint(flux)) {
+        throw std::invalid_argument(
+            "scene fluid opening-flux integrity is invalid");
+    }
+}
+
 void validateSceneFluidOpeningFlux(
     const SceneFluidOpeningFluxSet& flux,
     const SceneFluidSurfaceDefinition& surface,
@@ -667,11 +680,12 @@ void validateSceneFluidOpeningFlux(
     const fluid::MacVelocityField& velocityMetersPerSecond) {
     validateSceneFluidOpeningGridPatches(
         patches, surface, state, caps, quadrature, grid);
+    validateSceneFluidOpeningFluxIntegrity(flux);
     if (!velocityMetersPerSecond.matches(grid)
         || !fluid::isFinite(velocityMetersPerSecond)
         || flux.version != sceneFluidOpeningFluxVersion
-        || flux.fingerprint == 0
         || flux.surfaceDefinitionFingerprint != surface.fingerprint
+        || flux.surfaceStateFingerprint != state.fingerprint
         || flux.openingPatchFingerprint != patches.fingerprint
         || flux.velocityFingerprint
             != velocityFingerprint(grid, velocityMetersPerSecond)
@@ -693,9 +707,7 @@ void validateSceneFluidOpeningFlux(
     const auto expected = buildFlux(
         surface, quadrature, patches, grid,
         velocityMetersPerSecond, unlimited);
-    if (flux != expected
-        || flux.ownedStorageBytes != storageBytes(flux)
-        || flux.fingerprint != fluxFingerprint(flux)) {
+    if (flux != expected) {
         throw std::invalid_argument(
             "scene fluid opening-flux payload is invalid");
     }

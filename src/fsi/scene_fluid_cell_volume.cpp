@@ -803,6 +803,16 @@ SceneFluidCellVolumeSet buildSceneFluidCellVolumes(
     return result;
 }
 
+void validateSceneFluidCellVolumeIntegrity(
+    const SceneFluidCellVolumeSet& volumes) {
+    if (volumes.version != sceneFluidCellVolumeVersion
+        || volumes.fingerprint == 0
+        || volumes.fingerprint != volumeFingerprint(volumes)) {
+        throw std::invalid_argument(
+            "scene fluid cell-volume integrity is invalid");
+    }
+}
+
 void validateSceneFluidCellVolumes(
     const SceneFluidCellVolumeSet& volumes,
     const SceneFluidSurfaceDefinition& surface,
@@ -811,8 +821,8 @@ void validateSceneFluidCellVolumes(
     const SceneFluidSurfaceTransfer& transfer,
     const SceneFluidGridEpoch& epoch) {
     validateSceneFluidGridEpoch(epoch, surface, state, grid, transfer);
+    validateSceneFluidCellVolumeIntegrity(volumes);
     if (volumes.version != sceneFluidCellVolumeVersion
-        || volumes.fingerprint == 0
         || volumes.surfaceDefinitionFingerprint != surface.fingerprint
         || volumes.surfaceStateFingerprint != state.fingerprint
         || volumes.gridEpochFingerprint != epoch.fingerprint
@@ -847,8 +857,7 @@ void validateSceneFluidCellVolumes(
     unlimited.maximumVolumeBytes = std::numeric_limits<std::size_t>::max();
     const auto expected = buildVolumes(
         surface, state, grid, epoch, caps, volumes.settings, unlimited);
-    if (volumes != expected
-        || volumes.fingerprint != volumeFingerprint(volumes)) {
+    if (volumes != expected) {
         throw std::invalid_argument(
             "scene fluid cell-volume payload is invalid");
     }

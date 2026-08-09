@@ -536,8 +536,12 @@ flow or deterministic off-face staggered quadrature, and reports signed fluid
 flow, cap sweep, and relative volume flow. It also maps every intake or
 crossport into equal-and-opposite outward balances for its two authored
 regions. Uniform co-moving air and mouth give zero relative flow, and all
-region balances cancel globally. Projection connectivity and pressure response
-to that flux remain future work. Nonplanar or concave openings, surface junctions,
+region balances cancel globally. A bounded two-epoch audit now pairs those
+balances with sparse region volumes and evaluates `delta volume + outward
+relative flow` using endpoint trapezoidal integration. The expanding-cell
+regression closes only with its matching inlet transport and reports a local
+mismatch when that flow is removed. Projection connectivity and pressure
+response to that flux remain future work. Nonplanar or concave openings, surface junctions,
 periodic-boundary ambiguity, and general moving-boundary fluid equations still
 reject or remain open; the grid epoch itself continues to own geometry and
 transfer only.

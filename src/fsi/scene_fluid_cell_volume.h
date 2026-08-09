@@ -102,6 +102,12 @@ struct SceneFluidCellVolumeSet {
     const SceneFluidCellVolumeSettings& settings = {},
     const SceneFluidCellVolumeLimits& limits = {});
 
+// Lightweight immutable-product check for downstream adapters that already
+// received an accepted volume epoch and need to reject accidental mutation
+// without rebuilding its complete geometry chain.
+void validateSceneFluidCellVolumeIntegrity(
+    const SceneFluidCellVolumeSet& volumes);
+
 void validateSceneFluidCellVolumes(
     const SceneFluidCellVolumeSet& volumes,
     const SceneFluidSurfaceDefinition& surface,

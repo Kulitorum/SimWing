@@ -8,7 +8,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidOpeningFluxVersion = 2;
+inline constexpr std::uint32_t sceneFluidOpeningFluxVersion = 3;
 
 struct SceneFluidOpeningFluxLimits {
     std::size_t maximumRegions = 1'000'000;
@@ -74,6 +74,7 @@ struct SceneFluidOpeningFluxSet {
     std::uint32_t version = sceneFluidOpeningFluxVersion;
     std::uint64_t fingerprint = 0;
     std::uint64_t surfaceDefinitionFingerprint = 0;
+    std::uint64_t surfaceStateFingerprint = 0;
     std::uint64_t openingPatchFingerprint = 0;
     std::uint64_t velocityFingerprint = 0;
     std::uint64_t structureDefinitionFingerprint = 0;
@@ -107,6 +108,12 @@ struct SceneFluidOpeningFluxSet {
     const fluid::PeriodicCartesianGrid& grid,
     const fluid::MacVelocityField& velocityMetersPerSecond,
     const SceneFluidOpeningFluxLimits& limits = {});
+
+// Lightweight immutable-product check for downstream adapters that already
+// received an accepted flux epoch and need to reject accidental mutation
+// without resampling its complete geometry and MAC field chain.
+void validateSceneFluidOpeningFluxIntegrity(
+    const SceneFluidOpeningFluxSet& flux);
 
 void validateSceneFluidOpeningFlux(
     const SceneFluidOpeningFluxSet& flux,
