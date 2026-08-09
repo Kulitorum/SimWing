@@ -533,9 +533,11 @@ owners; paired grid-plane copies become one canonical non-periodic face owner,
 and their polygon, area, accepted velocity, and sweep remain explicit. A
 read-only flux epoch binds the complete MAC field, reads exact resolved face
 flow or deterministic off-face staggered quadrature, and reports signed fluid
-flow, cap sweep, and relative volume flow. Uniform co-moving air and mouth give
-zero relative flow. Projection connectivity and pressure response to that flux
-remain future work. Nonplanar or concave openings, surface junctions,
+flow, cap sweep, and relative volume flow. It also maps every intake or
+crossport into equal-and-opposite outward balances for its two authored
+regions. Uniform co-moving air and mouth give zero relative flow, and all
+region balances cancel globally. Projection connectivity and pressure response
+to that flux remain future work. Nonplanar or concave openings, surface junctions,
 periodic-boundary ambiguity, and general moving-boundary fluid equations still
 reject or remain open; the grid epoch itself continues to own geometry and
 transfer only.

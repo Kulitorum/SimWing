@@ -593,9 +593,11 @@ motion; periodic-boundary image ambiguity rejects. A read-only flux epoch now
 binds the entire MAC field. Face owners use the exact normal degree of freedom;
 cell owners use bounded degree-three quadrature of periodic staggered
 interpolation. It retains signed fluid flow, cap sweep, and relative flow per
-patch/opening. Partial-face tiles integrate analytically, linear off-face flow
-is recovered, reversed velocity reverses sign, and co-moving air/mouth motion
-has zero relative flux. Nonplanar/concave openings, surface junctions,
+patch/opening. The same epoch maps those values into equal-and-opposite outward
+balances for the negative- and positive-side regions, including cell-to-cell
+crossports, and verifies exact global cancellation. Partial-face tiles integrate
+analytically, linear off-face flow is recovered, reversed velocity reverses
+sign, and co-moving air/mouth motion has zero relative flux. Nonplanar/concave openings, surface junctions,
 inconsistent winding, and projection-connected opening flow or moving-boundary
 fluid equations remain open. A canonical Qt-free structural worker now
 launches the viewer by default and publishes accepted steps through a bounded

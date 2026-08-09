@@ -119,21 +119,51 @@ Scene openSquarePyramidScene() {
     return scene;
 }
 
+Scene crossportSquarePyramidScene() {
+    Scene scene = openSquarePyramidScene();
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-opening-crossport-flux";
+    scene.regions.push_back({3, RegionKind::Cell, "adjacent-cell"});
+    for (auto& triangle : scene.triangles) {
+        triangle.positiveSideRegionId = 3;
+    }
+    scene.openings.front().positiveSideRegionId = 3;
+    scene.openings.front().role = OpeningRole::Crossport;
+    return scene;
+}
+
 fluid::PeriodicCartesianGrid grid() {
     return {{4, 4, 4}, {0.0, 0.0, 0.0}, {4.0, 4.0, 4.0}};
 }
 
 struct Fixture {
-    Scene scene = openSquarePyramidScene();
-    SceneFluidSurfaceAssembly surface = assembleSceneFluidSurface(scene);
-    SceneStructureAssembly structureAssembly = assembleSceneStructure(scene);
-    Structure structure{structureAssembly.definition};
+    Scene scene;
+    SceneFluidSurfaceAssembly surface;
+    SceneStructureAssembly structureAssembly;
+    Structure structure;
+
+    explicit Fixture(Scene source = openSquarePyramidScene())
+        : scene(std::move(source)),
+          surface(assembleSceneFluidSurface(scene)),
+          structureAssembly(assembleSceneStructure(scene)),
+          structure(structureAssembly.definition) {}
 
     SceneFluidSurfaceState state() const {
         return captureSceneFluidSurfaceState(
             surface.definition, structureAssembly.mappings, structure);
     }
 };
+
+const SceneFluidOpeningRegionFlux& regionFlux(
+    const SceneFluidOpeningFluxSet& flux,
+    const StableId regionId) {
+    const auto found = std::ranges::find(
+        flux.regions, regionId, &SceneFluidOpeningRegionFlux::regionId);
+    if (found == flux.regions.end()) {
+        throw std::runtime_error("opening-flux test region is missing");
+    }
+    return *found;
+}
 
 struct OpeningGeometry {
     SceneFluidOpeningCapSet caps;
@@ -229,6 +259,17 @@ void testResolvedFaceFluxAndOrientation() {
     checkNear(opening.relativeVolumeFlowRateCubicMetersPerSecond,
               2.5, 2.0e-14,
               "stationary mouth relative flow equals fluid flow");
+    checkNear(regionFlux(first, 2)
+                  .outwardRelativeVolumeFlowRateCubicMetersPerSecond,
+              2.5, 2.0e-14,
+              "cell region receives positive outward intake flow");
+    checkNear(regionFlux(first, 1)
+                  .outwardRelativeVolumeFlowRateCubicMetersPerSecond,
+              -2.5, 2.0e-14,
+              "Outside receives equal-and-opposite intake flow");
+    checkNear(first.globalRelativeRegionBalanceResidualCubicMetersPerSecond,
+              0.0, 0.0,
+              "intake region flows cancel globally");
     validateSceneFluidOpeningFlux(
         first, fixture.surface.definition, state, geometry.caps,
         geometry.quadrature, geometry.patches, grid(), velocity);
@@ -239,6 +280,37 @@ void testResolvedFaceFluxAndOrientation() {
     checkNear(reversed.totalRelativeVolumeFlowRateCubicMetersPerSecond,
               -2.5, 2.0e-14,
               "negative MAC velocity reverses authored opening-flow sign");
+}
+
+void testCrossportRegionBalance() {
+    Fixture fixture(crossportSquarePyramidScene());
+    check(fixture.surface.ok() && fixture.structureAssembly.ok(),
+          "opening-flux crossport fixture assembles");
+    const auto state = fixture.state();
+    const auto geometry = buildGeometry(fixture, state);
+    const auto velocity = tiledFaceVelocity();
+    const auto flux = evaluate(fixture, state, geometry, velocity);
+    check(flux.openings.size() == 1
+              && flux.openings.front().role == OpeningRole::Crossport
+              && flux.regions.size() == 2,
+          "crossport flux retains both referenced cell regions");
+    checkNear(regionFlux(flux, 2)
+                  .outwardFluidVolumeFlowRateCubicMetersPerSecond,
+              2.5, 2.0e-14,
+              "crossport flow leaves its negative-side cell");
+    checkNear(regionFlux(flux, 3)
+                  .outwardFluidVolumeFlowRateCubicMetersPerSecond,
+              -2.5, 2.0e-14,
+              "crossport flow enters its positive-side cell");
+    checkNear(flux.globalFluidRegionBalanceResidualCubicMetersPerSecond,
+              0.0, 0.0,
+              "crossport fluid flow cancels globally");
+    checkNear(flux.globalSurfaceRegionBalanceResidualCubicMetersPerSecond,
+              0.0, 0.0,
+              "crossport surface sweep cancels globally");
+    checkNear(flux.globalRelativeRegionBalanceResidualCubicMetersPerSecond,
+              0.0, 0.0,
+              "crossport relative flow cancels globally");
 }
 
 void testMovingOffFaceRelativeFlux() {
@@ -309,6 +381,15 @@ void testCorruptionBindingAndLimits() {
             geometry.quadrature, geometry.patches, grid(), velocity); },
         "opening flux rejects ledger corruption");
 
+    corrupt = accepted;
+    corrupt.regions.front()
+        .outwardRelativeVolumeFlowRateCubicMetersPerSecond += 0.01;
+    expectInvalid(
+        [&] { validateSceneFluidOpeningFlux(
+            corrupt, fixture.surface.definition, state, geometry.caps,
+            geometry.quadrature, geometry.patches, grid(), velocity); },
+        "opening flux rejects region-balance corruption");
+
     auto changedVelocity = velocity;
     changedVelocity.yFaces().front() += 0.25;
     expectInvalid(
@@ -327,6 +408,12 @@ void testCorruptionBindingAndLimits() {
         "opening flux rejects a non-finite MAC field");
 
     SceneFluidOpeningFluxLimits limits;
+    limits.maximumRegions = 0;
+    expectLimited(
+        [&] { static_cast<void>(evaluate(
+            fixture, state, geometry, velocity, limits)); },
+        "opening flux bounds region count");
+    limits = {};
     limits.maximumOpenings = 0;
     expectLimited(
         [&] { static_cast<void>(evaluate(
@@ -357,6 +444,7 @@ void testCorruptionBindingAndLimits() {
 int main() {
     try {
         testResolvedFaceFluxAndOrientation();
+        testCrossportRegionBalance();
         testMovingOffFaceRelativeFlux();
         testCorruptionBindingAndLimits();
     } catch (const std::exception& exception) {

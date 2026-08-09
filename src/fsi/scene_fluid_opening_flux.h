@@ -8,13 +8,25 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidOpeningFluxVersion = 1;
+inline constexpr std::uint32_t sceneFluidOpeningFluxVersion = 2;
 
 struct SceneFluidOpeningFluxLimits {
+    std::size_t maximumRegions = 1'000'000;
     std::size_t maximumOpenings = 1'000'000;
     std::size_t maximumPatchSamples = 10'000'000;
     std::size_t maximumVelocityEvaluations = 100'000'000;
     std::size_t maximumFluxBytes = 512ULL * 1024ULL * 1024ULL;
+};
+
+struct SceneFluidOpeningRegionFlux {
+    std::size_t regionIndex = 0;
+    StableId regionId = invalidStableId;
+    RegionKind kind = RegionKind::Cell;
+    double outwardFluidVolumeFlowRateCubicMetersPerSecond = 0.0;
+    double outwardSurfaceSweepRateCubicMetersPerSecond = 0.0;
+    double outwardRelativeVolumeFlowRateCubicMetersPerSecond = 0.0;
+
+    bool operator==(const SceneFluidOpeningRegionFlux&) const = default;
 };
 
 struct SceneFluidOpeningFluxSample {
@@ -61,6 +73,7 @@ struct SceneFluidOpeningFlux {
 struct SceneFluidOpeningFluxSet {
     std::uint32_t version = sceneFluidOpeningFluxVersion;
     std::uint64_t fingerprint = 0;
+    std::uint64_t surfaceDefinitionFingerprint = 0;
     std::uint64_t openingPatchFingerprint = 0;
     std::uint64_t velocityFingerprint = 0;
     std::uint64_t structureDefinitionFingerprint = 0;
@@ -75,6 +88,10 @@ struct SceneFluidOpeningFluxSet {
     double totalFluidVolumeFlowRateCubicMetersPerSecond = 0.0;
     double totalSurfaceSweepRateCubicMetersPerSecond = 0.0;
     double totalRelativeVolumeFlowRateCubicMetersPerSecond = 0.0;
+    double globalFluidRegionBalanceResidualCubicMetersPerSecond = 0.0;
+    double globalSurfaceRegionBalanceResidualCubicMetersPerSecond = 0.0;
+    double globalRelativeRegionBalanceResidualCubicMetersPerSecond = 0.0;
+    std::vector<SceneFluidOpeningRegionFlux> regions;
     std::vector<SceneFluidOpeningFlux> openings;
     std::vector<SceneFluidOpeningFluxSample> samples;
 

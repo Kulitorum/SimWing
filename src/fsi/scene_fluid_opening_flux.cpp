@@ -294,16 +294,22 @@ std::uint64_t velocityFingerprint(
     return fingerprint.value();
 }
 
-std::size_t storageBytesForCounts(const std::size_t openingCount,
+std::size_t storageBytesForCounts(const std::size_t regionCount,
+                                  const std::size_t openingCount,
                                   const std::size_t sampleCount) {
+    std::size_t regionBytes = 0;
     std::size_t openingBytes = 0;
     std::size_t sampleBytes = 0;
+    std::size_t firstTotal = 0;
     std::size_t total = 0;
     if (!checkedMultiply(
+            regionCount, sizeof(SceneFluidOpeningRegionFlux), regionBytes)
+        || !checkedMultiply(
             openingCount, sizeof(SceneFluidOpeningFlux), openingBytes)
         || !checkedMultiply(
             sampleCount, sizeof(SceneFluidOpeningFluxSample), sampleBytes)
-        || !checkedAdd(openingBytes, sampleBytes, total)) {
+        || !checkedAdd(regionBytes, openingBytes, firstTotal)
+        || !checkedAdd(firstTotal, sampleBytes, total)) {
         throw std::length_error(
             "scene fluid opening-flux storage size overflows");
     }
@@ -311,12 +317,14 @@ std::size_t storageBytesForCounts(const std::size_t openingCount,
 }
 
 std::size_t storageBytes(const SceneFluidOpeningFluxSet& flux) {
-    return storageBytesForCounts(flux.openings.size(), flux.samples.size());
+    return storageBytesForCounts(
+        flux.regions.size(), flux.openings.size(), flux.samples.size());
 }
 
 std::uint64_t fluxFingerprint(const SceneFluidOpeningFluxSet& flux) {
     Fingerprint fingerprint;
     fingerprint.integer(flux.version);
+    fingerprint.integer(flux.surfaceDefinitionFingerprint);
     fingerprint.integer(flux.openingPatchFingerprint);
     fingerprint.integer(flux.velocityFingerprint);
     fingerprint.integer(flux.structureDefinitionFingerprint);
@@ -331,12 +339,27 @@ std::uint64_t fluxFingerprint(const SceneFluidOpeningFluxSet& flux) {
              flux.totalAreaSquareMeters,
              flux.totalFluidVolumeFlowRateCubicMetersPerSecond,
              flux.totalSurfaceSweepRateCubicMetersPerSecond,
-             flux.totalRelativeVolumeFlowRateCubicMetersPerSecond}) {
+             flux.totalRelativeVolumeFlowRateCubicMetersPerSecond,
+             flux.globalFluidRegionBalanceResidualCubicMetersPerSecond,
+             flux.globalSurfaceRegionBalanceResidualCubicMetersPerSecond,
+             flux.globalRelativeRegionBalanceResidualCubicMetersPerSecond}) {
         fingerprint.real(value);
     }
     fingerprint.integer(static_cast<std::uint64_t>(
         flux.velocityEvaluationCount));
     fingerprint.integer(static_cast<std::uint64_t>(flux.ownedStorageBytes));
+    fingerprint.integer(static_cast<std::uint64_t>(flux.regions.size()));
+    for (const auto& region : flux.regions) {
+        fingerprint.integer(static_cast<std::uint64_t>(region.regionIndex));
+        fingerprint.integer(region.regionId);
+        fingerprint.enumeration(region.kind);
+        fingerprint.real(
+            region.outwardFluidVolumeFlowRateCubicMetersPerSecond);
+        fingerprint.real(
+            region.outwardSurfaceSweepRateCubicMetersPerSecond);
+        fingerprint.real(
+            region.outwardRelativeVolumeFlowRateCubicMetersPerSecond);
+    }
     fingerprint.integer(static_cast<std::uint64_t>(flux.openings.size()));
     for (const auto& opening : flux.openings) {
         fingerprint.integer(static_cast<std::uint64_t>(
@@ -379,6 +402,7 @@ std::uint64_t fluxFingerprint(const SceneFluidOpeningFluxSet& flux) {
 }
 
 SceneFluidOpeningFluxSet buildFlux(
+    const SceneFluidSurfaceDefinition& surface,
     const SceneFluidOpeningQuadratureSet& quadrature,
     const SceneFluidOpeningGridPatchSet& patches,
     const fluid::PeriodicCartesianGrid& grid,
@@ -388,19 +412,22 @@ SceneFluidOpeningFluxSet buildFlux(
         throw std::invalid_argument(
             "scene fluid opening flux requires a matching finite MAC field");
     }
-    if (quadrature.openings.size() > limits.maximumOpenings
+    if (surface.regions.size() > limits.maximumRegions
+        || quadrature.openings.size() > limits.maximumOpenings
         || patches.patches.size() > limits.maximumPatchSamples) {
         throw std::length_error(
             "scene fluid opening flux exceeds its count limit");
     }
     const std::size_t expectedBytes = storageBytesForCounts(
-        quadrature.openings.size(), patches.patches.size());
+        surface.regions.size(), quadrature.openings.size(),
+        patches.patches.size());
     if (expectedBytes > limits.maximumFluxBytes) {
         throw std::length_error(
             "scene fluid opening flux exceeds its byte limit");
     }
 
     SceneFluidOpeningFluxSet result;
+    result.surfaceDefinitionFingerprint = surface.fingerprint;
     result.openingPatchFingerprint = patches.fingerprint;
     result.velocityFingerprint = velocityFingerprint(grid, velocity);
     result.structureDefinitionFingerprint =
@@ -410,6 +437,15 @@ SceneFluidOpeningFluxSet buildFlux(
     result.cellCounts = grid.cellCounts();
     result.lowerMeters = grid.lowerMeters();
     result.upperMeters = grid.upperMeters();
+    result.regions.reserve(surface.regions.size());
+    for (std::size_t regionIndex = 0;
+         regionIndex < surface.regions.size(); ++regionIndex) {
+        result.regions.push_back({
+            regionIndex,
+            surface.regions[regionIndex].id,
+            surface.regions[regionIndex].kind,
+        });
+    }
     result.openings.reserve(quadrature.openings.size());
     result.samples.reserve(patches.patches.size());
 
@@ -514,6 +550,29 @@ SceneFluidOpeningFluxSet buildFlux(
             opening.surfaceSweepRateCubicMetersPerSecond;
         result.totalRelativeVolumeFlowRateCubicMetersPerSecond +=
             opening.relativeVolumeFlowRateCubicMetersPerSecond;
+        const auto negativeRegion = surface.mappings.regionIndex(
+            opening.negativeSideRegionId);
+        const auto positiveRegion = surface.mappings.regionIndex(
+            opening.positiveSideRegionId);
+        if (!negativeRegion || !positiveRegion
+            || *negativeRegion == *positiveRegion) {
+            throw std::invalid_argument(
+                "scene fluid opening flux references invalid side regions");
+        }
+        auto& negative = result.regions[*negativeRegion];
+        auto& positive = result.regions[*positiveRegion];
+        negative.outwardFluidVolumeFlowRateCubicMetersPerSecond +=
+            opening.fluidVolumeFlowRateCubicMetersPerSecond;
+        positive.outwardFluidVolumeFlowRateCubicMetersPerSecond -=
+            opening.fluidVolumeFlowRateCubicMetersPerSecond;
+        negative.outwardSurfaceSweepRateCubicMetersPerSecond +=
+            opening.surfaceSweepRateCubicMetersPerSecond;
+        positive.outwardSurfaceSweepRateCubicMetersPerSecond -=
+            opening.surfaceSweepRateCubicMetersPerSecond;
+        negative.outwardRelativeVolumeFlowRateCubicMetersPerSecond +=
+            opening.relativeVolumeFlowRateCubicMetersPerSecond;
+        positive.outwardRelativeVolumeFlowRateCubicMetersPerSecond -=
+            opening.relativeVolumeFlowRateCubicMetersPerSecond;
         result.openings.push_back(opening);
     }
     if (!closeValue(
@@ -527,6 +586,41 @@ SceneFluidOpeningFluxSet buildFlux(
             result.totalRelativeVolumeFlowRateCubicMetersPerSecond)) {
         throw std::invalid_argument(
             "scene fluid opening flux does not close its global ledger");
+    }
+    double absoluteFluidRegionFlow = 0.0;
+    double absoluteSurfaceRegionFlow = 0.0;
+    double absoluteRelativeRegionFlow = 0.0;
+    for (const auto& region : result.regions) {
+        result.globalFluidRegionBalanceResidualCubicMetersPerSecond +=
+            region.outwardFluidVolumeFlowRateCubicMetersPerSecond;
+        result.globalSurfaceRegionBalanceResidualCubicMetersPerSecond +=
+            region.outwardSurfaceSweepRateCubicMetersPerSecond;
+        result.globalRelativeRegionBalanceResidualCubicMetersPerSecond +=
+            region.outwardRelativeVolumeFlowRateCubicMetersPerSecond;
+        absoluteFluidRegionFlow += std::abs(
+            region.outwardFluidVolumeFlowRateCubicMetersPerSecond);
+        absoluteSurfaceRegionFlow += std::abs(
+            region.outwardSurfaceSweepRateCubicMetersPerSecond);
+        absoluteRelativeRegionFlow += std::abs(
+            region.outwardRelativeVolumeFlowRateCubicMetersPerSecond);
+    }
+    const auto balanced = [](const double residual,
+                             const double absoluteFlow) {
+        return std::isfinite(residual) && std::isfinite(absoluteFlow)
+            && std::abs(residual)
+                <= 1.0e-12 + 1.0e-10 * absoluteFlow;
+    };
+    if (!balanced(
+            result.globalFluidRegionBalanceResidualCubicMetersPerSecond,
+            absoluteFluidRegionFlow)
+        || !balanced(
+            result.globalSurfaceRegionBalanceResidualCubicMetersPerSecond,
+            absoluteSurfaceRegionFlow)
+        || !balanced(
+            result.globalRelativeRegionBalanceResidualCubicMetersPerSecond,
+            absoluteRelativeRegionFlow)) {
+        throw std::overflow_error(
+            "scene fluid opening region balances do not close globally");
     }
     result.ownedStorageBytes = storageBytes(result);
     result.fingerprint = fluxFingerprint(result);
@@ -554,7 +648,8 @@ SceneFluidOpeningFluxSet evaluateSceneFluidOpeningFlux(
     validateSceneFluidOpeningGridPatches(
         patches, surface, state, caps, quadrature, grid);
     auto result = buildFlux(
-        quadrature, patches, grid, velocityMetersPerSecond, limits);
+        surface, quadrature, patches, grid,
+        velocityMetersPerSecond, limits);
     validateSceneFluidOpeningFlux(
         result, surface, state, caps, quadrature, patches,
         grid, velocityMetersPerSecond);
@@ -576,6 +671,7 @@ void validateSceneFluidOpeningFlux(
         || !fluid::isFinite(velocityMetersPerSecond)
         || flux.version != sceneFluidOpeningFluxVersion
         || flux.fingerprint == 0
+        || flux.surfaceDefinitionFingerprint != surface.fingerprint
         || flux.openingPatchFingerprint != patches.fingerprint
         || flux.velocityFingerprint
             != velocityFingerprint(grid, velocityMetersPerSecond)
@@ -592,9 +688,11 @@ void validateSceneFluidOpeningFlux(
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
+        std::numeric_limits<std::size_t>::max(),
     };
     const auto expected = buildFlux(
-        quadrature, patches, grid, velocityMetersPerSecond, unlimited);
+        surface, quadrature, patches, grid,
+        velocityMetersPerSecond, unlimited);
     if (flux != expected
         || flux.ownedStorageBytes != storageBytes(flux)
         || flux.fingerprint != fluxFingerprint(flux)) {
