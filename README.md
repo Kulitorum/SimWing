@@ -546,7 +546,12 @@ Outside, while a crossport joins only its adjacent cells. Every component owns
 one stable gauge ID and a component-wise continuity/source check. Thus two
 sealed cells with equal-and-opposite volume changes are rejected locally even
 though their global volume residual is zero. Applying these components to the
-grid projection remains future work. Nonplanar or concave openings, surface
+grid now starts with an immutable pressure-control-volume topology: every
+positive sparse cell/region volume owns one pressure unknown, stable fixed-grid
+cell/region ID, volume weight, component, and deterministic gauge owner. Mixed
+cut cells and full interior cells close independently and exactly recover all
+region and domain volumes. Face conductances and the actual projection remain
+future work. Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own
 geometry and transfer only.

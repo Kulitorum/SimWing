@@ -362,6 +362,8 @@ add_library(simwing_scene_fluid_cell_volume STATIC
     src/fsi/scene_fluid_region_continuity.h
     src/fsi/scene_fluid_region_connectivity.cpp
     src/fsi/scene_fluid_region_connectivity.h
+    src/fsi/scene_fluid_pressure_control_volume.cpp
+    src/fsi/scene_fluid_pressure_control_volume.h
 )
 target_include_directories(simwing_scene_fluid_cell_volume PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
@@ -1078,6 +1080,12 @@ add_executable(simwing-scene-fluid-region-connectivity-test
     tests/simwing_scene_fluid_region_connectivity_test.cpp
 )
 target_link_libraries(simwing-scene-fluid-region-connectivity-test
+    PRIVATE simwing_scene_fluid_cell_volume simwing_scene_structure)
+
+add_executable(simwing-scene-fluid-pressure-control-volume-test
+    tests/simwing_scene_fluid_pressure_control_volume_test.cpp
+)
+target_link_libraries(simwing-scene-fluid-pressure-control-volume-test
     PRIVATE simwing_scene_fluid_cell_volume simwing_scene_structure)
 
 add_executable(simwing-scene-fluid-opening-cap-test
@@ -1818,6 +1826,8 @@ add_test(NAME simwing_scene_fluid_region_continuity
     COMMAND simwing-scene-fluid-region-continuity-test)
 add_test(NAME simwing_scene_fluid_region_connectivity
     COMMAND simwing-scene-fluid-region-connectivity-test)
+add_test(NAME simwing_scene_fluid_pressure_control_volume
+    COMMAND simwing-scene-fluid-pressure-control-volume-test)
 add_test(NAME simwing_scene_fluid_opening_cap
     COMMAND simwing-scene-fluid-opening-cap-test)
 add_test(NAME simwing_scene_fluid_opening_quadrature

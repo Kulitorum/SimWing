@@ -420,6 +420,7 @@ src/fsi/
     scene_fluid_cell_volume.* signed-chain sparse region volumes
     scene_fluid_region_continuity.* consecutive volume/flux compatibility
     scene_fluid_region_connectivity.* pressure components and gauges
+    scene_fluid_pressure_control_volume.* sparse volume-weighted unknowns
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -616,7 +617,15 @@ owns the future pressure gauge. Intake and crossport regressions prove the
 expected connectivity; a moving pair of sealed cells proves component-wise
 incompatibility cannot be hidden by equal-and-opposite global volume change.
 Opening source rates also cancel independently inside each component. A
-canonical Qt-free structural worker now launches the viewer by default and
+first immutable pressure-control-volume owner now creates one unknown for
+every positive sparse cell/region volume. Cell-major indices and hashed
+fixed-grid cell/region IDs preserve identity across accepted motion, while
+region and component membership provide exact volume weights and one
+deterministic gauge volume per component. The large-tetrahedron regression
+retains mixed cut cells and 24 full interior cells and closes every cell,
+region, component, and the full domain. It deliberately owns no face
+conductance and performs no projection yet. A canonical Qt-free structural
+worker now launches the viewer by default and
 publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.
 The same worker can now select a smooth periodic Taylor-Green CFD case. Its
