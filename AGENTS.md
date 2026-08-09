@@ -290,10 +290,12 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   pair-specific chains at one physical higher-degree node; branching within
   one region pair still rejects. Simple closed loops then gain
   signed area, centroid, and enclosed/exterior region identity without merging
-  nested loops or sealing open chains. Eligible non-touching loop nests are
-  finally resolved into exact per-region MAC-face areas with a containment
-  tree; unresolved faces stay explicit. None of these products is a cut-cell
-  volume or complete grid-region classification.
+  nested loops or sealing open chains. Eligible non-touching loop nests and a
+  sole simple directed chain joining two face-boundary points are finally
+  resolved into exact per-region MAC-face areas; the latter retains its source
+  chain and uses the oriented rectangular boundary closure. All other faces
+  stay explicit unresolved. None of these products is a cut-cell volume or
+  complete grid-region classification.
 - `simwing_scene_fluid_quadrature`: converts those unique cell/face area owners
   into stable barycentric quadrature points with authored material, sheet, and
   two-sided region identity plus exact side-cell provenance, then delegates
@@ -956,8 +958,10 @@ makes this a certified aerodynamic solver.
   present local intrinsic charts are not manufacturing flat-pattern UVs, and
   it does not yet author paired seam chains. The cap owner now consumes the
   complete real-wing opening set. Its full multi-region volume ledger closes
-  on a centered coarse grid that crosses the canopy; grid-face junctions are
-  preserved as pair-specific chains and explicit unresolved partitions.
+  on a centered coarse grid that crosses the canopy. One simple
+  boundary-to-boundary interface is now an exact oriented partition; grid-face
+  junctions remain preserved as pair-specific chains and explicit unresolved
+  partitions.
   Opening quadrature and grid patches retain the full cap area, and authored
   connectivity plus sparse pressure control volumes assemble. Pressure-link
   construction now retains every coarse embedded opening without positive
@@ -1049,8 +1053,11 @@ makes this a certified aerodynamic solver.
 - `src/fsi/fluid/scene_surface_face_partition.{h,cpp}` rejects touching or
   intersecting loops, builds smallest-parent containment, requires authored
   region continuity through nesting, and closes exact per-region area on faces
-  containing only interior closed loops. Open chains, coplanar sheets,
-  boundary-touching loops, and empty active faces remain explicitly unresolved.
+  containing only interior closed loops. It also closes one simple directed
+  open chain between two rectangular face-boundary points, retains that source
+  chain explicitly, and assigns positive/negative side area from winding.
+  Opening-ended or multiple open chains, coplanar sheets, boundary-touching
+  loops, and empty active faces remain explicitly unresolved.
 - `src/fsi/scene_fluid_quadrature.{h,cpp}` turns each unique positive-area
   owner into one stable-ID barycentric quadrature point, preserves authored
   region/material/sheet/role metadata and the exact grid cell owning each

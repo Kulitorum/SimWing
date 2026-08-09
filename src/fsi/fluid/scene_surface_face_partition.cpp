@@ -133,6 +133,193 @@ double faceArea(const PeriodicCartesianGrid& grid, const GridFaceAxis axis) {
     return h.x * h.y;
 }
 
+struct FaceBounds {
+    double minimumU = 0.0;
+    double maximumU = 0.0;
+    double minimumV = 0.0;
+    double maximumV = 0.0;
+};
+
+FaceBounds faceBounds(const PeriodicCartesianGrid& grid,
+                      const SceneFluidActiveFace& face) {
+    const Vector3 lower = grid.lowerMeters();
+    const Vector3 spacing = grid.cellSpacingMeters();
+    if (face.axis == GridFaceAxis::X) {
+        const double minimumU = lower.y
+            + static_cast<double>(face.j) * spacing.y;
+        const double minimumV = lower.z
+            + static_cast<double>(face.k) * spacing.z;
+        return {minimumU, minimumU + spacing.y,
+                minimumV, minimumV + spacing.z};
+    }
+    if (face.axis == GridFaceAxis::Y) {
+        const double minimumU = lower.z
+            + static_cast<double>(face.k) * spacing.z;
+        const double minimumV = lower.x
+            + static_cast<double>(face.i) * spacing.x;
+        return {minimumU, minimumU + spacing.z,
+                minimumV, minimumV + spacing.x};
+    }
+    const double minimumU = lower.x
+        + static_cast<double>(face.i) * spacing.x;
+    const double minimumV = lower.y
+        + static_cast<double>(face.j) * spacing.y;
+    return {minimumU, minimumU + spacing.x,
+            minimumV, minimumV + spacing.y};
+}
+
+bool near(const double first, const double second,
+          const double tolerance) {
+    return std::abs(first - second) <= tolerance;
+}
+
+double boundaryParameter(const Point2& point,
+                         const FaceBounds& bounds,
+                         const double tolerance) {
+    const double width = bounds.maximumU - bounds.minimumU;
+    const double height = bounds.maximumV - bounds.minimumV;
+    if (point.u < bounds.minimumU - tolerance
+        || point.u > bounds.maximumU + tolerance
+        || point.v < bounds.minimumV - tolerance
+        || point.v > bounds.maximumV + tolerance) {
+        throw std::invalid_argument(
+            "scene fluid boundary-chain point leaves its face");
+    }
+    const bool minimumU = near(point.u, bounds.minimumU, tolerance);
+    const bool maximumU = near(point.u, bounds.maximumU, tolerance);
+    const bool minimumV = near(point.v, bounds.minimumV, tolerance);
+    const bool maximumV = near(point.v, bounds.maximumV, tolerance);
+    if (minimumU && minimumV) return 0.0;
+    if (maximumU && minimumV) return width;
+    if (maximumU && maximumV) return width + height;
+    if (minimumU && maximumV) return 2.0 * width + height;
+    if (minimumV) return point.u - bounds.minimumU;
+    if (maximumU) return width + point.v - bounds.minimumV;
+    if (maximumV) return width + height + bounds.maximumU - point.u;
+    if (minimumU)
+        return 2.0 * width + height + bounds.maximumV - point.v;
+    throw std::invalid_argument(
+        "scene fluid boundary-chain endpoint is not on its face boundary");
+}
+
+double boundaryChainPositiveArea(
+    const SceneFluidActiveFace& face,
+    const SceneFluidFaceChain& chain,
+    const SceneFluidFaceChainSet& chains,
+    const SceneFluidFaceGraph& graph,
+    const PeriodicCartesianGrid& grid,
+    const SceneFluidFacePartitionSettings& settings,
+    const SceneFluidFacePartitionLimits& limits,
+    std::size_t& segmentPairTestCount) {
+    if (chain.kind != SceneFluidFaceChainKind::Open
+        || chain.nodeReferenceCount < 2
+        || chain.segmentReferenceCount + 1 != chain.nodeReferenceCount
+        || chain.endpointFaceBoundaryMasks[0] == FaceBoundaryNone
+        || chain.endpointFaceBoundaryMasks[1] == FaceBoundaryNone
+        || chain.endpointOnAuthoredOpening[0]
+        || chain.endpointOnAuthoredOpening[1]) {
+        throw std::invalid_argument(
+            "scene fluid boundary face chain is invalid");
+    }
+    const FaceBounds bounds = faceBounds(grid, face);
+    const double width = bounds.maximumU - bounds.minimumU;
+    const double height = bounds.maximumV - bounds.minimumV;
+    const double perimeter = 2.0 * (width + height);
+    std::vector<Point2> polygon;
+    polygon.reserve(chain.nodeReferenceCount + 4);
+    for (std::size_t offset = 0;
+         offset < chain.nodeReferenceCount; ++offset) {
+        const auto& node = graph.nodes[chains.nodeReferences[
+            chain.firstNodeReference + offset]];
+        if (node.activeFaceIndex != chain.activeFaceIndex
+            || !std::isfinite(node.positionMeters.x)
+            || !std::isfinite(node.positionMeters.y)
+            || !std::isfinite(node.positionMeters.z)
+            || (offset != 0 && offset + 1 != chain.nodeReferenceCount
+                && (node.faceBoundaryMask != FaceBoundaryNone
+                    || node.authoredOpeningBoundary))) {
+            throw std::invalid_argument(
+                "scene fluid boundary face chain has invalid nodes");
+        }
+        const Point2 point = facePoint(face.axis, node.positionMeters);
+        if (point.u < bounds.minimumU - settings.geometryToleranceMeters
+            || point.u > bounds.maximumU + settings.geometryToleranceMeters
+            || point.v < bounds.minimumV - settings.geometryToleranceMeters
+            || point.v > bounds.maximumV + settings.geometryToleranceMeters) {
+            throw std::invalid_argument(
+                "scene fluid boundary face-chain node leaves its face");
+        }
+        polygon.push_back(point);
+    }
+    const double startParameter = boundaryParameter(
+        polygon.front(), bounds, settings.geometryToleranceMeters);
+    const double endParameter = boundaryParameter(
+        polygon.back(), bounds, settings.geometryToleranceMeters);
+    double targetParameter = startParameter;
+    if (targetParameter <= endParameter
+        + settings.geometryToleranceMeters) {
+        targetParameter += perimeter;
+    }
+    const std::array<std::pair<double, Point2>, 4> corners{{
+        {0.0, {bounds.minimumU, bounds.minimumV}},
+        {width, {bounds.maximumU, bounds.minimumV}},
+        {width + height, {bounds.maximumU, bounds.maximumV}},
+        {2.0 * width + height, {bounds.minimumU, bounds.maximumV}},
+    }};
+    std::vector<std::pair<double, Point2>> traversedCorners;
+    traversedCorners.reserve(corners.size());
+    for (const auto& [baseParameter, point] : corners) {
+        double parameter = baseParameter;
+        while (parameter <= endParameter
+               + settings.geometryToleranceMeters) {
+            parameter += perimeter;
+        }
+        if (parameter < targetParameter
+            - settings.geometryToleranceMeters) {
+            traversedCorners.emplace_back(parameter, point);
+        }
+    }
+    std::ranges::sort(traversedCorners, {}, &std::pair<double, Point2>::first);
+    for (const auto& [parameter, point] : traversedCorners) {
+        static_cast<void>(parameter);
+        polygon.push_back(point);
+    }
+    for (std::size_t first = 0; first < polygon.size(); ++first) {
+        const std::size_t firstNext = (first + 1) % polygon.size();
+        for (std::size_t second = first + 1;
+             second < polygon.size(); ++second) {
+            const std::size_t secondNext = (second + 1) % polygon.size();
+            if (firstNext == second || secondNext == first) continue;
+            if (segmentPairTestCount == limits.maximumSegmentPairTests) {
+                throw std::length_error(
+                    "scene fluid face partition exceeds pair-test limit");
+            }
+            ++segmentPairTestCount;
+            if (segmentsIntersect(
+                    polygon[first], polygon[firstNext], polygon[second],
+                    polygon[secondNext], settings.geometryToleranceMeters)) {
+                throw std::invalid_argument(
+                    "scene fluid boundary face chain self-intersects");
+            }
+        }
+    }
+    double twiceSignedArea = 0.0;
+    for (std::size_t index = 0; index < polygon.size(); ++index) {
+        const Point2& first = polygon[index];
+        const Point2& second = polygon[(index + 1) % polygon.size()];
+        twiceSignedArea += first.u * second.v - second.u * first.v;
+    }
+    const double positiveArea = 0.5 * twiceSignedArea;
+    const double fullArea = width * height;
+    if (!std::isfinite(positiveArea)
+        || !(positiveArea > 0.0)
+        || !(positiveArea < fullArea)) {
+        throw std::invalid_argument(
+            "scene fluid boundary face-chain area is invalid");
+    }
+    return positiveArea;
+}
+
 std::uint64_t partitionFingerprint(
     const SceneFluidFacePartitionSet& value) {
     Fingerprint f;
@@ -157,9 +344,14 @@ std::uint64_t partitionFingerprint(
     for (const auto& item : value.partitions) {
         f.integer(item.stableId);
         f.integer(static_cast<std::uint64_t>(item.activeFaceIndex));
+        f.integer(static_cast<std::uint8_t>(item.kind));
         f.integer(item.rootExteriorRegionId);
         f.integer(static_cast<std::uint64_t>(item.firstLoopReference));
         f.integer(static_cast<std::uint64_t>(item.loopReferenceCount));
+        f.integer(static_cast<std::uint64_t>(
+            item.firstOpenChainReference));
+        f.integer(static_cast<std::uint64_t>(
+            item.openChainReferenceCount));
         f.integer(static_cast<std::uint64_t>(item.firstRegionArea));
         f.integer(static_cast<std::uint64_t>(item.regionAreaCount));
         f.real(item.faceAreaSquareMeters);
@@ -168,6 +360,9 @@ std::uint64_t partitionFingerprint(
     }
     f.integer(static_cast<std::uint64_t>(value.loopReferences.size()));
     for (auto item : value.loopReferences)
+        f.integer(static_cast<std::uint64_t>(item));
+    f.integer(static_cast<std::uint64_t>(value.openChainReferences.size()));
+    for (auto item : value.openChainReferences)
         f.integer(static_cast<std::uint64_t>(item));
     f.integer(static_cast<std::uint64_t>(value.regionAreas.size()));
     for (const auto& item : value.regionAreas) {
@@ -230,10 +425,16 @@ SceneFluidFacePartitionSet buildPartitions(
         }
     }
 
-    std::vector<std::size_t> openByFace(topology.activeFaces.size(), 0);
-    for (const auto& chain : chains.chains)
-        if (chain.kind == SceneFluidFaceChainKind::Open)
-            ++openByFace[chain.activeFaceIndex];
+    std::vector<std::vector<std::size_t>> openChainsByFace(
+        topology.activeFaces.size());
+    for (std::size_t chainIndex = 0;
+         chainIndex < chains.chains.size(); ++chainIndex) {
+        if (chains.chains[chainIndex].kind
+            == SceneFluidFaceChainKind::Open) {
+            openChainsByFace[chains.chains[chainIndex].activeFaceIndex]
+                .push_back(chainIndex);
+        }
+    }
 
     for (std::size_t faceIndex = 0;
          faceIndex < topology.activeFaces.size(); ++faceIndex) {
@@ -302,7 +503,70 @@ SceneFluidFacePartitionSet buildPartitions(
                     || node.authoredOpeningBoundary;
             }
         }
-        if (faceLoops.empty() || openByFace[faceIndex] != 0
+        const auto& faceOpenChains = openChainsByFace[faceIndex];
+        const bool soleBoundaryChain =
+            faceLoops.empty() && faceOpenChains.size() == 1
+            && face.coplanarPatchReferenceCount == 0
+            && chains.chains[faceOpenChains.front()]
+                    .endpointFaceBoundaryMasks[0]
+                != FaceBoundaryNone
+            && chains.chains[faceOpenChains.front()]
+                    .endpointFaceBoundaryMasks[1]
+                != FaceBoundaryNone
+            && !chains.chains[faceOpenChains.front()]
+                    .endpointOnAuthoredOpening[0]
+            && !chains.chains[faceOpenChains.front()]
+                    .endpointOnAuthoredOpening[1];
+        if (soleBoundaryChain) {
+            if (result.partitions.size() == limits.maximumPartitions) {
+                throw std::length_error(
+                    "scene fluid face partitions exceed their limit");
+            }
+            const std::size_t chainIndex = faceOpenChains.front();
+            const auto& chain = chains.chains[chainIndex];
+            SceneFluidFacePartition partition;
+            partition.stableId = face.stableId;
+            partition.activeFaceIndex = faceIndex;
+            partition.kind =
+                SceneFluidFacePartitionKind::BoundaryOpenChain;
+            partition.firstLoopReference = result.loopReferences.size();
+            partition.firstOpenChainReference =
+                result.openChainReferences.size();
+            partition.openChainReferenceCount = 1;
+            result.openChainReferences.push_back(chainIndex);
+            partition.faceAreaSquareMeters = faceArea(grid, face.axis);
+            const double positiveArea = boundaryChainPositiveArea(
+                face, chain, chains, graph, grid, settings, limits,
+                result.segmentPairTestCount);
+            std::map<StableId, double> areas;
+            areas.emplace(chain.positiveSideRegionId, positiveArea);
+            areas.emplace(
+                chain.negativeSideRegionId,
+                partition.faceAreaSquareMeters - positiveArea);
+            partition.firstRegionArea = result.regionAreas.size();
+            for (const auto [region, area] : areas) {
+                if (!(area > 0.0) || !std::isfinite(area)) {
+                    throw std::invalid_argument(
+                        "scene fluid boundary face region area is invalid");
+                }
+                result.regionAreas.push_back({region, area});
+                partition.assignedAreaSquareMeters += area;
+            }
+            partition.regionAreaCount = result.regionAreas.size()
+                - partition.firstRegionArea;
+            partition.areaResidualSquareMeters =
+                partition.assignedAreaSquareMeters
+                - partition.faceAreaSquareMeters;
+            if (!std::isfinite(partition.areaResidualSquareMeters)
+                || std::abs(partition.areaResidualSquareMeters)
+                    > settings.areaClosureToleranceSquareMeters) {
+                throw std::invalid_argument(
+                    "scene fluid boundary face partition does not close area");
+            }
+            result.partitions.push_back(partition);
+            continue;
+        }
+        if (faceLoops.empty() || !faceOpenChains.empty()
             || face.coplanarPatchReferenceCount != 0 || boundaryTouch) {
             ++result.unresolvedActiveFaceCount;
             continue;
@@ -322,9 +586,12 @@ SceneFluidFacePartitionSet buildPartitions(
         SceneFluidFacePartition partition;
         partition.stableId = face.stableId;
         partition.activeFaceIndex = faceIndex;
+        partition.kind = SceneFluidFacePartitionKind::ClosedLoops;
         partition.rootExteriorRegionId = rootExterior;
         partition.firstLoopReference = result.loopReferences.size();
         partition.loopReferenceCount = faceLoops.size();
+        partition.firstOpenChainReference =
+            result.openChainReferences.size();
         result.loopReferences.insert(result.loopReferences.end(),
                                      faceLoops.begin(), faceLoops.end());
         std::map<StableId, double> areas;
@@ -354,19 +621,43 @@ SceneFluidFacePartitionSet buildPartitions(
         result.partitions.push_back(partition);
     }
 
-    std::size_t referenceCount = 0, partitionBytes = 0, containmentBytes = 0;
-    std::size_t loopReferenceBytes = 0, regionBytes = 0, first = 0, second = 0, total = 0;
-    if (!checkedAdd(result.loopReferences.size(), result.regionAreas.size(), referenceCount)
+    std::size_t sourceReferenceCount = 0;
+    std::size_t referenceCount = 0;
+    std::size_t partitionBytes = 0;
+    std::size_t containmentBytes = 0;
+    std::size_t loopReferenceBytes = 0;
+    std::size_t openChainReferenceBytes = 0;
+    std::size_t regionBytes = 0;
+    std::size_t fixedBytes = 0;
+    std::size_t sourceReferenceBytes = 0;
+    std::size_t referenceBytes = 0;
+    std::size_t total = 0;
+    if (!checkedAdd(result.loopReferences.size(),
+                    result.openChainReferences.size(),
+                    sourceReferenceCount)
+        || !checkedAdd(sourceReferenceCount, result.regionAreas.size(),
+                       referenceCount)
         || referenceCount > limits.maximumReferences
-        || !checkedMultiply(result.partitions.size(), sizeof(SceneFluidFacePartition), partitionBytes)
-        || !checkedMultiply(result.loopContainment.size(), sizeof(SceneFluidFaceLoopContainment), containmentBytes)
-        || !checkedMultiply(result.loopReferences.size(), sizeof(std::size_t), loopReferenceBytes)
-        || !checkedMultiply(result.regionAreas.size(), sizeof(SceneFluidFaceRegionArea), regionBytes)
-        || !checkedAdd(partitionBytes, containmentBytes, first)
-        || !checkedAdd(loopReferenceBytes, regionBytes, second)
-        || !checkedAdd(first, second, total)
-        || total > limits.maximumPartitionBytes)
-        throw std::length_error("scene fluid face partitions exceed storage limits");
+        || !checkedMultiply(result.partitions.size(),
+                            sizeof(SceneFluidFacePartition), partitionBytes)
+        || !checkedMultiply(result.loopContainment.size(),
+                            sizeof(SceneFluidFaceLoopContainment),
+                            containmentBytes)
+        || !checkedMultiply(result.loopReferences.size(),
+                            sizeof(std::size_t), loopReferenceBytes)
+        || !checkedMultiply(result.openChainReferences.size(),
+                            sizeof(std::size_t), openChainReferenceBytes)
+        || !checkedMultiply(result.regionAreas.size(),
+                            sizeof(SceneFluidFaceRegionArea), regionBytes)
+        || !checkedAdd(partitionBytes, containmentBytes, fixedBytes)
+        || !checkedAdd(loopReferenceBytes, openChainReferenceBytes,
+                       sourceReferenceBytes)
+        || !checkedAdd(sourceReferenceBytes, regionBytes, referenceBytes)
+        || !checkedAdd(fixedBytes, referenceBytes, total)
+        || total > limits.maximumPartitionBytes) {
+        throw std::length_error(
+            "scene fluid face partitions exceed storage limits");
+    }
     result.fingerprint = partitionFingerprint(result);
     return result;
 }

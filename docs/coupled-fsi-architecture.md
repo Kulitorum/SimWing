@@ -579,7 +579,10 @@ conflict within one pair rejects. Simple loops gain signed area, centroid, and w
 enclosed/exterior region identity with self-intersection and degenerate-area
 rejection. A bounded containment stage rejects touching loops, requires
 authored parent/child region continuity, and closes exact per-region areas on
-eligible faces; open, coplanar, and boundary-touching cases remain unresolved.
+eligible faces. A sole simple directed open chain between two rectangular
+face-boundary points likewise closes exact positive/negative region areas and
+retains its source-chain identity. Opening-ended or multiple open chains,
+coplanar sheets, and boundary-touching loops remain unresolved.
 The implemented stages are now composed by a versioned `SceneFluidGridEpoch`: one
 local build carries a single accepted Structure surface through candidates,
 exact intersections, clipping, ownership, crossings, face topology, graph,
@@ -596,8 +599,9 @@ whole-surface divergence calculation verifies the global region totals. Nested
 analytic tetrahedra, a rigid accepted remap, a valid three-region junction,
 and a large cavity with 24 full interior cells are regressions. The complete
 real-wing region ledger also closes on a centered coarse grid that crosses the
-canopy. Junction nodes there terminate pair-specific open chains and remain
-explicit unresolved face partitions. Scene-v2.2 can attach one oriented
+canopy. One simple boundary-to-boundary interface there now resolves to exact
+oriented face areas; junction nodes terminate pair-specific open chains and
+remain explicit unresolved face partitions. Scene-v2.2 can attach one oriented
 boundary-vertex cap disk to an opening. A topology-only owner requires one
 closed oriented region cycle around every finite-area material-plus-cap edge,
 including valid three-region sheet/cap junctions, and derives final winding
@@ -936,7 +940,8 @@ opening-only vertices. The real 3.28 regression verifies oriented nondegenerate
 cap facets and captures every opening vertex through the live Structure-to-fluid
 surface adapter. The cap owner validates the three-region skin/rib mouth cycles
 and consumes the complete real-wing opening set. Pairwise cell-volume measures
-close its complete region ledger on a centered coarse grid; grid-face junctions
+close its complete region ledger on a centered coarse grid. One simple
+boundary-to-boundary interface resolves exactly, while grid-face junctions
 remain explicit unresolved partitions. Opening quadrature and grid patches
 preserve the full cap area, while authored connectivity and sparse pressure
 control volumes assemble. Face-link construction now retains every coarse

@@ -87,6 +87,7 @@ std::size_t ownedStorageBytes(const SceneFluidGridEpoch& epoch) {
         && addVectorBytes(epoch.facePartitions.loopContainment, total)
         && addVectorBytes(epoch.facePartitions.partitions, total)
         && addVectorBytes(epoch.facePartitions.loopReferences, total)
+        && addVectorBytes(epoch.facePartitions.openChainReferences, total)
         && addVectorBytes(epoch.facePartitions.regionAreas, total)
         && addVectorBytes(epoch.quadrature.points, total);
     if (!valid) {

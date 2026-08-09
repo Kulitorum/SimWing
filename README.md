@@ -505,8 +505,11 @@ area, centroid, and winding-derived enclosed/exterior region identity;
 self-intersections and degenerate loops reject, while nested loops remain
 separate until a bounded containment stage proves they do not touch, requires
 authored region continuity through every parent, and closes exact per-region
-area over an eligible MAC face. Faces with open chains, coplanar sheets, or
-boundary-touching loops remain explicitly unresolved. The versioned
+area over an eligible MAC face. A sole simple directed chain joining two points
+on the rectangular face boundary also closes exact positive/negative region
+areas while retaining its source-chain identity. Opening-ended or multiple
+open chains, coplanar sheets, and boundary-touching loops remain explicitly
+unresolved. The versioned
 `simwing_scene_fluid_grid_epoch` boundary now composes this entire chain plus
 unique conservative quadrature into one immutable accepted-Structure remap.
 Its fingerprint prevents candidates, patches, topology, partitions, or loads
@@ -757,8 +760,9 @@ lip and rib-mesh boundary vertices, so every exported opening vertex reaches
 the live Structure-to-fluid surface state. The cap owner now validates the
 full real wing's three-region skin/rib cycles and consumes its complete opening
 set. Pairwise signed cell-volume accounting also closes the complete real-wing
-region ledger on a centered coarse grid that crosses the canopy. Junctions on
-a Cartesian face survive as pair-specific open chains and explicit unresolved
+region ledger on a centered coarse grid that crosses the canopy. One simple
+boundary-to-boundary interface now resolves to exact oriented face areas;
+junctions survive as pair-specific open chains and explicit unresolved
 partitions. Opening quadrature/grid patches preserve the full cap area, and
 authored connectivity plus sparse pressure controls assemble. Pressure-link
 construction now reaches that real geometry and retains every coarse embedded

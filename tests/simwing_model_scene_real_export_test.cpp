@@ -461,11 +461,23 @@ void testRealDesignCapture(const std::filesystem::path &input,
             fluidSurface.definition, fluidState, fluidGrid, fluidTransfer,
             fluidEpoch, openingCaps, openingQuadrature, openingPatches,
             fluidVolumes, fluidConnectivity, pressureVolumes);
+    const bool hasBoundaryChainPartition = std::ranges::any_of(
+        fluidEpoch.facePartitions.partitions,
+        [](const simwing::fsi::fluid::SceneFluidFacePartition &partition) {
+            return partition.kind
+                == simwing::fsi::fluid::SceneFluidFacePartitionKind::
+                    BoundaryOpenChain;
+        });
     check(fluidVolumes.regionVolumes.size() == result.scene.regions.size()
               && fluidVolumes.openingCapCount
                   == result.scene.openings.size()
               && fluidEpoch.faceGraph.higherDegreeNodeCount > 0
               && fluidEpoch.facePartitions.unresolvedActiveFaceCount > 0
+              && hasBoundaryChainPartition
+              && fluidEpoch.facePartitions.partitions.size() == 1
+              && fluidEpoch.facePartitions.unresolvedActiveFaceCount
+                      + fluidEpoch.facePartitions.partitions.size()
+                  == fluidEpoch.faceTopology.activeFaces.size()
               && fluidVolumes.maximumCellVolumeResidualCubicMeters
                   < 1.0e-10
               && fluidVolumes.maximumRegionVolumeResidualCubicMeters
@@ -479,6 +491,7 @@ void testRealDesignCapture(const std::filesystem::path &input,
                           - openingCaps.totalAreaSquareMeters)
                   < 1.0e-10
               && pressureFaceLinks.unresolvedActiveFaceCount > 0
+              && pressureFaceLinks.resolvedPartitionFaceCount > 0
               && pressureFaceLinks.unresolvedEmbeddedOpeningPatchCount > 0
               && pressureFaceLinks.unresolvedEmbeddedOpeningAreaSquareMeters
                   > 0.0,

@@ -8,8 +8,13 @@
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t sceneFluidFacePartitionVersion = 1;
+inline constexpr std::uint32_t sceneFluidFacePartitionVersion = 2;
 inline constexpr std::size_t noParentFaceLoop = static_cast<std::size_t>(-1);
+
+enum class SceneFluidFacePartitionKind : std::uint8_t {
+    ClosedLoops = 1,
+    BoundaryOpenChain = 2,
+};
 
 struct SceneFluidFacePartitionSettings {
     double geometryToleranceMeters = 1.0e-12;
@@ -36,9 +41,13 @@ struct SceneFluidFaceRegionArea {
 struct SceneFluidFacePartition {
     std::uint64_t stableId = 0;
     std::size_t activeFaceIndex = 0;
+    SceneFluidFacePartitionKind kind =
+        SceneFluidFacePartitionKind::ClosedLoops;
     StableId rootExteriorRegionId = invalidStableId;
     std::size_t firstLoopReference = 0;
     std::size_t loopReferenceCount = 0;
+    std::size_t firstOpenChainReference = 0;
+    std::size_t openChainReferenceCount = 0;
     std::size_t firstRegionArea = 0;
     std::size_t regionAreaCount = 0;
     double faceAreaSquareMeters = 0.0;
@@ -70,16 +79,19 @@ struct SceneFluidFacePartitionSet {
     std::vector<SceneFluidFaceLoopContainment> loopContainment;
     std::vector<SceneFluidFacePartition> partitions;
     std::vector<std::size_t> loopReferences;
+    std::vector<std::size_t> openChainReferences;
     std::vector<SceneFluidFaceRegionArea> regionAreas;
 
     bool operator==(const SceneFluidFacePartitionSet&) const = default;
 };
 
 // Builds containment and exact region-area accounting for active faces whose
-// interface consists solely of non-touching simple closed loops. Parent/child
-// authored regions must form a continuous nesting chain. Faces with open
-// chains, coplanar sheet area, boundary-touching loops, or no closed loop stay
-// explicitly unresolved. This is a face partition, not a cut-cell volume.
+// interface consists solely of non-touching simple closed loops, or of one
+// simple directed open chain joining two points on the rectangular face
+// boundary. Parent/child authored regions must form a continuous nesting chain.
+// Opening-ended/multiple open chains, coplanar sheet area, boundary-touching
+// closed loops, or absent interfaces stay explicitly unresolved. This is a face
+// partition, not a cut-cell volume.
 [[nodiscard]] SceneFluidFacePartitionSet buildSceneFluidFacePartitions(
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& state,
