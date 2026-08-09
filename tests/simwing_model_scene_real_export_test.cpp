@@ -1,6 +1,7 @@
 #include "engine_paths.h"
 #include "input_migration.h"
 #include "nurbs_model.h"
+#include "scene_fluid_cell_volume.h"
 #include "scene_fluid_opening_cap.h"
 #include "scene_fluid_surface.h"
 #include "scene_structure.h"
@@ -412,6 +413,49 @@ void testRealDesignCapture(const std::filesystem::path &input,
                   >= result.scene.openings.size()
               && openingCaps.totalAreaSquareMeters > 0.0,
           "real intake and crossport loops produce accepted fluid caps through their junctions");
+    const simwing::fsi::SceneFluidSurfaceTransfer fluidTransfer(
+        fluidSurface.definition, assembly.mappings, structure);
+    simwing::fsi::Vec3 minimum = fluidState.vertices.front().positionMeters;
+    simwing::fsi::Vec3 maximum = minimum;
+    for (const auto &vertex : fluidState.vertices) {
+        minimum.x = std::min(minimum.x, vertex.positionMeters.x);
+        minimum.y = std::min(minimum.y, vertex.positionMeters.y);
+        minimum.z = std::min(minimum.z, vertex.positionMeters.z);
+        maximum.x = std::max(maximum.x, vertex.positionMeters.x);
+        maximum.y = std::max(maximum.y, vertex.positionMeters.y);
+        maximum.z = std::max(maximum.z, vertex.positionMeters.z);
+    }
+    constexpr double fluidDomainPaddingMeters = 0.5;
+    const simwing::fsi::Vec3 fluidDomainSpan{
+        maximum.x - minimum.x + 2.0 * fluidDomainPaddingMeters,
+        maximum.y - minimum.y + 2.0 * fluidDomainPaddingMeters,
+        maximum.z - minimum.z + 2.0 * fluidDomainPaddingMeters};
+    // PeriodicCartesianGrid requires two cells per axis. Put each internal
+    // split below the wing so this regression isolates the complete region
+    // volume ledger from the separate junction-on-grid-face graph problem.
+    const simwing::fsi::fluid::PeriodicCartesianGrid fluidGrid(
+        {2, 2, 2},
+        {minimum.x - fluidDomainPaddingMeters - fluidDomainSpan.x,
+         minimum.y - fluidDomainPaddingMeters - fluidDomainSpan.y,
+         minimum.z - fluidDomainPaddingMeters - fluidDomainSpan.z},
+        {maximum.x + fluidDomainPaddingMeters,
+         maximum.y + fluidDomainPaddingMeters,
+         maximum.z + fluidDomainPaddingMeters});
+    const simwing::fsi::SceneFluidGridEpoch fluidEpoch =
+        simwing::fsi::buildSceneFluidGridEpoch(
+            fluidSurface.definition, fluidState, fluidGrid, fluidTransfer);
+    const simwing::fsi::SceneFluidCellVolumeSet fluidVolumes =
+        simwing::fsi::buildSceneFluidCellVolumes(
+            fluidSurface.definition, fluidState, fluidGrid, fluidTransfer,
+            fluidEpoch);
+    check(fluidVolumes.regionVolumes.size() == result.scene.regions.size()
+              && fluidVolumes.openingCapCount
+                  == result.scene.openings.size()
+              && fluidVolumes.maximumCellVolumeResidualCubicMeters
+                  < 1.0e-10
+              && fluidVolumes.maximumRegionVolumeResidualCubicMeters
+                  < 1.0e-10,
+          "real multi-region wing closes its complete coarse-grid volume ledger");
     const simwing::viewer::StructureFrameMapping mapping =
         simwing::viewer::makeStructureFrameMapping(
             result.scene, assembly, structure);

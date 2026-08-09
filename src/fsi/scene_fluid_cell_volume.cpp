@@ -470,6 +470,8 @@ std::uint64_t volumeFingerprint(const SceneFluidCellVolumeSet& volumes) {
              volumes.settings.openingCaps.planarityToleranceMeters,
              volumes.settings.openingCaps.minimumTriangleAreaSquareMeters,
              volumes.settings.openingCaps.convexityTolerance,
+             volumes.settings.openingCaps
+                 .collapsedBoundaryRelativeAreaTolerance,
              volumes.cellVolumeCubicMeters,
              volumes.openingCapAreaSquareMeters,
              volumes.maximumTetrahedronVolumeResidualCubicMeters,

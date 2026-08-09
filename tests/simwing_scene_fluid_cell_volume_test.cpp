@@ -186,6 +186,103 @@ Scene openTetraScene() {
     return scene;
 }
 
+Scene threeRegionJunctionScene() {
+    Scene scene;
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-three-region-junction-volume";
+    scene.metadata.exporterVersion = "scene-fluid-cell-volume-test/4";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "cell-a"},
+        {3, RegionKind::Cell, "cell-b"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900.0, 650.0, 220.0, 0.015,
+         0.041, 0.02, 0.0125, 2.5e-12},
+    };
+    const std::array<Vec3, 5> positions{{
+        {1.0, 1.0, 1.0},
+        {1.0, 2.0, 1.0},
+        {1.0, 1.0, 2.0},
+        {2.0, 1.25, 1.25},
+        {0.0, 1.25, 1.25},
+    }};
+    for (std::size_t vertex = 0; vertex < positions.size(); ++vertex) {
+        scene.vertices.push_back({10 + vertex, positions[vertex]});
+    }
+    const auto outward = [&positions](
+        std::array<std::size_t, 3> face,
+        const std::size_t opposite) {
+        const Vec3 first{
+            positions[face[1]].x - positions[face[0]].x,
+            positions[face[1]].y - positions[face[0]].y,
+            positions[face[1]].z - positions[face[0]].z};
+        const Vec3 second{
+            positions[face[2]].x - positions[face[0]].x,
+            positions[face[2]].y - positions[face[0]].y,
+            positions[face[2]].z - positions[face[0]].z};
+        const Vec3 normal{
+            first.y * second.z - first.z * second.y,
+            first.z * second.x - first.x * second.z,
+            first.x * second.y - first.y * second.x};
+        const Vec3 interior{
+            positions[opposite].x - positions[face[0]].x,
+            positions[opposite].y - positions[face[0]].y,
+            positions[opposite].z - positions[face[0]].z};
+        if (normal.x * interior.x + normal.y * interior.y
+                + normal.z * interior.z
+            > 0.0) {
+            std::swap(face[1], face[2]);
+        }
+        return face;
+    };
+    const auto addFace = [&](const std::array<std::size_t, 3> face,
+                             const StableId negativeRegion,
+                             const StableId positiveRegion) {
+        const Vec3 first = positions[face[0]];
+        const Vec3 second = positions[face[1]];
+        const Vec3 third = positions[face[2]];
+        const Vec3 edge{second.x - first.x,
+                        second.y - first.y,
+                        second.z - first.z};
+        const Vec3 diagonal{third.x - first.x,
+                            third.y - first.y,
+                            third.z - first.z};
+        const double edgeLength = std::hypot(edge.x, edge.y, edge.z);
+        const double projected = (
+            diagonal.x * edge.x + diagonal.y * edge.y
+            + diagonal.z * edge.z) / edgeLength;
+        const double diagonalSquared = diagonal.x * diagonal.x
+            + diagonal.y * diagonal.y + diagonal.z * diagonal.z;
+        scene.triangles.push_back({
+            500 + scene.triangles.size(),
+            {10 + face[0], 10 + face[1], 10 + face[2]},
+            {{{0.0, 0.0}, {edgeLength, 0.0},
+              {projected, std::sqrt(std::max(
+                  0.0, diagonalSquared - projected * projected))}}},
+            negativeRegion, positiveRegion, 100,
+            900 + scene.triangles.size(), SurfaceRole::Skin,
+        });
+    };
+
+    addFace({0, 2, 1}, 2, 3);
+    const auto openingA = outward({3, 0, 1}, 2);
+    addFace(outward({3, 1, 2}, 0), 2, 1);
+    addFace(outward({3, 2, 0}, 1), 2, 1);
+    const auto openingB = outward({4, 1, 0}, 2);
+    addFace(outward({4, 2, 1}, 0), 3, 1);
+    addFace(outward({4, 0, 2}, 1), 3, 1);
+    scene.openings = {
+        {700,
+         {10 + openingA[0], 10 + openingA[1], 10 + openingA[2]},
+         2, 1, OpeningRole::Intake},
+        {701,
+         {10 + openingB[0], 10 + openingB[1], 10 + openingB[2]},
+         3, 1, OpeningRole::Intake},
+    };
+    return scene;
+}
+
 Scene translatedLargeClosedScene() {
     Scene scene = largeClosedScene();
     scene.metadata.designChecksum =
@@ -540,6 +637,41 @@ void testPlanarOpeningCapVolume() {
         fixture.transfer, epoch);
 }
 
+void testThreeRegionJunctionVolumes() {
+    Fixture fixture(threeRegionJunctionScene());
+    check(fixture.surface.ok() && fixture.structureAssembly.ok(),
+          "three-region cell-volume fixture assembles");
+    if (!fixture.surface.ok() || !fixture.structureAssembly.ok()) {
+        return;
+    }
+    const auto state = captureSceneFluidSurfaceState(
+        fixture.surface.definition,
+        fixture.structureAssembly.mappings,
+        fixture.structure);
+    const auto epoch = buildSceneFluidGridEpoch(
+        fixture.surface.definition, state, grid(), fixture.transfer);
+    const auto volumes = buildSceneFluidCellVolumes(
+        fixture.surface.definition, state, grid(), fixture.transfer, epoch);
+    const auto regions = regionVolumes(volumes);
+    constexpr double cellVolume = 1.0 / 6.0;
+    check(volumes.openingCapCount == 2
+              && volumes.maximumCellVolumeResidualCubicMeters < 1.0e-12
+              && volumes.maximumRegionVolumeResidualCubicMeters < 1.0e-12,
+          "three-region cap junction closes deterministic cell ledgers");
+    checkNear(regions.at(2).summedCellVolumeCubicMeters,
+              cellVolume, 2.0e-12,
+              "first junction cell recovers its analytic tetrahedron volume");
+    checkNear(regions.at(3).summedCellVolumeCubicMeters,
+              cellVolume, 2.0e-12,
+              "second junction cell recovers its analytic tetrahedron volume");
+    checkNear(regions.at(1).summedCellVolumeCubicMeters,
+              64.0 - 2.0 * cellVolume, 2.0e-12,
+              "junction cells preserve the surrounding Outside volume");
+    validateSceneFluidCellVolumes(
+        volumes, fixture.surface.definition, state, grid(),
+        fixture.transfer, epoch);
+}
+
 void testUnsupportedTopologyCorruptionAndLimits() {
     Fixture open(openScene());
     check(open.surface.ok() && open.structureAssembly.ok(),
@@ -599,6 +731,13 @@ void testUnsupportedTopologyCorruptionAndLimits() {
             fixture.transfer, epoch); },
         "cell-volume validation rejects centroid corruption");
 
+    corrupt = accepted;
+    corrupt.settings.openingCaps
+        .collapsedBoundaryRelativeAreaTolerance *= 0.5;
+    expectInvalid(
+        [&] { validateSceneFluidCellVolumeIntegrity(corrupt); },
+        "cell-volume integrity binds collapsed-boundary tolerance");
+
     SceneFluidCellVolumeSettings invalidSettings;
     invalidSettings.absoluteVolumeToleranceCubicMeters = 0.0;
     invalidSettings.relativeVolumeTolerance = 0.0;
@@ -655,6 +794,7 @@ int main() {
         testNestedAnalyticVolumesAndAcceptedMotion();
         testFullInteriorCellClassification();
         testPlanarOpeningCapVolume();
+        testThreeRegionJunctionVolumes();
         testUnsupportedTopologyCorruptionAndLimits();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

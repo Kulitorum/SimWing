@@ -513,7 +513,7 @@ the aggregate owned payload has an additional byte ceiling. A focused moving
 regression crosses a fabric triangle through a MAC plane, preserves authored
 region/material/sheet identity, and retains force/moment closure. A first
 `simwing_scene_fluid_cell_volume` subset now reconstructs deterministic sparse
-per-cell region volumes for closed, consistently wound two-sided manifolds.
+per-cell region volumes for closed, consistently wound region cycles.
 Each oriented interface triangle forms a signed tetrahedron against the grid
 origin; deterministic convex clipping distributes that chain across exact
 cells, including cells wholly inside a region and cases whose face-local chains
@@ -743,16 +743,18 @@ and bounds/revalidates every momentum control volume and material quadrature
 traction before publication.
 Nonplanar openings without authored cap triangles, self-intersecting or folded
 caps, opening-only interior construction vertices, branching or inconsistently
-wound surface junctions,
-periodic-boundary ambiguity, and general moving-boundary fluid equations still
+wound surface junctions, periodic-boundary ambiguity, and general
+moving-boundary fluid equations still
 reject or remain open; the grid epoch itself continues to own geometry and
 transfer only. The analytical model exporter now supplies deterministic
 boundary-vertex cap disks for its nonplanar intakes. It reuses the actual skin
 lip and rib-mesh boundary vertices, so every exported opening vertex reaches
 the live Structure-to-fluid surface state. The cap owner now validates the
 full real wing's three-region skin/rib cycles and consumes its complete opening
-set. Integrating those junctions through the downstream capped cell-volume and
-worker path remains open.
+set. Pairwise signed cell-volume accounting also closes the complete real-wing
+region ledger when internal grid planes remain outside the canopy. Junctions
+that cross a Cartesian face still reach a branch in the grid-face graph, so
+that topology stage and subsequent worker integration remain open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

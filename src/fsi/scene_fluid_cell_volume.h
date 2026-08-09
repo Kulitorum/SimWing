@@ -93,13 +93,15 @@ struct SceneFluidRegionVolume {
 
 // First bounded cut-cell volume subset. Separating fabric plus optional simple
 // planar automatic or explicitly tessellated nonplanar opening caps must form
-// consistently wound two-sided
-// triangle manifolds around one Outside root. Sparse positive region volumes
-// are published for every cell. Each oriented material/cap triangle defines
-// one signed tetrahedron against the grid origin; exact convex clipping
-// distributes that chain into intersected cells, including cells wholly inside
-// a region. The same exact tetrahedral decomposition publishes first moments
-// and cell-local centroids and closes both volume and first moment per cell.
+// closed oriented region cycles around one Outside root. Pairwise signed
+// measures support valid multi-region junctions when the supplied grid epoch
+// has no unresolved junction branch on a Cartesian face. Sparse positive
+// region volumes are published for every cell. Each oriented material/cap
+// triangle defines one signed tetrahedron against the grid origin; exact
+// convex clipping distributes that chain into intersected cells, including
+// cells wholly inside a region. The same exact tetrahedral decomposition
+// publishes first moments and cell-local centroids and closes both volume and
+// first moment per cell.
 // Caps remain topology only and never enter Structure or traction.
 struct SceneFluidCellVolumeSet {
     std::uint32_t version = sceneFluidCellVolumeVersion;

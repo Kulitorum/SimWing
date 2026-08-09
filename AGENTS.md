@@ -328,7 +328,9 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   It does not modify projection or fluid connectivity.
 - `simwing_scene_fluid_cell_volume`: reconstructs bounded deterministic sparse
   per-cell region volumes for the first capped-manifold subset. It requires one
-  Outside region and consistently wound two-sided material-plus-cap surfaces.
+  Outside region and closed oriented material-plus-cap region cycles. Pairwise
+  signed measures support valid multi-region junctions when the supplied grid
+  epoch has no junction branch on a Cartesian face.
   Each oriented triangle becomes a signed tetrahedron against the grid origin;
   bounded convex clipping distributes it across exact cells, including full
   interior cells and open face-local tile chains. The same clipped tetrahedra
@@ -336,7 +338,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   volume, and cell first moment closes independently before the result agrees
   with whole-surface region volumes. General swept-volume remap, unauthored
   nonplanar or folded/self-intersecting mouths, opening-only cap vertices,
-  surface junctions, and periodic-boundary ambiguity remain unsupported.
+  junction branches on grid faces, and periodic-boundary ambiguity remain
+  unsupported.
 - `simwing_scene_fluid_region_continuity`: binds two consecutive accepted
   volume and opening-flux epochs. It trapezoidally integrates each region's
   outward relative opening flow and reports `delta volume + integrated flow`
@@ -946,8 +949,9 @@ makes this a certified aerodynamic solver.
   yet because the design format has no authoritative source for them. Its
   present local intrinsic charts are not manufacturing flat-pattern UVs, and
   it does not yet author paired seam chains. The cap owner now consumes the
-  complete real-wing opening set, but the downstream capped cell-volume and
-  worker path still supports only ordinary two-sided manifolds.
+  complete real-wing opening set. Its full multi-region volume ledger closes
+  on a coarse grid with all internal planes outside the canopy; junction-aware
+  grid-face graph construction and the subsequent worker path remain open.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
   loads/state, trusted constraint/membrane/bending assembly, explicit optional
   fabric self-contact, rigid-pilot suspension, diagnostics, and composite

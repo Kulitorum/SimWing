@@ -587,13 +587,16 @@ chained fingerprint, individual stage limits, and an aggregate owned-payload
 byte bound. Validation rejects nested corruption or any foreign surface step.
 The moving regression translates an accepted fabric triangle across a MAC
 plane and verifies remapped physical IDs, area, force, and moment. A first
-closed-manifold volume owner consumes that epoch. Every oriented interface
+closed-region-cycle volume owner consumes that epoch. Every oriented interface
 triangle forms a signed tetrahedron against the grid origin; bounded convex
 clipping distributes its chain into exact cells, including wholly interior
 cells and surfaces whose face-local contours cross tile boundaries. A separate
 whole-surface divergence calculation verifies the global region totals. Nested
-analytic tetrahedra, a rigid accepted remap, and a large cavity with 24 full
-interior cells are regressions. Scene-v2.2 can attach one oriented
+analytic tetrahedra, a rigid accepted remap, a valid three-region junction,
+and a large cavity with 24 full interior cells are regressions. The complete
+real-wing region ledger also closes on a coarse grid whose internal planes
+remain outside the canopy; a junction crossing a Cartesian face still reaches
+the separate face-graph branch rejection. Scene-v2.2 can attach one oriented
 boundary-vertex cap disk to an opening. A topology-only owner requires one
 closed oriented region cycle around every finite-area material-plus-cap edge,
 including valid three-region sheet/cap junctions, and derives final winding
@@ -930,8 +933,9 @@ boundary edges; bounded lip canonicalization removes otherwise motionless
 opening-only vertices. The real 3.28 regression verifies oriented nondegenerate
 cap facets and captures every opening vertex through the live Structure-to-fluid
 surface adapter. The cap owner validates the three-region skin/rib mouth cycles
-and consumes the complete real-wing opening set; downstream capped cell-volume
-and worker integration remains restricted to ordinary two-sided manifolds.
+and consumes the complete real-wing opening set. Pairwise cell-volume measures
+close its complete region ledger when grid faces avoid the canopy; junction-
+aware face-graph construction and subsequent worker integration remain open.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy
