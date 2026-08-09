@@ -821,9 +821,13 @@ post-fit shape residual. The coordinate/mixed/high-frequency probes instead
 have gains from `0.999` to `1.007`; their shape residuals range from `1.2%` to
 `16.5%`. A piecewise-constant inside/outside mode has no source on same-region
 graph links—only on the authored intake—and it reproduces the outlier with
-`2.562` gain and `1.98%` residual. This rules out a global pressure-unit or
+`2.562` gain and `1.98%` residual. A gauge-invariant source-work audit makes
+that comparison dimensional: the graph gives the intake a `0.18 m`
+two-terminal conductance, while the mixed-hybrid cut-cell response gives
+`0.0700821 m`, a `2.5684` ratio. This rules out a global pressure-unit or
 normalization repair and localizes the transition question to authored-opening
-conductance rather than bulk cut-cell response.
+cut-cell closure rather than bulk response. Neither value is yet treated as
+the physical oracle.
 Its checkpoint also stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and

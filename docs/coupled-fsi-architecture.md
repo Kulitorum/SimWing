@@ -1255,7 +1255,8 @@ stable IDs, and authored regions. It applies the graph operator to manufacture
 each source,
 solves both inverse problems independently, removes one arithmetic pressure
 gauge per component, and retains every source, graph response, shadow response,
-and post-fit residual. Solver iterations and final residuals are part of the
+post-fit residual, and gauge-invariant source work. Solver iterations and final
+residuals are part of the
 fingerprint; count and byte limits reject before publication.
 
 The first 65-control cut-cell spectrum rules out a global scale error. The
@@ -1270,8 +1271,17 @@ authored region, so its graph source is identically zero on all same-region
 links and supported only by the intake. It yields `2.56237` shadow gain,
 `1.982%` relative residual, and `0.999804` cosine similarity, reproducing the
 accepted outlier and localizing it to authored-opening/interface conductance.
-No global correction is admissible, and neither opening response is yet
-declared physically authoritative.
+Because this topology has one pressure component and two authored regions, the
+same records define an energy-equivalent two-terminal measurement without an
+arbitrary pressure average: squared integrated inter-region transfer divided by
+source work. The graph intake conductance is exactly `0.18 m`; the mixed-hybrid
+response is `0.0700820848 m`, giving a graph-to-shadow conductance ratio of
+`2.56841674`. That independent ratio closes the fitted pressure gain while
+showing that the transition blocker is the opening-adjacent cut-cell closure,
+not a missing global coefficient. The existing orthogonal Cartesian local-cell
+oracle still recovers area over centre distance exactly. No global correction
+is admissible, and neither non-orthogonal opening response is yet declared
+physically authoritative.
 
 The experiment is exposed as `simwing-fsi --case pressure-cell
 --mimetic-pressure-audit` and reports control/trace counts plus iteration and

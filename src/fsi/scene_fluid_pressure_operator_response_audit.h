@@ -11,7 +11,7 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t
-    sceneFluidPressureOperatorResponseAuditVersion = 2;
+    sceneFluidPressureOperatorResponseAuditVersion = 3;
 
 enum class SceneFluidPressureOperatorResponseModeKind : std::uint8_t {
     AcceptedSource = 1,
@@ -45,6 +45,7 @@ struct SceneFluidPressureOperatorResponseRecord {
     std::size_t modeIndex = 0;
     std::size_t controlVolumeIndex = 0;
     std::uint64_t stableId = 0;
+    StableId regionId = invalidStableId;
     std::size_t componentIndex = 0;
     double integratedSourcePascalsMeters = 0.0;
     double graphGaugeAlignedPressurePascals = 0.0;
@@ -66,6 +67,9 @@ struct SceneFluidPressureOperatorResponseModeDiagnostics {
     double graphPressureL2Pascals = 0.0;
     double shadowPressureL2Pascals = 0.0;
     double pressureDotProductPascalsSquared = 0.0;
+    double graphSourcePressureWorkPascalsSquaredMeters = 0.0;
+    double shadowSourcePressureWorkPascalsSquaredMeters = 0.0;
+    double shadowToGraphSourceComplianceRatio = 0.0;
     double bestFitShadowPressureScale = 0.0;
     double pressureCosineSimilarity = 0.0;
     double bestFitShapeResidualL2Pascals = 0.0;
@@ -78,6 +82,13 @@ struct SceneFluidPressureOperatorResponseModeDiagnostics {
     double shadowFinalResidualL2PascalsMeters = 0.0;
     double shadowFinalResidualMaximumPascalsMeters = 0.0;
     double shadowMaximumCellConservationResidual = 0.0;
+    bool hasTwoTerminalConductance = false;
+    StableId lowerTerminalRegionId = invalidStableId;
+    StableId upperTerminalRegionId = invalidStableId;
+    double twoTerminalIntegratedTransferPascalsMeters = 0.0;
+    double graphTwoTerminalConductanceMeters = 0.0;
+    double shadowTwoTerminalConductanceMeters = 0.0;
+    double graphToShadowTwoTerminalConductanceRatio = 0.0;
     bool finite = false;
 
     bool operator==(
@@ -89,8 +100,10 @@ struct SceneFluidPressureOperatorResponseModeDiagnostics {
 // cut-cell topology. The optional accepted source is audited first; six
 // deterministic, component-compatible manufactured pressure modes then span
 // smooth coordinate, high-frequency, and authored-region directions. Each
-// solve is independent, gauge aligned per component, and retained without
-// changing either live pressure owner or Structure loads.
+// solve is independent, gauge aligned per component, and retains source work.
+// A one-component/two-region contrast additionally reports the energy-based
+// graph and shadow terminal conductances. The audit never changes either live
+// pressure owner or Structure loads.
 struct SceneFluidPressureOperatorResponseAudit {
     std::uint32_t version =
         sceneFluidPressureOperatorResponseAuditVersion;

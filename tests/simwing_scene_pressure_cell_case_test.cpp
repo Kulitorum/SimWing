@@ -753,6 +753,9 @@ void testManufacturedPressureOperatorResponses() {
               == fsi::SceneFluidPressureOperatorResponseModeKind::
                   RegionContrast
               && regionContrast.finite
+              && regionContrast.hasTwoTerminalConductance
+              && regionContrast.lowerTerminalRegionId == 1
+              && regionContrast.upperTerminalRegionId == 2
               && std::abs(
                      regionContrast.bestFitShadowPressureScale
                      - 2.56237302967949)
@@ -761,8 +764,25 @@ void testManufacturedPressureOperatorResponses() {
                      regionContrast.relativeBestFitShapeResidualL2
                      - 0.0198229425861661)
                   < 1.0e-9
+              && std::abs(
+                     regionContrast.graphTwoTerminalConductanceMeters
+                     - 0.18)
+                  < 1.0e-12
+              && std::abs(
+                     regionContrast.shadowTwoTerminalConductanceMeters
+                     - 0.0700820848334838)
+                  < 1.0e-12
+              && std::abs(
+                     regionContrast.graphToShadowTwoTerminalConductanceRatio
+                     - 2.56841674199167)
+                  < 1.0e-9
+              && std::abs(
+                     regionContrast.shadowToGraphSourceComplianceRatio
+                     - regionContrast
+                         .graphToShadowTwoTerminalConductanceRatio)
+                  < 1.0e-12
               && regionContrast.pressureCosineSimilarity > 0.9998,
-          "authored-region contrast isolates the same high-gain response to intake-only graph sources");
+          "authored-region contrast measures the intake-only graph and shadow two-terminal conductances");
     const auto manufacturedOnly =
         fsi::auditSceneFluidPressureOperatorResponses(
             simulation.acceptedPressureEpoch().pressureOperator,
@@ -773,7 +793,7 @@ void testManufacturedPressureOperatorResponses() {
               && manufacturedOnly.modes.front().kind
                   == fsi::SceneFluidPressureOperatorResponseModeKind::
                       CoordinateX,
-          "operator-response audit supports a five-mode manufactured-only oracle");
+          "operator-response audit supports a six-mode manufactured-only oracle");
     auto corrupt = audit;
     corrupt.responses.front()
         .shadowMinusBestFitGraphPressurePascals += 0.01;

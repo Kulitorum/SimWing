@@ -174,6 +174,11 @@ std::uint64_t productFingerprint(
         fingerprint.real(mode.graphPressureL2Pascals);
         fingerprint.real(mode.shadowPressureL2Pascals);
         fingerprint.real(mode.pressureDotProductPascalsSquared);
+        fingerprint.real(
+            mode.graphSourcePressureWorkPascalsSquaredMeters);
+        fingerprint.real(
+            mode.shadowSourcePressureWorkPascalsSquaredMeters);
+        fingerprint.real(mode.shadowToGraphSourceComplianceRatio);
         fingerprint.real(mode.bestFitShadowPressureScale);
         fingerprint.real(mode.pressureCosineSimilarity);
         fingerprint.real(mode.bestFitShapeResidualL2Pascals);
@@ -188,6 +193,14 @@ std::uint64_t productFingerprint(
         fingerprint.real(mode.shadowFinalResidualL2PascalsMeters);
         fingerprint.real(mode.shadowFinalResidualMaximumPascalsMeters);
         fingerprint.real(mode.shadowMaximumCellConservationResidual);
+        fingerprint.integer(static_cast<std::uint8_t>(
+            mode.hasTwoTerminalConductance));
+        fingerprint.integer(mode.lowerTerminalRegionId);
+        fingerprint.integer(mode.upperTerminalRegionId);
+        fingerprint.real(mode.twoTerminalIntegratedTransferPascalsMeters);
+        fingerprint.real(mode.graphTwoTerminalConductanceMeters);
+        fingerprint.real(mode.shadowTwoTerminalConductanceMeters);
+        fingerprint.real(mode.graphToShadowTwoTerminalConductanceRatio);
         fingerprint.integer(static_cast<std::uint8_t>(mode.finite));
     }
     fingerprint.integer(static_cast<std::uint64_t>(audit.responses.size()));
@@ -196,6 +209,7 @@ std::uint64_t productFingerprint(
         fingerprint.integer(static_cast<std::uint64_t>(
             response.controlVolumeIndex));
         fingerprint.integer(response.stableId);
+        fingerprint.integer(response.regionId);
         fingerprint.integer(static_cast<std::uint64_t>(
             response.componentIndex));
         fingerprint.real(response.integratedSourcePascalsMeters);
@@ -249,8 +263,7 @@ double manufacturedValue(
     case SceneFluidPressureOperatorResponseModeKind::StableIdPattern:
         return static_cast<double>(control.stableId % 31U) - 15.0;
     case SceneFluidPressureOperatorResponseModeKind::RegionContrast:
-        return static_cast<double>(
-            (control.regionId ^ (control.regionId >> 32U)) & 0xffffU);
+        break;
     case SceneFluidPressureOperatorResponseModeKind::AcceptedSource:
         break;
     }
@@ -264,9 +277,40 @@ std::vector<double> manufacturedSource(
     const SceneFluidPressureOperatorResponseModeKind kind,
     const double targetL2Pascals) {
     std::vector<double> pressure(controls.controlCells.size(), 0.0);
-    for (const auto& control : controls.controlCells) {
-        pressure[control.controlVolumeIndex] =
-            manufacturedValue(control, kind);
+    if (kind
+        == SceneFluidPressureOperatorResponseModeKind::RegionContrast) {
+        for (const auto& component : graphOperator.components) {
+            std::vector<StableId> regionIds;
+            regionIds.reserve(component.controlVolumeCount);
+            for (std::size_t offset = 0;
+                 offset < component.controlVolumeCount; ++offset) {
+                const std::size_t controlIndex =
+                    graphOperator.componentControlVolumeIndices[
+                        component.firstControlVolumeMember + offset];
+                regionIds.push_back(
+                    controls.controlCells[controlIndex].regionId);
+            }
+            std::ranges::sort(regionIds);
+            regionIds.erase(
+                std::unique(regionIds.begin(), regionIds.end()),
+                regionIds.end());
+            for (std::size_t offset = 0;
+                 offset < component.controlVolumeCount; ++offset) {
+                const std::size_t controlIndex =
+                    graphOperator.componentControlVolumeIndices[
+                        component.firstControlVolumeMember + offset];
+                const auto region = std::ranges::lower_bound(
+                    regionIds,
+                    controls.controlCells[controlIndex].regionId);
+                pressure[controlIndex] = static_cast<double>(
+                    region - regionIds.begin());
+            }
+        }
+    } else {
+        for (const auto& control : controls.controlCells) {
+            pressure[control.controlVolumeIndex] =
+                manufacturedValue(control, kind);
+        }
     }
     centerByComponent(graphOperator, pressure);
     const double norm = l2(pressure);
@@ -285,6 +329,10 @@ SceneFluidPressureOperatorResponseModeDiagnostics summarizeMode(
     CompensatedSum graphSquared;
     CompensatedSum shadowSquared;
     CompensatedSum cross;
+    CompensatedSum graphSourceWork;
+    CompensatedSum shadowSourceWork;
+    std::vector<StableId> terminalRegionIds;
+    std::vector<std::size_t> terminalComponentIndices;
     for (const auto& response : responses) {
         sourceSquared.add(response.integratedSourcePascalsMeters
             * response.integratedSourcePascalsMeters);
@@ -294,6 +342,15 @@ SceneFluidPressureOperatorResponseModeDiagnostics summarizeMode(
             * response.shadowGaugeAlignedPressurePascals);
         cross.add(response.graphGaugeAlignedPressurePascals
             * response.shadowGaugeAlignedPressurePascals);
+        graphSourceWork.add(response.integratedSourcePascalsMeters
+            * response.graphGaugeAlignedPressurePascals);
+        shadowSourceWork.add(response.integratedSourcePascalsMeters
+            * response.shadowGaugeAlignedPressurePascals);
+        if (result.kind
+            == SceneFluidPressureOperatorResponseModeKind::RegionContrast) {
+            terminalRegionIds.push_back(response.regionId);
+            terminalComponentIndices.push_back(response.componentIndex);
+        }
         result.maximumAbsoluteSourcePascalsMeters = std::max(
             result.maximumAbsoluteSourcePascalsMeters,
             std::abs(response.integratedSourcePascalsMeters));
@@ -305,6 +362,15 @@ SceneFluidPressureOperatorResponseModeDiagnostics summarizeMode(
     result.shadowPressureL2Pascals = std::sqrt(
         std::max(0.0, shadowSquared.value()));
     result.pressureDotProductPascalsSquared = cross.value();
+    result.graphSourcePressureWorkPascalsSquaredMeters =
+        graphSourceWork.value();
+    result.shadowSourcePressureWorkPascalsSquaredMeters =
+        shadowSourceWork.value();
+    result.shadowToGraphSourceComplianceRatio =
+        result.graphSourcePressureWorkPascalsSquaredMeters > 0.0
+        ? result.shadowSourcePressureWorkPascalsSquaredMeters
+            / result.graphSourcePressureWorkPascalsSquaredMeters
+        : 0.0;
     result.bestFitShadowPressureScale = graphSquared.value() > 0.0
         ? cross.value() / graphSquared.value() : 0.0;
     const double normProduct = result.graphPressureL2Pascals
@@ -327,11 +393,59 @@ SceneFluidPressureOperatorResponseModeDiagnostics summarizeMode(
         ? result.bestFitShapeResidualL2Pascals
             / result.shadowPressureL2Pascals
         : 0.0;
+    if (result.kind
+        == SceneFluidPressureOperatorResponseModeKind::RegionContrast) {
+        std::ranges::sort(terminalRegionIds);
+        terminalRegionIds.erase(
+            std::unique(
+                terminalRegionIds.begin(), terminalRegionIds.end()),
+            terminalRegionIds.end());
+        std::ranges::sort(terminalComponentIndices);
+        terminalComponentIndices.erase(
+            std::unique(
+                terminalComponentIndices.begin(),
+                terminalComponentIndices.end()),
+            terminalComponentIndices.end());
+        if (terminalComponentIndices.size() == 1
+            && terminalRegionIds.size() == 2) {
+            CompensatedSum lowerSource;
+            CompensatedSum upperSource;
+            for (const auto& response : responses) {
+                if (response.regionId == terminalRegionIds[0]) {
+                    lowerSource.add(
+                        response.integratedSourcePascalsMeters);
+                } else {
+                    upperSource.add(
+                        response.integratedSourcePascalsMeters);
+                }
+            }
+            result.hasTwoTerminalConductance = true;
+            result.lowerTerminalRegionId = terminalRegionIds[0];
+            result.upperTerminalRegionId = terminalRegionIds[1];
+            result.twoTerminalIntegratedTransferPascalsMeters = 0.5
+                * (std::abs(lowerSource.value())
+                   + std::abs(upperSource.value()));
+            const double transferSquared =
+                result.twoTerminalIntegratedTransferPascalsMeters
+                * result.twoTerminalIntegratedTransferPascalsMeters;
+            result.graphTwoTerminalConductanceMeters = transferSquared
+                / result.graphSourcePressureWorkPascalsSquaredMeters;
+            result.shadowTwoTerminalConductanceMeters = transferSquared
+                / result.shadowSourcePressureWorkPascalsSquaredMeters;
+            result.graphToShadowTwoTerminalConductanceRatio =
+                result.graphTwoTerminalConductanceMeters
+                / result.shadowTwoTerminalConductanceMeters;
+        }
+    }
     result.finite = result.sourceL2PascalsMeters > 0.0
         && result.graphPressureL2Pascals > 0.0
         && result.shadowPressureL2Pascals > 0.0
         && std::isfinite(result.maximumAbsoluteSourcePascalsMeters)
         && std::isfinite(result.pressureDotProductPascalsSquared)
+        && result.graphSourcePressureWorkPascalsSquaredMeters > 0.0
+        && result.shadowSourcePressureWorkPascalsSquaredMeters > 0.0
+        && std::isfinite(result.shadowToGraphSourceComplianceRatio)
+        && result.shadowToGraphSourceComplianceRatio > 0.0
         && std::isfinite(result.bestFitShadowPressureScale)
         && std::isfinite(result.pressureCosineSimilarity)
         && std::isfinite(result.bestFitShapeResidualL2Pascals)
@@ -342,7 +456,18 @@ SceneFluidPressureOperatorResponseModeDiagnostics summarizeMode(
         && std::isfinite(result.graphFinalResidualMaximumPascalsMeters)
         && std::isfinite(result.shadowFinalResidualL2PascalsMeters)
         && std::isfinite(result.shadowFinalResidualMaximumPascalsMeters)
-        && std::isfinite(result.shadowMaximumCellConservationResidual);
+        && std::isfinite(result.shadowMaximumCellConservationResidual)
+        && (!result.hasTwoTerminalConductance
+            || (result.lowerTerminalRegionId != invalidStableId
+                && result.upperTerminalRegionId != invalidStableId
+                && result.lowerTerminalRegionId
+                    < result.upperTerminalRegionId
+                && result.twoTerminalIntegratedTransferPascalsMeters > 0.0
+                && result.graphTwoTerminalConductanceMeters > 0.0
+                && result.shadowTwoTerminalConductanceMeters > 0.0
+                && std::isfinite(
+                    result.graphToShadowTwoTerminalConductanceRatio)
+                && result.graphToShadowTwoTerminalConductanceRatio > 0.0));
     return result;
 }
 
@@ -506,6 +631,7 @@ auditSceneFluidPressureOperatorResponses(
                 modeIndex,
                 index,
                 graphOperator.rows[index].stableId,
+                mimeticControlCells.controlCells[index].regionId,
                 graphOperator.rows[index].componentIndex,
                 source[index],
                 graphPressure[index],
@@ -585,6 +711,7 @@ void validateSceneFluidPressureOperatorResponseAuditIntegrity(
             if (response.modeIndex != modeIndex
                 || response.controlVolumeIndex != index
                 || response.stableId == 0
+                || response.regionId == invalidStableId
                 || response.componentIndex >= audit.componentCount
                 || !std::isfinite(response.integratedSourcePascalsMeters)
                 || !std::isfinite(
@@ -601,11 +728,21 @@ void validateSceneFluidPressureOperatorResponseAuditIntegrity(
         expected.graphPressureL2Pascals = 0.0;
         expected.shadowPressureL2Pascals = 0.0;
         expected.pressureDotProductPascalsSquared = 0.0;
+        expected.graphSourcePressureWorkPascalsSquaredMeters = 0.0;
+        expected.shadowSourcePressureWorkPascalsSquaredMeters = 0.0;
+        expected.shadowToGraphSourceComplianceRatio = 0.0;
         expected.bestFitShadowPressureScale = 0.0;
         expected.pressureCosineSimilarity = 0.0;
         expected.bestFitShapeResidualL2Pascals = 0.0;
         expected.relativeBestFitShapeResidualL2 = 0.0;
         expected.maximumAbsoluteBestFitShapeResidualPascals = 0.0;
+        expected.hasTwoTerminalConductance = false;
+        expected.lowerTerminalRegionId = invalidStableId;
+        expected.upperTerminalRegionId = invalidStableId;
+        expected.twoTerminalIntegratedTransferPascalsMeters = 0.0;
+        expected.graphTwoTerminalConductanceMeters = 0.0;
+        expected.shadowTwoTerminalConductanceMeters = 0.0;
+        expected.graphToShadowTwoTerminalConductanceRatio = 0.0;
         expected.finite = false;
         expected = summarizeMode(responses, expected);
         if (expected != mode) {
