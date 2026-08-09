@@ -10,7 +10,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureFaceLinkVersion = 5;
+inline constexpr std::uint32_t sceneFluidPressureFaceLinkVersion = 6;
 inline constexpr std::size_t invalidSceneFluidPressureFaceIndex =
     std::numeric_limits<std::size_t>::max();
 
@@ -24,6 +24,7 @@ struct SceneFluidPressureFaceLinkSettings {
 struct SceneFluidPressureFaceLinkLimits {
     std::size_t maximumFaces = 30'000'000;
     std::size_t maximumLinks = 100'000'000;
+    std::size_t maximumEmbeddedOpeningRejections = 10'000'000;
     std::size_t maximumLinkBytes = 2048ULL * 1024ULL * 1024ULL;
 };
 
@@ -45,6 +46,11 @@ enum class SceneFluidPressureFaceLinkKind : std::uint8_t {
 enum class SceneFluidPressureLinkGeometryKind : std::uint8_t {
     CartesianFace = 1,
     EmbeddedOpening = 2,
+};
+
+enum class SceneFluidEmbeddedOpeningRejectionStatus : std::uint8_t {
+    NonPositiveProjectedDistance = 1,
+    BelowMinimumProjectedDistance = 2,
 };
 
 struct SceneFluidPressureFace {
@@ -92,6 +98,27 @@ struct SceneFluidPressureFaceLink {
     bool operator==(const SceneFluidPressureFaceLink&) const = default;
 };
 
+struct SceneFluidEmbeddedOpeningRejection {
+    std::size_t rejectionIndex = 0;
+    std::uint64_t openingPatchStableId = 0;
+    StableId openingId = invalidStableId;
+    std::size_t cellIndex = 0;
+    StableId negativeSideRegionId = invalidStableId;
+    StableId positiveSideRegionId = invalidStableId;
+    std::size_t negativeControlVolumeIndex = 0;
+    std::size_t positiveControlVolumeIndex = 0;
+    SceneFluidEmbeddedOpeningRejectionStatus status =
+        SceneFluidEmbeddedOpeningRejectionStatus::
+            NonPositiveProjectedDistance;
+    double areaSquareMeters = 0.0;
+    double projectedCenterDistanceMeters = 0.0;
+    double negativeCentroidSignedDistanceMeters = 0.0;
+    double positiveCentroidSignedDistanceMeters = 0.0;
+
+    bool operator==(
+        const SceneFluidEmbeddedOpeningRejection&) const = default;
+};
+
 // Conservative pressure-face subset. Exact active-face partitions create one
 // same-region link per positive region area. On a face crossed transversely by
 // a virtual opening cap, the capped material-plus-opening partition supersedes
@@ -101,8 +128,9 @@ struct SceneFluidPressureFaceLink {
 // links over its exact patch area and, when unambiguous, one complementary
 // same-region link. A cell-owned opening patch instead connects its two
 // same-cell pressure controls along the authored normal, using their projected
-// centroid separation. A patch without positive projected separation remains
-// an explicit unresolved embedded opening and publishes no link.
+// centroid separation. A patch without admissible positive projected
+// separation remains an explicit typed rejection with source identity and
+// signed centroid-to-patch distances, and publishes no link.
 // Material/open-chain/coplanar overlap, unresolved capped arrangements, and
 // ambiguous faces likewise remain explicit and unresolved; no dominant-cell or
 // smeared-interface fallback is permitted.
@@ -139,6 +167,8 @@ struct SceneFluidPressureFaceLinkSet {
     double maximumResolvedAreaResidualSquareMeters = 0.0;
     std::vector<SceneFluidPressureFace> faces;
     std::vector<SceneFluidPressureFaceLink> links;
+    std::vector<SceneFluidEmbeddedOpeningRejection>
+        embeddedOpeningRejections;
 
     bool operator==(const SceneFluidPressureFaceLinkSet&) const = default;
 };

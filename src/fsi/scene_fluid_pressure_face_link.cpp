@@ -248,14 +248,20 @@ std::vector<StableId> commonRegions(
 }
 
 std::size_t storageBytesForCounts(const std::size_t faceCount,
-                                  const std::size_t linkCount) {
+                                  const std::size_t linkCount,
+                                  const std::size_t rejectionCount = 0) {
     std::size_t faceBytes = 0;
     std::size_t linkBytes = 0;
+    std::size_t rejectionBytes = 0;
     std::size_t total = 0;
     if (!checkedMultiply(faceCount, sizeof(SceneFluidPressureFace), faceBytes)
         || !checkedMultiply(linkCount, sizeof(SceneFluidPressureFaceLink),
                             linkBytes)
-        || !checkedAdd(faceBytes, linkBytes, total)) {
+        || !checkedMultiply(
+            rejectionCount,
+            sizeof(SceneFluidEmbeddedOpeningRejection), rejectionBytes)
+        || !checkedAdd(faceBytes, linkBytes, total)
+        || !checkedAdd(total, rejectionBytes, total)) {
         throw std::length_error(
             "scene fluid pressure-face-link storage size overflows");
     }
@@ -263,7 +269,9 @@ std::size_t storageBytesForCounts(const std::size_t faceCount,
 }
 
 std::size_t storageBytes(const SceneFluidPressureFaceLinkSet& faceLinks) {
-    return storageBytesForCounts(faceLinks.faces.size(), faceLinks.links.size());
+    return storageBytesForCounts(
+        faceLinks.faces.size(), faceLinks.links.size(),
+        faceLinks.embeddedOpeningRejections.size());
 }
 
 std::uint64_t faceLinkFingerprint(
@@ -354,6 +362,29 @@ std::uint64_t faceLinkFingerprint(
         fingerprint.real(link.unitNormalMinusToPlus.x);
         fingerprint.real(link.unitNormalMinusToPlus.y);
         fingerprint.real(link.unitNormalMinusToPlus.z);
+    }
+    fingerprint.integer(static_cast<std::uint64_t>(
+        faceLinks.embeddedOpeningRejections.size()));
+    for (const auto& rejection : faceLinks.embeddedOpeningRejections) {
+        fingerprint.integer(static_cast<std::uint64_t>(
+            rejection.rejectionIndex));
+        fingerprint.integer(rejection.openingPatchStableId);
+        fingerprint.integer(rejection.openingId);
+        fingerprint.integer(static_cast<std::uint64_t>(
+            rejection.cellIndex));
+        fingerprint.integer(rejection.negativeSideRegionId);
+        fingerprint.integer(rejection.positiveSideRegionId);
+        fingerprint.integer(static_cast<std::uint64_t>(
+            rejection.negativeControlVolumeIndex));
+        fingerprint.integer(static_cast<std::uint64_t>(
+            rejection.positiveControlVolumeIndex));
+        fingerprint.enumeration(rejection.status);
+        fingerprint.real(rejection.areaSquareMeters);
+        fingerprint.real(rejection.projectedCenterDistanceMeters);
+        fingerprint.real(
+            rejection.negativeCentroidSignedDistanceMeters);
+        fingerprint.real(
+            rejection.positiveCentroidSignedDistanceMeters);
     }
     return fingerprint.value();
 }
@@ -553,7 +584,10 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
             throw std::length_error(
                 "scene fluid pressure-face-link exceeds its link limit");
         }
-        if (result.links.size() == maximumLinksByBytes) {
+        if (storageBytesForCounts(
+                faceCount, result.links.size() + 1,
+                result.embeddedOpeningRejections.size())
+            > limits.maximumLinkBytes) {
             throw std::length_error(
                 "scene fluid pressure-face-link exceeds its byte limit");
         }
@@ -841,11 +875,61 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
             throw std::invalid_argument(
                 "scene fluid embedded pressure opening has no matching control volumes");
         }
+        const double negativeSignedDistance = projectedDistance(
+            patch.centroidMeters, minus->centroidMeters,
+            patch.unitNormalNegativeToPositive);
+        const double positiveSignedDistance = projectedDistance(
+            patch.centroidMeters, plus->centroidMeters,
+            patch.unitNormalNegativeToPositive);
         const double distance = projectedDistance(
             minus->centroidMeters, plus->centroidMeters,
             patch.unitNormalNegativeToPositive);
-        if (!std::isfinite(distance)
-            || distance < settings.minimumCenterDistanceMeters) {
+        if (!std::isfinite(negativeSignedDistance)
+            || !std::isfinite(positiveSignedDistance)
+            || !std::isfinite(distance)) {
+            throw std::invalid_argument(
+                "scene fluid embedded pressure opening projection is invalid");
+        }
+        if (distance < settings.minimumCenterDistanceMeters) {
+            if (result.embeddedOpeningRejections.size()
+                == limits.maximumEmbeddedOpeningRejections) {
+                throw std::length_error(
+                    "scene fluid pressure-face-link exceeds its "
+                    "embedded-opening rejection limit");
+            }
+            if (storageBytesForCounts(
+                    faceCount, result.links.size(),
+                    result.embeddedOpeningRejections.size() + 1)
+                > limits.maximumLinkBytes) {
+                throw std::length_error(
+                    "scene fluid pressure-face-link exceeds its byte limit");
+            }
+            SceneFluidEmbeddedOpeningRejection rejection;
+            rejection.rejectionIndex =
+                result.embeddedOpeningRejections.size();
+            rejection.openingPatchStableId = patch.stableId;
+            rejection.openingId = patch.openingId;
+            rejection.cellIndex = patch.cellIndex;
+            rejection.negativeSideRegionId =
+                patch.negativeSideRegionId;
+            rejection.positiveSideRegionId =
+                patch.positiveSideRegionId;
+            rejection.negativeControlVolumeIndex =
+                minus->controlVolumeIndex;
+            rejection.positiveControlVolumeIndex =
+                plus->controlVolumeIndex;
+            rejection.status = distance <= 0.0
+                ? SceneFluidEmbeddedOpeningRejectionStatus::
+                    NonPositiveProjectedDistance
+                : SceneFluidEmbeddedOpeningRejectionStatus::
+                    BelowMinimumProjectedDistance;
+            rejection.areaSquareMeters = patch.areaSquareMeters;
+            rejection.projectedCenterDistanceMeters = distance;
+            rejection.negativeCentroidSignedDistanceMeters =
+                negativeSignedDistance;
+            rejection.positiveCentroidSignedDistanceMeters =
+                positiveSignedDistance;
+            result.embeddedOpeningRejections.push_back(rejection);
             ++result.unresolvedEmbeddedOpeningPatchCount;
             result.unresolvedEmbeddedOpeningAreaSquareMeters +=
                 patch.areaSquareMeters;
@@ -855,7 +939,10 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
             throw std::length_error(
                 "scene fluid pressure-face-link exceeds its link limit");
         }
-        if (result.links.size() == maximumLinksByBytes) {
+        if (storageBytesForCounts(
+                faceCount, result.links.size() + 1,
+                result.embeddedOpeningRejections.size())
+            > limits.maximumLinkBytes) {
             throw std::length_error(
                 "scene fluid pressure-face-link exceeds its byte limit");
         }
@@ -997,6 +1084,7 @@ void validateSceneFluidPressureFaceLinks(
             "scene fluid pressure-face-link identity is invalid");
     }
     const SceneFluidPressureFaceLinkLimits unlimited{
+        std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),

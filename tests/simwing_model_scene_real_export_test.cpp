@@ -498,6 +498,23 @@ void testRealDesignCapture(const std::filesystem::path &input,
             cappedFailureSourceIds.insert(face.failureSourceStableId);
         }
     }
+    std::set<simwing::fsi::StableId> rejectedEmbeddedOpeningIds;
+    using EmbeddedRejectionStatus =
+        simwing::fsi::SceneFluidEmbeddedOpeningRejectionStatus;
+    const bool embeddedRejectionsAreNonAdmissible =
+        std::ranges::all_of(
+            pressureFaceLinks.embeddedOpeningRejections,
+            [&](const simwing::fsi::SceneFluidEmbeddedOpeningRejection&
+                    rejection) {
+                rejectedEmbeddedOpeningIds.insert(rejection.openingId);
+                return rejection.openingPatchStableId != 0
+                    && rejection.status
+                        == EmbeddedRejectionStatus::
+                            NonPositiveProjectedDistance
+                    && rejection.projectedCenterDistanceMeters < 0.0
+                    && rejection.negativeCentroidSignedDistanceMeters > 0.0
+                    && rejection.positiveCentroidSignedDistanceMeters > 0.0;
+            });
     check(fluidVolumes.regionVolumes.size() == result.scene.regions.size()
               && fluidVolumes.openingCapCount
                   == result.scene.openings.size()
@@ -536,7 +553,10 @@ void testRealDesignCapture(const std::filesystem::path &input,
               && pressureFaceLinks.unresolvedActiveFaceCount == 0
               && pressureFaceLinks.unresolvedCappedFaceCount == 0
               && pressureFaceLinks.resolvedPartitionFaceCount == 10
-              && pressureFaceLinks.unresolvedEmbeddedOpeningPatchCount > 0
+              && pressureFaceLinks.unresolvedEmbeddedOpeningPatchCount == 24
+              && pressureFaceLinks.embeddedOpeningRejections.size() == 24
+              && rejectedEmbeddedOpeningIds.size() == 2
+              && embeddedRejectionsAreNonAdmissible
               && pressureFaceLinks.unresolvedEmbeddedOpeningAreaSquareMeters
                   > 0.0,
           "real wing closes cap-crossed pressure faces and retains explicit embedded-opening limits");

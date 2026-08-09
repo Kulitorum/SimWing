@@ -977,10 +977,16 @@ cap-touched faces without snapping or fabricating a junction. Opening
 quadrature and grid patches
 preserve the full cap area, while authored connectivity and sparse pressure
 control volumes assemble. Face-link construction now retains every coarse
-embedded opening without positive projected cell-region centroid separation as
-explicit unresolved count and area, without publishing a conductance link.
-Pressure-operator assembly rejects the incomplete topology. Resolving those
-embedded conductances and subsequent worker integration remain open.
+embedded opening without admissible projected cell-region centroid separation
+as a typed rejection with its patch/opening identity, exact signed
+centroid-to-cap-plane distances, count, and area, without publishing a
+conductance link. All 24 patches across the two mirrored intake openings are
+non-positive in the current coarse fixture: both pressure centroids lie on the
+positive side of each local cap plane. This is a non-admissible two-point
+stencil, not a near-zero tolerance case, so taking an absolute value is not an
+accepted closure. Pressure-operator assembly rejects the incomplete topology.
+Resolving those embedded conductances and subsequent worker integration remain
+open.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy

@@ -482,11 +482,38 @@ void testCorruptionSettingsAndLimits() {
     SceneFluidPressureFaceLinkSettings excessiveDistance;
     excessiveDistance.minimumCenterDistanceMeters = 10.0;
     const auto unresolvedEmbedded = tilted.links(excessiveDistance);
-    check(unresolvedEmbedded.embeddedOpeningLinkCount == 0
+    check(unresolvedEmbedded == tilted.links(excessiveDistance)
+              && unresolvedEmbedded.embeddedOpeningLinkCount == 0
               && unresolvedEmbedded.unresolvedEmbeddedOpeningPatchCount == 1
+              && unresolvedEmbedded.embeddedOpeningRejections.size() == 1
               && unresolvedEmbedded.unresolvedEmbeddedOpeningAreaSquareMeters
                   == tilted.openingPatches.totalAreaSquareMeters,
-          "embedded pressure link retains degenerate centroid separation as unresolved");
+          "embedded pressure link retains typed source geometry below its admissible distance");
+    if (unresolvedEmbedded.embeddedOpeningRejections.size() == 1) {
+        const auto& rejection =
+            unresolvedEmbedded.embeddedOpeningRejections.front();
+        const auto& patch = tilted.openingPatches.patches.front();
+        check(rejection.rejectionIndex == 0
+                  && rejection.openingPatchStableId == patch.stableId
+                  && rejection.openingId == patch.openingId
+                  && rejection.cellIndex == patch.cellIndex
+                  && rejection.negativeSideRegionId
+                      == patch.negativeSideRegionId
+                  && rejection.positiveSideRegionId
+                      == patch.positiveSideRegionId
+                  && rejection.status
+                      == SceneFluidEmbeddedOpeningRejectionStatus::
+                          BelowMinimumProjectedDistance
+                  && rejection.projectedCenterDistanceMeters > 0.0
+                  && rejection.projectedCenterDistanceMeters
+                      < excessiveDistance.minimumCenterDistanceMeters,
+              "embedded pressure rejection preserves patch provenance and reason");
+        checkNear(
+            rejection.positiveCentroidSignedDistanceMeters
+                - rejection.negativeCentroidSignedDistanceMeters,
+            rejection.projectedCenterDistanceMeters, 2.0e-16,
+            "embedded pressure rejection retains signed patch-plane geometry");
+    }
     expectInvalid(
         [&] { static_cast<void>(buildSceneFluidPressureOperator(
             tilted.surface.definition, tilted.state, grid(),
@@ -511,6 +538,20 @@ void testCorruptionSettingsAndLimits() {
     expectLimited(
         [&] { static_cast<void>(fixture.links({}, limits)); },
         "pressure-face-link assembly bounds owned storage");
+    limits = {};
+    limits.maximumEmbeddedOpeningRejections = 0;
+    expectLimited(
+        [&] {
+            static_cast<void>(tilted.links(excessiveDistance, limits));
+        },
+        "pressure-face-link assembly bounds embedded-opening rejections");
+    limits = {};
+    limits.maximumLinkBytes = unresolvedEmbedded.ownedStorageBytes - 1;
+    expectLimited(
+        [&] {
+            static_cast<void>(tilted.links(excessiveDistance, limits));
+        },
+        "pressure-face-link byte limit includes embedded-opening rejections");
 }
 
 } // namespace

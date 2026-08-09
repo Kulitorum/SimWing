@@ -789,9 +789,14 @@ junctions survive as pair-specific open chains and explicit unresolved
 partitions. Opening quadrature/grid patches preserve the full cap area, and
 authored connectivity plus sparse pressure controls assemble. Pressure-link
 construction now reaches that real geometry and retains every coarse embedded
-opening without positive projected cell-region centroid separation as explicit
-unresolved count and area, without publishing a conductance link. Resolving
-those embedded conductances and subsequent worker integration remain open.
+opening without admissible projected cell-region centroid separation as a
+typed rejection with patch/opening identity, signed centroid-to-patch
+distances, exact count and area, and no conductance link. The current coarse
+fixture has 24 non-positive patches across its two mirrored intake openings;
+both region centroids lie on the positive side of each local cap plane, so an
+absolute-value coefficient would hide a non-admissible two-point stencil.
+Resolving those embedded conductances and subsequent worker integration remain
+open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,
