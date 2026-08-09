@@ -2,6 +2,7 @@
 
 #include "scene_fluid_mimetic_trace_system.h"
 #include "scene_fluid_opening_flux.h"
+#include "scene_fluid_region_wall.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -9,7 +10,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidMimeticTraceFlowVersion = 1;
+inline constexpr std::uint32_t sceneFluidMimeticTraceFlowVersion = 2;
 
 struct SceneFluidMimeticTraceFlowLimits {
     std::size_t maximumSharedTraces = 200'000'000;
@@ -33,9 +34,10 @@ struct SceneFluidMimeticPredictedTraceFlow {
         const SceneFluidMimeticPredictedTraceFlow&) const = default;
 };
 
-// Immutable fixed-epoch predictor over every shared mimetic trace. Cartesian
-// partitions sample their exact owning MAC face; authored openings consume
-// their accepted per-patch fluid-minus-cap-sweep flux. Positive flow is
+// Immutable predictor over every shared mimetic trace. A fixed-epoch bootstrap
+// samples exact partitioned MAC faces and accepted relative opening flux. The
+// transported overload instead projects accepted material-wall-adjusted region
+// velocities and subtracts the same accepted cap sweep. Positive flow is
 // oriented from the trace's MinusOrNegative control to its PlusOrPositive
 // control. Material-wall traces remain impermeable and are intentionally
 // absent. This product samples predictor flow only; it does not assemble a
@@ -48,9 +50,11 @@ struct SceneFluidMimeticTraceFlowPrediction {
     std::uint64_t pressureFaceLinkFingerprint = 0;
     std::uint64_t openingFluxFingerprint = 0;
     std::uint64_t velocityFingerprint = 0;
+    std::uint64_t regionWallExchangeFingerprint = 0;
     std::uint64_t structureDefinitionFingerprint = 0;
     std::uint64_t acceptedStepCount = 0;
     double simulationTimeSeconds = 0.0;
+    double sourceDensityKgPerCubicMeter = 0.0;
     std::size_t ownedStorageBytes = 0;
     std::size_t componentCount = 0;
     std::size_t cartesianTraceCount = 0;
@@ -75,6 +79,15 @@ sampleSceneFluidMimeticTraceFlows(
     const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
     const SceneFluidMimeticTraceFlowLimits& limits = {});
 
+[[nodiscard]] SceneFluidMimeticTraceFlowPrediction
+sampleSceneFluidMimeticTraceFlows(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidRegionWallExchange& wallExchange,
+    const SceneFluidMimeticTraceFlowLimits& limits = {});
+
 void validateSceneFluidMimeticTraceFlowPredictionIntegrity(
     const SceneFluidMimeticTraceFlowPrediction& prediction);
 
@@ -86,5 +99,13 @@ void validateSceneFluidMimeticTraceFlowPrediction(
     const SceneFluidOpeningFluxSet& openingFlux,
     const fluid::PeriodicCartesianGrid& grid,
     const fluid::MacVelocityField& predictedVelocityMetersPerSecond);
+
+void validateSceneFluidMimeticTraceFlowPrediction(
+    const SceneFluidMimeticTraceFlowPrediction& prediction,
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidRegionWallExchange& wallExchange);
 
 } // namespace simwing::fsi

@@ -674,6 +674,44 @@ void testEmbeddedOpeningProjection() {
     check(wallPrediction.diagnostics.embeddedOpeningLinkCount == 1
               && wallPrediction.links == prediction.links,
           "zero wall exchange preserves tilted aperture prediction exactly");
+    SceneFluidPressureFaceLinkSettings rejectedMimeticLinkSettings;
+    rejectedMimeticLinkSettings.minimumCenterDistanceMeters = 10.0;
+    const auto rejectedMimeticFaceLinks =
+        buildSceneFluidPressureFaceLinks(
+            fixture.surface.definition, currentState, grid(),
+            fixture.transfer, currentEpoch.gridEpoch,
+            currentEpoch.openingCaps, currentEpoch.openingQuadrature,
+            currentEpoch.openingPatches,
+            currentEpoch.openingFaceCrossings,
+            currentEpoch.cappedFacePartitions,
+            currentEpoch.cellVolumes, fixture.connectivity,
+            currentEpoch.pressureControlVolumes,
+            rejectedMimeticLinkSettings);
+    const auto rejectedMimeticControls =
+        buildSceneFluidMimeticControlCells(
+            fixture.surface.definition, currentState, grid(),
+            currentEpoch.gridEpoch, currentEpoch.openingCaps,
+            currentEpoch.openingQuadrature, currentEpoch.openingPatches,
+            currentEpoch.pressureControlVolumes,
+            rejectedMimeticFaceLinks);
+    const auto rejectedMimeticSystem =
+        buildSceneFluidMimeticTraceSystem(rejectedMimeticControls);
+    const auto rejectedWallMimeticFlows =
+        sampleSceneFluidMimeticTraceFlows(
+            rejectedMimeticControls, rejectedMimeticSystem,
+            rejectedMimeticFaceLinks, currentFlux, wallExchange);
+    const auto rejectedOpeningTrace = std::ranges::find(
+        rejectedWallMimeticFlows.traces,
+        SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace,
+        &SceneFluidMimeticPredictedTraceFlow::kind);
+    check(rejectedMimeticFaceLinks.unresolvedEmbeddedOpeningPatchCount == 1
+              && rejectedOpeningTrace
+                  != rejectedWallMimeticFlows.traces.end()
+              && std::isfinite(rejectedOpeningTrace
+                    ->predictedRelativeVolumeFlowRateCubicMetersPerSecond)
+              && rejectedWallMimeticFlows.regionWallExchangeFingerprint
+                  == wallExchange.fingerprint,
+          "material-wall-adjusted prediction directly covers an authored opening after its two-point graph link is rejected");
 }
 
 void testConcaveEmbeddedOpeningProjection() {
@@ -1146,6 +1184,9 @@ void testAreaChangingLinkContinuation() {
     const auto mimeticTraceFlows = sampleSceneFluidMimeticTraceFlows(
         mimeticControls, mimeticSystem,
         currentEpoch.pressureFaceLinks, currentFlux, grid(), velocity);
+    const auto wallMimeticTraceFlows = sampleSceneFluidMimeticTraceFlows(
+        mimeticControls, mimeticSystem,
+        currentEpoch.pressureFaceLinks, currentFlux, wallExchange);
     SceneFluidMimeticPressureSourceSettings mimeticSourceSettings;
     mimeticSourceSettings.densityKgPerCubicMeter =
         strictSettings().densityKgPerCubicMeter;
@@ -1153,6 +1194,9 @@ void testAreaChangingLinkContinuation() {
         strictSettings().timeStepSeconds;
     const auto mimeticSources = buildSceneFluidMimeticPressureSources(
         mimeticControls, mimeticSystem, mimeticTraceFlows, volumeRates,
+        mimeticSourceSettings);
+    const auto wallMimeticSources = buildSceneFluidMimeticPressureSources(
+        mimeticControls, mimeticSystem, wallMimeticTraceFlows, volumeRates,
         mimeticSourceSettings);
     bool exactMimeticVolumeRates = mimeticSources.controls.size()
         == mimeticControls.controlCells.size();
@@ -1185,6 +1229,50 @@ void testAreaChangingLinkContinuation() {
                     .maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond
                   < 2.0e-12,
           "mimetic pressure sources bind exact shared-trace flow and accepted consecutive-epoch GCL rates");
+    bool exactWallGraphOverlap = true;
+    for (const auto& trace : wallMimeticTraceFlows.traces) {
+        if (trace.kind
+            == SceneFluidMimeticHalfFaceKind::CartesianTrace) {
+            const auto graph = std::ranges::find(
+                wallPrediction.links, trace.sourceStableId,
+                &SceneFluidRegionPredictedLinkFlow::stableId);
+            exactWallGraphOverlap = graph != wallPrediction.links.end()
+                && graph
+                    ->predictedRelativeVolumeFlowRateCubicMetersPerSecond
+                    == trace
+                        .predictedRelativeVolumeFlowRateCubicMetersPerSecond;
+        } else {
+            const auto graph = std::ranges::find(
+                wallPrediction.links, trace.sourceStableId,
+                &SceneFluidRegionPredictedLinkFlow::openingPatchStableId);
+            if (graph != wallPrediction.links.end()) {
+                exactWallGraphOverlap = graph
+                    ->predictedRelativeVolumeFlowRateCubicMetersPerSecond
+                    == trace
+                        .predictedRelativeVolumeFlowRateCubicMetersPerSecond;
+            }
+        }
+        if (!exactWallGraphOverlap) break;
+    }
+    check(wallMimeticTraceFlows.regionWallExchangeFingerprint
+              == wallExchange.fingerprint
+              && wallMimeticTraceFlows.sourceDensityKgPerCubicMeter
+                  == wallExchange.densityKgPerCubicMeter
+              && wallMimeticTraceFlows.traces.size()
+                  == mimeticSystem.sharedTraceCount
+              && exactWallGraphOverlap
+              && wallMimeticSources.mimeticTraceFlowFingerprint
+                  == wallMimeticTraceFlows.fingerprint
+              && wallMimeticSources.pressureVolumeRateFingerprint
+                  == volumeRates.fingerprint,
+          "material-wall-adjusted region velocities reproduce every existing graph predictor and extend over the complete mimetic trace topology");
+    auto wrongMimeticDensitySettings = mimeticSourceSettings;
+    wrongMimeticDensitySettings.densityKgPerCubicMeter *= 0.5;
+    expectInvalid(
+        [&] { static_cast<void>(buildSceneFluidMimeticPressureSources(
+            mimeticControls, mimeticSystem, wallMimeticTraceFlows,
+            volumeRates, wrongMimeticDensitySettings)); },
+        "mimetic pressure sources reject a wall-predictor density mismatch");
     auto wrongMimeticSourceSettings = mimeticSourceSettings;
     wrongMimeticSourceSettings.timeStepSeconds *= 0.5;
     expectInvalid(

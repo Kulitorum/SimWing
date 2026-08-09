@@ -285,7 +285,8 @@ SceneFluidMimeticPressureSourceSet buildSources(
 std::vector<double> accumulatePredictedNetOutwardFlows(
     const SceneFluidMimeticControlCellSet& controlCells,
     const SceneFluidMimeticTraceSystem& traceSystem,
-    const SceneFluidMimeticTraceFlowPrediction& predictedTraceFlows) {
+    const SceneFluidMimeticTraceFlowPrediction& predictedTraceFlows,
+    const SceneFluidMimeticPressureSourceSettings& settings) {
     validateSceneFluidMimeticTraceSystem(traceSystem, controlCells);
     validateSceneFluidMimeticTraceFlowPredictionIntegrity(
         predictedTraceFlows);
@@ -299,6 +300,9 @@ std::vector<double> accumulatePredictedNetOutwardFlows(
             != controlCells.acceptedStepCount
         || predictedTraceFlows.simulationTimeSeconds
             != controlCells.simulationTimeSeconds
+        || (predictedTraceFlows.sourceDensityKgPerCubicMeter != 0.0
+            && predictedTraceFlows.sourceDensityKgPerCubicMeter
+                != settings.densityKgPerCubicMeter)
         || predictedTraceFlows.componentCount != traceSystem.componentCount
         || predictedTraceFlows.traces.size()
             != traceSystem.sharedTraceCount) {
@@ -411,7 +415,7 @@ SceneFluidMimeticPressureSourceSet buildSceneFluidMimeticPressureSources(
     const SceneFluidMimeticPressureSourceSettings& settings,
     const SceneFluidMimeticPressureSourceLimits& limits) {
     const auto predictedRates = accumulatePredictedNetOutwardFlows(
-        controlCells, traceSystem, predictedTraceFlows);
+        controlCells, traceSystem, predictedTraceFlows, settings);
     const auto result = buildSources(
         controlCells, predictedRates, {}, settings, limits,
         predictedTraceFlows.fingerprint, 0);
@@ -427,7 +431,7 @@ SceneFluidMimeticPressureSourceSet buildSceneFluidMimeticPressureSources(
     const SceneFluidMimeticPressureSourceSettings& settings,
     const SceneFluidMimeticPressureSourceLimits& limits) {
     const auto predictedRates = accumulatePredictedNetOutwardFlows(
-        controlCells, traceSystem, predictedTraceFlows);
+        controlCells, traceSystem, predictedTraceFlows, settings);
     const auto geometryRates = mapGeometryVolumeRates(
         controlCells, geometryVolumeRates, settings);
     const auto result = buildSources(

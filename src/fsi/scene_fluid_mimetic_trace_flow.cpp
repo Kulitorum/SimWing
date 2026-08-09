@@ -93,9 +93,11 @@ std::uint64_t productFingerprint(
     fingerprint.integer(prediction.pressureFaceLinkFingerprint);
     fingerprint.integer(prediction.openingFluxFingerprint);
     fingerprint.integer(prediction.velocityFingerprint);
+    fingerprint.integer(prediction.regionWallExchangeFingerprint);
     fingerprint.integer(prediction.structureDefinitionFingerprint);
     fingerprint.integer(prediction.acceptedStepCount);
     fingerprint.real(prediction.simulationTimeSeconds);
+    fingerprint.real(prediction.sourceDensityKgPerCubicMeter);
     fingerprint.integer(static_cast<std::uint64_t>(
         prediction.ownedStorageBytes));
     fingerprint.integer(static_cast<std::uint64_t>(
@@ -165,6 +167,47 @@ double orientedOpeningFlow(
     }
     throw std::invalid_argument(
         "scene fluid mimetic trace-flow opening orientation is inconsistent");
+}
+
+double orientedOpeningSweep(
+    const SceneFluidPressureFaceLink& link,
+    const SceneFluidOpeningFluxSample& sample) {
+    if (sample.openingId != link.openingId
+        || sample.areaSquareMeters != link.areaSquareMeters) {
+        throw std::invalid_argument(
+            "scene fluid mimetic trace-flow opening identity is inconsistent");
+    }
+    if (sample.negativeSideRegionId == link.minusRegionId
+        && sample.positiveSideRegionId == link.plusRegionId) {
+        return sample.surfaceSweepRateCubicMetersPerSecond;
+    }
+    if (sample.negativeSideRegionId == link.plusRegionId
+        && sample.positiveSideRegionId == link.minusRegionId) {
+        return -sample.surfaceSweepRateCubicMetersPerSecond;
+    }
+    throw std::invalid_argument(
+        "scene fluid mimetic trace-flow opening orientation is inconsistent");
+}
+
+double dot(const fluid::Vector3& first, const fluid::Vector3& second) {
+    return first.x * second.x
+        + first.y * second.y
+        + first.z * second.z;
+}
+
+fluid::Vector3 averageVelocity(
+    const SceneFluidRegionWallExchange& wallExchange,
+    const std::size_t minusControlCellIndex,
+    const std::size_t plusControlCellIndex) {
+    const auto& minus = wallExchange.controlVolumes[
+        minusControlCellIndex].velocityMetersPerSecond;
+    const auto& plus = wallExchange.controlVolumes[
+        plusControlCellIndex].velocityMetersPerSecond;
+    return {
+        0.5 * (minus.x + plus.x),
+        0.5 * (minus.y + plus.y),
+        0.5 * (minus.z + plus.z),
+    };
 }
 
 struct OrientedTrace {
@@ -273,6 +316,70 @@ void validateInputIdentity(
                 grid, predictedVelocityMetersPerSecond)) {
         throw std::invalid_argument(
             "scene fluid mimetic trace-flow input identity is invalid");
+    }
+}
+
+void validateWallInputIdentity(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidRegionWallExchange& wallExchange) {
+    validateSceneFluidMimeticTraceSystem(traceSystem, controlCells);
+    validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
+    validateSceneFluidOpeningFluxIntegrity(openingFlux);
+    validateSceneFluidRegionWallExchangeIntegrity(wallExchange);
+    if (!wallExchange.diagnostics.accepted
+        || controlCells.pressureFaceLinkFingerprint != faceLinks.fingerprint
+        || controlCells.pressureControlVolumeFingerprint
+            != wallExchange.currentPressureControlVolumeFingerprint
+        || controlCells.openingPatchFingerprint
+            != openingFlux.openingPatchFingerprint
+        || controlCells.surfaceDefinitionFingerprint
+            != openingFlux.surfaceDefinitionFingerprint
+        || controlCells.surfaceDefinitionFingerprint
+            != wallExchange.surfaceDefinitionFingerprint
+        || controlCells.surfaceStateFingerprint
+            != openingFlux.surfaceStateFingerprint
+        || controlCells.surfaceStateFingerprint
+            != wallExchange.surfaceStateFingerprint
+        || controlCells.structureDefinitionFingerprint
+            != openingFlux.structureDefinitionFingerprint
+        || controlCells.structureDefinitionFingerprint
+            != wallExchange.structureDefinitionFingerprint
+        || controlCells.acceptedStepCount != faceLinks.acceptedStepCount
+        || controlCells.acceptedStepCount != openingFlux.acceptedStepCount
+        || controlCells.acceptedStepCount != wallExchange.acceptedStepCount
+        || controlCells.simulationTimeSeconds
+            != faceLinks.simulationTimeSeconds
+        || controlCells.simulationTimeSeconds
+            != openingFlux.simulationTimeSeconds
+        || controlCells.simulationTimeSeconds
+            != wallExchange.simulationTimeSeconds
+        || controlCells.cellCounts != wallExchange.cellCounts
+        || controlCells.lowerMeters != wallExchange.lowerMeters
+        || controlCells.upperMeters != wallExchange.upperMeters
+        || openingFlux.cellCounts != wallExchange.cellCounts
+        || openingFlux.lowerMeters != wallExchange.lowerMeters
+        || openingFlux.upperMeters != wallExchange.upperMeters
+        || wallExchange.controlVolumes.size()
+            != controlCells.controlCells.size()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic trace-flow wall input identity is invalid");
+    }
+    for (const auto& cell : controlCells.controlCells) {
+        if (cell.controlCellIndex >= wallExchange.controlVolumes.size()) {
+            throw std::invalid_argument(
+                "scene fluid mimetic trace-flow wall control index is invalid");
+        }
+        const auto& wall = wallExchange.controlVolumes[
+            cell.controlCellIndex];
+        if (wall.controlVolumeIndex != cell.controlVolumeIndex
+            || wall.stableId != cell.stableId
+            || wall.volumeCubicMeters != cell.volumeCubicMeters) {
+            throw std::invalid_argument(
+                "scene fluid mimetic trace-flow wall control topology is invalid");
+        }
     }
 }
 
@@ -456,8 +563,196 @@ SceneFluidMimeticTraceFlowPrediction sampleSceneFluidMimeticTraceFlows(
     return result;
 }
 
+SceneFluidMimeticTraceFlowPrediction sampleSceneFluidMimeticTraceFlows(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidRegionWallExchange& wallExchange,
+    const SceneFluidMimeticTraceFlowLimits& limits) {
+    validateWallInputIdentity(
+        controlCells, traceSystem, faceLinks, openingFlux, wallExchange);
+    if (traceSystem.sharedTraceCount > limits.maximumSharedTraces
+        || traceSystem.componentCount > limits.maximumComponents) {
+        throw std::length_error(
+            "scene fluid mimetic wall trace-flow count limit exceeded");
+    }
+    const std::size_t expectedBytes = storageBytesForCounts(
+        traceSystem.sharedTraceCount, traceSystem.componentCount);
+    if (expectedBytes > limits.maximumOwnedBytes) {
+        throw std::length_error(
+            "scene fluid mimetic wall trace-flow byte limit exceeded");
+    }
+
+    std::map<std::uint64_t, const SceneFluidOpeningFluxSample*>
+        openingSamples;
+    for (const auto& sample : openingFlux.samples) {
+        if (sample.patchStableId == 0
+            || !openingSamples.emplace(sample.patchStableId, &sample).second) {
+            throw std::invalid_argument(
+                "scene fluid mimetic wall trace-flow has duplicate opening identity");
+        }
+    }
+
+    SceneFluidMimeticTraceFlowPrediction result;
+    result.mimeticControlCellFingerprint = controlCells.fingerprint;
+    result.mimeticTraceSystemFingerprint = traceSystem.fingerprint;
+    result.pressureFaceLinkFingerprint = faceLinks.fingerprint;
+    result.openingFluxFingerprint = openingFlux.fingerprint;
+    result.velocityFingerprint = openingFlux.velocityFingerprint;
+    result.regionWallExchangeFingerprint = wallExchange.fingerprint;
+    result.structureDefinitionFingerprint =
+        controlCells.structureDefinitionFingerprint;
+    result.acceptedStepCount = controlCells.acceptedStepCount;
+    result.simulationTimeSeconds = controlCells.simulationTimeSeconds;
+    result.sourceDensityKgPerCubicMeter =
+        wallExchange.densityKgPerCubicMeter;
+    result.ownedStorageBytes = expectedBytes;
+    result.componentCount = traceSystem.componentCount;
+    result.traces.reserve(traceSystem.sharedTraceCount);
+    std::vector<CompensatedSum> componentBalances(result.componentCount);
+
+    for (const auto& trace : traceSystem.traces) {
+        if (trace.kind == SceneFluidMimeticHalfFaceKind::MaterialWall) {
+            continue;
+        }
+        if (trace.kind != SceneFluidMimeticHalfFaceKind::CartesianTrace
+            && trace.kind
+                != SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace) {
+            throw std::invalid_argument(
+                "scene fluid mimetic wall trace-flow kind is invalid");
+        }
+        const OrientedTrace oriented = orientTrace(
+            trace, traceSystem, controlCells);
+        const fluid::Vector3 velocity = averageVelocity(
+            wallExchange, oriented.minusControlCellIndex,
+            oriented.plusControlCellIndex);
+        double predictedFlow = 0.0;
+        if (trace.kind
+            == SceneFluidMimeticHalfFaceKind::CartesianTrace) {
+            if (oriented.minus->sourceIndex >= faceLinks.links.size()) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic wall trace-flow face-link index is invalid");
+            }
+            const auto& link = faceLinks.links[oriented.minus->sourceIndex];
+            if (link.linkIndex != oriented.minus->sourceIndex
+                || link.stableId != trace.sourceStableId
+                || link.geometryKind
+                    != SceneFluidPressureLinkGeometryKind::CartesianFace
+                || link.minusControlVolumeIndex
+                    != controlCells.controlCells[
+                        oriented.minusControlCellIndex].controlVolumeIndex
+                || link.plusControlVolumeIndex
+                    != controlCells.controlCells[
+                        oriented.plusControlCellIndex].controlVolumeIndex
+                || link.areaSquareMeters
+                    != oriented.minus->areaSquareMeters
+                || link.faceIndex >= faceLinks.faces.size()) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic wall trace-flow face-link binding is invalid");
+            }
+            predictedFlow = link.areaSquareMeters
+                * dot(velocity, link.unitNormalMinusToPlus);
+            if (link.kind
+                == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
+                const auto found = openingSamples.find(
+                    link.openingPatchStableId);
+                if (found == openingSamples.end()) {
+                    throw std::invalid_argument(
+                        "scene fluid mimetic wall trace-flow opening sample is missing");
+                }
+                predictedFlow -= orientedOpeningSweep(link, *found->second);
+                openingSamples.erase(found);
+            } else if (link.kind
+                       != SceneFluidPressureFaceLinkKind::SameRegion) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic wall trace-flow face-link kind is invalid");
+            }
+            ++result.cartesianTraceCount;
+        } else {
+            const auto found = openingSamples.find(trace.sourceStableId);
+            if (found == openingSamples.end()) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic wall trace-flow embedded opening sample is missing");
+            }
+            const auto& sample = *found->second;
+            const auto& minusCell = controlCells.controlCells[
+                oriented.minusControlCellIndex];
+            const auto& plusCell = controlCells.controlCells[
+                oriented.plusControlCellIndex];
+            if (sample.patchStableId != trace.sourceStableId
+                || sample.areaSquareMeters
+                    != oriented.minus->areaSquareMeters
+                || sample.negativeSideRegionId != minusCell.regionId
+                || sample.positiveSideRegionId != plusCell.regionId) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic wall trace-flow embedded opening identity is inconsistent");
+            }
+            predictedFlow = sample.areaSquareMeters
+                    * dot(velocity, oriented.minus->outwardUnitNormal)
+                - sample.surfaceSweepRateCubicMetersPerSecond;
+            openingSamples.erase(found);
+            ++result.authoredOpeningTraceCount;
+        }
+        if (!std::isfinite(predictedFlow)) {
+            throw std::overflow_error(
+                "scene fluid mimetic wall trace-flow prediction is non-finite");
+        }
+        SceneFluidMimeticPredictedTraceFlow predicted;
+        predicted.sharedTraceOrdinal = result.traces.size();
+        predicted.traceIndex = trace.traceIndex;
+        predicted.stableId = trace.stableId;
+        predicted.kind = trace.kind;
+        predicted.sourceStableId = trace.sourceStableId;
+        predicted.componentIndex = trace.componentIndex;
+        predicted.minusControlCellIndex = oriented.minusControlCellIndex;
+        predicted.plusControlCellIndex = oriented.plusControlCellIndex;
+        predicted.predictedRelativeVolumeFlowRateCubicMetersPerSecond =
+            predictedFlow;
+        result.traces.push_back(predicted);
+        componentBalances[trace.componentIndex].add(predictedFlow);
+        componentBalances[trace.componentIndex].add(-predictedFlow);
+        result
+            .maximumAbsolutePredictedRelativeVolumeFlowRateCubicMetersPerSecond =
+            std::max(
+                result
+                    .maximumAbsolutePredictedRelativeVolumeFlowRateCubicMetersPerSecond,
+                std::abs(predictedFlow));
+    }
+    if (result.traces.size() != traceSystem.sharedTraceCount
+        || !openingSamples.empty()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic wall trace-flow did not consume its complete topology");
+    }
+    result.componentBalanceResidualsCubicMetersPerSecond.resize(
+        result.componentCount);
+    for (std::size_t component = 0;
+         component < result.componentCount; ++component) {
+        result.componentBalanceResidualsCubicMetersPerSecond[component] =
+            componentBalances[component].value();
+        result.maximumAbsoluteComponentBalanceResidualCubicMetersPerSecond =
+            std::max(
+                result
+                    .maximumAbsoluteComponentBalanceResidualCubicMetersPerSecond,
+                std::abs(result
+                    .componentBalanceResidualsCubicMetersPerSecond[
+                        component]));
+    }
+    result.fingerprint = productFingerprint(result);
+    validateSceneFluidMimeticTraceFlowPrediction(
+        result, controlCells, traceSystem, faceLinks, openingFlux,
+        wallExchange);
+    return result;
+}
+
 void validateSceneFluidMimeticTraceFlowPredictionIntegrity(
     const SceneFluidMimeticTraceFlowPrediction& prediction) {
+    const bool fixedEpochSource = prediction.regionWallExchangeFingerprint == 0
+        && prediction.sourceDensityKgPerCubicMeter == 0.0;
+    const bool wallAdjustedSource =
+        prediction.regionWallExchangeFingerprint != 0
+        && std::isfinite(prediction.sourceDensityKgPerCubicMeter)
+        && prediction.sourceDensityKgPerCubicMeter > 0.0;
     if (prediction.version != sceneFluidMimeticTraceFlowVersion
         || prediction.fingerprint == 0
         || prediction.mimeticControlCellFingerprint == 0
@@ -467,6 +762,7 @@ void validateSceneFluidMimeticTraceFlowPredictionIntegrity(
         || prediction.velocityFingerprint == 0
         || prediction.structureDefinitionFingerprint == 0
         || !std::isfinite(prediction.simulationTimeSeconds)
+        || (!fixedEpochSource && !wallAdjustedSource)
         || prediction.componentCount == 0
         || prediction.traces.empty()
         || prediction.componentBalanceResidualsCubicMetersPerSecond.size()
@@ -559,6 +855,8 @@ void validateSceneFluidMimeticTraceFlowPrediction(
         || prediction.pressureFaceLinkFingerprint != faceLinks.fingerprint
         || prediction.openingFluxFingerprint != openingFlux.fingerprint
         || prediction.velocityFingerprint != openingFlux.velocityFingerprint
+        || prediction.regionWallExchangeFingerprint != 0
+        || prediction.sourceDensityKgPerCubicMeter != 0.0
         || prediction.structureDefinitionFingerprint
             != controlCells.structureDefinitionFingerprint
         || prediction.acceptedStepCount != controlCells.acceptedStepCount
@@ -588,6 +886,59 @@ void validateSceneFluidMimeticTraceFlowPrediction(
                 != oriented.plusControlCellIndex) {
             throw std::invalid_argument(
                 "scene fluid mimetic trace-flow topology is invalid");
+        }
+        ++sharedOrdinal;
+    }
+}
+
+void validateSceneFluidMimeticTraceFlowPrediction(
+    const SceneFluidMimeticTraceFlowPrediction& prediction,
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidRegionWallExchange& wallExchange) {
+    validateWallInputIdentity(
+        controlCells, traceSystem, faceLinks, openingFlux, wallExchange);
+    validateSceneFluidMimeticTraceFlowPredictionIntegrity(prediction);
+    if (prediction.mimeticControlCellFingerprint != controlCells.fingerprint
+        || prediction.mimeticTraceSystemFingerprint != traceSystem.fingerprint
+        || prediction.pressureFaceLinkFingerprint != faceLinks.fingerprint
+        || prediction.openingFluxFingerprint != openingFlux.fingerprint
+        || prediction.velocityFingerprint != openingFlux.velocityFingerprint
+        || prediction.regionWallExchangeFingerprint
+            != wallExchange.fingerprint
+        || prediction.structureDefinitionFingerprint
+            != controlCells.structureDefinitionFingerprint
+        || prediction.acceptedStepCount != controlCells.acceptedStepCount
+        || prediction.simulationTimeSeconds
+            != controlCells.simulationTimeSeconds
+        || prediction.sourceDensityKgPerCubicMeter
+            != wallExchange.densityKgPerCubicMeter
+        || prediction.componentCount != traceSystem.componentCount
+        || prediction.traces.size() != traceSystem.sharedTraceCount) {
+        throw std::invalid_argument(
+            "scene fluid mimetic wall trace-flow prediction is foreign");
+    }
+    std::size_t sharedOrdinal = 0;
+    for (const auto& trace : traceSystem.traces) {
+        if (trace.kind == SceneFluidMimeticHalfFaceKind::MaterialWall) {
+            continue;
+        }
+        const auto& predicted = prediction.traces[sharedOrdinal];
+        const auto oriented = orientTrace(trace, traceSystem, controlCells);
+        if (predicted.sharedTraceOrdinal != sharedOrdinal
+            || predicted.traceIndex != trace.traceIndex
+            || predicted.stableId != trace.stableId
+            || predicted.kind != trace.kind
+            || predicted.sourceStableId != trace.sourceStableId
+            || predicted.componentIndex != trace.componentIndex
+            || predicted.minusControlCellIndex
+                != oriented.minusControlCellIndex
+            || predicted.plusControlCellIndex
+                != oriented.plusControlCellIndex) {
+            throw std::invalid_argument(
+                "scene fluid mimetic wall trace-flow topology is invalid");
         }
         ++sharedOrdinal;
     }
