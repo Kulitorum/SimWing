@@ -556,7 +556,14 @@ interfaces retain one link per region partition; untouched faces require one
 unambiguous common region. Material/interface ambiguity remains unlinked, and
 a face-owned authored opening is explicitly reserved for future opening
 coupling instead of being smeared into a full-face link. Physical pressure
-coefficients, opening links, and the actual projection remain future work.
+coefficients are still absent. For fully resolved closed geometry, those links
+now assemble into a bounded symmetric integrated graph Laplacian. Its exact
+constant nullspace, positive link energy, component conservation, and retained
+gauge owners are tested. Assembly requires one connected link graph per
+authored pressure component, so both a face-owned unresolved intake and a
+complete Cartesian grid with a missing off-face intake link reject instead of
+acting like sealed fabric. Opening links, RHS construction, and the actual
+projection remain future work.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own

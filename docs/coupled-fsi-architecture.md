@@ -422,6 +422,7 @@ src/fsi/
     scene_fluid_region_connectivity.* pressure components and gauges
     scene_fluid_pressure_control_volume.* sparse volume-weighted unknowns
     scene_fluid_pressure_face_link.* exact same-region Cartesian links
+    scene_fluid_pressure_operator.* symmetric integrated graph Laplacian
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -633,7 +634,19 @@ unambiguous common region. Material/open-chain/coplanar ambiguity remains
 explicitly unresolved, and face-owned authored openings are reserved and
 unlinked rather than silently becoming full same-region faces. The published
 geometry weight is area over center distance; physical coefficients, opening
-links, and projection remain unimplemented. A canonical Qt-free structural
+links, and projection remain unimplemented. For the fully resolved closed
+subset, a bounded immutable pressure-operator owner now expands every link into
+the two directed rows of a symmetric integrated graph Laplacian. Its action is
+the conservative sum of `area/distance * (p_row - p_neighbour)`, so constants
+are exact null modes and quadratic energy is the positive sum over links. The
+operator retains each existing gauge control-volume owner but does not apply a
+gauge or solve. It additionally proves that each authored pressure component
+is exactly one link-connected graph. The face-aligned intake rejects because
+its face is unresolved; an off-face intake with otherwise complete Cartesian
+faces rejects because its authored component remains split. This prevents both
+missing opening paths from becoming accidental no-flow boundaries. RHS
+construction, opening transmissibility, gauge application, and projection are
+still absent. A canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.
