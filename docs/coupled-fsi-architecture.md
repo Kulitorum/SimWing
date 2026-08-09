@@ -634,15 +634,16 @@ A bounded planar half-edge arrangement now combines these crossings with
 directed material chains on every touched Cartesian face. Disconnected signed
 cycles are accounted explicitly; a supported arrangement publishes exact
 same-region areas, while an unsupported one remains a first-class unresolved
-face. Five of the coarse real wing's nine cap-crossed faces now close. The
+face. All nine of the coarse real wing's cap-crossed faces now close. Exact
+coordinates shared by both endpoints of a clipped edge are preserved through
+later-axis clipping; this keeps earlier Cartesian-plane identity without a
+geometry tolerance and restores the four rib segments previously lost to
+one-ulp interpolation drift. The
 immutable touched-face record classifies face-owned opening overlap, coplanar
 material, invalid source geometry, material- versus opening-owned dangling
 endpoints, unstitched intersections, winding/region ambiguity, and area-closure
 failure. It also retains the unique failing source stable ID when one exists.
-The four real-wing residuals are interior unpaired material endpoints, not
-authored-opening or grid-boundary endpoints; no cap segment owns those gaps,
-and closure therefore waits for authored seam/junction topology rather than a
-geometric snap. The accepted pressure epoch retains this capped
+The accepted pressure epoch retains this capped
 material-plus-opening partition,
 while face-owned aperture area remains separate. A read-only flux epoch now
 binds the entire MAC field. Face owners use the exact normal degree of freedom;
@@ -686,7 +687,7 @@ unambiguous common region. A transversely cap-crossed face instead consumes
 the exact capped partition, superseding the material-only result; unsupported
 capped arrangements retain a distinct unresolved status. The analytic open
 tetrahedron reaches pressure links with `0.105 m²` of Cell and `0.895 m²` of
-Outside area, and the coarse real wing reaches six resolved partition faces
+Outside area, and the coarse real wing reaches ten resolved partition faces
 rather than one. Material/open-chain/coplanar ambiguity remains explicitly
 unresolved. A face-owned authored opening instead contributes an
 oriented cross-region link for each exact cap patch and, when unambiguous, one
@@ -970,17 +971,16 @@ surface adapter. The cap owner validates the three-region skin/rib mouth cycles
 and consumes the complete real-wing opening set. Pairwise cell-volume measures
 close its complete region ledger on a centered coarse grid. One simple
 boundary-to-boundary interface resolves exactly, while grid-face junctions
-remain explicit unresolved partitions. Their four cap-touched residual faces
-are classified as interior unpaired material endpoints with distinct source
-chain IDs; the exporter has no paired seam chains from which an exact closure
-could be derived. Opening quadrature and grid patches
+remain pair-specific open chains in the material-only partition. Exact
+multi-axis clip-plane identity lets the capped arrangement close all nine
+cap-touched faces without snapping or fabricating a junction. Opening
+quadrature and grid patches
 preserve the full cap area, while authored connectivity and sparse pressure
 control volumes assemble. Face-link construction now retains every coarse
 embedded opening without positive projected cell-region centroid separation as
 explicit unresolved count and area, without publishing a conductance link.
 Pressure-operator assembly rejects the incomplete topology. Resolving those
-conductances, junction face areas, and subsequent worker integration also
-remain open.
+embedded conductances and subsequent worker integration remain open.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy

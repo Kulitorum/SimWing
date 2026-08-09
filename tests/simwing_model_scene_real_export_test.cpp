@@ -524,22 +524,22 @@ void testRealDesignCapture(const std::filesystem::path &input,
               && openingFaceCrossings.crossingLengthMeters > 0.0
               && cappedFacePartitions.touchedFaceCount == 9
               && cappedFacePartitions.faces.size() == 9
-              && cappedFacePartitions.partitions.size() == 5
-              && cappedFacePartitions.unresolvedTouchedFaceCount == 4
-              && unresolvedCappedFaceRecordCount == 4
-              && unpairedMaterialFaceCount == 4
-              && cappedFailureSourceIds.size() == 4
+              && cappedFacePartitions.partitions.size() == 9
+              && cappedFacePartitions.unresolvedTouchedFaceCount == 0
+              && unresolvedCappedFaceRecordCount == 0
+              && unpairedMaterialFaceCount == 0
+              && cappedFailureSourceIds.empty()
               && cappedFacePartitions.segmentPairTestCount > 0
               && std::abs(openingPatches.totalAreaSquareMeters
                           - openingCaps.totalAreaSquareMeters)
                   < 1.0e-10
               && pressureFaceLinks.unresolvedActiveFaceCount == 0
-              && pressureFaceLinks.unresolvedCappedFaceCount == 4
-              && pressureFaceLinks.resolvedPartitionFaceCount == 6
+              && pressureFaceLinks.unresolvedCappedFaceCount == 0
+              && pressureFaceLinks.resolvedPartitionFaceCount == 10
               && pressureFaceLinks.unresolvedEmbeddedOpeningPatchCount > 0
               && pressureFaceLinks.unresolvedEmbeddedOpeningAreaSquareMeters
                   > 0.0,
-          "real wing reaches pressure links with explicit unresolved topology");
+          "real wing closes cap-crossed pressure faces and retains explicit embedded-opening limits");
     const simwing::viewer::StructureFrameMapping mapping =
         simwing::viewer::makeStructureFrameMapping(
             result.scene, assembly, structure);

@@ -466,8 +466,8 @@ void testFullInteriorCellClassification() {
         fixture.structure);
     const auto epoch = buildSceneFluidGridEpoch(
         fixture.surface.definition, state, fineGrid(), fixture.transfer);
-    check(epoch.facePartitions.unresolvedActiveFaceCount > 0,
-          "large tetrahedron exercises boundary-crossing open face chains");
+    check(epoch.facePartitions.unresolvedActiveFaceCount == 0,
+          "large tetrahedron closes its boundary-crossing face chains");
     const auto volumes = buildSceneFluidCellVolumes(
         fixture.surface.definition, state, fineGrid(), fixture.transfer,
         epoch);

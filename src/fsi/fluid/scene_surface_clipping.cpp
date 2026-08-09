@@ -152,6 +152,19 @@ SceneFluidClippedVertex interpolate(
     result.positionMeters = add(
         scale(first.positionMeters, 1.0 - parameter),
         scale(second.positionMeters, parameter));
+    // A segment already lying on an earlier clip plane must stay there when
+    // a later-axis plane splits it. Re-evaluating c*((1-t)+t) can move the
+    // shared coordinate by an ulp and erase exact face ownership downstream.
+    for (std::size_t preservedAxis = 0;
+         preservedAxis < 3; ++preservedAxis) {
+        const double firstCoordinate = coordinate(
+            first.positionMeters, preservedAxis);
+        if (firstCoordinate
+            == coordinate(second.positionMeters, preservedAxis)) {
+            setCoordinate(result.positionMeters, preservedAxis,
+                          firstCoordinate);
+        }
+    }
     setCoordinate(result.positionMeters, axis, planeCoordinate);
     for (std::size_t corner = 0; corner < 3; ++corner) {
         result.barycentricCoordinates[corner] =

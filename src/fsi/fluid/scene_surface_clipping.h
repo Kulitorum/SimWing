@@ -11,7 +11,7 @@
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t sceneFluidGridPatchVersion = 1;
+inline constexpr std::uint32_t sceneFluidGridPatchVersion = 2;
 
 enum class SceneFluidPatchDimension : std::uint8_t {
     Point = 1,

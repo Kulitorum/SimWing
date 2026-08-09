@@ -552,14 +552,12 @@ not guessed. A bounded planar half-edge arrangement combines these virtual-cap
 crossings with the material chains on each touched face. It supports
 disconnected signed cycles, publishes exact same-region areas when they close,
 and otherwise retains an explicit unresolved face record. The coarse real wing
-closes five of nine cap-crossed faces through this path. Face-owned aperture
-area remains with its existing owner. Every rejected face carries a stable
-reason and, when one source is uniquely responsible, its material-chain or
-opening-crossing stable ID. The real wing's four residuals are specifically
-interior unpaired material endpoints: they are neither grid-boundary nor
-authored-opening endpoints, so they cannot be joined to a virtual cap without
-inventing the still-unauthored seam/junction topology. The pressure epoch
-retains the complete
+closes all nine cap-crossed faces through this path. Exact coordinates already
+owned by an earlier clip plane survive later-axis clipping, so a mathematical
+face segment cannot disappear through one-ulp interpolation drift. Face-owned
+aperture area remains with its existing owner. Every rejected face carries a
+stable reason and, when one source is uniquely responsible, its material-chain
+or opening-crossing stable ID. The pressure epoch retains the complete
 product without turning caps into fabric. A
 read-only flux epoch binds the complete MAC field, reads exact resolved face
 flow or deterministic off-face staggered quadrature, and reports signed fluid
@@ -590,7 +588,7 @@ material-plus-opening partition supersedes the material-only result; an
 unsupported arrangement has its own unresolved status and no fabricated link.
 The analytic open tetrahedron carries its `0.105 m²` Cell section and
 `0.895 m²` Outside complement into pressure links, while the coarse real wing
-now has six resolved partition faces rather than one. A face-aligned authored
+now has ten resolved partition faces rather than one. A face-aligned authored
 opening now contributes its
 exact oriented cross-region aperture area plus an unambiguous same-region link
 over the rest of that Cartesian face. The analytic intake therefore retains
@@ -793,8 +791,7 @@ authored connectivity plus sparse pressure controls assemble. Pressure-link
 construction now reaches that real geometry and retains every coarse embedded
 opening without positive projected cell-region centroid separation as explicit
 unresolved count and area, without publishing a conductance link. Resolving
-those conductances, junction face areas, and subsequent worker integration
-remain open.
+those embedded conductances and subsequent worker integration remain open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

@@ -1,5 +1,6 @@
 #include "fluid/scene_surface_clipping.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -133,6 +134,32 @@ void testReusableTriangleBoxPrimitive() {
         [&] { static_cast<void>(clipSceneFluidTriangleToAxisAlignedBox(
             triangle, {1.0, 0.0, 0.0}, {1.0, 1.0, 1.0})); },
         "triangle-box primitive rejects a degenerate box");
+}
+
+void testEarlierPlaneIdentitySurvivesLaterClip() {
+    constexpr double yPlane = 1.267722221816278;
+    const std::array<Vec3, 3> triangle{{
+        {0.2, yPlane, 0.8},
+        {1.2, yPlane, 1.8},
+        {0.2, 0.5, 0.8},
+    }};
+    const auto clipped = clipSceneFluidTriangleToAxisAlignedBox(
+        triangle, {0.0, 0.0, 0.0}, {2.0, yPlane, 1.0});
+    check(clipped
+              && clipped->dimension == SceneFluidPatchDimension::Area,
+          "triangle-box primitive retains a multi-axis clipped area");
+    if (!clipped) return;
+    const auto yBoundaryVertexCount = std::ranges::count_if(
+        clipped->vertices, [](const SceneFluidClippedVertex& vertex) {
+            return vertex.positionMeters.y == yPlane;
+        });
+    const bool hasLaterClipIntersection = std::ranges::any_of(
+        clipped->vertices, [](const SceneFluidClippedVertex& vertex) {
+            return vertex.positionMeters.y == yPlane
+                && vertex.positionMeters.z == 1.0;
+        });
+    check(yBoundaryVertexCount == 2 && hasLaterClipIntersection,
+          "later-axis clipping preserves exact earlier-plane identity");
 }
 
 void testExactClippedPatches() {
@@ -325,6 +352,7 @@ void testToleranceAndTransactionalLimits() {
 
 int main() {
     testReusableTriangleBoxPrimitive();
+    testEarlierPlaneIdentitySurvivesLaterClip();
     testExactClippedPatches();
     testContactDimensionAndBoundaryAmbiguity();
     testToleranceAndTransactionalLimits();
