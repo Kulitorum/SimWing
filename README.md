@@ -548,8 +548,13 @@ Cell-owned polygons now also expose exact positive-length cap intersections
 with internal Cartesian faces. Independently clipped segments from both
 adjacent cells must agree before one stable, winding-directed crossing is
 published; face-owned aperture area remains area, and grid-edge ownership is
-not guessed. These virtual-cap crossings are retained by the pressure epoch as
-the missing topology needed to close opening-ended material face chains. A
+not guessed. A bounded planar half-edge arrangement combines these virtual-cap
+crossings with the material chains on each touched face. It supports
+disconnected signed cycles, publishes exact same-region areas when they close,
+and otherwise retains an explicit unresolved face record. The coarse real wing
+closes five of nine cap-crossed faces through this path. Face-owned aperture
+area remains with its existing owner. The pressure epoch retains the complete
+product without turning caps into fabric. A
 read-only flux epoch binds the complete MAC field, reads exact resolved face
 flow or deterministic off-face staggered quadrature, and reports signed fluid
 flow, cap sweep, and relative volume flow. It also maps every intake or
@@ -574,7 +579,13 @@ cells and full interior cells close independently and exactly recover all
 region and domain volumes. A complementary immutable face topology now links
 those unknowns only through exact same-region Cartesian areas. Resolved nested
 interfaces retain one link per region partition; untouched faces require one
-unambiguous common region. A face-aligned authored opening now contributes its
+unambiguous common region. On a transversely cap-crossed face, the exact capped
+material-plus-opening partition supersedes the material-only result; an
+unsupported arrangement has its own unresolved status and no fabricated link.
+The analytic open tetrahedron carries its `0.105 m²` Cell section and
+`0.895 m²` Outside complement into pressure links, while the coarse real wing
+now has six resolved partition faces rather than one. A face-aligned authored
+opening now contributes its
 exact oriented cross-region aperture area plus an unambiguous same-region link
 over the rest of that Cartesian face. The analytic intake therefore retains
 `0.18 m²` of opening and `0.82 m²` of Outside flow area instead of smearing the
@@ -632,8 +643,8 @@ its scene-derived pressure. Uniform pressure-gauge warm starts give identical
 samples and loads, while a sealed inside/outside pair with independent gauges
 rejects rather than inventing an arbitrary pressure jump.
 A versioned pressure epoch now composes the entire accepted geometry side of
-that solve atomically: grid remap, opening caps, patches, and transverse face
-crossings, sparse region
+that solve atomically: grid remap, opening caps, patches, transverse face
+crossings, capped face partitions, sparse region
 volumes, pressure controls, conservative links, and the ungauged operator all
 share one Structure-state identity and an aggregate storage bound. Downstream
 macro-step code can no longer accidentally mix those products across accepted

@@ -306,6 +306,7 @@ SceneFluidPressureOperator buildOperator(
     const SceneFluidPressureOperatorLimits& limits) {
     const std::size_t unresolvedTopologyCount =
         faceLinks.unresolvedActiveFaceCount
+        + faceLinks.unresolvedCappedFaceCount
         + faceLinks.unresolvedAmbiguousFaceCount
         + faceLinks.unresolvedOpeningFaceCount
         + faceLinks.unresolvedEmbeddedOpeningPatchCount;
@@ -635,6 +636,38 @@ void shiftComponentGauges(
     }
 }
 
+void validateOperatorInputs(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidGridEpoch& epoch,
+    const SceneFluidOpeningCapSet& caps,
+    const SceneFluidOpeningQuadratureSet& openingQuadrature,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidCellVolumeSet& volumes,
+    const SceneFluidRegionConnectivity& connectivity,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks) {
+    validateSceneFluidGridEpoch(epoch, surface, state, grid, transfer);
+    validateSceneFluidOpeningGridPatches(
+        openingPatches, surface, state, caps, openingQuadrature, grid);
+    validateSceneFluidCellVolumes(
+        volumes, surface, state, grid, transfer, epoch);
+    validateSceneFluidPressureControlVolumes(
+        pressureVolumes, surface, volumes, connectivity);
+    validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
+    if (faceLinks.surfaceDefinitionFingerprint != surface.fingerprint
+        || faceLinks.surfaceStateFingerprint != state.fingerprint
+        || faceLinks.gridEpochFingerprint != epoch.fingerprint
+        || faceLinks.openingPatchFingerprint != openingPatches.fingerprint
+        || faceLinks.pressureControlVolumeFingerprint
+            != pressureVolumes.fingerprint) {
+        throw std::invalid_argument(
+            "scene fluid pressure-operator face-link identity is invalid");
+    }
+}
+
 } // namespace
 
 SceneFluidPressureOperator buildSceneFluidPressureOperator(
@@ -651,10 +684,9 @@ SceneFluidPressureOperator buildSceneFluidPressureOperator(
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidPressureOperatorLimits& limits) {
-    validateSceneFluidPressureFaceLinks(
-        faceLinks, surface, state, grid, transfer, epoch, caps,
-        openingQuadrature, openingPatches, volumes, connectivity,
-        pressureVolumes);
+    validateOperatorInputs(
+        surface, state, grid, transfer, epoch, caps, openingQuadrature,
+        openingPatches, volumes, connectivity, pressureVolumes, faceLinks);
     auto result = buildOperator(pressureVolumes, faceLinks, limits);
     validateSceneFluidPressureOperator(
         result, surface, state, grid, transfer, epoch, caps,
@@ -677,10 +709,9 @@ void validateSceneFluidPressureOperator(
     const SceneFluidRegionConnectivity& connectivity,
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
     const SceneFluidPressureFaceLinkSet& faceLinks) {
-    validateSceneFluidPressureFaceLinks(
-        faceLinks, surface, state, grid, transfer, epoch, caps,
-        openingQuadrature, openingPatches, volumes, connectivity,
-        pressureVolumes);
+    validateOperatorInputs(
+        surface, state, grid, transfer, epoch, caps, openingQuadrature,
+        openingPatches, volumes, connectivity, pressureVolumes, faceLinks);
     validatePayload(pressureOperator);
     if (pressureOperator.pressureControlVolumeFingerprint
             != pressureVolumes.fingerprint

@@ -249,6 +249,8 @@ struct Fixture {
     SceneFluidOpeningCapSet caps;
     SceneFluidOpeningQuadratureSet openingQuadrature;
     SceneFluidOpeningGridPatchSet openingPatches;
+    SceneFluidOpeningFaceCrossingSet openingFaceCrossings;
+    SceneFluidCappedFacePartitionSet cappedFacePartitions;
     SceneFluidCellVolumeSet volumes;
     SceneFluidRegionConnectivity connectivity;
     SceneFluidPressureControlVolumeSet pressureVolumes;
@@ -275,6 +277,12 @@ struct Fixture {
               surface.definition, state, caps)),
           openingPatches(buildSceneFluidOpeningGridPatches(
               surface.definition, state, caps, openingQuadrature, grid())),
+          openingFaceCrossings(buildSceneFluidOpeningFaceCrossings(
+              surface.definition, state, caps, openingQuadrature,
+              openingPatches, grid())),
+          cappedFacePartitions(buildSceneFluidCappedFacePartitions(
+              surface.definition, state, grid(), transfer, epoch, caps,
+              openingQuadrature, openingPatches, openingFaceCrossings)),
           volumes(buildSceneFluidCellVolumes(
               surface.definition, state, grid(), transfer, epoch)),
           connectivity(buildSceneFluidRegionConnectivity(
@@ -283,7 +291,8 @@ struct Fixture {
               surface.definition, volumes, connectivity)),
           faceLinks(buildSceneFluidPressureFaceLinks(
               surface.definition, state, grid(), transfer, epoch, caps,
-              openingQuadrature, openingPatches, volumes, connectivity,
+              openingQuadrature, openingPatches, openingFaceCrossings,
+              cappedFacePartitions, volumes, connectivity,
               pressureVolumes)),
           pressureOperator(buildSceneFluidPressureOperator(
               surface.definition, state, grid(), transfer, epoch, caps,

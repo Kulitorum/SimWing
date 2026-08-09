@@ -98,10 +98,10 @@ Scene openingTetrahedron(const MouthGeometry geometry) {
          0.041, 0.02, 0.0125, 2.5e-12},
     };
     std::array<Vec3, 4> positions{{
-        {1.0, 1.5, 1.5},
+        {1.0, 1.7, 1.3},
         {1.5, 1.2, 1.2},
-        {2.5, 1.2, 1.2},
-        {2.5, 1.8, 1.8},
+        {2.5, 1.8, 1.2},
+        {2.5, 1.2, 1.8},
     }};
     if (geometry == MouthGeometry::FaceAligned) {
         positions[1] = {2.0, 1.2, 1.2};
@@ -230,10 +230,10 @@ void testTransverseOpeningCrossing() {
     checkNear(crossing.negativeToPositiveDirectionInFace.x, 0.0, 0.0,
               "cap crossing direction remains in its Cartesian face");
     checkNear(crossing.negativeToPositiveDirectionInFace.y,
-              capNormal.y / projectedMagnitude, 0.0,
+              capNormal.y / projectedMagnitude, 2.0e-16,
               "cap crossing direction preserves projected normal y");
     checkNear(crossing.negativeToPositiveDirectionInFace.z,
-              capNormal.z / projectedMagnitude, 0.0,
+              capNormal.z / projectedMagnitude, 2.0e-16,
               "cap crossing direction preserves projected normal z");
     validateSceneFluidOpeningFaceCrossings(
         first, fixture.surface.definition, fixture.state, fixture.caps,

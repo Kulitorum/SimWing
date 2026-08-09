@@ -170,6 +170,8 @@ struct Endpoint {
     SceneFluidOpeningCapSet caps;
     SceneFluidOpeningQuadratureSet openingQuadrature;
     SceneFluidOpeningGridPatchSet openingPatches;
+    SceneFluidOpeningFaceCrossingSet openingFaceCrossings;
+    SceneFluidCappedFacePartitionSet cappedFacePartitions;
     SceneFluidCellVolumeSet volumes;
     SceneFluidPressureControlVolumeSet pressureVolumes;
 };
@@ -187,13 +189,21 @@ Endpoint captureEndpoint(const Fixture& fixture) {
         fixture.surface.definition, state, caps);
     auto openingPatches = buildSceneFluidOpeningGridPatches(
         fixture.surface.definition, state, caps, openingQuadrature, grid());
+    auto openingFaceCrossings = buildSceneFluidOpeningFaceCrossings(
+        fixture.surface.definition, state, caps, openingQuadrature,
+        openingPatches, grid());
+    auto cappedFacePartitions = buildSceneFluidCappedFacePartitions(
+        fixture.surface.definition, state, grid(), fixture.transfer, epoch,
+        caps, openingQuadrature, openingPatches, openingFaceCrossings);
     auto volumes = buildSceneFluidCellVolumes(
         fixture.surface.definition, state, grid(), fixture.transfer, epoch);
     auto pressureVolumes = buildSceneFluidPressureControlVolumes(
         fixture.surface.definition, volumes, fixture.connectivity);
     return {std::move(state), std::move(epoch), std::move(caps),
             std::move(openingQuadrature), std::move(openingPatches),
-            std::move(volumes), std::move(pressureVolumes)};
+            std::move(openingFaceCrossings),
+            std::move(cappedFacePartitions), std::move(volumes),
+            std::move(pressureVolumes)};
 }
 
 void advanceApex(Fixture& fixture, const double accelerationX) {
@@ -328,8 +338,9 @@ void testMovingVolumeProjection() {
     const auto faceLinks = buildSceneFluidPressureFaceLinks(
         fixture.surface.definition, current.state, grid(), fixture.transfer,
         current.epoch, current.caps, current.openingQuadrature,
-        current.openingPatches, current.volumes, fixture.connectivity,
-        current.pressureVolumes);
+        current.openingPatches, current.openingFaceCrossings,
+        current.cappedFacePartitions, current.volumes,
+        fixture.connectivity, current.pressureVolumes);
     const auto pressureOperator = buildSceneFluidPressureOperator(
         fixture.surface.definition, current.state, grid(), fixture.transfer,
         current.epoch, current.caps, current.openingQuadrature,
@@ -911,8 +922,9 @@ void testIndependentGaugeSamplingRejection() {
     const auto faceLinks = buildSceneFluidPressureFaceLinks(
         fixture.surface.definition, current.state, grid(), fixture.transfer,
         current.epoch, current.caps, current.openingQuadrature,
-        current.openingPatches, current.volumes, fixture.connectivity,
-        current.pressureVolumes);
+        current.openingPatches, current.openingFaceCrossings,
+        current.cappedFacePartitions, current.volumes,
+        fixture.connectivity, current.pressureVolumes);
     const auto pressureOperator = buildSceneFluidPressureOperator(
         fixture.surface.definition, current.state, grid(), fixture.transfer,
         current.epoch, current.caps, current.openingQuadrature,
@@ -961,9 +973,13 @@ void testComposedPressureEpoch() {
               && first.openingFaceCrossings.fingerprint != 0
               && first.openingFaceCrossings.crossings.empty()
               && first.openingFaceCrossings.faceOwnedPatchCount == 1
+              && first.cappedFacePartitions.fingerprint != 0
+              && first.cappedFacePartitions.touchedFaceCount == 0
+              && first.cappedFacePartitions.partitions.empty()
               && first.cellVolumes.cellRegionVolumes.size()
                   == first.pressureControlVolumes.controlVolumes.size()
               && first.pressureFaceLinks.unresolvedActiveFaceCount == 0
+              && first.pressureFaceLinks.unresolvedCappedFaceCount == 0
               && first.pressureFaceLinks.unresolvedAmbiguousFaceCount == 0
               && first.pressureFaceLinks.unresolvedOpeningFaceCount == 0
               && first.pressureFaceLinks.unresolvedEmbeddedOpeningPatchCount

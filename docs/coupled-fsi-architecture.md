@@ -416,6 +416,8 @@ src/fsi/
     scene_fluid_opening_cap.* topology-only automatic/authored opening closure
     scene_fluid_opening_quadrature.* accepted cap motion/surface sweep
     scene_fluid_opening_patch.* exact grid-resolved opening polygons
+    scene_fluid_opening_face_crossing.* paired transverse cap segments
+    scene_fluid_capped_face_partition.* material-plus-cap face areas
     scene_fluid_opening_flux.* read-only relative MAC volume-flow ledger
     scene_fluid_cell_volume.* signed-chain sparse region volumes
     scene_fluid_region_continuity.* consecutive volume/flux compatibility
@@ -628,8 +630,13 @@ motion; periodic-boundary image ambiguity rejects. Cell-owned cap polygons
 also pair exact positive-length boundary segments from both adjacent cells
 into stable, winding-directed transverse face crossings. Face-owned aperture
 area is never collapsed into a line, and grid-edge ambiguity remains explicit.
-The accepted pressure epoch retains these crossings for the later capped
-material-plus-opening face partition. A read-only flux epoch now
+A bounded planar half-edge arrangement now combines these crossings with
+directed material chains on every touched Cartesian face. Disconnected signed
+cycles are accounted explicitly; a supported arrangement publishes exact
+same-region areas, while an unsupported one remains a first-class unresolved
+face. Five of the coarse real wing's nine cap-crossed faces now close. The
+accepted pressure epoch retains this capped material-plus-opening partition,
+while face-owned aperture area remains separate. A read-only flux epoch now
 binds the entire MAC field. Face owners use the exact normal degree of freedom;
 cell owners use bounded degree-three quadrature of periodic staggered
 interpolation. It retains signed fluid flow, cap sweep, and relative flow per
@@ -667,8 +674,13 @@ owner now consumes the exact face partitions and connects only matching
 same-region pressure volumes. A resolved nested face retains its exact
 exterior, annular-cell, and inner-cell areas as separate links; an untouched
 face receives one full-area link only when both adjacent sparse cells have one
-unambiguous common region. Material/open-chain/coplanar ambiguity remains
-explicitly unresolved. A face-owned authored opening instead contributes an
+unambiguous common region. A transversely cap-crossed face instead consumes
+the exact capped partition, superseding the material-only result; unsupported
+capped arrangements retain a distinct unresolved status. The analytic open
+tetrahedron reaches pressure links with `0.105 m²` of Cell and `0.895 m²` of
+Outside area, and the coarse real wing reaches six resolved partition faces
+rather than one. Material/open-chain/coplanar ambiguity remains explicitly
+unresolved. A face-owned authored opening instead contributes an
 oriented cross-region link for each exact cap patch and, when unambiguous, one
 same-region link over the complementary face area. The analytic triangular
 intake closes its unit Cartesian face as `0.18 m²` of Cell-to-Outside aperture
@@ -737,8 +749,9 @@ ledgers; a uniform pressure warm-start shift is bit-identical after gauge
 normalization, and sealed independently gauged sides reject explicitly. This
 does not add shear, a polar force, or a second aerodynamic load path. A
 versioned bounded pressure epoch now composes the grid remap, opening cap and
-patch topology, sparse volumes, pressure controls, face links, and graph
-operator under one accepted Structure-state fingerprint. Construction uses
+patch/crossing topology, capped face partitions, sparse volumes, pressure
+controls, face links, and graph operator under one accepted Structure-state
+fingerprint. Construction uses
 local candidates and publishes only the complete fully resolved chain; nested
 corruption, a foreign accepted state, and an excessive aggregate payload all
 reject. This is the atomic geometry/operator input for the next transactional

@@ -90,6 +90,7 @@ std::size_t ownedStorageBytes(const SceneFluidPressureEpoch& epoch) {
     addOwnedBytes(epoch.openingQuadrature.ownedStorageBytes, result);
     addOwnedBytes(epoch.openingPatches.ownedStorageBytes, result);
     addOwnedBytes(epoch.openingFaceCrossings.ownedStorageBytes, result);
+    addOwnedBytes(epoch.cappedFacePartitions.ownedStorageBytes, result);
     addVectorBytes(epoch.cellVolumes.cells, result);
     addVectorBytes(epoch.cellVolumes.cellRegionVolumes, result);
     addVectorBytes(epoch.cellVolumes.regionVolumes, result);
@@ -123,6 +124,7 @@ std::uint64_t epochFingerprint(const SceneFluidPressureEpoch& epoch) {
     fingerprint.integer(epoch.openingQuadrature.fingerprint);
     fingerprint.integer(epoch.openingPatches.fingerprint);
     fingerprint.integer(epoch.openingFaceCrossings.fingerprint);
+    fingerprint.integer(epoch.cappedFacePartitions.fingerprint);
     fingerprint.integer(epoch.cellVolumes.fingerprint);
     fingerprint.integer(epoch.pressureControlVolumes.fingerprint);
     fingerprint.integer(epoch.pressureFaceLinks.fingerprint);
@@ -200,6 +202,11 @@ SceneFluidPressureEpoch buildSceneFluidPressureEpoch(
     result.openingFaceCrossings = buildSceneFluidOpeningFaceCrossings(
         surface, state, result.openingCaps, result.openingQuadrature,
         result.openingPatches, grid, limits.openingFaceCrossings);
+    result.cappedFacePartitions = buildSceneFluidCappedFacePartitions(
+        surface, state, grid, transfer, result.gridEpoch,
+        result.openingCaps, result.openingQuadrature,
+        result.openingPatches, result.openingFaceCrossings,
+        settings.cappedFacePartitions, limits.cappedFacePartitions);
     result.cellVolumes = buildSceneFluidCellVolumes(
         surface, state, grid, transfer, result.gridEpoch,
         settings.cellVolumes, limits.cellVolumes);
@@ -209,9 +216,10 @@ SceneFluidPressureEpoch buildSceneFluidPressureEpoch(
     result.pressureFaceLinks = buildSceneFluidPressureFaceLinks(
         surface, state, grid, transfer, result.gridEpoch,
         result.openingCaps, result.openingQuadrature,
-        result.openingPatches, result.cellVolumes, connectivity,
-        result.pressureControlVolumes, settings.faceLinks,
-        limits.faceLinks);
+        result.openingPatches, result.openingFaceCrossings,
+        result.cappedFacePartitions, result.cellVolumes,
+        connectivity, result.pressureControlVolumes,
+        settings.faceLinks, limits.faceLinks);
     result.pressureOperator = buildSceneFluidPressureOperator(
         surface, state, grid, transfer, result.gridEpoch,
         result.openingCaps, result.openingQuadrature,
@@ -249,6 +257,10 @@ void validateSceneFluidPressureEpoch(
     validateSceneFluidOpeningFaceCrossings(
         epoch.openingFaceCrossings, surface, state, epoch.openingCaps,
         epoch.openingQuadrature, epoch.openingPatches, grid);
+    validateSceneFluidCappedFacePartitions(
+        epoch.cappedFacePartitions, surface, state, grid, transfer,
+        epoch.gridEpoch, epoch.openingCaps, epoch.openingQuadrature,
+        epoch.openingPatches, epoch.openingFaceCrossings);
     validateSceneFluidCellVolumes(
         epoch.cellVolumes, surface, state, grid, transfer,
         epoch.gridEpoch);
@@ -258,8 +270,9 @@ void validateSceneFluidPressureEpoch(
     validateSceneFluidPressureFaceLinks(
         epoch.pressureFaceLinks, surface, state, grid, transfer,
         epoch.gridEpoch, epoch.openingCaps, epoch.openingQuadrature,
-        epoch.openingPatches, epoch.cellVolumes, connectivity,
-        epoch.pressureControlVolumes);
+        epoch.openingPatches, epoch.openingFaceCrossings,
+        epoch.cappedFacePartitions, epoch.cellVolumes,
+        connectivity, epoch.pressureControlVolumes);
     validateSceneFluidPressureOperator(
         epoch.pressureOperator, surface, state, grid, transfer,
         epoch.gridEpoch, epoch.openingCaps, epoch.openingQuadrature,

@@ -150,6 +150,40 @@ Scene tiltedOpenScene() {
     return scene;
 }
 
+Scene crossingOpenScene() {
+    Scene scene;
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-pressure-face-crossing-open";
+    scene.metadata.exporterVersion =
+        "scene-fluid-pressure-face-link-test/1";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "cell"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900.0, 650.0, 220.0, 0.015,
+         0.041, 0.02, 0.0125, 2.5e-12},
+    };
+    scene.vertices = {
+        {10, {1.0, 1.7, 1.3}},
+        {11, {1.5, 1.2, 1.2}},
+        {12, {2.5, 1.8, 1.2}},
+        {13, {2.5, 1.2, 1.8}},
+    };
+    const std::array<Vec2, 3> chart{{{0.0, 0.0},
+                                      {1.0, 0.0},
+                                      {0.0, 1.0}}};
+    scene.triangles = {
+        {500, {10, 12, 11}, chart, 2, 1, 100, 900, SurfaceRole::Skin},
+        {501, {10, 11, 13}, chart, 2, 1, 100, 900, SurfaceRole::Skin},
+        {502, {10, 13, 12}, chart, 2, 1, 100, 900, SurfaceRole::Skin},
+    };
+    scene.openings = {
+        {700, {11, 12, 13}, 2, 1, OpeningRole::Intake},
+    };
+    return scene;
+}
+
 fluid::PeriodicCartesianGrid grid() {
     return {{4, 4, 4}, {}, {4.0, 4.0, 4.0}};
 }
@@ -165,6 +199,8 @@ struct Fixture {
     SceneFluidOpeningCapSet caps;
     SceneFluidOpeningQuadratureSet openingQuadrature;
     SceneFluidOpeningGridPatchSet openingPatches;
+    SceneFluidOpeningFaceCrossingSet openingFaceCrossings;
+    SceneFluidCappedFacePartitionSet cappedFacePartitions;
     SceneFluidCellVolumeSet volumes;
     SceneFluidRegionConnectivity connectivity;
     SceneFluidPressureControlVolumeSet pressureVolumes;
@@ -186,6 +222,12 @@ struct Fixture {
               surface.definition, state, caps)),
           openingPatches(buildSceneFluidOpeningGridPatches(
               surface.definition, state, caps, openingQuadrature, grid())),
+          openingFaceCrossings(buildSceneFluidOpeningFaceCrossings(
+              surface.definition, state, caps, openingQuadrature,
+              openingPatches, grid())),
+          cappedFacePartitions(buildSceneFluidCappedFacePartitions(
+              surface.definition, state, grid(), transfer, epoch, caps,
+              openingQuadrature, openingPatches, openingFaceCrossings)),
           volumes(buildSceneFluidCellVolumes(
               surface.definition, state, grid(), transfer, epoch)),
           connectivity(buildSceneFluidRegionConnectivity(
@@ -198,8 +240,9 @@ struct Fixture {
         const SceneFluidPressureFaceLinkLimits& limits = {}) const {
         return buildSceneFluidPressureFaceLinks(
             surface.definition, state, grid(), transfer, epoch, caps,
-            openingQuadrature, openingPatches, volumes, connectivity,
-            pressureVolumes, settings, limits);
+            openingQuadrature, openingPatches, openingFaceCrossings,
+            cappedFacePartitions, volumes, connectivity, pressureVolumes,
+            settings, limits);
     }
 };
 
@@ -260,6 +303,7 @@ void testExactNestedFaceLinks() {
         first, fixture.surface.definition, fixture.state, grid(),
         fixture.transfer, fixture.epoch, fixture.caps,
         fixture.openingQuadrature, fixture.openingPatches,
+        fixture.openingFaceCrossings, fixture.cappedFacePartitions,
         fixture.volumes, fixture.connectivity, fixture.pressureVolumes);
 }
 
@@ -373,6 +417,39 @@ void testFaceAndEmbeddedOpeningLinks() {
     checkNear(embeddedLinks.totalEmbeddedOpeningAreaSquareMeters,
               tilted.openingPatches.totalAreaSquareMeters, 0.0,
               "embedded pressure links consume every off-face opening patch");
+
+    Fixture crossing(crossingOpenScene());
+    const auto crossingLinks = crossing.links();
+    const auto cappedFace = std::ranges::find_if(
+        crossingLinks.faces,
+        [](const SceneFluidPressureFace& face) {
+            return face.axis == fluid::GridFaceAxis::X
+                && face.i == 2 && face.j == 1 && face.k == 1;
+        });
+    check(crossing.epoch.facePartitions.partitions.empty()
+              && crossing.cappedFacePartitions.touchedFaceCount == 1
+              && crossing.cappedFacePartitions.partitions.size() == 1
+              && crossingLinks.resolvedPartitionFaceCount == 1
+              && crossingLinks.unresolvedCappedFaceCount == 0
+              && cappedFace != crossingLinks.faces.end()
+              && cappedFace->status
+                  == SceneFluidPressureFaceStatus::ResolvedPartition
+              && cappedFace->linkCount == 2,
+          "virtual opening cap upgrades an open material chain to pressure links");
+    if (cappedFace != crossingLinks.faces.end()
+        && cappedFace->linkCount == 2) {
+        std::map<StableId, double> cappedAreas;
+        for (std::size_t offset = 0; offset < cappedFace->linkCount;
+             ++offset) {
+            const auto& link = crossingLinks.links[
+                cappedFace->firstLink + offset];
+            cappedAreas.emplace(link.minusRegionId, link.areaSquareMeters);
+        }
+        checkNear(cappedAreas.at(2), 0.105, 3.0e-15,
+                  "pressure link retains capped cell cross-section area");
+        checkNear(cappedAreas.at(1), 0.895, 3.0e-15,
+                  "pressure link retains capped exterior complement area");
+    }
 }
 
 void testCorruptionSettingsAndLimits() {
@@ -385,6 +462,7 @@ void testCorruptionSettingsAndLimits() {
             corrupt, fixture.surface.definition, fixture.state, grid(),
             fixture.transfer, fixture.epoch, fixture.caps,
             fixture.openingQuadrature, fixture.openingPatches,
+            fixture.openingFaceCrossings, fixture.cappedFacePartitions,
             fixture.volumes, fixture.connectivity,
             fixture.pressureVolumes); },
         "pressure-face-link validation rejects nested corruption");

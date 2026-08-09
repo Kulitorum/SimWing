@@ -2,6 +2,7 @@
 #include "input_migration.h"
 #include "nurbs_model.h"
 #include "scene_fluid_cell_volume.h"
+#include "scene_fluid_capped_face_partition.h"
 #include "scene_fluid_opening_cap.h"
 #include "scene_fluid_opening_face_crossing.h"
 #include "scene_fluid_pressure_control_volume.h"
@@ -456,6 +457,13 @@ void testRealDesignCapture(const std::filesystem::path &input,
             simwing::fsi::buildSceneFluidOpeningFaceCrossings(
                 fluidSurface.definition, fluidState, openingCaps,
                 openingQuadrature, openingPatches, fluidGrid);
+    const simwing::fsi::SceneFluidCappedFacePartitionSet
+        cappedFacePartitions =
+            simwing::fsi::buildSceneFluidCappedFacePartitions(
+                fluidSurface.definition, fluidState, fluidGrid,
+                fluidTransfer, fluidEpoch, openingCaps,
+                openingQuadrature, openingPatches,
+                openingFaceCrossings);
     const simwing::fsi::SceneFluidRegionConnectivity fluidConnectivity =
         simwing::fsi::buildSceneFluidRegionConnectivity(
             fluidSurface.definition);
@@ -466,7 +474,8 @@ void testRealDesignCapture(const std::filesystem::path &input,
         simwing::fsi::buildSceneFluidPressureFaceLinks(
             fluidSurface.definition, fluidState, fluidGrid, fluidTransfer,
             fluidEpoch, openingCaps, openingQuadrature, openingPatches,
-            fluidVolumes, fluidConnectivity, pressureVolumes);
+            openingFaceCrossings, cappedFacePartitions, fluidVolumes,
+            fluidConnectivity, pressureVolumes);
     const bool hasBoundaryChainPartition = std::ranges::any_of(
         fluidEpoch.facePartitions.partitions,
         [](const simwing::fsi::fluid::SceneFluidFacePartition &partition) {
@@ -474,6 +483,10 @@ void testRealDesignCapture(const std::filesystem::path &input,
                 == simwing::fsi::fluid::SceneFluidFacePartitionKind::
                     BoundaryOpenChain;
         });
+    const auto unresolvedCappedFaceRecordCount = std::ranges::count(
+        cappedFacePartitions.faces,
+        simwing::fsi::invalidSceneFluidCappedFacePartitionIndex,
+        &simwing::fsi::SceneFluidCappedFace::partitionIndex);
     check(fluidVolumes.regionVolumes.size() == result.scene.regions.size()
               && fluidVolumes.openingCapCount
                   == result.scene.openings.size()
@@ -498,11 +511,18 @@ void testRealDesignCapture(const std::filesystem::path &input,
                   == 2 * openingFaceCrossings.crossings.size()
               && openingFaceCrossings.unpairedContactSegmentCount == 0
               && openingFaceCrossings.crossingLengthMeters > 0.0
+              && cappedFacePartitions.touchedFaceCount == 9
+              && cappedFacePartitions.faces.size() == 9
+              && cappedFacePartitions.partitions.size() == 5
+              && cappedFacePartitions.unresolvedTouchedFaceCount == 4
+              && unresolvedCappedFaceRecordCount == 4
+              && cappedFacePartitions.segmentPairTestCount > 0
               && std::abs(openingPatches.totalAreaSquareMeters
                           - openingCaps.totalAreaSquareMeters)
                   < 1.0e-10
-              && pressureFaceLinks.unresolvedActiveFaceCount > 0
-              && pressureFaceLinks.resolvedPartitionFaceCount > 0
+              && pressureFaceLinks.unresolvedActiveFaceCount == 0
+              && pressureFaceLinks.unresolvedCappedFaceCount == 4
+              && pressureFaceLinks.resolvedPartitionFaceCount == 6
               && pressureFaceLinks.unresolvedEmbeddedOpeningPatchCount > 0
               && pressureFaceLinks.unresolvedEmbeddedOpeningAreaSquareMeters
                   > 0.0,

@@ -275,6 +275,7 @@ std::uint64_t faceLinkFingerprint(
              faceLinks.surfaceStateFingerprint,
              faceLinks.gridEpochFingerprint,
              faceLinks.openingPatchFingerprint,
+             faceLinks.cappedFacePartitionFingerprint,
              faceLinks.pressureControlVolumeFingerprint,
              faceLinks.structureDefinitionFingerprint,
              faceLinks.acceptedStepCount}) {
@@ -305,6 +306,7 @@ std::uint64_t faceLinkFingerprint(
              faceLinks.embeddedOpeningLinkCount,
              faceLinks.unresolvedEmbeddedOpeningPatchCount,
              faceLinks.unresolvedActiveFaceCount,
+             faceLinks.unresolvedCappedFaceCount,
              faceLinks.unresolvedAmbiguousFaceCount,
              faceLinks.unresolvedOpeningFaceCount}) {
         fingerprint.integer(static_cast<std::uint64_t>(value));
@@ -362,6 +364,7 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
     const fluid::PeriodicCartesianGrid& grid,
     const SceneFluidGridEpoch& epoch,
     const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidCappedFacePartitionSet& cappedFacePartitions,
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
     const SceneFluidPressureFaceLinkSettings& settings,
     const SceneFluidPressureFaceLinkLimits& limits) {
@@ -390,7 +393,16 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
         || pressureVolumes.lowerMeters != grid.lowerMeters()
         || pressureVolumes.upperMeters != grid.upperMeters()
         || pressureVolumes.cells.size() != grid.cellCount()
-        || epoch.facePartitions.surfaceStateFingerprint != state.fingerprint) {
+        || epoch.facePartitions.surfaceStateFingerprint != state.fingerprint
+        || cappedFacePartitions.surfaceStateFingerprint != state.fingerprint
+        || cappedFacePartitions.gridEpochFingerprint != epoch.fingerprint
+        || cappedFacePartitions.openingPatchFingerprint
+            != openingPatches.fingerprint
+        || cappedFacePartitions.cellCounts != grid.cellCounts()
+        || cappedFacePartitions.lowerMeters != grid.lowerMeters()
+        || cappedFacePartitions.upperMeters != grid.upperMeters()
+        || cappedFacePartitions.faces.size()
+            != cappedFacePartitions.touchedFaceCount) {
         throw std::invalid_argument(
             "scene fluid pressure-face-link source identity is invalid");
     }
@@ -425,6 +437,23 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                 "scene fluid pressure-face-link partition index is invalid");
         }
         partitionsByActiveFace[partition.activeFaceIndex] = partitionIndex;
+    }
+    std::vector<std::size_t> cappedPartitionsByFace(
+        faceCount, invalidSceneFluidCappedFacePartitionIndex);
+    std::vector<bool> cappedTouchedFaces(faceCount, false);
+    for (const auto& cappedFace : cappedFacePartitions.faces) {
+        const std::size_t ordinal = faceOrdinal(
+            grid, cappedFace.axis, cappedFace.i, cappedFace.j, cappedFace.k);
+        if (cappedTouchedFaces[ordinal]
+            || (cappedFace.partitionIndex
+                    != invalidSceneFluidCappedFacePartitionIndex
+                && cappedFace.partitionIndex
+                    >= cappedFacePartitions.partitions.size())) {
+            throw std::invalid_argument(
+                "scene fluid pressure-face-link capped face is invalid");
+        }
+        cappedTouchedFaces[ordinal] = true;
+        cappedPartitionsByFace[ordinal] = cappedFace.partitionIndex;
     }
     std::vector<std::size_t> openingPatchCounts(faceCount, 0);
     for (const auto& patch : openingPatches.patches) {
@@ -470,6 +499,8 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
     result.surfaceStateFingerprint = state.fingerprint;
     result.gridEpochFingerprint = epoch.fingerprint;
     result.openingPatchFingerprint = openingPatches.fingerprint;
+    result.cappedFacePartitionFingerprint =
+        cappedFacePartitions.fingerprint;
     result.pressureControlVolumeFingerprint = pressureVolumes.fingerprint;
     result.structureDefinitionFingerprint =
         state.structureDefinitionFingerprint;
@@ -670,6 +701,38 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                             }
                             ++result.resolvedOpeningFaceCount;
                         }
+                    } else if (cappedTouchedFaces[ordinal]) {
+                        const std::size_t partitionIndex =
+                            cappedPartitionsByFace[ordinal];
+                        if (partitionIndex
+                            == invalidSceneFluidCappedFacePartitionIndex) {
+                            face.status = SceneFluidPressureFaceStatus::
+                                UnresolvedCapped;
+                            ++result.unresolvedCappedFaceCount;
+                        } else {
+                            face.status = SceneFluidPressureFaceStatus::
+                                ResolvedPartition;
+                            const auto& partition =
+                                cappedFacePartitions.partitions[
+                                    partitionIndex];
+                            for (std::size_t offset = 0;
+                                 offset < partition.regionAreaCount;
+                                 ++offset) {
+                                const auto& regionArea =
+                                    cappedFacePartitions.regionAreas[
+                                        partition.firstRegionArea + offset];
+                                if (regionArea.areaSquareMeters == 0.0) {
+                                    continue;
+                                }
+                                appendLink(
+                                    face,
+                                    SceneFluidPressureFaceLinkKind::SameRegion,
+                                    regionArea.regionId, regionArea.regionId,
+                                    regionArea.areaSquareMeters,
+                                    invalidStableId, 0);
+                            }
+                            ++result.resolvedPartitionFaceCount;
+                        }
                     } else if (activeIndex
                         == std::numeric_limits<std::size_t>::max()) {
                         const auto common = commonRegions(
@@ -853,6 +916,8 @@ SceneFluidPressureFaceLinkSet buildSceneFluidPressureFaceLinks(
     const SceneFluidOpeningCapSet& caps,
     const SceneFluidOpeningQuadratureSet& openingQuadrature,
     const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidOpeningFaceCrossingSet& openingFaceCrossings,
+    const SceneFluidCappedFacePartitionSet& cappedFacePartitions,
     const SceneFluidCellVolumeSet& volumes,
     const SceneFluidRegionConnectivity& connectivity,
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
@@ -861,17 +926,20 @@ SceneFluidPressureFaceLinkSet buildSceneFluidPressureFaceLinks(
     validateSceneFluidGridEpoch(epoch, surface, state, grid, transfer);
     validateSceneFluidOpeningGridPatches(
         openingPatches, surface, state, caps, openingQuadrature, grid);
+    validateSceneFluidCappedFacePartitions(
+        cappedFacePartitions, surface, state, grid, transfer, epoch, caps,
+        openingQuadrature, openingPatches, openingFaceCrossings);
     validateSceneFluidCellVolumes(
         volumes, surface, state, grid, transfer, epoch);
     validateSceneFluidPressureControlVolumes(
         pressureVolumes, surface, volumes, connectivity);
     auto result = buildFaceLinks(
         surface, state, grid, epoch, openingPatches,
-        pressureVolumes, settings, limits);
+        cappedFacePartitions, pressureVolumes, settings, limits);
     validateSceneFluidPressureFaceLinks(
         result, surface, state, grid, transfer, epoch, caps,
-        openingQuadrature, openingPatches, volumes, connectivity,
-        pressureVolumes);
+        openingQuadrature, openingPatches, openingFaceCrossings,
+        cappedFacePartitions, volumes, connectivity, pressureVolumes);
     return result;
 }
 
@@ -882,6 +950,7 @@ void validateSceneFluidPressureFaceLinkIntegrity(
         || faceLinks.surfaceDefinitionFingerprint == 0
         || faceLinks.surfaceStateFingerprint == 0
         || faceLinks.gridEpochFingerprint == 0
+        || faceLinks.cappedFacePartitionFingerprint == 0
         || faceLinks.pressureControlVolumeFingerprint == 0
         || faceLinks.ownedStorageBytes != storageBytes(faceLinks)
         || faceLinks.fingerprint != faceLinkFingerprint(faceLinks)) {
@@ -900,12 +969,17 @@ void validateSceneFluidPressureFaceLinks(
     const SceneFluidOpeningCapSet& caps,
     const SceneFluidOpeningQuadratureSet& openingQuadrature,
     const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidOpeningFaceCrossingSet& openingFaceCrossings,
+    const SceneFluidCappedFacePartitionSet& cappedFacePartitions,
     const SceneFluidCellVolumeSet& volumes,
     const SceneFluidRegionConnectivity& connectivity,
     const SceneFluidPressureControlVolumeSet& pressureVolumes) {
     validateSceneFluidGridEpoch(epoch, surface, state, grid, transfer);
     validateSceneFluidOpeningGridPatches(
         openingPatches, surface, state, caps, openingQuadrature, grid);
+    validateSceneFluidCappedFacePartitions(
+        cappedFacePartitions, surface, state, grid, transfer, epoch, caps,
+        openingQuadrature, openingPatches, openingFaceCrossings);
     validateSceneFluidCellVolumes(
         volumes, surface, state, grid, transfer, epoch);
     validateSceneFluidPressureControlVolumes(
@@ -915,6 +989,8 @@ void validateSceneFluidPressureFaceLinks(
         || faceLinks.surfaceStateFingerprint != state.fingerprint
         || faceLinks.gridEpochFingerprint != epoch.fingerprint
         || faceLinks.openingPatchFingerprint != openingPatches.fingerprint
+        || faceLinks.cappedFacePartitionFingerprint
+            != cappedFacePartitions.fingerprint
         || faceLinks.pressureControlVolumeFingerprint
             != pressureVolumes.fingerprint) {
         throw std::invalid_argument(
@@ -926,8 +1002,8 @@ void validateSceneFluidPressureFaceLinks(
         std::numeric_limits<std::size_t>::max(),
     };
     const auto expected = buildFaceLinks(
-        surface, state, grid, epoch, openingPatches, pressureVolumes,
-        faceLinks.settings, unlimited);
+        surface, state, grid, epoch, openingPatches, cappedFacePartitions,
+        pressureVolumes, faceLinks.settings, unlimited);
     if (faceLinks != expected) {
         throw std::invalid_argument(
             "scene fluid pressure-face-link payload is invalid");

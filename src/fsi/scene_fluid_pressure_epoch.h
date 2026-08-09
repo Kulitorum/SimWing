@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scene_fluid_opening_face_crossing.h"
+#include "scene_fluid_capped_face_partition.h"
 #include "scene_fluid_pressure_operator.h"
 
 #include <cstddef>
@@ -8,12 +8,13 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureEpochVersion = 2;
+inline constexpr std::uint32_t sceneFluidPressureEpochVersion = 3;
 
 struct SceneFluidPressureEpochSettings {
     SceneFluidGridEpochSettings gridEpoch;
     SceneFluidCellVolumeSettings cellVolumes;
     SceneFluidOpeningGridPatchSettings openingPatches;
+    SceneFluidCappedFacePartitionSettings cappedFacePartitions;
     SceneFluidPressureFaceLinkSettings faceLinks;
 
     bool operator==(const SceneFluidPressureEpochSettings&) const = default;
@@ -25,6 +26,7 @@ struct SceneFluidPressureEpochLimits {
     SceneFluidOpeningQuadratureLimits openingQuadrature;
     SceneFluidOpeningGridPatchLimits openingPatches;
     SceneFluidOpeningFaceCrossingLimits openingFaceCrossings;
+    SceneFluidCappedFacePartitionLimits cappedFacePartitions;
     SceneFluidPressureControlVolumeLimits pressureControlVolumes;
     SceneFluidPressureFaceLinkLimits faceLinks;
     SceneFluidPressureOperatorLimits pressureOperator;
@@ -58,6 +60,7 @@ struct SceneFluidPressureEpoch {
     SceneFluidOpeningQuadratureSet openingQuadrature;
     SceneFluidOpeningGridPatchSet openingPatches;
     SceneFluidOpeningFaceCrossingSet openingFaceCrossings;
+    SceneFluidCappedFacePartitionSet cappedFacePartitions;
     SceneFluidCellVolumeSet cellVolumes;
     SceneFluidPressureControlVolumeSet pressureControlVolumes;
     SceneFluidPressureFaceLinkSet pressureFaceLinks;

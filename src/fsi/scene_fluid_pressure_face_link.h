@@ -1,5 +1,6 @@
 #pragma once
 
+#include "scene_fluid_capped_face_partition.h"
 #include "scene_fluid_pressure_control_volume.h"
 
 #include <cstddef>
@@ -9,7 +10,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureFaceLinkVersion = 4;
+inline constexpr std::uint32_t sceneFluidPressureFaceLinkVersion = 5;
 inline constexpr std::size_t invalidSceneFluidPressureFaceIndex =
     std::numeric_limits<std::size_t>::max();
 
@@ -33,6 +34,7 @@ enum class SceneFluidPressureFaceStatus : std::uint8_t {
     UnresolvedAmbiguous = 4,
     UnresolvedOpening = 5,
     ResolvedOpening = 6,
+    UnresolvedCapped = 7,
 };
 
 enum class SceneFluidPressureFaceLinkKind : std::uint8_t {
@@ -91,17 +93,19 @@ struct SceneFluidPressureFaceLink {
 };
 
 // Conservative pressure-face subset. Exact active-face partitions create one
-// same-region link per positive region area. An untouched face is linked over
-// its full area only when the two adjacent sparse cells have one unambiguous
-// common region. A face-aligned authored opening instead contributes oriented
-// cross-region links over its exact patch area and, when unambiguous, one
-// complementary same-region link. A cell-owned opening patch instead connects
-// its two same-cell pressure controls along the authored normal, using their
-// projected centroid separation. A patch without positive projected separation
-// remains an explicit unresolved embedded opening and publishes no link.
-// Material/open-chain/coplanar overlap and ambiguous faces likewise remain
-// explicit and unresolved; no dominant-cell or smeared-interface fallback is
-// permitted.
+// same-region link per positive region area. On a face crossed transversely by
+// a virtual opening cap, the capped material-plus-opening partition supersedes
+// that material-only result. An untouched face is linked over its full area
+// only when the two adjacent sparse cells have one unambiguous common region.
+// A face-aligned authored opening instead contributes oriented cross-region
+// links over its exact patch area and, when unambiguous, one complementary
+// same-region link. A cell-owned opening patch instead connects its two
+// same-cell pressure controls along the authored normal, using their projected
+// centroid separation. A patch without positive projected separation remains
+// an explicit unresolved embedded opening and publishes no link.
+// Material/open-chain/coplanar overlap, unresolved capped arrangements, and
+// ambiguous faces likewise remain explicit and unresolved; no dominant-cell or
+// smeared-interface fallback is permitted.
 struct SceneFluidPressureFaceLinkSet {
     std::uint32_t version = sceneFluidPressureFaceLinkVersion;
     std::uint64_t fingerprint = 0;
@@ -109,6 +113,7 @@ struct SceneFluidPressureFaceLinkSet {
     std::uint64_t surfaceStateFingerprint = 0;
     std::uint64_t gridEpochFingerprint = 0;
     std::uint64_t openingPatchFingerprint = 0;
+    std::uint64_t cappedFacePartitionFingerprint = 0;
     std::uint64_t pressureControlVolumeFingerprint = 0;
     std::uint64_t structureDefinitionFingerprint = 0;
     std::uint64_t acceptedStepCount = 0;
@@ -124,6 +129,7 @@ struct SceneFluidPressureFaceLinkSet {
     std::size_t embeddedOpeningLinkCount = 0;
     std::size_t unresolvedEmbeddedOpeningPatchCount = 0;
     std::size_t unresolvedActiveFaceCount = 0;
+    std::size_t unresolvedCappedFaceCount = 0;
     std::size_t unresolvedAmbiguousFaceCount = 0;
     std::size_t unresolvedOpeningFaceCount = 0;
     double totalFaceAreaSquareMeters = 0.0;
@@ -147,6 +153,8 @@ buildSceneFluidPressureFaceLinks(
     const SceneFluidOpeningCapSet& caps,
     const SceneFluidOpeningQuadratureSet& openingQuadrature,
     const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidOpeningFaceCrossingSet& openingFaceCrossings,
+    const SceneFluidCappedFacePartitionSet& cappedFacePartitions,
     const SceneFluidCellVolumeSet& volumes,
     const SceneFluidRegionConnectivity& connectivity,
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
@@ -169,6 +177,8 @@ void validateSceneFluidPressureFaceLinks(
     const SceneFluidOpeningCapSet& caps,
     const SceneFluidOpeningQuadratureSet& openingQuadrature,
     const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidOpeningFaceCrossingSet& openingFaceCrossings,
+    const SceneFluidCappedFacePartitionSet& cappedFacePartitions,
     const SceneFluidCellVolumeSet& volumes,
     const SceneFluidRegionConnectivity& connectivity,
     const SceneFluidPressureControlVolumeSet& pressureVolumes);

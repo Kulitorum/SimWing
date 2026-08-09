@@ -339,6 +339,8 @@ target_link_libraries(simwing_scene_fluid_grid_epoch PUBLIC
 )
 
 add_library(simwing_scene_fluid_opening_cap STATIC
+    src/fsi/scene_fluid_capped_face_partition.cpp
+    src/fsi/scene_fluid_capped_face_partition.h
     src/fsi/scene_fluid_opening_cap.cpp
     src/fsi/scene_fluid_opening_cap.h
     src/fsi/scene_fluid_opening_face_crossing.cpp
@@ -355,6 +357,7 @@ target_include_directories(simwing_scene_fluid_opening_cap PUBLIC
 )
 target_link_libraries(simwing_scene_fluid_opening_cap PUBLIC
     simwing_scene_fluid_geometry
+    simwing_scene_fluid_grid_epoch
     simwing_scene_fluid_surface
 )
 
@@ -1210,6 +1213,12 @@ add_executable(simwing-scene-fluid-opening-face-crossing-test
 target_link_libraries(simwing-scene-fluid-opening-face-crossing-test
     PRIVATE simwing_scene_fluid_opening_cap simwing_scene_structure)
 
+add_executable(simwing-scene-fluid-capped-face-partition-test
+    tests/simwing_scene_fluid_capped_face_partition_test.cpp
+)
+target_link_libraries(simwing-scene-fluid-capped-face-partition-test
+    PRIVATE simwing_scene_fluid_opening_cap simwing_scene_structure)
+
 add_executable(simwing-scene-fluid-opening-flux-test
     tests/simwing_scene_fluid_opening_flux_test.cpp
 )
@@ -1959,6 +1968,8 @@ add_test(NAME simwing_scene_fluid_opening_patch
     COMMAND simwing-scene-fluid-opening-patch-test)
 add_test(NAME simwing_scene_fluid_opening_face_crossing
     COMMAND simwing-scene-fluid-opening-face-crossing-test)
+add_test(NAME simwing_scene_fluid_capped_face_partition
+    COMMAND simwing-scene-fluid-capped-face-partition-test)
 add_test(NAME simwing_scene_fluid_opening_flux
     COMMAND simwing-scene-fluid-opening-flux-test)
 add_test(NAME simwing_scene_fluid_pressure_traction
