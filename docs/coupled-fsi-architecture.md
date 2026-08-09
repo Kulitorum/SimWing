@@ -421,6 +421,7 @@ src/fsi/
     scene_fluid_region_continuity.* consecutive volume/flux compatibility
     scene_fluid_region_connectivity.* pressure components and gauges
     scene_fluid_pressure_control_volume.* sparse volume-weighted unknowns
+    scene_fluid_pressure_face_link.* exact same-region Cartesian links
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -623,8 +624,16 @@ fixed-grid cell/region IDs preserve identity across accepted motion, while
 region and component membership provide exact volume weights and one
 deterministic gauge volume per component. The large-tetrahedron regression
 retains mixed cut cells and 24 full interior cells and closes every cell,
-region, component, and the full domain. It deliberately owns no face
-conductance and performs no projection yet. A canonical Qt-free structural
+region, component, and the full domain. A complementary immutable face-link
+owner now consumes the exact face partitions and connects only matching
+same-region pressure volumes. A resolved nested face retains its exact
+exterior, annular-cell, and inner-cell areas as separate links; an untouched
+face receives one full-area link only when both adjacent sparse cells have one
+unambiguous common region. Material/open-chain/coplanar ambiguity remains
+explicitly unresolved, and face-owned authored openings are reserved and
+unlinked rather than silently becoming full same-region faces. The published
+geometry weight is area over center distance; physical coefficients, opening
+links, and projection remain unimplemented. A canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.

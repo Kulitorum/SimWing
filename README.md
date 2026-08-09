@@ -550,8 +550,14 @@ grid now starts with an immutable pressure-control-volume topology: every
 positive sparse cell/region volume owns one pressure unknown, stable fixed-grid
 cell/region ID, volume weight, component, and deterministic gauge owner. Mixed
 cut cells and full interior cells close independently and exactly recover all
-region and domain volumes. Face conductances and the actual projection remain
-future work. Nonplanar or concave openings, surface
+region and domain volumes. A complementary immutable face topology now links
+those unknowns only through exact same-region Cartesian areas. Resolved nested
+interfaces retain one link per region partition; untouched faces require one
+unambiguous common region. Material/interface ambiguity remains unlinked, and
+a face-owned authored opening is explicitly reserved for future opening
+coupling instead of being smeared into a full-face link. Physical pressure
+coefficients, opening links, and the actual projection remain future work.
+Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own
 geometry and transfer only.

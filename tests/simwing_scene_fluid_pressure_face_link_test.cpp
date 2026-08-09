@@ -1,0 +1,329 @@
+#include "scene_fluid_pressure_face_link.h"
+
+#include <algorithm>
+#include <array>
+#include <cmath>
+#include <cstdio>
+#include <map>
+#include <stdexcept>
+#include <utility>
+
+namespace {
+
+using namespace simwing::fsi;
+
+int failures = 0;
+
+void check(const bool condition, const char* message) {
+    if (!condition) {
+        std::fprintf(stderr, "FAIL: %s\n", message);
+        ++failures;
+    }
+}
+
+void checkNear(const double actual,
+               const double expected,
+               const double tolerance,
+               const char* message) {
+    if (!std::isfinite(actual) || std::abs(actual - expected) > tolerance) {
+        std::fprintf(stderr,
+                     "FAIL: %s (actual %.17g expected %.17g)\n",
+                     message, actual, expected);
+        ++failures;
+    }
+}
+
+template<typename Callback>
+void expectInvalid(Callback&& callback, const char* message) {
+    bool rejected = false;
+    try {
+        callback();
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected, message);
+}
+
+template<typename Callback>
+void expectLimited(Callback&& callback, const char* message) {
+    bool rejected = false;
+    try {
+        callback();
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected, message);
+}
+
+void addTetra(Scene& scene,
+              const StableId vertexBase,
+              const StableId triangleBase,
+              const StableId insideRegion,
+              const StableId outsideRegion,
+              const double leftX,
+              const double rightX,
+              const double yRadius,
+              const double zRadius,
+              const StableId sheet,
+              const bool openMouth = false) {
+    scene.vertices.insert(scene.vertices.end(), {
+        {vertexBase + 0, {leftX, 1.5, 1.45}},
+        {vertexBase + 1, {rightX, 1.5 - yRadius, 1.45 - zRadius}},
+        {vertexBase + 2, {rightX, 1.5 + yRadius, 1.45 - zRadius}},
+        {vertexBase + 3, {rightX, 1.5, 1.45 + zRadius}},
+    });
+    const std::array<Vec2, 3> chart{{{0.0, 0.0},
+                                      {1.0, 0.0},
+                                      {0.0, 1.0}}};
+    scene.triangles.insert(scene.triangles.end(), {
+        {triangleBase + 0,
+         {vertexBase + 0, vertexBase + 2, vertexBase + 1},
+         chart, insideRegion, outsideRegion, 100, sheet, SurfaceRole::Skin},
+        {triangleBase + 1,
+         {vertexBase + 0, vertexBase + 1, vertexBase + 3},
+         chart, insideRegion, outsideRegion, 100, sheet, SurfaceRole::Skin},
+        {triangleBase + 2,
+         {vertexBase + 0, vertexBase + 3, vertexBase + 2},
+         chart, insideRegion, outsideRegion, 100, sheet, SurfaceRole::Skin},
+    });
+    if (openMouth) {
+        scene.openings.push_back({
+            700, {vertexBase + 1, vertexBase + 2, vertexBase + 3},
+            insideRegion, outsideRegion, OpeningRole::Intake,
+        });
+    } else {
+        scene.triangles.push_back({
+            triangleBase + 3,
+            {vertexBase + 1, vertexBase + 2, vertexBase + 3},
+            chart, insideRegion, outsideRegion, 100, sheet,
+            SurfaceRole::Skin,
+        });
+    }
+}
+
+Scene nestedScene() {
+    Scene scene;
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-pressure-face-links";
+    scene.metadata.exporterVersion =
+        "scene-fluid-pressure-face-link-test/1";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "outer"},
+        {3, RegionKind::Cell, "inner"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900.0, 650.0, 220.0, 0.015,
+         0.041, 0.02, 0.0125, 2.5e-12},
+    };
+    addTetra(scene, 10, 500, 2, 1, 1.2, 2.8, 0.3, 0.3, 900);
+    addTetra(scene, 20, 600, 3, 2, 1.6, 2.4, 0.1, 0.1, 901);
+    return scene;
+}
+
+Scene openScene() {
+    Scene scene;
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-pressure-face-open";
+    scene.metadata.exporterVersion =
+        "scene-fluid-pressure-face-link-test/1";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "cell"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900.0, 650.0, 220.0, 0.015,
+         0.041, 0.02, 0.0125, 2.5e-12},
+    };
+    addTetra(scene, 10, 500, 2, 1, 1.2, 2.0, 0.3, 0.3, 900, true);
+    return scene;
+}
+
+fluid::PeriodicCartesianGrid grid() {
+    return {{4, 4, 4}, {}, {4.0, 4.0, 4.0}};
+}
+
+struct Fixture {
+    Scene scene;
+    SceneFluidSurfaceAssembly surface;
+    SceneStructureAssembly structureAssembly;
+    Structure structure;
+    SceneFluidSurfaceTransfer transfer;
+    SceneFluidSurfaceState state;
+    SceneFluidGridEpoch epoch;
+    SceneFluidOpeningCapSet caps;
+    SceneFluidOpeningQuadratureSet openingQuadrature;
+    SceneFluidOpeningGridPatchSet openingPatches;
+    SceneFluidCellVolumeSet volumes;
+    SceneFluidRegionConnectivity connectivity;
+    SceneFluidPressureControlVolumeSet pressureVolumes;
+
+    explicit Fixture(Scene source)
+        : scene(std::move(source)),
+          surface(assembleSceneFluidSurface(scene)),
+          structureAssembly(assembleSceneStructure(scene)),
+          structure(structureAssembly.definition),
+          transfer(surface.definition,
+                   structureAssembly.mappings,
+                   structure),
+          state(captureSceneFluidSurfaceState(
+              surface.definition, structureAssembly.mappings, structure)),
+          epoch(buildSceneFluidGridEpoch(
+              surface.definition, state, grid(), transfer)),
+          caps(buildSceneFluidOpeningCaps(surface.definition, state)),
+          openingQuadrature(buildSceneFluidOpeningQuadrature(
+              surface.definition, state, caps)),
+          openingPatches(buildSceneFluidOpeningGridPatches(
+              surface.definition, state, caps, openingQuadrature, grid())),
+          volumes(buildSceneFluidCellVolumes(
+              surface.definition, state, grid(), transfer, epoch)),
+          connectivity(buildSceneFluidRegionConnectivity(
+              surface.definition)),
+          pressureVolumes(buildSceneFluidPressureControlVolumes(
+              surface.definition, volumes, connectivity)) {}
+
+    SceneFluidPressureFaceLinkSet links(
+        const SceneFluidPressureFaceLinkSettings& settings = {},
+        const SceneFluidPressureFaceLinkLimits& limits = {}) const {
+        return buildSceneFluidPressureFaceLinks(
+            surface.definition, state, grid(), transfer, epoch, caps,
+            openingQuadrature, openingPatches, volumes, connectivity,
+            pressureVolumes, settings, limits);
+    }
+};
+
+void testExactNestedFaceLinks() {
+    Fixture fixture(nestedScene());
+    check(fixture.surface.ok() && fixture.structureAssembly.ok(),
+          "pressure-face nested fixture assembles");
+    const auto first = fixture.links();
+    const auto repeated = fixture.links();
+    check(first == repeated
+              && first.version == sceneFluidPressureFaceLinkVersion
+              && first.fingerprint != 0
+              && first.faces.size() == 3 * grid().cellCount()
+              && first.resolvedPartitionFaceCount == 1
+              && first.unresolvedActiveFaceCount == 0
+              && first.unresolvedAmbiguousFaceCount == 0,
+          "nested pressure face links resolve deterministically without fallback");
+    const auto partitionFace = std::ranges::find(
+        first.faces,
+        SceneFluidPressureFaceStatus::ResolvedPartition,
+        &SceneFluidPressureFace::status);
+    check(partitionFace != first.faces.end()
+              && partitionFace->linkCount == 3,
+          "nested interface face owns one exact link per region area");
+    std::map<StableId, double> areas;
+    for (std::size_t offset = 0;
+         offset < partitionFace->linkCount; ++offset) {
+        const auto& link = first.links[partitionFace->firstLink + offset];
+        areas.emplace(link.regionId, link.areaSquareMeters);
+        const auto& minus = fixture.pressureVolumes.controlVolumes[
+            link.minusControlVolumeIndex];
+        const auto& plus = fixture.pressureVolumes.controlVolumes[
+            link.plusControlVolumeIndex];
+        check(minus.regionId == link.regionId
+                  && plus.regionId == link.regionId
+                  && minus.componentIndex == link.componentIndex
+                  && plus.componentIndex == link.componentIndex,
+              "pressure face link joins matching same-region control volumes");
+        checkNear(link.geometryWeightMeters,
+                  link.areaSquareMeters / link.centerDistanceMeters,
+                  0.0,
+                  "pressure face link retains its exact geometric weight");
+    }
+    checkNear(areas.at(1), 0.955, 3.0e-15,
+              "partitioned pressure face retains exterior area");
+    checkNear(areas.at(2), 0.04, 3.0e-15,
+              "partitioned pressure face retains annular-cell area");
+    checkNear(areas.at(3), 0.005, 3.0e-15,
+              "partitioned pressure face retains inner-cell area");
+    check(first.resolvedFullFaceCount + first.resolvedPartitionFaceCount
+              == first.faces.size()
+              && first.maximumResolvedAreaResidualSquareMeters < 4.0e-15,
+          "every nested-scene periodic face closes its exact linked area");
+    validateSceneFluidPressureFaceLinks(
+        first, fixture.surface.definition, fixture.state, grid(),
+        fixture.transfer, fixture.epoch, fixture.caps,
+        fixture.openingQuadrature, fixture.openingPatches,
+        fixture.volumes, fixture.connectivity, fixture.pressureVolumes);
+}
+
+void testOpeningFacesRemainExplicitlyUnresolved() {
+    Fixture fixture(openScene());
+    const auto links = fixture.links();
+    const auto faceOwnedPatchCount = std::ranges::count(
+        fixture.openingPatches.patches,
+        SceneFluidOpeningPatchOwnerKind::Face,
+        &SceneFluidOpeningGridPatch::ownerKind);
+    check(faceOwnedPatchCount == 1
+              && links.unresolvedOpeningFaceCount == 1,
+          "authored opening owns exactly one unresolved pressure face");
+    for (const auto& face : links.faces) {
+        if (face.status
+            != SceneFluidPressureFaceStatus::UnresolvedOpening) {
+            continue;
+        }
+        check(face.linkCount == 0
+                  && face.linkedAreaSquareMeters == 0.0,
+              "unresolved opening face owns no smeared pressure link");
+    }
+}
+
+void testCorruptionSettingsAndLimits() {
+    Fixture fixture(nestedScene());
+    const auto accepted = fixture.links();
+    auto corrupt = accepted;
+    corrupt.links.front().areaSquareMeters += 0.01;
+    expectInvalid(
+        [&] { validateSceneFluidPressureFaceLinks(
+            corrupt, fixture.surface.definition, fixture.state, grid(),
+            fixture.transfer, fixture.epoch, fixture.caps,
+            fixture.openingQuadrature, fixture.openingPatches,
+            fixture.volumes, fixture.connectivity,
+            fixture.pressureVolumes); },
+        "pressure-face-link validation rejects nested corruption");
+
+    SceneFluidPressureFaceLinkSettings invalidSettings;
+    invalidSettings.areaToleranceSquareMeters = 0.0;
+    expectInvalid(
+        [&] { static_cast<void>(fixture.links(invalidSettings)); },
+        "pressure-face-link assembly rejects zero area tolerance");
+
+    SceneFluidPressureFaceLinkLimits limits;
+    limits.maximumFaces = 3 * grid().cellCount() - 1;
+    expectLimited(
+        [&] { static_cast<void>(fixture.links({}, limits)); },
+        "pressure-face-link assembly bounds face count");
+    limits = {};
+    limits.maximumLinks = accepted.links.size() - 1;
+    expectLimited(
+        [&] { static_cast<void>(fixture.links({}, limits)); },
+        "pressure-face-link assembly bounds link count");
+    limits = {};
+    limits.maximumLinkBytes = accepted.ownedStorageBytes - 1;
+    expectLimited(
+        [&] { static_cast<void>(fixture.links({}, limits)); },
+        "pressure-face-link assembly bounds owned storage");
+}
+
+} // namespace
+
+int main() {
+    try {
+        testExactNestedFaceLinks();
+        testOpeningFacesRemainExplicitlyUnresolved();
+        testCorruptionSettingsAndLimits();
+    } catch (const std::exception& exception) {
+        std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
+        return 1;
+    }
+    if (failures != 0) {
+        std::fprintf(stderr,
+                     "%d scene fluid pressure-face-link check(s) failed\n",
+                     failures);
+        return 1;
+    }
+    std::puts("all scene fluid pressure-face-link checks passed");
+    return 0;
+}
