@@ -677,6 +677,17 @@ flow inward through its authored intake; omitting the rate remains the exact
 frozen zero-flow baseline. Conservative topology rebase/remap, a unique
 corrected MAC reconstruction for partitioned faces, and off-face opening
 transmissibility remain absent. A
+bounded return-path adapter now samples accepted sparse pressure on the
+authoritative material quadrature. Quadrature-v2 retains exact negative- and
+positive-side cell owners for both cell-owned and face-owned patches. Each
+side resolves to one current cell/region pressure unknown, and the sampler
+requires a shared pressure component before forming a gauge-invariant jump.
+That ordered one-sided field delegates to the existing conservative
+pressure-traction transfer and then the real Structure load accumulator. The
+moving open tetra produces a nonzero load with closed force and moment
+ledgers; a uniform pressure warm-start shift is bit-identical after gauge
+normalization, and sealed independently gauged sides reject explicitly. This
+does not add shear, a polar force, or a second aerodynamic load path. A
 canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded

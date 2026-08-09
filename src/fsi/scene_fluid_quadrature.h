@@ -10,7 +10,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidQuadratureVersion = 1;
+inline constexpr std::uint32_t sceneFluidQuadratureVersion = 2;
 
 enum class SceneFluidQuadratureOwnerKind : std::uint8_t {
     Cell = 1,
@@ -24,6 +24,11 @@ struct SceneFluidQuadraturePoint {
     double areaSquareMeters = 0.0;
     StableId negativeSideRegionId = invalidStableId;
     StableId positiveSideRegionId = invalidStableId;
+    // Cell-owned patches sample both sides in their unique owner cell.
+    // Face-owned patches retain the exact adjacent cell selected by authored
+    // winding for each side, so downstream pressure lookup is unambiguous.
+    std::size_t negativeSideCellIndex = 0;
+    std::size_t positiveSideCellIndex = 0;
     StableId materialId = invalidStableId;
     StableId sheetId = invalidStableId;
     SurfaceRole role = SurfaceRole::Skin;

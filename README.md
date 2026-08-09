@@ -588,6 +588,15 @@ through its intake. Sparse cell/region appearance or disappearance rejects as
 a topology rebase. Conservative rebase/remap, corrected-MAC reconstruction
 across partitioned faces, off-face opening transmissibility, and general
 moving-boundary projection remain future work.
+Accepted projection pressure now also returns through the authoritative
+surface path. Quadrature-v2 retains the exact cell owner of each authored
+surface side; a bounded sampler resolves those cell/region pressure unknowns,
+requires both sides to share one gauge component, and passes their difference
+to the existing conservative pressure-traction transfer. The expanding open
+tetra therefore produces a nonzero, force/moment-conservative XPBD load from
+its scene-derived pressure. Uniform pressure-gauge warm starts give identical
+samples and loads, while a sealed inside/outside pair with independent gauges
+rejects rather than inventing an arbitrary pressure jump.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own

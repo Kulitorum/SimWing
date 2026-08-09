@@ -83,6 +83,10 @@ std::uint64_t definitionFingerprint(
         fingerprint.real(point.areaSquareMeters);
         fingerprint.integer(point.negativeSideRegionId);
         fingerprint.integer(point.positiveSideRegionId);
+        fingerprint.integer(static_cast<std::uint64_t>(
+            point.negativeSideCellIndex));
+        fingerprint.integer(static_cast<std::uint64_t>(
+            point.positiveSideCellIndex));
         fingerprint.integer(point.materialId);
         fingerprint.integer(point.sheetId);
         fingerprint.enumeration(point.role);
@@ -104,7 +108,9 @@ SceneFluidQuadraturePoint pointFromPatch(
     const SceneFluidQuadratureOwnerKind ownerKind,
     const std::uint64_t stableId,
     const StableId negativeRegion,
-    const StableId positiveRegion) {
+    const StableId positiveRegion,
+    const std::size_t negativeCellIndex,
+    const std::size_t positiveCellIndex) {
     const auto& patch = patches.patches[sourcePatchIndex];
     const auto& triangle = surface.triangles[patch.triangleIndex];
     return {
@@ -114,11 +120,35 @@ SceneFluidQuadraturePoint pointFromPatch(
         patch.areaSquareMeters,
         negativeRegion,
         positiveRegion,
+        negativeCellIndex,
+        positiveCellIndex,
         surface.materials[triangle.materialIndex].id,
         triangle.sheetId,
         triangle.role,
         ownerKind,
     };
+}
+
+std::size_t lowerCellIndex(
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::GridFaceAxis axis,
+    const std::size_t i,
+    const std::size_t j,
+    const std::size_t k) {
+    const auto counts = grid.cellCounts();
+    switch (axis) {
+    case fluid::GridFaceAxis::X:
+        return grid.cellIndex(
+            (i + counts.x - 1) % counts.x, j, k);
+    case fluid::GridFaceAxis::Y:
+        return grid.cellIndex(
+            i, (j + counts.y - 1) % counts.y, k);
+    case fluid::GridFaceAxis::Z:
+        return grid.cellIndex(
+            i, j, (k + counts.z - 1) % counts.z);
+    }
+    throw std::invalid_argument(
+        "scene fluid quadrature has an invalid face axis");
 }
 
 } // namespace
@@ -216,7 +246,8 @@ SceneFluidQuadratureDefinition buildSceneFluidQuadrature(
         result.points.push_back(pointFromPatch(
             surface, patches, owned.sourcePatchIndex,
             SceneFluidQuadratureOwnerKind::Cell, stableId,
-            owned.negativeSideRegionId, owned.positiveSideRegionId));
+            owned.negativeSideRegionId, owned.positiveSideRegionId,
+            owned.cellIndex, owned.cellIndex));
     }
     for (const auto& owned : ownership.facePatches) {
         const std::uint64_t stableId = pointStableId(
@@ -226,10 +257,19 @@ SceneFluidQuadratureDefinition buildSceneFluidQuadrature(
              static_cast<std::uint64_t>(owned.i),
              static_cast<std::uint64_t>(owned.j),
              static_cast<std::uint64_t>(owned.k)});
+        const std::size_t lower = lowerCellIndex(
+            grid, owned.axis, owned.i, owned.j, owned.k);
+        const std::size_t upper = grid.cellIndex(
+            owned.i, owned.j, owned.k);
+        const std::size_t negativeCell =
+            owned.triangleNormalAxisSign > 0 ? lower : upper;
+        const std::size_t positiveCell =
+            owned.triangleNormalAxisSign > 0 ? upper : lower;
         result.points.push_back(pointFromPatch(
             surface, patches, owned.lowerCellSourcePatchIndex,
             SceneFluidQuadratureOwnerKind::Face, stableId,
-            owned.negativeSideRegionId, owned.positiveSideRegionId));
+            owned.negativeSideRegionId, owned.positiveSideRegionId,
+            negativeCell, positiveCell));
     }
     std::sort(result.points.begin(), result.points.end(),
               [](const auto& first, const auto& second) {

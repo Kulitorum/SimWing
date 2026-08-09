@@ -155,7 +155,9 @@ void testCellQuadratureTransfer() {
                   && point.positiveSideRegionId == 2
                   && point.materialId == 100
                   && point.sheetId == 900
-                  && point.ownerKind == SceneFluidQuadratureOwnerKind::Cell,
+                  && point.ownerKind == SceneFluidQuadratureOwnerKind::Cell
+                  && point.negativeSideCellIndex
+                      == point.positiveSideCellIndex,
               "scene fluid quadrature: authored physical ownership reaches every point");
     }
     checkNear(area, 1.28, 3.0e-15,
@@ -189,8 +191,10 @@ void testFaceQuadratureDoesNotDoubleCount() {
               && boundary.quadrature.points.size() == 3,
           "scene fluid quadrature: three paired grid faces create three points");
     for (const auto& point : boundary.quadrature.points) {
-        check(point.ownerKind == SceneFluidQuadratureOwnerKind::Face,
-              "scene fluid quadrature: shared-plane ownership remains explicit");
+        check(point.ownerKind == SceneFluidQuadratureOwnerKind::Face
+                  && point.positiveSideCellIndex
+                      == point.negativeSideCellIndex + 16,
+              "scene fluid quadrature: shared-plane ownership retains exact side cells");
     }
     const auto result = evaluateSceneFluidQuadrature(
         boundary.transfer,

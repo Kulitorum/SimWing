@@ -1,4 +1,4 @@
-#include "scene_fluid_pressure_projection.h"
+#include "scene_fluid_pressure_sampling.h"
 
 #include <algorithm>
 #include <array>
@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <ranges>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -81,7 +82,7 @@ std::array<Vec2, 3> intrinsicChart(
                  0.0, diagonalSquared - projected * projected))}}};
 }
 
-Scene openTetraScene() {
+Scene tetraScene(const bool open = true) {
     Scene scene;
     scene.metadata.designChecksum =
         "sha256:scene-fluid-pressure-volume-rate";
@@ -95,11 +96,12 @@ Scene openTetraScene() {
         {100, "fabric", 900.0, 650.0, 220.0, 0.015,
          0.041, 0.02, 0.0125, 2.5e-12},
     };
+    const double mouthX = open ? 2.0 : 2.2;
     const std::array<Vec3, 4> positions{{
         {1.2, 1.5, 1.45},
-        {2.0, 1.2, 1.15},
-        {2.0, 1.8, 1.15},
-        {2.0, 1.5, 1.75},
+        {mouthX, 1.2, 1.15},
+        {mouthX, 1.8, 1.15},
+        {mouthX, 1.5, 1.75},
     }};
     for (std::size_t vertex = 0; vertex < positions.size(); ++vertex) {
         scene.vertices.push_back({10 + vertex, positions[vertex]});
@@ -116,9 +118,17 @@ Scene openTetraScene() {
             2, 1, 100, 900, SurfaceRole::Skin,
         });
     }
-    scene.openings = {
-        {700, {11, 12, 13}, 2, 1, OpeningRole::Intake},
-    };
+    if (open) {
+        scene.openings = {
+            {700, {11, 12, 13}, 2, 1, OpeningRole::Intake},
+        };
+    } else {
+        const std::array<std::size_t, 3> mouth{{1, 2, 3}};
+        scene.triangles.push_back({
+            503, {11, 12, 13}, intrinsicChart(positions, mouth),
+            2, 1, 100, 900, SurfaceRole::Skin,
+        });
+    }
     return scene;
 }
 
@@ -138,7 +148,9 @@ SceneStructureAssembly fixedMouthAssembly(const Scene& scene) {
 }
 
 struct Fixture {
-    Scene scene = openTetraScene();
+    explicit Fixture(const bool open = true) : scene(tetraScene(open)) {}
+
+    Scene scene;
     SceneFluidSurfaceAssembly surface = assembleSceneFluidSurface(scene);
     SceneStructureAssembly structureAssembly = fixedMouthAssembly(scene);
     Structure structure{structureAssembly.definition};
@@ -347,6 +359,113 @@ void testMovingVolumeProjection() {
     check(correctedApertureFlow < -1.0e-4,
           "expanding cell pressure correction draws flow inward through its intake");
 
+    const auto samples = sampleSceneFluidProjectedPressure(
+        current.epoch.quadrature, current.pressureVolumes, projected);
+    const auto repeatedSamples = sampleSceneFluidProjectedPressure(
+        current.epoch.quadrature, current.pressureVolumes, projected);
+    check(samples == repeatedSamples
+              && samples.fingerprint != 0
+              && samples.pressures.size()
+                  == current.epoch.quadrature.points.size()
+              && samples.maximumAbsolutePressureDifferencePascals > 1.0e-4,
+          "accepted moving pressure samples deterministically on every material patch");
+    for (std::size_t index = 0; index < samples.bindings.size(); ++index) {
+        const auto& binding = samples.bindings[index];
+        const auto& pressure = samples.pressures[index];
+        check(binding.sampleIndex == index
+                  && binding.stableId == pressure.stableId
+                  && binding.componentIndex
+                      == current.pressureVolumes.controlVolumes[
+                             binding.negativeSideControlVolumeIndex]
+                             .componentIndex
+                  && binding.componentIndex
+                      == current.pressureVolumes.controlVolumes[
+                             binding.positiveSideControlVolumeIndex]
+                             .componentIndex,
+              "surface pressure sample binds both sides in one gauge component");
+        checkNear(binding.pressureDifferencePascals,
+                  pressure.negativeSidePressurePascals
+                      - pressure.positiveSidePressurePascals,
+                  0.0,
+                  "surface pressure sample retains its exact one-sided difference");
+    }
+    const auto transferred = evaluateSceneFluidProjectedPressureQuadrature(
+        fixture.surface.definition, current.state, fixture.transfer,
+        current.epoch.quadrature, samples);
+    check(transferred.diagnostics().finite
+              && transferred.diagnostics().forceResidualNormNewtons
+                  < 1.0e-12
+              && transferred.diagnostics().momentResidualNormNewtonMeters
+                  < 1.0e-12
+              && std::hypot(
+                  transferred.diagnostics().integratedSurfaceForceNewtons.x,
+                  transferred.diagnostics().integratedSurfaceForceNewtons.y,
+                  transferred.diagnostics().integratedSurfaceForceNewtons.z)
+                  > 1.0e-5,
+          "projected pressure reaches conservative nonzero structural traction");
+    std::vector<double> shiftedWarm(pressureOperator.rows.size(), 73.0);
+    const auto shiftedProjection = projectSceneFluidPressureLinkFlows(
+        fixture.surface.definition, current.state, grid(), fixture.transfer,
+        current.epoch, current.caps, current.openingQuadrature,
+        current.openingPatches, openingFlux, predictedVelocity,
+        current.volumes, fixture.connectivity, current.pressureVolumes,
+        faceLinks, pressureOperator, rates, shiftedWarm, settings);
+    const auto shiftedSamples = sampleSceneFluidProjectedPressure(
+        current.epoch.quadrature, current.pressureVolumes,
+        shiftedProjection);
+    const auto shiftedTransfer =
+        evaluateSceneFluidProjectedPressureQuadrature(
+            fixture.surface.definition, current.state, fixture.transfer,
+            current.epoch.quadrature, shiftedSamples);
+    check(shiftedProjection.pressurePascals == projected.pressurePascals
+              && shiftedSamples.pressures == samples.pressures
+              && shiftedSamples.bindings == samples.bindings
+              && shiftedTransfer == transferred,
+          "uniform pressure warm-start gauge shifts leave sampled traction exact");
+    fixture.transfer.addLoadsTo(fixture.structure, transferred);
+    check(fixture.structure.diagnostics().pendingExternalForceNewtons
+              == transferred.diagnostics().transferredNodalForceNewtons,
+          "projected pressure load reaches the live Structure load accumulator");
+    validateSceneFluidProjectedPressureSamples(
+        samples, current.epoch.quadrature, current.pressureVolumes,
+        projected);
+    auto corruptSamples = samples;
+    corruptSamples.bindings.front().pressureDifferencePascals += 1.0;
+    expectInvalid(
+        [&] { validateSceneFluidPressureSampleIntegrity(corruptSamples); },
+        "projected-pressure sampling rejects nested ledger corruption");
+    SceneFluidPressureSamplingLimits samplingLimits;
+    samplingLimits.maximumSamples = samples.bindings.size() - 1;
+    expectLimited(
+        [&] { static_cast<void>(sampleSceneFluidProjectedPressure(
+            current.epoch.quadrature, current.pressureVolumes, projected,
+            samplingLimits)); },
+        "projected-pressure sampling bounds sample count");
+    samplingLimits = {};
+    samplingLimits.maximumSamplingBytes = samples.ownedStorageBytes - 1;
+    expectLimited(
+        [&] { static_cast<void>(sampleSceneFluidProjectedPressure(
+            current.epoch.quadrature, current.pressureVolumes, projected,
+            samplingLimits)); },
+        "projected-pressure sampling bounds owned storage");
+
+    auto truncatedSettings = settings;
+    truncatedSettings.pressureSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-30;
+    truncatedSettings.pressureSolve.relativeResidualTolerance = 0.0;
+    truncatedSettings.pressureSolve.maximumIterations = 0;
+    const auto rejectedProjection = projectSceneFluidPressureLinkFlows(
+        fixture.surface.definition, current.state, grid(), fixture.transfer,
+        current.epoch, current.caps, current.openingQuadrature,
+        current.openingPatches, openingFlux, predictedVelocity,
+        current.volumes, fixture.connectivity, current.pressureVolumes,
+        faceLinks, pressureOperator, rates, warm, truncatedSettings);
+    expectInvalid(
+        [&] { static_cast<void>(sampleSceneFluidProjectedPressure(
+            current.epoch.quadrature, current.pressureVolumes,
+            rejectedProjection)); },
+        "pressure sampling rejects a non-converged projection attempt");
+
     const auto frozen = projectSceneFluidPressureLinkFlows(
         fixture.surface.definition, current.state, grid(), fixture.transfer,
         current.epoch, current.caps, current.openingQuadrature,
@@ -374,6 +493,40 @@ void testMovingVolumeProjection() {
             current.pressureVolumes, faceLinks, pressureOperator, rates,
             warm, mismatchedSettings)); },
         "moving-volume projection rejects a pressure-step duration mismatch");
+}
+
+void testIndependentGaugeSamplingRejection() {
+    Fixture fixture(false);
+    const auto current = captureEndpoint(fixture);
+    const auto faceLinks = buildSceneFluidPressureFaceLinks(
+        fixture.surface.definition, current.state, grid(), fixture.transfer,
+        current.epoch, current.caps, current.openingQuadrature,
+        current.openingPatches, current.volumes, fixture.connectivity,
+        current.pressureVolumes);
+    const auto pressureOperator = buildSceneFluidPressureOperator(
+        fixture.surface.definition, current.state, grid(), fixture.transfer,
+        current.epoch, current.caps, current.openingQuadrature,
+        current.openingPatches, current.volumes, fixture.connectivity,
+        current.pressureVolumes, faceLinks);
+    fluid::MacVelocityField velocity(grid());
+    const auto openingFlux = evaluateSceneFluidOpeningFlux(
+        fixture.surface.definition, current.state, current.caps,
+        current.openingQuadrature, current.openingPatches, grid(), velocity);
+    std::vector<double> warm(pressureOperator.rows.size(), 0.0);
+    const auto projection = projectSceneFluidPressureLinkFlows(
+        fixture.surface.definition, current.state, grid(), fixture.transfer,
+        current.epoch, current.caps, current.openingQuadrature,
+        current.openingPatches, openingFlux, velocity, current.volumes,
+        fixture.connectivity, current.pressureVolumes, faceLinks,
+        pressureOperator, warm);
+    check(projection.diagnostics.accepted
+              && pressureOperator.components.size() == 2,
+          "sealed tetra has an accepted zero-flow solve with independent gauges");
+    expectInvalid(
+        [&] { static_cast<void>(sampleSceneFluidProjectedPressure(
+            current.epoch.quadrature, current.pressureVolumes,
+            projection)); },
+        "surface sampling rejects pressure differences across independent gauges");
 }
 
 void testCorruptionAndLimits() {
@@ -414,12 +567,19 @@ void testCorruptionAndLimits() {
 
 } // namespace
 
-int main() {
+int main(const int argc, const char* const argv[]) {
     try {
-        testTopologyStableMovingRates();
-        testStationaryAndTopologyRebase();
-        testMovingVolumeProjection();
-        testCorruptionAndLimits();
+        if (argc == 2 && std::string_view(argv[1]) == "--sampling") {
+            testMovingVolumeProjection();
+            testIndependentGaugeSamplingRejection();
+        } else if (argc == 1) {
+            testTopologyStableMovingRates();
+            testStationaryAndTopologyRebase();
+            testCorruptionAndLimits();
+        } else {
+            std::fprintf(stderr, "unexpected test argument\n");
+            return 2;
+        }
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
         return 1;
@@ -430,6 +590,6 @@ int main() {
                      failures);
         return 1;
     }
-    std::puts("all scene fluid pressure-volume-rate checks passed");
+    std::puts("all scene fluid pressure-volume-rate/sampling checks passed");
     return 0;
 }
