@@ -305,8 +305,11 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   has an aggregate byte ceiling. It does not infer cut-cell volumes or solve
   moving-boundary fluid equations.
 - `simwing_scene_fluid_opening_cap`: builds topology-only virtual caps for
-  simple authored openings. Every separating surface boundary edge must be
-  claimed exactly once; adjacent fabric fixes negative-to-positive winding.
+  simple authored openings. Material and cap incidences must form one closed
+  oriented region cycle around every finite-area edge, including valid
+  three-region sheet/cap junctions; adjacent fabric with the same region pair
+  fixes negative-to-positive winding. A closed material boundary may remain
+  cap-free only while both reference and accepted geometry are collapsed.
   Planar convex loops retain their exact fan and planar concave loops use
   bounded deterministic reference-geometry ear clipping. Scene-v2.2 may
   instead provide one oriented boundary-vertex disk, allowing nonplanar facets
@@ -936,14 +939,15 @@ makes this a certified aerodynamic solver.
   their side chains reuse the actual OCCT rib-triangulation boundary, with a
   maximum 0.25 mm sub-mesh canonicalization when a captured lip corner falls
   between rib mesh samples; larger disagreement rejects export. The
-  real-design regression verifies cap orientation, exact fabric boundary-edge
+  real-design regression verifies complete cap construction through the
+  three-region skin/rib junctions, cap orientation, exact fabric boundary-edge
   reuse, and live Structure motion for every opening vertex. Physical
   fabric/line/pilot settings are mandatory and no engine CLI writes this scene
   yet because the design format has no authoritative source for them. Its
   present local intrinsic charts are not manufacturing flat-pattern UVs, and
-  it does not yet author paired seam chains. General three-region skin/rib
-  surface junctions still prevent the fluid cap owner from consuming the
-  complete real wing as one ordinary two-sided manifold.
+  it does not yet author paired seam chains. The cap owner now consumes the
+  complete real-wing opening set, but the downstream capped cell-volume and
+  worker path still supports only ordinary two-sided manifolds.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
   loads/state, trusted constraint/membrane/bending assembly, explicit optional
   fabric self-contact, rigid-pilot suspension, diagnostics, and composite

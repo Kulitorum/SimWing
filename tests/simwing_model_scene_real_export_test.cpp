@@ -1,6 +1,7 @@
 #include "engine_paths.h"
 #include "input_migration.h"
 #include "nurbs_model.h"
+#include "scene_fluid_opening_cap.h"
 #include "scene_fluid_surface.h"
 #include "scene_structure.h"
 #include "structure_frame.h"
@@ -403,6 +404,14 @@ void testRealDesignCapture(const std::filesystem::path &input,
               == fluidSurface.definition.vertices.size()
               && fluidState.fingerprint != 0,
           "every real opening vertex has live Structure-owned fluid motion");
+    const simwing::fsi::SceneFluidOpeningCapSet openingCaps =
+        simwing::fsi::buildSceneFluidOpeningCaps(
+            fluidSurface.definition, fluidState);
+    check(openingCaps.caps.size() == result.scene.openings.size()
+              && openingCaps.triangles.size()
+                  >= result.scene.openings.size()
+              && openingCaps.totalAreaSquareMeters > 0.0,
+          "real intake and crossport loops produce accepted fluid caps through their junctions");
     const simwing::viewer::StructureFrameMapping mapping =
         simwing::viewer::makeStructureFrameMapping(
             result.scene, assembly, structure);

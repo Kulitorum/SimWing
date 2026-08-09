@@ -526,7 +526,10 @@ accounting only. When that disk is absent, planar convex loops retain their
 exact fan and planar concave loops use deterministic reference-geometry ear
 clipping, so triangle identity stays fixed under accepted motion. Winding comes
 from the adjacent fabric boundary; the individual authored facet normals
-survive, and no cap becomes fabric or traction. The analytic open-tetrahedron
+survive, and no cap becomes fabric or traction. Every finite-area edge must
+form one closed oriented region cycle, including valid three-region
+sheet/cap junctions. A cap-free directed material loop is accepted only while
+both its reference and live geometry remain collapsed. The analytic open-tetrahedron
 regression therefore has a finite cell volume. Stable one-point triangle
 samples now exactly integrate the accepted piecewise-linear cap velocity into
 per-opening surface-sweep rates; a rigid material-plus-cap surface closes that
@@ -739,16 +742,17 @@ projection provenance, including explicit-normal embedded-opening momentum,
 and bounds/revalidates every momentum control volume and material quadrature
 traction before publication.
 Nonplanar openings without authored cap triangles, self-intersecting or folded
-caps, opening-only interior construction vertices, surface junctions,
+caps, opening-only interior construction vertices, branching or inconsistently
+wound surface junctions,
 periodic-boundary ambiguity, and general moving-boundary fluid equations still
 reject or remain open; the grid epoch itself continues to own geometry and
 transfer only. The analytical model exporter now supplies deterministic
 boundary-vertex cap disks for its nonplanar intakes. It reuses the actual skin
 lip and rib-mesh boundary vertices, so every exported opening vertex reaches
-the live Structure-to-fluid surface state. The full real wing still reaches
-three-region skin/rib junctions that the current ordinary two-sided cap owner
-deliberately rejects; exporting the disks does not claim that junction work is
-finished.
+the live Structure-to-fluid surface state. The cap owner now validates the
+full real wing's three-region skin/rib cycles and consumes its complete opening
+set. Integrating those junctions through the downstream capped cell-volume and
+worker path remains open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

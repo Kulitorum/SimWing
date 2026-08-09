@@ -2656,7 +2656,8 @@ private:
                             int &edgeCount,
                             TopoDS_Shape &curveFallback,
                             std::vector<std::string> &warnings,
-                            std::vector<std::string> &errors) const
+                            std::vector<std::string> &errors,
+                            const std::set<int> *sceneContourStations = nullptr) const
     {
         const auto fail = [&errors, ribIndex](const std::string &reason) {
             errors.push_back(
@@ -2673,12 +2674,43 @@ private:
                       return left.firstPoint < right.firstPoint;
                   });
 
-        // The outline is interpolated through the exact rib station points
-        // rather than reusing the panel boundary edges: the lofts are only
-        // validated at the stations and their boundary curves oscillate
-        // measurably out of the rib plane between them. The outline is
-        // still split at the panel region boundaries (vent corners), which
-        // are genuine feature points of the rib.
+        // The rib plane uses a Newell normal so the winding test below is
+        // well conditioned. Detect a collapsed wingtip before choosing the
+        // scene-only coarse edge topology: its retraced zero-area
+        // contour is deliberately retained as the compact curve fallback.
+        gp_XYZ centroid(0.0, 0.0, 0.0);
+        for (const gp_Pnt &point : rib.spatialPoints) {
+            centroid += point.XYZ();
+        }
+        centroid /= static_cast<double>(totalPointCount);
+        gp_XYZ normalAccumulator(0.0, 0.0, 0.0);
+        for (int index = 0; index < totalPointCount; ++index) {
+            const gp_XYZ current =
+                rib.spatialPoints[
+                    static_cast<std::size_t>(index)].XYZ() - centroid;
+            const gp_XYZ next =
+                rib.spatialPoints[
+                    static_cast<std::size_t>(
+                        (index + 1) % totalPointCount)].XYZ() - centroid;
+            normalAccumulator += current.Crossed(next);
+        }
+        double contourExtent = 0.0;
+        for (const gp_Pnt &point : rib.spatialPoints) {
+            contourExtent = std::max(
+                contourExtent,
+                (point.XYZ() - centroid).Modulus());
+        }
+        const bool collapsedContour = normalAccumulator.Modulus()
+            <= 1.0e-6 * contourExtent * contourExtent;
+        const bool useSceneContour =
+            sceneContourStations != nullptr && !collapsedContour;
+
+        // CAD output interpolates through the exact rib station points rather
+        // than reusing panel boundary edges. The scene-only path uses straight
+        // segments between retained coarse skin stations so its rib boundary
+        // shares the same finite-element topology while keeping every endpoint
+        // on the authoritative captured rib contour. Both remain split at the
+        // panel region boundaries (vent corners).
         std::vector<std::pair<int, int>> ranges;
         int cursor = 1;
         for (const RibBoundarySegment &segment : segments) {
@@ -2708,17 +2740,45 @@ private:
         };
         std::vector<BoundaryEdge> boundary;
         for (const auto &[firstPoint, lastPoint] : ranges) {
-            const TopoDS_Edge edge =
-                contourEdge(rib, firstPoint, lastPoint);
-            if (edge.IsNull()) {
-                return fail("Could not build the outline");
+            std::vector<int> edgeStations{firstPoint};
+            if (useSceneContour) {
+                for (auto station = sceneContourStations->upper_bound(
+                         firstPoint);
+                     station != sceneContourStations->end()
+                         && *station < lastPoint;
+                     ++station) {
+                    edgeStations.push_back(*station);
+                }
             }
-            boundary.push_back(
-                {edge,
-                 rib.spatialPoints[
-                     static_cast<std::size_t>(firstPoint - 1)],
-                 rib.spatialPoints[
-                     static_cast<std::size_t>(lastPoint - 1)]});
+            edgeStations.push_back(lastPoint);
+            for (std::size_t station = 0;
+                 station + 1 < edgeStations.size(); ++station) {
+                const int edgeFirst = edgeStations[station];
+                const int edgeLast = edgeStations[station + 1];
+                TopoDS_Edge edge;
+                if (useSceneContour) {
+                    BRepBuilderAPI_MakeEdge makeEdge(
+                        makeLinearSpline(
+                            rib.spatialPoints[static_cast<std::size_t>(
+                                edgeFirst - 1)],
+                            rib.spatialPoints[static_cast<std::size_t>(
+                                edgeLast - 1)]));
+                    if (makeEdge.IsDone()) {
+                        edge = makeEdge.Edge();
+                    }
+                } else {
+                    edge = contourEdge(rib, edgeFirst, edgeLast);
+                }
+                if (edge.IsNull()) {
+                    return fail("Could not build the outline");
+                }
+                boundary.push_back(
+                    {edge,
+                     rib.spatialPoints[
+                         static_cast<std::size_t>(edgeFirst - 1)],
+                     rib.spatialPoints[
+                         static_cast<std::size_t>(edgeLast - 1)]});
+            }
         }
         // Straight trailing-edge seam whenever the airfoil is open there.
         if (boundary.back().end.Distance(boundary.front().start)
@@ -2748,35 +2808,10 @@ private:
             return fail("The outline is not closed");
         }
 
-        // The rib plane, with a Newell normal so the winding test below is
-        // well conditioned, and validated against every contour point.
-        gp_XYZ centroid(0.0, 0.0, 0.0);
-        for (const gp_Pnt &point : rib.spatialPoints) {
-            centroid += point.XYZ();
-        }
-        centroid /= static_cast<double>(totalPointCount);
-        gp_XYZ normalAccumulator(0.0, 0.0, 0.0);
-        for (int index = 0; index < totalPointCount; ++index) {
-            const gp_XYZ current =
-                rib.spatialPoints[
-                    static_cast<std::size_t>(index)].XYZ() - centroid;
-            const gp_XYZ next =
-                rib.spatialPoints[
-                    static_cast<std::size_t>(
-                        (index + 1) % totalPointCount)].XYZ() - centroid;
-            normalAccumulator += current.Crossed(next);
-        }
-        double contourExtent = 0.0;
-        for (const gp_Pnt &point : rib.spatialPoints) {
-            contourExtent = std::max(
-                contourExtent,
-                (point.XYZ() - centroid).Modulus());
-        }
         // A collapsed rib encloses no area (the wingtip typically closes
         // the wing with a zero-thickness profile whose lower side retraces
         // the upper one). No face exists there; export the outline curves.
-        if (normalAccumulator.Modulus()
-            <= 1.0e-6 * contourExtent * contourExtent) {
+        if (collapsedContour) {
             std::vector<TopoDS_Shape> outline;
             outline.reserve(boundary.size());
             for (const BoundaryEdge &edge : boundary) {
@@ -4008,6 +4043,7 @@ public:
         };
         std::size_t openingOrdinal = 0;
         std::vector<PendingIntake> pendingIntakes;
+        std::set<std::pair<StableId, int>> pendingRibBoundaryVertices;
         std::vector<RibOuterBoundary> ribOuterBoundaries;
         double maximumRibWeldDeviationMillimetres = 0.0;
         for (const SimRegionCapture &capture : simRegions_) {
@@ -4076,6 +4112,16 @@ public:
                 }
                 if (!ribWeldValid) {
                     continue;
+                }
+                if (capture.authoredSurface) {
+                    for (std::size_t row = 0; row < grid.size(); ++row) {
+                        pendingRibBoundaryVertices.emplace(
+                            vertexId(grid[row].front()),
+                            capture.panelIndex);
+                        pendingRibBoundaryVertices.emplace(
+                            vertexId(grid[row].back()),
+                            capture.panelIndex - 1);
+                    }
                 }
                 if (!capture.authoredSurface) {
                     PendingIntake intake;
@@ -4172,6 +4218,13 @@ public:
                 ribSegments[panel.panelIndex - 1].push_back(
                     {panel.firstPoint, panel.lastPoint});
             }
+        }
+        std::map<int, std::set<int>> sceneRibContourStations;
+        for (const SimRegionCapture &capture : simRegions_) {
+            auto &first = sceneRibContourStations[capture.panelIndex];
+            auto &last = sceneRibContourStations[capture.panelIndex - 1];
+            first.insert(capture.stations.begin(), capture.stations.end());
+            last.insert(capture.stations.begin(), capture.stations.end());
         }
 
         const auto ribCandidateCells = [&cells](int ribIndex,
@@ -4320,7 +4373,9 @@ public:
                                         ignoredEdgeCount,
                                         curveFallback,
                                         ribWarnings,
-                                        ribErrors);
+                                        ribErrors,
+                                        &sceneRibContourStations.at(
+                                            ribIndex));
             } catch (const Standard_Failure &failure) {
                 ribErrors.push_back(
                     "OCCT failed building rib " + std::to_string(ribIndex)
@@ -4639,6 +4694,19 @@ public:
             ribBoundaryAliases.emplace(id, replacement);
             return replacement;
         };
+
+        for (const auto &[id, ribIndex] : pendingRibBoundaryVertices) {
+            const bool hasFabricRib = std::ranges::any_of(
+                ribOuterBoundaries,
+                [ribIndex](const RibOuterBoundary &boundary) {
+                    return boundary.ribIndex == ribIndex;
+                });
+            if (hasFabricRib
+                && !canonicalRibBoundaryVertex(id, ribIndex)) {
+                addError(
+                    "Captured skin boundary could not be canonicalized to its rib-mesh station");
+            }
+        }
 
         // A fluid intake must follow actual Structure-owned fabric edges.
         // The two spanwise lips already come from the skin grid. Complete

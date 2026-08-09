@@ -594,9 +594,12 @@ cells and surfaces whose face-local contours cross tile boundaries. A separate
 whole-surface divergence calculation verifies the global region totals. Nested
 analytic tetrahedra, a rigid accepted remap, and a large cavity with 24 full
 interior cells are regressions. Scene-v2.2 can attach one oriented
-boundary-vertex cap disk to an opening. A topology-only owner matches every
-loop edge to one separating-surface boundary and derives final winding from the
-adjacent fabric. Without an explicit disk, planar convex loops preserve their
+boundary-vertex cap disk to an opening. A topology-only owner requires one
+closed oriented region cycle around every finite-area material-plus-cap edge,
+including valid three-region sheet/cap junctions, and derives final winding
+from adjacent fabric with the same region pair. Closed directed material loops
+may remain cap-free only while both reference and accepted geometry are
+collapsed. Without an explicit disk, planar convex loops preserve their
 exact fan and planar concave loops use bounded deterministic ear clipping from
 reference geometry. An authored disk may be nonplanar and retains each facet's
 normal and identity under accepted motion. Folded, intersecting, degenerate,
@@ -621,7 +624,7 @@ crossports, and verifies exact global cancellation. Partial-face tiles integrate
 analytically, linear off-face flow is recovered, reversed velocity reverses
 sign, and co-moving air/mouth motion has zero relative flux.
 Unauthored nonplanar, folded, or self-intersecting openings, opening-only cap
-vertices, surface junctions, inconsistent winding, and general moving-boundary
+vertices, branching junctions, inconsistent winding, and general moving-boundary
 fluid equations remain open. A bounded two-epoch continuity owner now binds
 consecutive accepted volume and flux products by their exact surface-state and
 producer fingerprints. It trapezoidally integrates endpoint outward relative
@@ -926,9 +929,10 @@ spanwise lips reuse skin vertices and their side chains follow actual rib-mesh
 boundary edges; bounded lip canonicalization removes otherwise motionless
 opening-only vertices. The real 3.28 regression verifies oriented nondegenerate
 cap facets and captures every opening vertex through the live Structure-to-fluid
-surface adapter. General three-region skin/rib mouth junctions remain outside
-the ordinary two-sided cap owner, so it does not yet consume the complete wing
-cap set. Scene assembly adds per-sheet bending and preserves the junction graph.
+surface adapter. The cap owner validates the three-region skin/rib mouth cycles
+and consumes the complete real-wing opening set; downstream capped cell-volume
+and worker integration remains restricted to ordinary two-sided manifolds.
+Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy
 because scene-v2 has no authoritative contact material yet. `softwing_core`

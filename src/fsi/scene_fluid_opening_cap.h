@@ -18,6 +18,11 @@ struct SceneFluidOpeningCapSettings {
     // scale-relative orientation tolerance for simple-loop validation and
     // deterministic triangulation as well as convexity classification.
     double convexityTolerance = 1.0e-12;
+    // A directed unresolved material-boundary loop may remain cap-free only
+    // while both reference and accepted geometry have area no larger than
+    // this fraction of the loop's squared extent. This represents a closed
+    // collapsed wingtip, not a finite aperture.
+    double collapsedBoundaryRelativeAreaTolerance = 1.0e-6;
 
     bool operator==(const SceneFluidOpeningCapSettings&) const = default;
 };
@@ -89,14 +94,16 @@ struct SceneFluidOpeningCap {
     }
 };
 
-// A virtual cap is fluid topology, not fabric. Simple opening loops exactly own
-// every boundary edge of an otherwise closed, consistently wound separating
-// surface. Planar loops may omit cap triangles: convex loops then retain the
-// exact fan and concave loops receive deterministic reference-geometry ear
-// clipping. A nonplanar loop must author one oriented boundary-vertex disk;
-// its individual triangle normals survive accepted motion. Cap winding is
-// derived from the adjacent fabric edge and retains the opening's
-// negative/positive region order. No cap enters Structure or traction transfer.
+// A virtual cap is fluid topology, not fabric. Material and cap incidences
+// must form one oriented closed region cycle around every finite-area edge;
+// this includes consistently wound three-region sheet/cap junctions. A closed
+// material boundary may remain cap-free only while it is collapsed in both
+// reference and accepted geometry. Planar loops may omit cap triangles:
+// convex loops then retain the exact fan and concave loops receive
+// deterministic reference-geometry ear clipping. A nonplanar loop must author
+// one oriented boundary-vertex disk; its individual triangle normals survive
+// accepted motion. Cap winding is derived from an adjacent fabric edge with
+// the same region pair. No cap enters Structure or traction transfer.
 struct SceneFluidOpeningCapSet {
     std::uint32_t version = sceneFluidOpeningCapVersion;
     std::uint64_t fingerprint = 0;

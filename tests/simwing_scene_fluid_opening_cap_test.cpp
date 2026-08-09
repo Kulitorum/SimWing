@@ -120,6 +120,126 @@ Scene openTetraScene() {
     return scene;
 }
 
+Scene collapsedBoundaryScene() {
+    Scene scene;
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-collapsed-boundary";
+    scene.metadata.exporterVersion = "scene-fluid-opening-cap-test/1";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "cell"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900.0, 650.0, 220.0, 0.015,
+         0.041, 0.02, 0.0125, 2.5e-12},
+    };
+    const std::array<Vec3, 4> positions{{
+        {0.0, 1.0, 0.0},
+        {-1.0, 0.0, 0.0},
+        {0.0, 0.0, 0.0},
+        {1.0, 0.0, 0.0},
+    }};
+    for (std::size_t vertex = 0; vertex < positions.size(); ++vertex) {
+        scene.vertices.push_back({10 + vertex, positions[vertex]});
+    }
+    const std::array<std::array<std::size_t, 3>, 3> faces{{
+        {{0, 1, 2}},
+        {{0, 2, 3}},
+        {{0, 3, 1}},
+    }};
+    for (std::size_t face = 0; face < faces.size(); ++face) {
+        scene.triangles.push_back({
+            500 + face,
+            {10 + faces[face][0], 10 + faces[face][1],
+             10 + faces[face][2]},
+            intrinsicChart(positions, faces[face]),
+            2, 1, 100, 900, SurfaceRole::Skin,
+        });
+    }
+    return scene;
+}
+
+Scene threeRegionJunctionScene() {
+    Scene scene;
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-three-region-junction-cap";
+    scene.metadata.exporterVersion = "scene-fluid-opening-cap-test/1";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "cell-a"},
+        {3, RegionKind::Cell, "cell-b"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900.0, 650.0, 220.0, 0.015,
+         0.041, 0.02, 0.0125, 2.5e-12},
+    };
+    const std::array<Vec3, 5> positions{{
+        {0.0, 0.0, 0.0},
+        {0.0, 1.0, 0.0},
+        {0.0, 0.0, 1.0},
+        {1.0, 0.25, 0.25},
+        {-1.0, 0.25, 0.25},
+    }};
+    for (std::size_t vertex = 0; vertex < positions.size(); ++vertex) {
+        scene.vertices.push_back({10 + vertex, positions[vertex]});
+    }
+    const auto outward = [&positions](
+        std::array<std::size_t, 3> face,
+        const std::size_t opposite) {
+        const Vec3 first{
+            positions[face[1]].x - positions[face[0]].x,
+            positions[face[1]].y - positions[face[0]].y,
+            positions[face[1]].z - positions[face[0]].z};
+        const Vec3 second{
+            positions[face[2]].x - positions[face[0]].x,
+            positions[face[2]].y - positions[face[0]].y,
+            positions[face[2]].z - positions[face[0]].z};
+        const Vec3 normal{
+            first.y * second.z - first.z * second.y,
+            first.z * second.x - first.x * second.z,
+            first.x * second.y - first.y * second.x};
+        const Vec3 interior{
+            positions[opposite].x - positions[face[0]].x,
+            positions[opposite].y - positions[face[0]].y,
+            positions[opposite].z - positions[face[0]].z};
+        if (normal.x * interior.x + normal.y * interior.y
+                + normal.z * interior.z
+            > 0.0) {
+            std::swap(face[1], face[2]);
+        }
+        return face;
+    };
+    const auto addFace = [&](const std::array<std::size_t, 3> face,
+                             const StableId negativeRegion,
+                             const StableId positiveRegion) {
+        scene.triangles.push_back({
+            500 + scene.triangles.size(),
+            {10 + face[0], 10 + face[1], 10 + face[2]},
+            intrinsicChart(positions, face),
+            negativeRegion, positiveRegion, 100,
+            900 + scene.triangles.size(), SurfaceRole::Skin,
+        });
+    };
+
+    // The shared face points from cell A (+x) to cell B (-x).
+    addFace({0, 2, 1}, 2, 3);
+    const auto openingA = outward({3, 0, 1}, 2);
+    addFace(outward({3, 1, 2}, 0), 2, 1);
+    addFace(outward({3, 2, 0}, 1), 2, 1);
+    const auto openingB = outward({4, 1, 0}, 2);
+    addFace(outward({4, 2, 1}, 0), 3, 1);
+    addFace(outward({4, 0, 2}, 1), 3, 1);
+    scene.openings = {
+        {700,
+         {10 + openingA[0], 10 + openingA[1], 10 + openingA[2]},
+         2, 1, OpeningRole::Intake},
+        {701,
+         {10 + openingB[0], 10 + openingB[1], 10 + openingB[2]},
+         3, 1, OpeningRole::Intake},
+    };
+    return scene;
+}
+
 Scene nonPlanarOpeningScene() {
     Scene scene;
     scene.metadata.designChecksum = "sha256:scene-fluid-nonplanar-cap";
@@ -325,6 +445,86 @@ void testPlanarCapAndAcceptedMotion() {
     checkNear(moved.caps.front().centroidMeters.x,
               cap.centroidMeters.x + 0.01, 1.0e-13,
               "virtual cap follows accepted opening vertices");
+}
+
+void testThreeRegionJunction() {
+    Fixture fixture(threeRegionJunctionScene());
+    check(fixture.surface.ok() && fixture.structureAssembly.ok(),
+          "three-region junction fixture assembles");
+    if (!fixture.surface.ok() || !fixture.structureAssembly.ok()) {
+        return;
+    }
+    const auto state = fixture.state();
+    const auto caps = buildSceneFluidOpeningCaps(
+        fixture.surface.definition, state);
+    const auto repeated = buildSceneFluidOpeningCaps(
+        fixture.surface.definition, state);
+    check(caps == repeated
+              && caps.caps.size() == 2
+              && caps.triangles.size() == 2
+              && caps.separatingBoundaryEdgeCount == 5,
+          "two intake caps deterministically close one three-region edge cycle");
+    const bool bothCapsUseSharedEdge = std::ranges::all_of(
+        caps.triangles, [](const auto &triangle) {
+            return std::ranges::find(triangle.vertexIndices, 0)
+                    != triangle.vertexIndices.end()
+                && std::ranges::find(triangle.vertexIndices, 1)
+                    != triangle.vertexIndices.end();
+        });
+    check(bothCapsUseSharedEdge,
+          "both caps meet the cell-to-cell sheet on the shared junction edge");
+    validateSceneFluidOpeningCaps(caps, fixture.surface.definition, state);
+
+    auto missingScene = threeRegionJunctionScene();
+    missingScene.openings.pop_back();
+    Fixture missing(std::move(missingScene));
+    expectInvalid(
+        [&] { static_cast<void>(buildSceneFluidOpeningCaps(
+            missing.surface.definition, missing.state())); },
+        "an incomplete three-region edge cycle remains rejected");
+}
+
+void testCollapsedBoundaryEpochs() {
+    Fixture fixture(collapsedBoundaryScene());
+    check(fixture.surface.ok() && fixture.structureAssembly.ok(),
+          "collapsed material-boundary fixture assembles");
+    if (!fixture.surface.ok() || !fixture.structureAssembly.ok()) {
+        return;
+    }
+    const auto initialState = fixture.state();
+    const auto caps = buildSceneFluidOpeningCaps(
+        fixture.surface.definition, initialState);
+    check(caps.caps.empty()
+              && caps.triangles.empty()
+              && caps.separatingBoundaryEdgeCount == 3,
+          "closed zero-area material boundary remains cap-free");
+    validateSceneFluidOpeningCaps(
+        caps, fixture.surface.definition, initialState);
+
+    const auto movingNode = fixture.structureAssembly.mappings.nodeIndex(12);
+    check(movingNode.has_value(),
+          "collapsed boundary moving vertex has a Structure node");
+    if (!movingNode.has_value()) {
+        return;
+    }
+    const double mass = fixture.structure.definition()
+        .nodes[*movingNode].massKg;
+    fixture.structure.addExternalForce(
+        *movingNode, {0.0, 0.0, 100.0 * mass});
+    StructureStepSettings settings;
+    settings.timeStepSeconds = 0.1;
+    settings.substeps = 1;
+    settings.constraintIterations = 1;
+    settings.gravityMetersPerSecondSquared = {};
+    settings.velocityDampingPerSecond = 0.0;
+    const auto diagnostics = fixture.structure.step(settings);
+    check(diagnostics.finite,
+          "collapsed-boundary motion remains structurally finite");
+    const auto openedState = fixture.state();
+    expectInvalid(
+        [&] { static_cast<void>(buildSceneFluidOpeningCaps(
+            fixture.surface.definition, openedState)); },
+        "accepted motion that opens a collapsed boundary is rejected");
 }
 
 void testRejectionCorruptionAndLimits() {
@@ -565,6 +765,12 @@ void testRejectionCorruptionAndLimits() {
         [&] { static_cast<void>(buildSceneFluidOpeningCaps(
             fixture.surface.definition, state, invalidSettings)); },
         "opening-cap construction rejects invalid tolerances");
+    invalidSettings = {};
+    invalidSettings.collapsedBoundaryRelativeAreaTolerance = 1.0;
+    expectInvalid(
+        [&] { static_cast<void>(buildSceneFluidOpeningCaps(
+            fixture.surface.definition, state, invalidSettings)); },
+        "opening-cap construction bounds collapsed-boundary tolerance");
 
     SceneFluidOpeningCapLimits limits;
     limits.maximumCaps = 0;
@@ -614,6 +820,8 @@ void testRejectionCorruptionAndLimits() {
 int main() {
     try {
         testPlanarCapAndAcceptedMotion();
+        testThreeRegionJunction();
+        testCollapsedBoundaryEpochs();
         testRejectionCorruptionAndLimits();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

@@ -7,6 +7,7 @@
 #include <map>
 #include <set>
 #include <span>
+#include <sstream>
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
@@ -62,6 +63,51 @@ struct EdgeIncidence {
 
 using Edge = std::pair<std::size_t, std::size_t>;
 
+bool validClosedRegionCycle(
+    const Edge edge,
+    const std::span<const EdgeIncidence> incidences) {
+    if (incidences.size() < 2) {
+        return false;
+    }
+    std::map<std::size_t, std::size_t> nextRegion;
+    std::set<std::size_t> incomingRegions;
+    for (const EdgeIncidence& incidence : incidences) {
+        const bool followsCanonicalEdge =
+            incidence.from == edge.first && incidence.to == edge.second;
+        const bool opposesCanonicalEdge =
+            incidence.from == edge.second && incidence.to == edge.first;
+        if (!followsCanonicalEdge && !opposesCanonicalEdge) {
+            return false;
+        }
+        const std::size_t fromRegion = followsCanonicalEdge
+            ? incidence.negativeRegion : incidence.positiveRegion;
+        const std::size_t toRegion = followsCanonicalEdge
+            ? incidence.positiveRegion : incidence.negativeRegion;
+        if (fromRegion == toRegion
+            || !nextRegion.emplace(fromRegion, toRegion).second
+            || !incomingRegions.insert(toRegion).second) {
+            return false;
+        }
+    }
+    if (nextRegion.size() != incomingRegions.size()) {
+        return false;
+    }
+    const std::size_t start = nextRegion.begin()->first;
+    std::set<std::size_t> visited;
+    std::size_t current = start;
+    for (std::size_t step = 0; step < nextRegion.size(); ++step) {
+        if (!visited.insert(current).second) {
+            return false;
+        }
+        const auto next = nextRegion.find(current);
+        if (next == nextRegion.end()) {
+            return false;
+        }
+        current = next->second;
+    }
+    return current == start && visited.size() == nextRegion.size();
+}
+
 bool checkedAdd(const std::size_t first,
                 const std::size_t second,
                 std::size_t& result) {
@@ -103,6 +149,130 @@ double dot(const Vec3& first, const Vec3& second) {
 
 double length(const Vec3& value) {
     return std::hypot(value.x, value.y, value.z);
+}
+
+template<typename PositionAt>
+bool collapsedLoopGeometry(
+    const std::vector<std::size_t>& loop,
+    PositionAt&& positionAt,
+    const double relativeAreaTolerance) {
+    if (loop.size() < 3) {
+        return false;
+    }
+    Vec3 minimum = positionAt(loop.front());
+    Vec3 maximum = minimum;
+    for (const std::size_t vertex : loop) {
+        const Vec3 position = positionAt(vertex);
+        minimum.x = std::min(minimum.x, position.x);
+        minimum.y = std::min(minimum.y, position.y);
+        minimum.z = std::min(minimum.z, position.z);
+        maximum.x = std::max(maximum.x, position.x);
+        maximum.y = std::max(maximum.y, position.y);
+        maximum.z = std::max(maximum.z, position.z);
+    }
+    const double scale = length(subtract(maximum, minimum));
+    if (!std::isfinite(scale) || !(scale > 0.0)) {
+        return false;
+    }
+
+    const Vec3 origin = positionAt(loop.front());
+    Vec3 normalizedAreaVector;
+    for (std::size_t index = 1; index + 1 < loop.size(); ++index) {
+        const Vec3 firstDelta = subtract(
+            positionAt(loop[index]), origin);
+        const Vec3 secondDelta = subtract(
+            positionAt(loop[index + 1]), origin);
+        const Vec3 first{firstDelta.x / scale,
+                         firstDelta.y / scale,
+                         firstDelta.z / scale};
+        const Vec3 second{secondDelta.x / scale,
+                          secondDelta.y / scale,
+                          secondDelta.z / scale};
+        const Vec3 contribution = cross(first, second);
+        normalizedAreaVector.x += contribution.x;
+        normalizedAreaVector.y += contribution.y;
+        normalizedAreaVector.z += contribution.z;
+    }
+    const double relativeArea = 0.5 * length(normalizedAreaVector);
+    return std::isfinite(relativeArea)
+        && relativeArea <= relativeAreaTolerance;
+}
+
+bool validCollapsedBoundaryComponents(
+    const std::map<Edge, std::vector<EdgeIncidence>>& unresolvedEdges,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const double relativeAreaTolerance) {
+    using RegionPair = std::pair<std::size_t, std::size_t>;
+    std::map<RegionPair, std::vector<EdgeIncidence>> regionBoundaries;
+    for (const auto& [edge, incidences] : unresolvedEdges) {
+        static_cast<void>(edge);
+        if (incidences.size() != 1
+            || incidences.front().negativeRegion
+                == incidences.front().positiveRegion) {
+            return false;
+        }
+        const EdgeIncidence& incidence = incidences.front();
+        regionBoundaries[{incidence.negativeRegion,
+                          incidence.positiveRegion}]
+            .push_back(incidence);
+    }
+
+    for (const auto& [regions, incidences] : regionBoundaries) {
+        static_cast<void>(regions);
+        std::map<std::size_t, std::size_t> nextVertex;
+        std::set<std::size_t> incomingVertices;
+        for (const EdgeIncidence& incidence : incidences) {
+            if (incidence.from == incidence.to
+                || !nextVertex.emplace(
+                        incidence.from, incidence.to).second
+                || !incomingVertices.insert(incidence.to).second) {
+                return false;
+            }
+        }
+        if (nextVertex.size() != incomingVertices.size()) {
+            return false;
+        }
+
+        std::set<std::size_t> unvisited;
+        for (const auto& [from, to] : nextVertex) {
+            static_cast<void>(to);
+            unvisited.insert(from);
+        }
+        while (!unvisited.empty()) {
+            const std::size_t start = *unvisited.begin();
+            std::vector<std::size_t> loop;
+            std::size_t current = start;
+            do {
+                if (!unvisited.erase(current)) {
+                    return false;
+                }
+                loop.push_back(current);
+                const auto next = nextVertex.find(current);
+                if (next == nextVertex.end()) {
+                    return false;
+                }
+                current = next->second;
+            } while (current != start);
+
+            if (!collapsedLoopGeometry(
+                    loop,
+                    [&surface](const std::size_t vertex) {
+                        return surface.vertices[vertex]
+                            .referencePositionMeters;
+                    },
+                    relativeAreaTolerance)
+                || !collapsedLoopGeometry(
+                    loop,
+                    [&state](const std::size_t vertex) {
+                        return state.vertices[vertex].positionMeters;
+                    },
+                    relativeAreaTolerance)) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 Vec3 scaled(const Vec3& value, const double factor) {
@@ -392,7 +562,11 @@ void validateSettings(const SceneFluidOpeningCapSettings& settings) {
         || !(settings.minimumTriangleAreaSquareMeters > 0.0)
         || !std::isfinite(settings.convexityTolerance)
         || settings.convexityTolerance < 0.0
-        || settings.convexityTolerance >= 1.0) {
+        || settings.convexityTolerance >= 1.0
+        || !std::isfinite(
+            settings.collapsedBoundaryRelativeAreaTolerance)
+        || settings.collapsedBoundaryRelativeAreaTolerance < 0.0
+        || settings.collapsedBoundaryRelativeAreaTolerance >= 1.0) {
         throw std::invalid_argument(
             "scene fluid opening-cap settings are invalid");
     }
@@ -409,6 +583,8 @@ std::uint64_t capFingerprint(const SceneFluidOpeningCapSet& caps) {
     fingerprint.real(caps.settings.planarityToleranceMeters);
     fingerprint.real(caps.settings.minimumTriangleAreaSquareMeters);
     fingerprint.real(caps.settings.convexityTolerance);
+    fingerprint.real(
+        caps.settings.collapsedBoundaryRelativeAreaTolerance);
     fingerprint.integer(static_cast<std::uint64_t>(
         caps.separatingBoundaryEdgeCount));
     fingerprint.real(caps.totalAreaSquareMeters);
@@ -495,24 +671,15 @@ SceneFluidOpeningCapSet buildCaps(
         }
     }
 
-    std::map<Edge, EdgeIncidence> boundaryEdges;
+    std::size_t incompleteSurfaceEdgeCount = 0;
     for (const auto& [edge, incidences] : surfaceEdges) {
-        if (incidences.size() == 1) {
-            boundaryEdges.emplace(edge, incidences.front());
-            continue;
-        }
-        if (incidences.size() != 2
-            || incidences[0].from != incidences[1].to
-            || incidences[0].to != incidences[1].from
-            || incidences[0].negativeRegion != incidences[1].negativeRegion
-            || incidences[0].positiveRegion != incidences[1].positiveRegion) {
-            throw std::invalid_argument(
-                "scene fluid opening caps require consistently wound two-sided manifolds away from openings");
+        if (!validClosedRegionCycle(edge, incidences)) {
+            ++incompleteSurfaceEdgeCount;
         }
     }
-    result.separatingBoundaryEdgeCount = boundaryEdges.size();
+    result.separatingBoundaryEdgeCount = incompleteSurfaceEdgeCount;
 
-    std::set<Edge> claimedBoundaryEdges;
+    auto resolvedEdges = surfaceEdges;
     std::size_t boundaryIntersectionTestCount = 0;
     std::size_t triangulationPointTestCount = 0;
     result.caps.reserve(surface.openings.size());
@@ -531,29 +698,34 @@ SceneFluidOpeningCapSet buildCaps(
             const std::size_t to = opening.orderedVertexIndices[
                 (edge + 1) % opening.orderedVertexIndices.size()];
             const Edge key = edgeKey(from, to);
-            const auto found = boundaryEdges.find(key);
-            if (found == boundaryEdges.end()
-                || found->second.negativeRegion
-                    != opening.negativeSideRegionIndex
-                || found->second.positiveRegion
-                    != opening.positiveSideRegionIndex) {
+            const auto found = surfaceEdges.find(key);
+            if (found == surfaceEdges.end()) {
                 throw std::invalid_argument(
-                    "scene fluid opening loop does not match one separating surface boundary");
+                    "scene fluid opening loop edge is absent from the material surface");
             }
-            if (!claimedBoundaryEdges.insert(key).second) {
-                throw std::invalid_argument(
-                    "scene fluid opening boundary edge is claimed more than once");
+            for (const EdgeIncidence& incidence : found->second) {
+                if (incidence.negativeRegion
+                        != opening.negativeSideRegionIndex
+                    || incidence.positiveRegion
+                        != opening.positiveSideRegionIndex) {
+                    continue;
+                }
+                const bool loopMatchesSurface =
+                    incidence.from == from && incidence.to == to;
+                const bool thisCapMatchesOpening = !loopMatchesSurface;
+                if (!orientationSet) {
+                    capOrderMatchesOpening = thisCapMatchesOpening;
+                    orientationSet = true;
+                } else if (capOrderMatchesOpening
+                           != thisCapMatchesOpening) {
+                    throw std::invalid_argument(
+                        "scene fluid opening loop orientation conflicts with its matching material boundary");
+                }
             }
-            const bool loopMatchesSurface =
-                found->second.from == from && found->second.to == to;
-            const bool thisCapMatchesOpening = !loopMatchesSurface;
-            if (!orientationSet) {
-                capOrderMatchesOpening = thisCapMatchesOpening;
-                orientationSet = true;
-            } else if (capOrderMatchesOpening != thisCapMatchesOpening) {
-                throw std::invalid_argument(
-                    "scene fluid opening loop orientation conflicts with its surface boundary");
-            }
+        }
+        if (!orientationSet) {
+            throw std::invalid_argument(
+                "scene fluid opening has no material edge with the same region pair to fix cap winding");
         }
 
         std::vector<std::size_t> capOrder = opening.orderedVertexIndices;
@@ -684,6 +856,19 @@ SceneFluidOpeningCapSet buildCaps(
             result.triangles.push_back({
                 openingIndex, ordinal, vertices, triangleNormal,
                 centroid, area});
+            for (std::size_t edge = 0; edge < 3; ++edge) {
+                const std::size_t from = vertices[edge];
+                const std::size_t to = vertices[(edge + 1) % 3];
+                resolvedEdges[edgeKey(from, to)].push_back({
+                    from, to,
+                    opening.negativeSideRegionIndex,
+                    opening.positiveSideRegionIndex,
+                });
+                if (resolvedEdges.size() > limits.maximumBoundaryEdges) {
+                    throw std::length_error(
+                        "scene fluid opening-cap resolved edges exceed their limit");
+                }
+            }
             cap.areaSquareMeters += area;
             weightedCentroid = add(
                 weightedCentroid, scaled(centroid, area));
@@ -694,9 +879,49 @@ SceneFluidOpeningCapSet buildCaps(
         result.totalAreaSquareMeters += cap.areaSquareMeters;
         result.caps.push_back(cap);
     }
-    if (claimedBoundaryEdges.size() != boundaryEdges.size()) {
-        throw std::invalid_argument(
-            "scene fluid separating surface has an unauthored boundary edge");
+    std::map<Edge, std::vector<EdgeIncidence>> unresolvedEdges;
+    for (const auto& [edge, incidences] : resolvedEdges) {
+        if (!validClosedRegionCycle(edge, incidences)) {
+            unresolvedEdges.emplace(edge, incidences);
+        }
+    }
+    if (!unresolvedEdges.empty()
+        && !validCollapsedBoundaryComponents(
+            unresolvedEdges, surface, state,
+            settings.collapsedBoundaryRelativeAreaTolerance)) {
+        const auto& [edge, incidences] = *unresolvedEdges.begin();
+        std::ostringstream message;
+        message << "scene fluid material and cap incidences do not form one closed region cycle around edge ("
+                << edge.first << ", " << edge.second << "), stable IDs ("
+                << surface.vertices[edge.first].id << ", "
+                << surface.vertices[edge.second].id << "), positions [("
+                << surface.vertices[edge.first].referencePositionMeters.x
+                << ", "
+                << surface.vertices[edge.first].referencePositionMeters.y
+                << ", "
+                << surface.vertices[edge.first].referencePositionMeters.z
+                << "), ("
+                << surface.vertices[edge.second].referencePositionMeters.x
+                << ", "
+                << surface.vertices[edge.second].referencePositionMeters.y
+                << ", "
+                << surface.vertices[edge.second].referencePositionMeters.z
+                << ")]:";
+        constexpr std::size_t maximumReportedIncidences = 8;
+        for (std::size_t index = 0;
+             index < std::min(incidences.size(),
+                              maximumReportedIncidences);
+             ++index) {
+            const EdgeIncidence& incidence = incidences[index];
+            message << " [" << incidence.from << "->"
+                    << incidence.to << ", regions "
+                    << incidence.negativeRegion << "->"
+                    << incidence.positiveRegion << ']';
+        }
+        if (incidences.size() > maximumReportedIncidences) {
+            message << " ...";
+        }
+        throw std::invalid_argument(message.str());
     }
 
     std::size_t capBytes = 0;
