@@ -505,11 +505,12 @@ area, centroid, and winding-derived enclosed/exterior region identity;
 self-intersections and degenerate loops reject, while nested loops remain
 separate until a bounded containment stage proves they do not touch, requires
 authored region continuity through every parent, and closes exact per-region
-area over an eligible MAC face. A sole simple directed chain joining two points
-on the rectangular face boundary also closes exact positive/negative region
-areas while retaining its source-chain identity. Opening-ended or multiple
-open chains, coplanar sheets, and boundary-touching loops remain explicitly
-unresolved. The versioned
+area over an eligible MAC face. Simple directed open-chain arrangements whose
+leaves all reach the rectangular face boundary also close exact per-region
+areas while retaining every source chain. A bounded half-edge traversal
+enumerates left faces from authored winding and rejects unstitched crossings or
+conflicting labels. Opening-ended chains, coplanar sheets, and
+boundary-touching loops remain explicitly unresolved. The versioned
 `simwing_scene_fluid_grid_epoch` boundary now composes this entire chain plus
 unique conservative quadrature into one immutable accepted-Structure remap.
 Its fingerprint prevents candidates, patches, topology, partitions, or loads

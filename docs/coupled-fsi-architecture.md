@@ -579,10 +579,12 @@ conflict within one pair rejects. Simple loops gain signed area, centroid, and w
 enclosed/exterior region identity with self-intersection and degenerate-area
 rejection. A bounded containment stage rejects touching loops, requires
 authored parent/child region continuity, and closes exact per-region areas on
-eligible faces. A sole simple directed open chain between two rectangular
-face-boundary points likewise closes exact positive/negative region areas and
-retains its source-chain identity. Opening-ended or multiple open chains,
-coplanar sheets, and boundary-touching loops remain unresolved.
+eligible faces. Simple directed open-chain arrangements whose leaves all reach
+the rectangular face boundary likewise close exact per-region areas and retain
+every source chain. A bounded half-edge traversal enumerates left faces from
+authored winding and rejects unstitched crossings or conflicting labels.
+Opening-ended chains, coplanar sheets, and boundary-touching loops remain
+unresolved.
 The implemented stages are now composed by a versioned `SceneFluidGridEpoch`: one
 local build carries a single accepted Structure surface through candidates,
 exact intersections, clipping, ownership, crossings, face topology, graph,

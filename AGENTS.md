@@ -290,10 +290,11 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   pair-specific chains at one physical higher-degree node; branching within
   one region pair still rejects. Simple closed loops then gain
   signed area, centroid, and enclosed/exterior region identity without merging
-  nested loops or sealing open chains. Eligible non-touching loop nests and a
-  sole simple directed chain joining two face-boundary points are finally
-  resolved into exact per-region MAC-face areas; the latter retains its source
-  chain and uses the oriented rectangular boundary closure. All other faces
+  nested loops or sealing open chains. Eligible non-touching loop nests and
+  simple directed open-chain arrangements whose leaves all reach the
+  rectangular face boundary are finally resolved into exact per-region
+  MAC-face areas. The latter retain every source chain and enumerate bounded
+  left faces from authored winding. Opening-ended and other incomplete faces
   stay explicit unresolved. None of these products is a cut-cell volume or
   complete grid-region classification.
 - `simwing_scene_fluid_quadrature`: converts those unique cell/face area owners
@@ -1053,11 +1054,12 @@ makes this a certified aerodynamic solver.
 - `src/fsi/fluid/scene_surface_face_partition.{h,cpp}` rejects touching or
   intersecting loops, builds smallest-parent containment, requires authored
   region continuity through nesting, and closes exact per-region area on faces
-  containing only interior closed loops. It also closes one simple directed
-  open chain between two rectangular face-boundary points, retains that source
-  chain explicitly, and assigns positive/negative side area from winding.
-  Opening-ended or multiple open chains, coplanar sheets, boundary-touching
-  loops, and empty active faces remain explicitly unresolved.
+  containing only interior closed loops. It also closes simple directed
+  open-chain arrangements whose leaves reach the rectangular face boundary,
+  retains every source chain, rejects unstitched crossings/conflicting region
+  winding, and enumerates exact positive-area faces through a bounded
+  half-edge traversal. Opening-ended chains, coplanar sheets,
+  boundary-touching loops, and empty active faces remain explicitly unresolved.
 - `src/fsi/scene_fluid_quadrature.{h,cpp}` turns each unique positive-area
   owner into one stable-ID barycentric quadrature point, preserves authored
   region/material/sheet/role metadata and the exact grid cell owning each

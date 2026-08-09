@@ -102,6 +102,53 @@ Scene boundarySplitScene(
     }
     return scene;
 }
+
+Scene boundaryJunctionScene(
+    const GridFaceAxis axis = GridFaceAxis::X) {
+    Scene scene;
+    scene.metadata.designChecksum = "sha256:scene-face-boundary-junction";
+    scene.metadata.exporterVersion = "scene-face-partition-test/3";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "cell-a"},
+        {3, RegionKind::Cell, "cell-b"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900, 650, 220, 0.015, 0.041, 0.02,
+         0.0125, 2.5e-12},
+    };
+    scene.vertices = {
+        {10, {1.5, 1.5, 1.5}},
+        {11, {2.5, 1.5, 1.5}},
+        {12, {2.5, 2.5, 1.5}},
+        {13, {2.5, 1.5, 2.5}},
+        {14, {2.5, 0.5, 1.5}},
+    };
+    const std::array<Vec2, 3> chart{{
+        {0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}}};
+    scene.triangles = {
+        {500, {10, 11, 12}, chart,
+         1, 2, 100, 900, SurfaceRole::Skin},
+        {501, {10, 11, 13}, chart,
+         2, 3, 100, 901, SurfaceRole::Rib},
+        {502, {10, 11, 14}, chart,
+         3, 1, 100, 902, SurfaceRole::Skin},
+    };
+    if (axis == GridFaceAxis::Y) {
+        scene.metadata.designChecksum += "-y";
+        for (auto& vertex : scene.vertices) {
+            const Vec3 point = vertex.positionMeters;
+            vertex.positionMeters = {point.z, point.x, point.y};
+        }
+    } else if (axis == GridFaceAxis::Z) {
+        scene.metadata.designChecksum += "-z";
+        for (auto& vertex : scene.vertices) {
+            const Vec3 point = vertex.positionMeters;
+            vertex.positionMeters = {point.y, point.z, point.x};
+        }
+    }
+    return scene;
+}
 PeriodicCartesianGrid grid(){ return {{4,4,4},{},{4,4,4}}; }
 
 struct Pipeline {
@@ -290,6 +337,98 @@ void testBoundaryOpenChainPartition() {
         "face partition: corrupt boundary-chain reference is rejected");
 }
 
+void testBoundaryJunctionArrangement() {
+    Pipeline p(boundaryJunctionScene());
+    const auto first = partitions(p);
+    const auto repeated = partitions(p);
+    const auto found = std::ranges::find(
+        first.partitions,
+        SceneFluidFacePartitionKind::BoundaryChainArrangement,
+        &SceneFluidFacePartition::kind);
+    check(first == repeated && found != first.partitions.end(),
+          "face partition: three-region boundary junction resolves deterministically");
+    if (found == first.partitions.end()) return;
+    const auto& activeFace = p.topology.activeFaces[
+        found->activeFaceIndex];
+    check(activeFace.axis == GridFaceAxis::X
+              && activeFace.i == 2
+              && activeFace.j == 1
+              && activeFace.k == 1
+              && found->rootExteriorRegionId == invalidStableId
+              && found->loopReferenceCount == 0
+              && found->openChainReferenceCount == 3
+              && found->regionAreaCount == 3,
+          "face partition: junction arrangement retains all source chains");
+    std::map<StableId, double> areas;
+    for (std::size_t offset = 0;
+         offset < found->regionAreaCount; ++offset) {
+        const auto& area = first.regionAreas[
+            found->firstRegionArea + offset];
+        areas.emplace(area.regionId, area.areaSquareMeters);
+    }
+    checkNear(areas.at(1), 0.5, 3.0e-15,
+              "face partition: junction retains lower exterior sector");
+    checkNear(areas.at(2), 0.25, 3.0e-15,
+              "face partition: junction retains upper-right cell sector");
+    checkNear(areas.at(3), 0.25, 3.0e-15,
+              "face partition: junction retains upper-left cell sector");
+    checkNear(found->assignedAreaSquareMeters, 1.0, 3.0e-15,
+              "face partition: junction sectors close the face");
+    checkNear(found->areaResidualSquareMeters, 0.0, 3.0e-15,
+              "face partition: junction area residual is exact");
+    validateSceneFluidFacePartitions(
+        first, p.surface.definition, p.state, grid(), p.candidates,
+        p.intersections, p.patches, p.ownership, p.crossings, p.topology,
+        p.graph, p.chains, p.loops);
+
+    for (const GridFaceAxis axis : {
+             GridFaceAxis::Y, GridFaceAxis::Z}) {
+        Pipeline rotated(boundaryJunctionScene(axis));
+        const auto rotatedPartitions = partitions(rotated);
+        const auto rotatedFound = std::ranges::find(
+            rotatedPartitions.partitions,
+            SceneFluidFacePartitionKind::BoundaryChainArrangement,
+            &SceneFluidFacePartition::kind);
+        check(rotatedFound != rotatedPartitions.partitions.end(),
+              "face partition: right-handed Y/Z charts retain junction sectors");
+        if (rotatedFound == rotatedPartitions.partitions.end()) continue;
+        std::map<StableId, double> rotatedAreas;
+        for (std::size_t offset = 0;
+             offset < rotatedFound->regionAreaCount; ++offset) {
+            const auto& area = rotatedPartitions.regionAreas[
+                rotatedFound->firstRegionArea + offset];
+            rotatedAreas.emplace(area.regionId, area.areaSquareMeters);
+        }
+        checkNear(rotatedAreas.at(1), 0.5, 3.0e-15,
+                  "face partition: Y/Z junction keeps exterior sector");
+        checkNear(rotatedAreas.at(2), 0.25, 3.0e-15,
+                  "face partition: Y/Z junction keeps first cell sector");
+        checkNear(rotatedAreas.at(3), 0.25, 3.0e-15,
+                  "face partition: Y/Z junction keeps second cell sector");
+    }
+
+    SceneFluidFacePartitionLimits limits;
+    limits.maximumReferences =
+        first.openChainReferences.size() + first.loopReferences.size()
+        + first.regionAreas.size() - 1;
+    expectLimited(
+        [&] { static_cast<void>(partitions(p, {}, limits)); },
+        "face partition: junction arrangement references are bounded");
+    limits = {};
+    limits.maximumSegmentPairTests = first.segmentPairTestCount - 1;
+    expectLimited(
+        [&] { static_cast<void>(partitions(p, {}, limits)); },
+        "face partition: junction arrangement intersection work is bounded");
+
+    auto conflictingScene = boundaryJunctionScene();
+    std::swap(conflictingScene.triangles[1].negativeSideRegionId,
+              conflictingScene.triangles[1].positiveSideRegionId);
+    Pipeline conflicting(std::move(conflictingScene));
+    expectInvalid(
+        [&] { static_cast<void>(partitions(conflicting)); },
+        "face partition: junction arrangement rejects conflicting region winding");
+}
+
 void testLimitsAndValidation() {
     Pipeline p;
     SceneFluidFacePartitionLimits limits; limits.maximumSegmentPairTests=8;
@@ -314,4 +453,4 @@ void testLimitsAndValidation() {
         "face partition: corrupt area is rejected transactionally");
 }
 }
-int main(){testNestedPartition();testBoundaryOpenChainPartition();testLimitsAndValidation();if(failures){std::fprintf(stderr,"%d face-partition failures\n",failures);return 1;}std::printf("scene face-partition tests passed\n");}
+int main(){testNestedPartition();testBoundaryOpenChainPartition();testBoundaryJunctionArrangement();testLimitsAndValidation();if(failures){std::fprintf(stderr,"%d face-partition failures\n",failures);return 1;}std::printf("scene face-partition tests passed\n");}

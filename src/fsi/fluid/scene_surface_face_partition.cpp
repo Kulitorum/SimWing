@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <type_traits>
 
@@ -320,6 +321,395 @@ double boundaryChainPositiveArea(
     return positiveArea;
 }
 
+struct ArrangementNode {
+    Point2 point;
+    std::size_t sourceGraphNode = std::numeric_limits<std::size_t>::max();
+    bool onBoundary = false;
+};
+
+struct ArrangementEdge {
+    std::size_t firstNode = 0;
+    std::size_t secondNode = 0;
+    bool material = false;
+    std::size_t directedFromNode = 0;
+    std::size_t directedToNode = 0;
+    StableId negativeSideRegionId = invalidStableId;
+    StableId positiveSideRegionId = invalidStableId;
+};
+
+struct ArrangementHalfEdge {
+    std::size_t edgeIndex = 0;
+    std::size_t fromNode = 0;
+    std::size_t toNode = 0;
+    double angleRadians = 0.0;
+};
+
+std::map<StableId, double> boundaryChainArrangementAreas(
+    const std::size_t activeFaceIndex,
+    const SceneFluidActiveFace& face,
+    const std::vector<std::size_t>& chainIndices,
+    const SceneFluidFaceChainSet& chains,
+    const SceneFluidFaceGraph& graph,
+    const SceneFluidFaceGraphRange& graphRange,
+    const PeriodicCartesianGrid& grid,
+    const SceneFluidFacePartitionSettings& settings,
+    const SceneFluidFacePartitionLimits& limits,
+    std::size_t& segmentPairTestCount) {
+    const FaceBounds bounds = faceBounds(grid, face);
+    const double width = bounds.maximumU - bounds.minimumU;
+    const double height = bounds.maximumV - bounds.minimumV;
+    const double perimeter = 2.0 * (width + height);
+    std::vector<ArrangementNode> nodes;
+    std::vector<ArrangementEdge> edges;
+    std::map<std::size_t, std::size_t> localNodeByGraphNode;
+    std::set<std::pair<std::size_t, std::size_t>> edgeKeys;
+
+    auto localNode = [&](const std::size_t graphNodeIndex) {
+        const auto found = localNodeByGraphNode.find(graphNodeIndex);
+        if (found != localNodeByGraphNode.end()) return found->second;
+        if (graphNodeIndex < graphRange.firstNode
+            || graphNodeIndex
+                >= graphRange.firstNode + graphRange.nodeCount) {
+            throw std::invalid_argument(
+                "scene fluid face arrangement has a foreign node");
+        }
+        const auto& source = graph.nodes[graphNodeIndex];
+        ArrangementNode node;
+        node.point = facePoint(face.axis, source.positionMeters);
+        node.sourceGraphNode = graphNodeIndex;
+        node.onBoundary = source.faceBoundaryMask != FaceBoundaryNone;
+        if (!std::isfinite(node.point.u) || !std::isfinite(node.point.v)
+            || node.point.u
+                < bounds.minimumU - settings.geometryToleranceMeters
+            || node.point.u
+                > bounds.maximumU + settings.geometryToleranceMeters
+            || node.point.v
+                < bounds.minimumV - settings.geometryToleranceMeters
+            || node.point.v
+                > bounds.maximumV + settings.geometryToleranceMeters
+            || source.authoredOpeningBoundary) {
+            throw std::invalid_argument(
+                "scene fluid face arrangement has invalid source nodes");
+        }
+        const std::size_t index = nodes.size();
+        nodes.push_back(node);
+        localNodeByGraphNode.emplace(graphNodeIndex, index);
+        return index;
+    };
+
+    for (const std::size_t chainIndex : chainIndices) {
+        if (chainIndex >= chains.chains.size()) {
+            throw std::invalid_argument(
+                "scene fluid face arrangement has an invalid chain");
+        }
+        const auto& chain = chains.chains[chainIndex];
+        if (chain.activeFaceIndex != activeFaceIndex
+            || chain.kind != SceneFluidFaceChainKind::Open
+            || chain.nodeReferenceCount < 2
+            || chain.segmentReferenceCount + 1
+                != chain.nodeReferenceCount
+            || chain.negativeSideRegionId == invalidStableId
+            || chain.positiveSideRegionId == invalidStableId
+            || chain.negativeSideRegionId
+                == chain.positiveSideRegionId
+            || chain.endpointOnAuthoredOpening[0]
+            || chain.endpointOnAuthoredOpening[1]) {
+            throw std::invalid_argument(
+                "scene fluid face arrangement chain is invalid");
+        }
+        for (std::size_t offset = 0;
+             offset + 1 < chain.nodeReferenceCount; ++offset) {
+            const std::size_t from = localNode(chains.nodeReferences[
+                chain.firstNodeReference + offset]);
+            const std::size_t to = localNode(chains.nodeReferences[
+                chain.firstNodeReference + offset + 1]);
+            if (from == to) {
+                throw std::invalid_argument(
+                    "scene fluid face arrangement edge is degenerate");
+            }
+            const auto key = std::minmax(from, to);
+            if (!edgeKeys.emplace(key.first, key.second).second) {
+                throw std::invalid_argument(
+                    "scene fluid face arrangement repeats an edge");
+            }
+            ArrangementEdge edge;
+            edge.firstNode = key.first;
+            edge.secondNode = key.second;
+            edge.material = true;
+            edge.directedFromNode = from;
+            edge.directedToNode = to;
+            edge.negativeSideRegionId = chain.negativeSideRegionId;
+            edge.positiveSideRegionId = chain.positiveSideRegionId;
+            edges.push_back(edge);
+        }
+    }
+    if (edges.size() != graphRange.segmentCount) {
+        throw std::invalid_argument(
+            "scene fluid face arrangement does not cover its graph");
+    }
+
+    const std::array<Point2, 4> cornerPoints{{
+        {bounds.minimumU, bounds.minimumV},
+        {bounds.maximumU, bounds.minimumV},
+        {bounds.maximumU, bounds.maximumV},
+        {bounds.minimumU, bounds.maximumV},
+    }};
+    for (const Point2& corner : cornerPoints) {
+        std::size_t matchingNode = nodes.size();
+        for (std::size_t nodeIndex = 0;
+             nodeIndex < nodes.size(); ++nodeIndex) {
+            if (near(nodes[nodeIndex].point.u, corner.u,
+                     settings.geometryToleranceMeters)
+                && near(nodes[nodeIndex].point.v, corner.v,
+                        settings.geometryToleranceMeters)) {
+                if (matchingNode != nodes.size()) {
+                    throw std::invalid_argument(
+                        "scene fluid face arrangement duplicates a corner");
+                }
+                matchingNode = nodeIndex;
+            }
+        }
+        if (matchingNode == nodes.size()) {
+            nodes.push_back({corner,
+                std::numeric_limits<std::size_t>::max(), true});
+        } else if (!nodes[matchingNode].onBoundary) {
+            throw std::invalid_argument(
+                "scene fluid face arrangement corner ownership is invalid");
+        }
+    }
+
+    std::vector<std::pair<double, std::size_t>> boundaryNodes;
+    for (std::size_t nodeIndex = 0;
+         nodeIndex < nodes.size(); ++nodeIndex) {
+        if (!nodes[nodeIndex].onBoundary) continue;
+        boundaryNodes.emplace_back(
+            boundaryParameter(nodes[nodeIndex].point, bounds,
+                              settings.geometryToleranceMeters),
+            nodeIndex);
+    }
+    std::ranges::sort(boundaryNodes);
+    if (boundaryNodes.size() < 4) {
+        throw std::invalid_argument(
+            "scene fluid face arrangement boundary is incomplete");
+    }
+    for (std::size_t index = 1;
+         index < boundaryNodes.size(); ++index) {
+        if (boundaryNodes[index].first
+                - boundaryNodes[index - 1].first
+            <= settings.geometryToleranceMeters) {
+            throw std::invalid_argument(
+                "scene fluid face arrangement boundary nodes overlap");
+        }
+    }
+    if (boundaryNodes.front().first + perimeter
+            - boundaryNodes.back().first
+        <= settings.geometryToleranceMeters) {
+        throw std::invalid_argument(
+            "scene fluid face arrangement boundary nodes overlap");
+    }
+    for (std::size_t index = 0;
+         index < boundaryNodes.size(); ++index) {
+        const std::size_t first = boundaryNodes[index].second;
+        const std::size_t second = boundaryNodes[
+            (index + 1) % boundaryNodes.size()].second;
+        const auto key = std::minmax(first, second);
+        if (!edgeKeys.emplace(key.first, key.second).second) {
+            throw std::invalid_argument(
+                "scene fluid face arrangement overlaps its boundary");
+        }
+        ArrangementEdge edge;
+        edge.firstNode = key.first;
+        edge.secondNode = key.second;
+        edges.push_back(edge);
+    }
+
+    std::vector<std::size_t> materialDegree(nodes.size(), 0);
+    for (const auto& edge : edges) {
+        if (!edge.material) continue;
+        ++materialDegree[edge.firstNode];
+        ++materialDegree[edge.secondNode];
+    }
+    for (std::size_t nodeIndex = 0;
+         nodeIndex < nodes.size(); ++nodeIndex) {
+        const auto& node = nodes[nodeIndex];
+        if (node.sourceGraphNode
+            == std::numeric_limits<std::size_t>::max()) {
+            continue;
+        }
+        const auto& source = graph.nodes[node.sourceGraphNode];
+        if (materialDegree[nodeIndex]
+                != source.incidentSegmentReferenceCount
+            || (materialDegree[nodeIndex] == 1 && !node.onBoundary)
+            || (node.onBoundary && materialDegree[nodeIndex] == 0)) {
+            throw std::invalid_argument(
+                "scene fluid face arrangement has incomplete node ownership");
+        }
+    }
+
+    for (std::size_t first = 0; first < edges.size(); ++first) {
+        for (std::size_t second = first + 1;
+             second < edges.size(); ++second) {
+            const auto& a = edges[first];
+            const auto& b = edges[second];
+            if (a.firstNode == b.firstNode
+                || a.firstNode == b.secondNode
+                || a.secondNode == b.firstNode
+                || a.secondNode == b.secondNode) {
+                continue;
+            }
+            if (segmentPairTestCount == limits.maximumSegmentPairTests) {
+                throw std::length_error(
+                    "scene fluid face partition exceeds pair-test limit");
+            }
+            ++segmentPairTestCount;
+            if (segmentsIntersect(
+                    nodes[a.firstNode].point, nodes[a.secondNode].point,
+                    nodes[b.firstNode].point, nodes[b.secondNode].point,
+                    settings.geometryToleranceMeters)) {
+                throw std::invalid_argument(
+                    "scene fluid face arrangement edges intersect");
+            }
+        }
+    }
+
+    std::vector<ArrangementHalfEdge> halfEdges;
+    std::vector<std::vector<std::size_t>> outgoing(nodes.size());
+    halfEdges.reserve(2 * edges.size());
+    for (std::size_t edgeIndex = 0;
+         edgeIndex < edges.size(); ++edgeIndex) {
+        const auto& edge = edges[edgeIndex];
+        for (const auto [from, to] : {
+                 std::pair{edge.firstNode, edge.secondNode},
+                 std::pair{edge.secondNode, edge.firstNode}}) {
+            const Point2 delta{
+                nodes[to].point.u - nodes[from].point.u,
+                nodes[to].point.v - nodes[from].point.v,
+            };
+            if (!(std::hypot(delta.u, delta.v)
+                    > settings.geometryToleranceMeters)) {
+                throw std::invalid_argument(
+                    "scene fluid face arrangement has a short edge");
+            }
+            const std::size_t halfEdgeIndex = halfEdges.size();
+            halfEdges.push_back({
+                edgeIndex, from, to, std::atan2(delta.v, delta.u)});
+            outgoing[from].push_back(halfEdgeIndex);
+        }
+    }
+    const double angularTolerance = settings.geometryToleranceMeters
+        / std::min(width, height);
+    for (std::size_t nodeIndex = 0;
+         nodeIndex < nodes.size(); ++nodeIndex) {
+        auto& nodeOutgoing = outgoing[nodeIndex];
+        std::ranges::sort(nodeOutgoing, {},
+                          [&](const std::size_t halfEdgeIndex) {
+                              return halfEdges[halfEdgeIndex].angleRadians;
+                          });
+        for (std::size_t index = 0;
+             index < nodeOutgoing.size(); ++index) {
+            const double first = halfEdges[nodeOutgoing[index]].angleRadians;
+            double second = halfEdges[nodeOutgoing[
+                (index + 1) % nodeOutgoing.size()]].angleRadians;
+            if (index + 1 == nodeOutgoing.size()) second += 2.0 * std::acos(-1.0);
+            if (second - first <= angularTolerance) {
+                throw std::invalid_argument(
+                    "scene fluid face arrangement has overlapping rays");
+            }
+        }
+    }
+
+    std::vector<bool> visited(halfEdges.size(), false);
+    std::map<StableId, double> areas;
+    std::size_t exteriorCycleCount = 0;
+    for (std::size_t start = 0;
+         start < halfEdges.size(); ++start) {
+        if (visited[start]) continue;
+        std::vector<std::size_t> cycle;
+        StableId regionId = invalidStableId;
+        std::size_t current = start;
+        while (true) {
+            if (cycle.size() > halfEdges.size() || visited[current]) {
+                throw std::invalid_argument(
+                    "scene fluid face arrangement cycle is invalid");
+            }
+            visited[current] = true;
+            cycle.push_back(current);
+            const auto& halfEdge = halfEdges[current];
+            const auto& edge = edges[halfEdge.edgeIndex];
+            if (edge.material) {
+                const StableId candidate =
+                    halfEdge.fromNode == edge.directedFromNode
+                        && halfEdge.toNode == edge.directedToNode
+                    ? edge.positiveSideRegionId
+                    : edge.negativeSideRegionId;
+                if (regionId == invalidStableId) regionId = candidate;
+                else if (regionId != candidate) {
+                    throw std::invalid_argument(
+                        "scene fluid face arrangement region winding conflicts");
+                }
+            }
+            const std::size_t reverse = current ^ 1U;
+            const auto& destinationOutgoing = outgoing[halfEdge.toNode];
+            const auto found = std::ranges::find(
+                destinationOutgoing, reverse);
+            if (found == destinationOutgoing.end()) {
+                throw std::logic_error(
+                    "scene fluid face arrangement reverse edge is missing");
+            }
+            const std::size_t position = static_cast<std::size_t>(
+                found - destinationOutgoing.begin());
+            current = destinationOutgoing[
+                position == 0
+                    ? destinationOutgoing.size() - 1
+                    : position - 1];
+            if (current == start) break;
+        }
+        double twiceSignedArea = 0.0;
+        for (const std::size_t halfEdgeIndex : cycle) {
+            const auto& halfEdge = halfEdges[halfEdgeIndex];
+            const Point2& first = nodes[halfEdge.fromNode].point;
+            const Point2& second = nodes[halfEdge.toNode].point;
+            twiceSignedArea +=
+                first.u * second.v - second.u * first.v;
+        }
+        const double signedArea = 0.5 * twiceSignedArea;
+        if (!std::isfinite(signedArea) || signedArea == 0.0) {
+            throw std::invalid_argument(
+                "scene fluid face arrangement cycle area is invalid");
+        }
+        if (signedArea < 0.0) {
+            ++exteriorCycleCount;
+            continue;
+        }
+        if (regionId == invalidStableId) {
+            throw std::invalid_argument(
+                "scene fluid face arrangement has an unlabeled interior");
+        }
+        areas[regionId] += signedArea;
+    }
+    if (exteriorCycleCount != 1 || areas.size() < 2) {
+        throw std::invalid_argument(
+            "scene fluid face arrangement does not form one bounded partition");
+    }
+    double assignedArea = 0.0;
+    for (const auto [regionId, area] : areas) {
+        static_cast<void>(regionId);
+        if (!(area > 0.0) || !std::isfinite(area)) {
+            throw std::invalid_argument(
+                "scene fluid face arrangement region area is invalid");
+        }
+        assignedArea += area;
+    }
+    const double fullArea = width * height;
+    if (!std::isfinite(assignedArea)
+        || std::abs(assignedArea - fullArea)
+            > settings.areaClosureToleranceSquareMeters) {
+        throw std::invalid_argument(
+            "scene fluid face arrangement does not close area");
+    }
+    return areas;
+}
+
 std::uint64_t partitionFingerprint(
     const SceneFluidFacePartitionSet& value) {
     Fingerprint f;
@@ -562,6 +952,62 @@ SceneFluidFacePartitionSet buildPartitions(
                     > settings.areaClosureToleranceSquareMeters) {
                 throw std::invalid_argument(
                     "scene fluid boundary face partition does not close area");
+            }
+            result.partitions.push_back(partition);
+            continue;
+        }
+        bool boundaryArrangement =
+            faceLoops.empty() && faceOpenChains.size() > 1
+            && face.coplanarPatchReferenceCount == 0;
+        bool hasBoundaryNode = false;
+        const auto& graphRange = graph.faceRanges[faceIndex];
+        for (std::size_t offset = 0;
+             boundaryArrangement && offset < graphRange.nodeCount;
+             ++offset) {
+            const auto& node = graph.nodes[graphRange.firstNode + offset];
+            hasBoundaryNode = hasBoundaryNode
+                || node.faceBoundaryMask != FaceBoundaryNone;
+            boundaryArrangement = !node.authoredOpeningBoundary
+                && (node.incidentSegmentReferenceCount != 1
+                    || node.faceBoundaryMask != FaceBoundaryNone);
+        }
+        boundaryArrangement = boundaryArrangement && hasBoundaryNode;
+        if (boundaryArrangement) {
+            if (result.partitions.size() == limits.maximumPartitions) {
+                throw std::length_error(
+                    "scene fluid face partitions exceed their limit");
+            }
+            SceneFluidFacePartition partition;
+            partition.stableId = face.stableId;
+            partition.activeFaceIndex = faceIndex;
+            partition.kind =
+                SceneFluidFacePartitionKind::BoundaryChainArrangement;
+            partition.firstLoopReference = result.loopReferences.size();
+            partition.firstOpenChainReference =
+                result.openChainReferences.size();
+            partition.openChainReferenceCount = faceOpenChains.size();
+            result.openChainReferences.insert(
+                result.openChainReferences.end(),
+                faceOpenChains.begin(), faceOpenChains.end());
+            partition.faceAreaSquareMeters = faceArea(grid, face.axis);
+            const auto areas = boundaryChainArrangementAreas(
+                faceIndex, face, faceOpenChains, chains, graph, graphRange,
+                grid, settings, limits, result.segmentPairTestCount);
+            partition.firstRegionArea = result.regionAreas.size();
+            for (const auto [region, area] : areas) {
+                result.regionAreas.push_back({region, area});
+                partition.assignedAreaSquareMeters += area;
+            }
+            partition.regionAreaCount = result.regionAreas.size()
+                - partition.firstRegionArea;
+            partition.areaResidualSquareMeters =
+                partition.assignedAreaSquareMeters
+                - partition.faceAreaSquareMeters;
+            if (!std::isfinite(partition.areaResidualSquareMeters)
+                || std::abs(partition.areaResidualSquareMeters)
+                    > settings.areaClosureToleranceSquareMeters) {
+                throw std::invalid_argument(
+                    "scene fluid face arrangement does not close area");
             }
             result.partitions.push_back(partition);
             continue;

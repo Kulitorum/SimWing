@@ -8,12 +8,13 @@
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t sceneFluidFacePartitionVersion = 2;
+inline constexpr std::uint32_t sceneFluidFacePartitionVersion = 3;
 inline constexpr std::size_t noParentFaceLoop = static_cast<std::size_t>(-1);
 
 enum class SceneFluidFacePartitionKind : std::uint8_t {
     ClosedLoops = 1,
     BoundaryOpenChain = 2,
+    BoundaryChainArrangement = 3,
 };
 
 struct SceneFluidFacePartitionSettings {
@@ -87,10 +88,10 @@ struct SceneFluidFacePartitionSet {
 
 // Builds containment and exact region-area accounting for active faces whose
 // interface consists solely of non-touching simple closed loops, or of one
-// simple directed open chain joining two points on the rectangular face
-// boundary. Parent/child authored regions must form a continuous nesting chain.
-// Opening-ended/multiple open chains, coplanar sheet area, boundary-touching
-// closed loops, or absent interfaces stay explicitly unresolved. This is a face
+// simple directed open-chain arrangement whose leaves all lie on the rectangular
+// face boundary. Parent/child authored regions must form a continuous nesting
+// chain. Opening-ended chains, coplanar sheet area, boundary-touching closed
+// loops, or absent interfaces stay explicitly unresolved. This is a face
 // partition, not a cut-cell volume.
 [[nodiscard]] SceneFluidFacePartitionSet buildSceneFluidFacePartitions(
     const SceneFluidSurfaceDefinition& surface,
