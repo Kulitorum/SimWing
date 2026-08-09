@@ -316,16 +316,17 @@ void testOpeningTopologyBoundaries() {
               "face-aligned intake contributes its exact aperture graph energy");
 
     Fixture offFace(tiltedOpenScene());
-    const std::size_t unresolvedFaceCount =
+    const std::size_t unresolvedTopologyCount =
         offFace.faceLinks.unresolvedActiveFaceCount
         + offFace.faceLinks.unresolvedAmbiguousFaceCount
-        + offFace.faceLinks.unresolvedOpeningFaceCount;
+        + offFace.faceLinks.unresolvedOpeningFaceCount
+        + offFace.faceLinks.unresolvedEmbeddedOpeningPatchCount;
     const auto embeddedOperator = offFace.pressureOperator();
     const auto embeddedLink = std::ranges::find(
         offFace.faceLinks.links,
         SceneFluidPressureLinkGeometryKind::EmbeddedOpening,
         &SceneFluidPressureFaceLink::geometryKind);
-    check(unresolvedFaceCount == 0
+    check(unresolvedTopologyCount == 0
               && offFace.pressureVolumes.components.size() == 1
               && offFace.faceLinks.embeddedOpeningLinkCount == 1
               && embeddedLink != offFace.faceLinks.links.end()

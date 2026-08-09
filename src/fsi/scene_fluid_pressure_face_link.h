@@ -9,7 +9,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureFaceLinkVersion = 3;
+inline constexpr std::uint32_t sceneFluidPressureFaceLinkVersion = 4;
 inline constexpr std::size_t invalidSceneFluidPressureFaceIndex =
     std::numeric_limits<std::size_t>::max();
 
@@ -97,9 +97,11 @@ struct SceneFluidPressureFaceLink {
 // cross-region links over its exact patch area and, when unambiguous, one
 // complementary same-region link. A cell-owned opening patch instead connects
 // its two same-cell pressure controls along the authored normal, using their
-// projected centroid separation. Material/open-chain/coplanar overlap and
-// ambiguous faces remain explicit and unresolved; no dominant-cell or
-// smeared-interface fallback is permitted.
+// projected centroid separation. A patch without positive projected separation
+// remains an explicit unresolved embedded opening and publishes no link.
+// Material/open-chain/coplanar overlap and ambiguous faces likewise remain
+// explicit and unresolved; no dominant-cell or smeared-interface fallback is
+// permitted.
 struct SceneFluidPressureFaceLinkSet {
     std::uint32_t version = sceneFluidPressureFaceLinkVersion;
     std::uint64_t fingerprint = 0;
@@ -120,12 +122,14 @@ struct SceneFluidPressureFaceLinkSet {
     std::size_t resolvedPartitionFaceCount = 0;
     std::size_t resolvedOpeningFaceCount = 0;
     std::size_t embeddedOpeningLinkCount = 0;
+    std::size_t unresolvedEmbeddedOpeningPatchCount = 0;
     std::size_t unresolvedActiveFaceCount = 0;
     std::size_t unresolvedAmbiguousFaceCount = 0;
     std::size_t unresolvedOpeningFaceCount = 0;
     double totalFaceAreaSquareMeters = 0.0;
     double totalLinkedAreaSquareMeters = 0.0;
     double totalEmbeddedOpeningAreaSquareMeters = 0.0;
+    double unresolvedEmbeddedOpeningAreaSquareMeters = 0.0;
     double maximumResolvedAreaResidualSquareMeters = 0.0;
     std::vector<SceneFluidPressureFace> faces;
     std::vector<SceneFluidPressureFaceLink> links;

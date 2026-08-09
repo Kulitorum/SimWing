@@ -665,8 +665,9 @@ plus `0.82 m²` of Outside-to-Outside area. The published geometry weight is
 area over center distance. A cell-owned patch instead publishes an embedded
 same-cell cross-region link along the full authored normal. Its center distance
 is the positive normal projection between the two exact cell-region centroids;
-degenerate separation rejects instead of creating unbounded conductance. For
-the fully resolved
+when that projection is not positive, the patch count and exact area remain
+explicitly unresolved and no conductance link is fabricated. The pressure
+operator rejects such incomplete topology. For the fully resolved
 subset, a bounded immutable pressure-operator owner now expands every link into
 the two directed rows of a symmetric integrated graph Laplacian. Its action is
 the conservative sum of `area/distance * (p_row - p_neighbour)`, so constants
@@ -938,10 +939,12 @@ and consumes the complete real-wing opening set. Pairwise cell-volume measures
 close its complete region ledger on a centered coarse grid; grid-face junctions
 remain explicit unresolved partitions. Opening quadrature and grid patches
 preserve the full cap area, while authored connectivity and sparse pressure
-control volumes assemble. Exact pressure face links remain open because at
-least one coarse embedded opening lacks positive projected separation between
-its two cell-region centroids. Resolving junction face areas and subsequent
-worker integration also remain open.
+control volumes assemble. Face-link construction now retains every coarse
+embedded opening without positive projected cell-region centroid separation as
+explicit unresolved count and area, without publishing a conductance link.
+Pressure-operator assembly rejects the incomplete topology. Resolving those
+conductances, junction face areas, and subsequent worker integration also
+remain open.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy

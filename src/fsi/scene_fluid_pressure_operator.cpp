@@ -304,11 +304,12 @@ SceneFluidPressureOperator buildOperator(
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidPressureOperatorLimits& limits) {
-    const std::size_t unresolvedFaceCount =
+    const std::size_t unresolvedTopologyCount =
         faceLinks.unresolvedActiveFaceCount
         + faceLinks.unresolvedAmbiguousFaceCount
-        + faceLinks.unresolvedOpeningFaceCount;
-    if (unresolvedFaceCount != 0
+        + faceLinks.unresolvedOpeningFaceCount
+        + faceLinks.unresolvedEmbeddedOpeningPatchCount;
+    if (unresolvedTopologyCount != 0
         || faceLinks.resolvedFullFaceCount
             + faceLinks.resolvedPartitionFaceCount
             + faceLinks.resolvedOpeningFaceCount

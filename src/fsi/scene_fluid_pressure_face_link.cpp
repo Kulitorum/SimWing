@@ -293,6 +293,7 @@ std::uint64_t faceLinkFingerprint(
              faceLinks.totalFaceAreaSquareMeters,
              faceLinks.totalLinkedAreaSquareMeters,
              faceLinks.totalEmbeddedOpeningAreaSquareMeters,
+             faceLinks.unresolvedEmbeddedOpeningAreaSquareMeters,
              faceLinks.maximumResolvedAreaResidualSquareMeters}) {
         fingerprint.real(value);
     }
@@ -302,6 +303,7 @@ std::uint64_t faceLinkFingerprint(
              faceLinks.resolvedPartitionFaceCount,
              faceLinks.resolvedOpeningFaceCount,
              faceLinks.embeddedOpeningLinkCount,
+             faceLinks.unresolvedEmbeddedOpeningPatchCount,
              faceLinks.unresolvedActiveFaceCount,
              faceLinks.unresolvedAmbiguousFaceCount,
              faceLinks.unresolvedOpeningFaceCount}) {
@@ -781,8 +783,10 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
             patch.unitNormalNegativeToPositive);
         if (!std::isfinite(distance)
             || distance < settings.minimumCenterDistanceMeters) {
-            throw std::invalid_argument(
-                "scene fluid embedded pressure opening has degenerate centroid separation");
+            ++result.unresolvedEmbeddedOpeningPatchCount;
+            result.unresolvedEmbeddedOpeningAreaSquareMeters +=
+                patch.areaSquareMeters;
+            continue;
         }
         if (result.links.size() == limits.maximumLinks) {
             throw std::length_error(

@@ -98,10 +98,10 @@ struct SceneFluidPressureOperatorComponent {
 // entries, where w is area / centre distance. The operator is deliberately
 // ungauged and therefore has one constant null mode per pressure component;
 // the existing deterministic gauge control volume is retained as metadata for
-// a future solve. Construction requires every Cartesian face to be resolved
-// and the link graph to contain exactly one connected graph per authored
-// pressure component. Missing opening/interface ownership therefore rejects
-// instead of silently becoming a no-flow boundary.
+// a future solve. Construction requires every Cartesian face and embedded
+// opening patch to be resolved, and the link graph to contain exactly one
+// connected graph per authored pressure component. Missing opening/interface
+// ownership therefore rejects instead of silently becoming a no-flow boundary.
 struct SceneFluidPressureOperator {
     std::uint32_t version = sceneFluidPressureOperatorVersion;
     std::uint64_t fingerprint = 0;

@@ -4,6 +4,7 @@
 #include "scene_fluid_cell_volume.h"
 #include "scene_fluid_opening_cap.h"
 #include "scene_fluid_pressure_control_volume.h"
+#include "scene_fluid_pressure_face_link.h"
 #include "scene_fluid_surface.h"
 #include "scene_structure.h"
 #include "structure_frame.h"
@@ -455,6 +456,11 @@ void testRealDesignCapture(const std::filesystem::path &input,
     const simwing::fsi::SceneFluidPressureControlVolumeSet pressureVolumes =
         simwing::fsi::buildSceneFluidPressureControlVolumes(
             fluidSurface.definition, fluidVolumes, fluidConnectivity);
+    const simwing::fsi::SceneFluidPressureFaceLinkSet pressureFaceLinks =
+        simwing::fsi::buildSceneFluidPressureFaceLinks(
+            fluidSurface.definition, fluidState, fluidGrid, fluidTransfer,
+            fluidEpoch, openingCaps, openingQuadrature, openingPatches,
+            fluidVolumes, fluidConnectivity, pressureVolumes);
     check(fluidVolumes.regionVolumes.size() == result.scene.regions.size()
               && fluidVolumes.openingCapCount
                   == result.scene.openings.size()
@@ -471,8 +477,12 @@ void testRealDesignCapture(const std::filesystem::path &input,
                   >= openingQuadrature.points.size()
               && std::abs(openingPatches.totalAreaSquareMeters
                           - openingCaps.totalAreaSquareMeters)
-                  < 1.0e-10,
-          "real wing reaches bounded opening patches and pressure controls");
+                  < 1.0e-10
+              && pressureFaceLinks.unresolvedActiveFaceCount > 0
+              && pressureFaceLinks.unresolvedEmbeddedOpeningPatchCount > 0
+              && pressureFaceLinks.unresolvedEmbeddedOpeningAreaSquareMeters
+                  > 0.0,
+          "real wing reaches pressure links with explicit unresolved topology");
     const simwing::viewer::StructureFrameMapping mapping =
         simwing::viewer::makeStructureFrameMapping(
             result.scene, assembly, structure);

@@ -1,4 +1,5 @@
 #include "scene_fluid_pressure_face_link.h"
+#include "scene_fluid_pressure_operator.h"
 
 #include <algorithm>
 #include <array>
@@ -323,6 +324,9 @@ void testFaceAndEmbeddedOpeningLinks() {
         &SceneFluidPressureFaceLink::geometryKind);
     check(cellOwnedPatchCount == 1
               && embeddedLinks.embeddedOpeningLinkCount == 1
+              && embeddedLinks.unresolvedEmbeddedOpeningPatchCount == 0
+              && embeddedLinks.unresolvedEmbeddedOpeningAreaSquareMeters
+                  == 0.0
               && embedded != embeddedLinks.links.end()
               && embeddedLinks.unresolvedOpeningFaceCount == 0,
           "tilted off-face intake owns one embedded pressure link");
@@ -399,9 +403,20 @@ void testCorruptionSettingsAndLimits() {
     Fixture tilted(tiltedOpenScene());
     SceneFluidPressureFaceLinkSettings excessiveDistance;
     excessiveDistance.minimumCenterDistanceMeters = 10.0;
+    const auto unresolvedEmbedded = tilted.links(excessiveDistance);
+    check(unresolvedEmbedded.embeddedOpeningLinkCount == 0
+              && unresolvedEmbedded.unresolvedEmbeddedOpeningPatchCount == 1
+              && unresolvedEmbedded.unresolvedEmbeddedOpeningAreaSquareMeters
+                  == tilted.openingPatches.totalAreaSquareMeters,
+          "embedded pressure link retains degenerate centroid separation as unresolved");
     expectInvalid(
-        [&] { static_cast<void>(tilted.links(excessiveDistance)); },
-        "embedded pressure link rejects degenerate centroid separation");
+        [&] { static_cast<void>(buildSceneFluidPressureOperator(
+            tilted.surface.definition, tilted.state, grid(),
+            tilted.transfer, tilted.epoch, tilted.caps,
+            tilted.openingQuadrature, tilted.openingPatches,
+            tilted.volumes, tilted.connectivity,
+            tilted.pressureVolumes, unresolvedEmbedded)); },
+        "pressure operator rejects unresolved embedded openings");
 
     SceneFluidPressureFaceLinkLimits limits;
     limits.maximumFaces = 3 * grid().cellCount() - 1;

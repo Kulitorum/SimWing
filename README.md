@@ -571,9 +571,12 @@ over the rest of that Cartesian face. The analytic intake therefore retains
 whole face into either one. A cell-owned opening patch contributes an embedded
 cross-region link inside its cut cell. Its authored normal and exact area are
 retained, while conductance distance is the positive projected separation of
-the two cell-region pressure centroids. Material/interface ambiguity remains
-unlinked, and physical pressure coefficients enter only in the downstream
-fixed-epoch projection. For fully resolved geometry,
+the two cell-region pressure centroids. When that separation is not positive,
+the patch count and exact area remain explicitly unresolved and no conductance
+link is fabricated. Material/interface ambiguity remains unlinked, and the
+pressure operator rejects either incomplete topology. Physical pressure
+coefficients enter only in the downstream fixed-epoch projection. For fully
+resolved geometry,
 those links assemble into a bounded symmetric integrated graph Laplacian. Its exact
 constant nullspace, positive link energy, component conservation, and retained
 gauge owners are tested. Assembly requires one connected link graph per
@@ -757,10 +760,12 @@ set. Pairwise signed cell-volume accounting also closes the complete real-wing
 region ledger on a centered coarse grid that crosses the canopy. Junctions on
 a Cartesian face survive as pair-specific open chains and explicit unresolved
 partitions. Opening quadrature/grid patches preserve the full cap area, and
-authored connectivity plus sparse pressure controls assemble. Exact pressure
-face links remain open because at least one coarse embedded opening lacks
-positive projected separation between its two cell-region centroids; resolving
-junction face areas and subsequent worker integration also remain open.
+authored connectivity plus sparse pressure controls assemble. Pressure-link
+construction now reaches that real geometry and retains every coarse embedded
+opening without positive projected cell-region centroid separation as explicit
+unresolved count and area, without publishing a conductance link. Resolving
+those conductances, junction face areas, and subsequent worker integration
+remain open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

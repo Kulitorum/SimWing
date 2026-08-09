@@ -963,6 +963,8 @@ void testComposedPressureEpoch() {
               && first.pressureFaceLinks.unresolvedActiveFaceCount == 0
               && first.pressureFaceLinks.unresolvedAmbiguousFaceCount == 0
               && first.pressureFaceLinks.unresolvedOpeningFaceCount == 0
+              && first.pressureFaceLinks.unresolvedEmbeddedOpeningPatchCount
+                  == 0
               && first.pressureOperator.rows.size()
                   == first.pressureControlVolumes.controlVolumes.size(),
           "pressure epoch atomically composes one fully resolved accepted topology");
