@@ -424,12 +424,13 @@ src/fsi/
     scene_fluid_pressure_face_link.* exact same-region Cartesian links
     scene_fluid_pressure_operator.* symmetric integrated graph Laplacian
     scene_fluid_pressure_epoch.* atomic accepted pressure geometry/operator
+    scene_fluid_pressure_topology_transition.* shared crossing ownership
     scene_fluid_pressure_volume_rate.* consecutive sparse geometry rates
     scene_fluid_pressure_projection.* link-resolved pressure/flow correction
     scene_fluid_pressure_sampling.* gauge-safe surface pressure return path
     scene_fluid_region_momentum.* accepted collocated region momentum
     scene_fluid_region_transport.* conservative region-momentum advance
-    scene_fluid_region_rebase.* bounded appearance-only current rebase
+    scene_fluid_region_rebase.* bounded mapped current-topology rebase
     scene_fluid_region_wall.* two-sided material-wall momentum exchange
     scene_fluid_region_link_flow.* current-link region predictor
     scene_fluid_pressure_coupling.* strong pressure/shear feedback
@@ -682,7 +683,11 @@ now matches stable cell/region pressure IDs and publishes exact geometry
 `dV/dt` for every current unknown plus component/global ledgers. A newly
 positive row is marked and receives an exact zero-volume previous endpoint. A
 disappeared row can retire its complete previous volume to one unique retained
-same-region neighbour; missing or ambiguous retirement rejects. The moving
+same-region neighbour; missing or ambiguous retirement rejects. One bounded,
+versioned topology-transition product pairs retained rows and publishes both
+appearance donors and retirement recipients. Geometry-volume rates,
+transported region state, and pressure warm starts all consume its fingerprint
+instead of deriving three potentially different mappings. The moving
 projection overload adds that rate to
 the predicted net outward link flow before RHS assembly and accepts only when
 `dV/dt + corrected net outward flow` closes locally. Starting from zero air
@@ -772,16 +777,18 @@ quadrature point. It uses a local half-volume/incident-area distance, bounded
 explicit subcycling, and separate wall-work/dissipation ledgers. The fluid
 impulse and equal-and-opposite Structure traction close before publication;
 normal traction remains pressure-owned. A bounded first one-ring crossing
-adapter sits immediately upstream: retained controls keep transported velocity,
-and each newly positive control
-receives the area-weighted velocity of directly linked retained controls in
-the same authored region. A disappeared control transfers its complete source
-volume and momentum to one unique previous same-region neighbour; the mapped
-source ledger closes before current-volume geometric correction. Pressure warm
-state seeds appearances, preserves retained rows, and drops retired values. The
-strong owner composes that result through wall exchange and projection
-transactionally. Cross-material donation and missing or ambiguous one-ring
-ownership reject; this is not a general swept-volume remap. Pressure projection then
+adapter sits immediately upstream. Its shared transition pairs retained rows,
+records current same-region donors for every appearance, and records the unique
+previous same-region recipient for every supported disappearance. Retained
+controls keep transported velocity; appeared velocity is donor-area weighted;
+and a disappeared source transfers its complete volume and momentum to that
+recorded recipient. The mapped source ledger closes before current-volume
+geometric correction. Pressure warm state consumes the identical transition,
+seeding appearances, preserving retained rows, and dropping retired values.
+The strong owner composes that result through wall exchange and pressure
+projection transactionally. Cross-material donation and missing or ambiguous
+one-ring ownership reject; this is not a general swept-volume remap. Pressure
+projection then
 consumes the wall-adjusted link predictor, and the existing conservative
 transfer applies the combined pressure-plus-shear load to XPBD. This is a
 local cut-region wall closure, not a resolved immersed-boundary boundary

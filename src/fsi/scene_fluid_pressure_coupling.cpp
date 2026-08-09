@@ -750,12 +750,18 @@ SceneFluidPressureCoupling::advanceImpl(
             auto currentEpoch = buildSceneFluidPressureEpoch(
                 surface_, currentState, grid_, transfer_, connectivity_,
                 settings_.pressureEpoch, limits_.pressureEpoch);
+            const auto topologyTransition =
+                buildSceneFluidPressureTopologyTransition(
+                    acceptedPressureEpoch_.pressureControlVolumes,
+                    acceptedPressureEpoch_.pressureFaceLinks,
+                    currentEpoch.pressureControlVolumes,
+                    currentEpoch.pressureFaceLinks,
+                    limits_.topologyTransition);
             const auto rates = buildSceneFluidPressureVolumeRates(
                 acceptedPressureEpoch_.cellVolumes,
                 currentEpoch.cellVolumes,
-                acceptedPressureEpoch_.pressureControlVolumes,
-                acceptedPressureEpoch_.pressureFaceLinks,
                 currentEpoch.pressureControlVolumes,
+                topologyTransition,
                 limits_.volumeRates);
             const auto openingFlux = evaluateSceneFluidOpeningFlux(
                 surface_, currentState, currentEpoch.openingCaps,
@@ -772,7 +778,7 @@ SceneFluidPressureCoupling::advanceImpl(
                 rebasedWarmPressure = rebaseSceneFluidPressureWarmStart(
                     acceptedPressureEpoch_.pressureControlVolumes,
                     currentEpoch.pressureControlVolumes,
-                    currentEpoch.pressureFaceLinks,
+                    topologyTransition,
                     acceptedPressurePascals_);
                 projectionWarmPressure = rebasedWarmPressure;
             }
@@ -786,9 +792,8 @@ SceneFluidPressureCoupling::advanceImpl(
                     regionRebase.emplace(rebaseSceneFluidRegionTransport(
                         *transportedRegionMomentum,
                         acceptedPressureEpoch_.pressureControlVolumes,
-                        acceptedPressureEpoch_.pressureFaceLinks,
                         currentEpoch.pressureControlVolumes,
-                        currentEpoch.pressureFaceLinks,
+                        topologyTransition,
                         limits_.regionRebase));
                 }
                 auto wallSettings = settings_.regionWall;

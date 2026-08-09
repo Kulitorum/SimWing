@@ -1,5 +1,6 @@
 #pragma once
 
+#include "scene_fluid_pressure_topology_transition.h"
 #include "scene_fluid_region_transport.h"
 
 #include <cstddef>
@@ -10,11 +11,11 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidRegionRebaseVersion = 2;
+inline constexpr std::uint32_t sceneFluidRegionRebaseVersion = 3;
 
 struct SceneFluidRegionRebaseLimits {
     std::size_t maximumControlVolumes = 50'000'000;
-    std::size_t maximumLinks = 100'000'000;
+    std::size_t maximumMappings = 100'000'000;
     std::size_t maximumRebaseBytes =
         4ULL * 1024ULL * 1024ULL * 1024ULL;
 };
@@ -82,10 +83,9 @@ struct SceneFluidRegionRebase {
     std::uint32_t version = sceneFluidRegionRebaseVersion;
     std::uint64_t fingerprint = 0;
     std::uint64_t sourceTransportFingerprint = 0;
+    std::uint64_t sourceTopologyTransitionFingerprint = 0;
     std::uint64_t previousPressureControlVolumeFingerprint = 0;
-    std::uint64_t previousPressureFaceLinkFingerprint = 0;
     std::uint64_t currentPressureControlVolumeFingerprint = 0;
-    std::uint64_t currentPressureFaceLinkFingerprint = 0;
     std::uint64_t surfaceDefinitionFingerprint = 0;
     std::uint64_t structureDefinitionFingerprint = 0;
     std::uint64_t previousAcceptedStepCount = 0;
@@ -106,9 +106,8 @@ struct SceneFluidRegionRebase {
 [[nodiscard]] SceneFluidRegionRebase rebaseSceneFluidRegionTransport(
     const SceneFluidRegionTransport& transport,
     const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& previousFaceLinks,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& currentFaceLinks,
+    const SceneFluidPressureTopologyTransition& topologyTransition,
     const SceneFluidRegionRebaseLimits& limits = {});
 
 void validateSceneFluidRegionRebaseIntegrity(
@@ -118,9 +117,8 @@ void validateSceneFluidRegionRebase(
     const SceneFluidRegionRebase& rebase,
     const SceneFluidRegionTransport& transport,
     const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& previousFaceLinks,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& currentFaceLinks);
+    const SceneFluidPressureTopologyTransition& topologyTransition);
 
 // Maps an accepted pressure warm start onto the supported topology subset.
 // Retained stable IDs keep their exact pressure; a disappeared value retires
@@ -131,7 +129,7 @@ void validateSceneFluidRegionRebase(
 [[nodiscard]] std::vector<double> rebaseSceneFluidPressureWarmStart(
     const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& currentFaceLinks,
+    const SceneFluidPressureTopologyTransition& topologyTransition,
     std::span<const double> previousPressurePascals);
 
 } // namespace simwing::fsi

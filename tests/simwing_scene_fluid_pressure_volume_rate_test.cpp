@@ -579,16 +579,72 @@ void testAppearedControlRegionRebase() {
     const auto currentEpoch = buildSceneFluidPressureEpoch(
         fixture.surface.definition, currentState, grid(), fixture.transfer,
         fixture.connectivity);
+    const auto topologyTransition =
+        buildSceneFluidPressureTopologyTransition(
+            previousEpoch.pressureControlVolumes,
+            previousEpoch.pressureFaceLinks,
+            currentEpoch.pressureControlVolumes,
+            currentEpoch.pressureFaceLinks);
+    const auto repeatedTransition =
+        buildSceneFluidPressureTopologyTransition(
+            previousEpoch.pressureControlVolumes,
+            previousEpoch.pressureFaceLinks,
+            currentEpoch.pressureControlVolumes,
+            currentEpoch.pressureFaceLinks);
+    check(topologyTransition == repeatedTransition
+              && topologyTransition.retainedControlVolumeCount == 65
+              && topologyTransition.appearedControlVolumeCount == 1
+              && topologyTransition.disappearedControlVolumeCount == 0
+              && !topologyTransition.appearanceDonors.empty()
+              && topologyTransition.retirementRecipients.empty()
+              && topologyTransition.maximumAppearanceDonorCount > 0,
+          "pressure topology transition deterministically owns the appeared row and its donors");
+    validateSceneFluidPressureTopologyTransition(
+        topologyTransition,
+        previousEpoch.pressureControlVolumes,
+        previousEpoch.pressureFaceLinks,
+        currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks);
+    auto corruptTransition = topologyTransition;
+    corruptTransition.appearanceDonors.front().normalizedWeight += 0.01;
+    expectInvalid(
+        [&] {
+            validateSceneFluidPressureTopologyTransitionIntegrity(
+                corruptTransition);
+        },
+        "pressure topology-transition integrity rejects donor corruption");
+    SceneFluidPressureTopologyTransitionLimits transitionLimits;
+    transitionLimits.maximumMappings =
+        topologyTransition.appearanceDonors.size() - 1;
+    expectLimited(
+        [&] { static_cast<void>(
+            buildSceneFluidPressureTopologyTransition(
+                previousEpoch.pressureControlVolumes,
+                previousEpoch.pressureFaceLinks,
+                currentEpoch.pressureControlVolumes,
+                currentEpoch.pressureFaceLinks,
+                transitionLimits)); },
+        "pressure topology transition bounds its mapping count");
+    transitionLimits = {};
+    transitionLimits.maximumTransitionBytes =
+        topologyTransition.ownedStorageBytes - 1;
+    expectLimited(
+        [&] { static_cast<void>(
+            buildSceneFluidPressureTopologyTransition(
+                previousEpoch.pressureControlVolumes,
+                previousEpoch.pressureFaceLinks,
+                currentEpoch.pressureControlVolumes,
+                currentEpoch.pressureFaceLinks,
+                transitionLimits)); },
+        "pressure topology transition bounds its owned storage");
     const auto rebase = rebaseSceneFluidRegionTransport(
         transport, previousEpoch.pressureControlVolumes,
-        previousEpoch.pressureFaceLinks,
         currentEpoch.pressureControlVolumes,
-        currentEpoch.pressureFaceLinks);
+        topologyTransition);
     const auto repeated = rebaseSceneFluidRegionTransport(
         transport, previousEpoch.pressureControlVolumes,
-        previousEpoch.pressureFaceLinks,
         currentEpoch.pressureControlVolumes,
-        currentEpoch.pressureFaceLinks);
+        topologyTransition);
     check(rebase == repeated
               && rebase.diagnostics.previousControlVolumeCount == 65
               && rebase.diagnostics.currentControlVolumeCount == 66
@@ -628,15 +684,14 @@ void testAppearedControlRegionRebase() {
           "region rebase preserves every retained stable-ID velocity across index insertion");
     validateSceneFluidRegionRebase(
         rebase, transport, previousEpoch.pressureControlVolumes,
-        previousEpoch.pressureFaceLinks,
         currentEpoch.pressureControlVolumes,
-        currentEpoch.pressureFaceLinks);
+        topologyTransition);
     std::vector<double> previousWarm(
         previousEpoch.pressureControlVolumes.controlVolumes.size(), 73.0);
     const auto currentWarm = rebaseSceneFluidPressureWarmStart(
         previousEpoch.pressureControlVolumes,
         currentEpoch.pressureControlVolumes,
-        currentEpoch.pressureFaceLinks, previousWarm);
+        topologyTransition, previousWarm);
     check(currentWarm.size()
               == currentEpoch.pressureControlVolumes.controlVolumes.size()
               && std::ranges::all_of(
@@ -658,7 +713,7 @@ void testAppearedControlRegionRebase() {
         const auto nonuniformWarm = rebaseSceneFluidPressureWarmStart(
             previousEpoch.pressureControlVolumes,
             currentEpoch.pressureControlVolumes,
-            currentEpoch.pressureFaceLinks, previousWarm);
+            topologyTransition, previousWarm);
         check(nonuniformWarm[appeared->controlVolumeIndex] == 17.0,
               "appeared pressure warm start uses its exact retained same-region donor");
     }
@@ -687,19 +742,19 @@ void testAppearedControlRegionRebase() {
     auto corruptLinks = currentEpoch.pressureFaceLinks;
     corruptLinks.links.front().areaSquareMeters += 0.01;
     expectInvalid(
-        [&] { static_cast<void>(rebaseSceneFluidRegionTransport(
-            transport, previousEpoch.pressureControlVolumes,
-            previousEpoch.pressureFaceLinks,
-            currentEpoch.pressureControlVolumes, corruptLinks)); },
-        "region rebase rejects nested face-link corruption");
+        [&] { static_cast<void>(
+            buildSceneFluidPressureTopologyTransition(
+                previousEpoch.pressureControlVolumes,
+                previousEpoch.pressureFaceLinks,
+                currentEpoch.pressureControlVolumes, corruptLinks)); },
+        "topology transition rejects nested face-link corruption");
     SceneFluidRegionRebaseLimits limits;
     limits.maximumControlVolumes = rebase.controlVolumes.size() - 1;
     expectLimited(
         [&] { static_cast<void>(rebaseSceneFluidRegionTransport(
             transport, previousEpoch.pressureControlVolumes,
-            previousEpoch.pressureFaceLinks,
             currentEpoch.pressureControlVolumes,
-            currentEpoch.pressureFaceLinks, limits)); },
+            topologyTransition, limits)); },
         "region rebase bounds its current control count");
 
     const auto crossingFlux = evaluateSceneFluidOpeningFlux(
@@ -735,16 +790,30 @@ void testAppearedControlRegionRebase() {
     const auto retreatEpoch = buildSceneFluidPressureEpoch(
         fixture.surface.definition, retreatState, grid(), fixture.transfer,
         fixture.connectivity);
+    const auto retirementTransition =
+        buildSceneFluidPressureTopologyTransition(
+            currentEpoch.pressureControlVolumes,
+            currentEpoch.pressureFaceLinks,
+            retreatEpoch.pressureControlVolumes,
+            retreatEpoch.pressureFaceLinks);
+    check(retirementTransition.retainedControlVolumeCount == 65
+              && retirementTransition.appearedControlVolumeCount == 0
+              && retirementTransition.disappearedControlVolumeCount == 1
+              && retirementTransition.appearanceDonors.empty()
+              && retirementTransition.retirementRecipients.size() == 1
+              && retirementTransition.retirementRecipients.front()
+                     .normalizedWeight == 1.0,
+          "pressure topology transition owns the unique disappeared-row retirement");
     const auto retirementRates = buildSceneFluidPressureVolumeRates(
         currentEpoch.cellVolumes, retreatEpoch.cellVolumes,
-        currentEpoch.pressureControlVolumes,
-        currentEpoch.pressureFaceLinks,
-        retreatEpoch.pressureControlVolumes);
+        retreatEpoch.pressureControlVolumes, retirementTransition);
     check(retirementRates.previousControlVolumeCount == 66
               && retirementRates.retainedControlVolumeCount == 65
               && retirementRates.appearedControlVolumeCount == 0
               && retirementRates.disappearedControlVolumeCount == 1
               && retirementRates.retiredPreviousVolumeCubicMeters > 0.0
+              && retirementRates.pressureTopologyTransitionFingerprint
+                  == retirementTransition.fingerprint
               && std::abs(retirementRates.globalVolumeChangeCubicMeters)
                   < 3.0e-12,
           "pressure-volume rates conservatively retire one disappeared row");
@@ -764,19 +833,18 @@ void testAppearedControlRegionRebase() {
     validateSceneFluidPressureVolumeRates(
         retirementRates, currentEpoch.cellVolumes,
         retreatEpoch.cellVolumes,
-        currentEpoch.pressureControlVolumes,
-        currentEpoch.pressureFaceLinks,
-        retreatEpoch.pressureControlVolumes);
+        retreatEpoch.pressureControlVolumes, retirementTransition);
     const auto retirement = rebaseSceneFluidRegionTransport(
         crossingTransport, currentEpoch.pressureControlVolumes,
-        currentEpoch.pressureFaceLinks,
         retreatEpoch.pressureControlVolumes,
-        retreatEpoch.pressureFaceLinks);
+        retirementTransition);
     check(retirement.diagnostics.previousControlVolumeCount == 66
               && retirement.diagnostics.currentControlVolumeCount == 65
               && retirement.diagnostics.retainedControlVolumeCount == 65
               && retirement.diagnostics.appearedControlVolumeCount == 0
               && retirement.diagnostics.disappearedControlVolumeCount == 1
+              && retirement.sourceTopologyTransitionFingerprint
+                  == retirementTransition.fingerprint
               && retirement.diagnostics
                      .maximumRetirementRecipientCount > 0
               && std::abs(retirement.diagnostics
@@ -784,7 +852,8 @@ void testAppearedControlRegionRebase() {
               && retirement.diagnostics
                      .sourceMomentumMappingResidualNormKilogramMetersPerSecond
                   < 1.0e-12,
-          "region transport conservatively retires one disappeared control onto retained same-region recipients");
+          "region transport conservatively retires one disappeared control "
+          "onto retained same-region recipients");
     const auto recipient = std::ranges::find_if(
         retirement.controlVolumes,
         [](const auto& control) {
@@ -801,9 +870,8 @@ void testAppearedControlRegionRebase() {
     validateSceneFluidRegionRebase(
         retirement, crossingTransport,
         currentEpoch.pressureControlVolumes,
-        currentEpoch.pressureFaceLinks,
         retreatEpoch.pressureControlVolumes,
-        retreatEpoch.pressureFaceLinks);
+        retirementTransition);
     std::vector<double> retirementWarm(
         currentEpoch.pressureControlVolumes.controlVolumes.size(), 0.0);
     const auto retainedPressure = std::ranges::find_if(
@@ -830,9 +898,10 @@ void testAppearedControlRegionRebase() {
         const auto retiredWarm = rebaseSceneFluidPressureWarmStart(
             currentEpoch.pressureControlVolumes,
             retreatEpoch.pressureControlVolumes,
-            retreatEpoch.pressureFaceLinks, retirementWarm);
+            retirementTransition, retirementWarm);
         check(retiredWarm[recipient->controlVolumeIndex] == 17.0,
-              "pressure warm-start retirement preserves the retained row and drops the retired value");
+              "pressure warm-start retirement preserves the retained row "
+              "and drops the retired value");
     }
 }
 

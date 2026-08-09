@@ -587,7 +587,12 @@ expanding analytic cell develops pressure and draws corrected flow inward
 through its intake. A newly positive cell/region row is now marked explicitly
 and receives a zero-volume previous endpoint. A disappeared row can retire its
 complete previous volume to one unique retained same-region neighbour;
-ambiguous or donorless retirement rejects. General swept-volume remap,
+ambiguous or donorless retirement rejects. One bounded, versioned
+pressure-topology transition now pairs every retained row and owns both
+appearance donors and retirement recipients. Geometry-volume rates,
+transported momentum, and pressure warm state consume that same fingerprinted
+decision. General
+swept-volume remap,
 corrected-MAC reconstruction across partitioned faces, off-face opening
 transmissibility, and general moving-boundary projection remain future work.
 Accepted projection pressure now also returns through the authoritative
@@ -620,7 +625,7 @@ including oriented intake-cap sweep. The visible pressure-cell canonical uses
 that field as its next predictor. Region-resolved transport and a local
 material-wall exchange now continue the accepted state after bootstrap;
 general immersed-boundary advection/boundary layers and general topology
-rebasing remain later work.
+swept-volume remapping remain later work.
 A separate topology-bound link-flow continuation primitive now proves exactly
 what the collapse loses. It restores accepted opening-cap sweep, carries each
 link's absolute velocity deviation from its previous face mean, recentres those
@@ -653,10 +658,10 @@ remapping momentum to current physical volumes, averages them onto current
 pressure links, subtracts exact opening-cap sweep, and supplies the
 fingerprinted predictor to pressure projection alongside dV/dt.
 A bounded first crossing adapter now handles one-ring appearance and
-retirement. Retained controls keep transported
-velocity; each newly positive control receives the area-weighted velocity of
-directly linked retained controls in the same authored region. Momentum is
-recomputed from current volume with an explicit geometric-change ledger. A
+retirement through that shared topology transition. Retained controls keep
+transported velocity; each newly positive control receives the transition's
+area-weighted retained same-region velocity. Momentum is recomputed from
+current volume with an explicit geometric-change ledger. A
 disappeared control transfers its complete source volume and momentum to one
 unique previous same-region neighbour, and that source mapping closes before
 geometric correction. The pressure warm start seeds appearances, preserves

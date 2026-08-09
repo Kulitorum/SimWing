@@ -98,6 +98,7 @@ std::uint64_t volumeRateFingerprint(
              rates.previousCellVolumeFingerprint,
              rates.currentCellVolumeFingerprint,
              rates.currentPressureControlVolumeFingerprint,
+             rates.pressureTopologyTransitionFingerprint,
              rates.previousAcceptedStepCount,
              rates.currentAcceptedStepCount}) {
         fingerprint.integer(value);
@@ -291,87 +292,47 @@ struct RetirementPlan {
 
 RetirementPlan buildRetirementPlan(
     const SceneFluidCellVolumeSet& previousVolumes,
-    const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& previousFaceLinks,
-    const SceneFluidPressureControlVolumeSet& currentPressureVolumes) {
-    validateSceneFluidPressureControlVolumeIntegrity(previousPressureVolumes);
-    validateSceneFluidPressureFaceLinkIntegrity(previousFaceLinks);
-    if (previousPressureVolumes.cellVolumeFingerprint
+    const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
+    const SceneFluidPressureTopologyTransition& topologyTransition) {
+    validateSceneFluidPressureTopologyTransitionIntegrity(
+        topologyTransition);
+    if (topologyTransition.previousCellVolumeFingerprint
             != previousVolumes.fingerprint
-        || previousPressureVolumes.surfaceDefinitionFingerprint
-            != currentPressureVolumes.surfaceDefinitionFingerprint
-        || previousPressureVolumes.structureDefinitionFingerprint
-            != currentPressureVolumes.structureDefinitionFingerprint
-        || previousPressureVolumes.acceptedStepCount
+        || topologyTransition.currentPressureControlVolumeFingerprint
+            != currentPressureVolumes.fingerprint
+        || topologyTransition.previousAcceptedStepCount
             != previousVolumes.acceptedStepCount
-        || previousPressureVolumes.simulationTimeSeconds
+        || topologyTransition.previousSimulationTimeSeconds
             != previousVolumes.simulationTimeSeconds
-        || previousFaceLinks.pressureControlVolumeFingerprint
-            != previousPressureVolumes.fingerprint
-        || previousFaceLinks.acceptedStepCount
-            != previousPressureVolumes.acceptedStepCount
-        || previousFaceLinks.simulationTimeSeconds
-            != previousPressureVolumes.simulationTimeSeconds
-        || previousPressureVolumes.cellCounts
-            != currentPressureVolumes.cellCounts
-        || previousPressureVolumes.lowerMeters
-            != currentPressureVolumes.lowerMeters
-        || previousPressureVolumes.upperMeters
-            != currentPressureVolumes.upperMeters) {
+        || topologyTransition.currentAcceptedStepCount
+            != currentPressureVolumes.acceptedStepCount
+        || topologyTransition.currentSimulationTimeSeconds
+            != currentPressureVolumes.simulationTimeSeconds) {
         throw std::invalid_argument(
             "scene fluid pressure-volume retirement source is invalid");
     }
-    std::map<std::uint64_t, std::size_t> currentByStableId;
-    for (const auto& current : currentPressureVolumes.controlVolumes) {
-        currentByStableId.emplace(
-            current.stableId, current.controlVolumeIndex);
-    }
 
     RetirementPlan result;
-    for (const auto& previous : previousPressureVolumes.controlVolumes) {
-        if (currentByStableId.contains(previous.stableId)) {
-            continue;
-        }
-        std::map<std::uint64_t, double> recipientAreaByStableId;
-        for (const auto& link : previousFaceLinks.links) {
-            if (link.kind != SceneFluidPressureFaceLinkKind::SameRegion
-                || (link.minusControlVolumeIndex
-                        != previous.controlVolumeIndex
-                    && link.plusControlVolumeIndex
-                        != previous.controlVolumeIndex)) {
-                continue;
-            }
-            const std::size_t neighbourIndex =
-                link.minusControlVolumeIndex == previous.controlVolumeIndex
-                ? link.plusControlVolumeIndex
-                : link.minusControlVolumeIndex;
-            const auto& neighbour =
-                previousPressureVolumes.controlVolumes[neighbourIndex];
-            if (neighbour.regionId != previous.regionId
-                || !currentByStableId.contains(neighbour.stableId)) {
-                continue;
-            }
-            recipientAreaByStableId[neighbour.stableId] +=
-                link.areaSquareMeters;
-        }
-        double totalArea = 0.0;
-        for (const auto& [stableId, area] : recipientAreaByStableId) {
-            static_cast<void>(stableId);
-            totalArea += area;
-        }
-        if (recipientAreaByStableId.size() != 1 || !(totalArea > 0.0)
-            || !std::isfinite(totalArea)) {
+    result.disappearedControlVolumeCount =
+        topologyTransition.disappearedControlVolumeCount;
+    for (const auto& recipient : topologyTransition.retirementRecipients) {
+        if (recipient.disappearedPreviousControlVolumeIndex
+                >= previousVolumes.cellRegionVolumes.size()
+            || recipient.retainedCurrentControlVolumeIndex
+                >= currentPressureVolumes.controlVolumes.size()) {
             throw std::invalid_argument(
-                "scene fluid pressure-volume disappeared control lacks one unique retained same-region recipient");
+                "scene fluid pressure-volume retirement mapping is invalid");
         }
-        ++result.disappearedControlVolumeCount;
-        result.sourceVolumeCubicMeters += previous.volumeCubicMeters;
-        for (const auto& [stableId, area] : recipientAreaByStableId) {
-            const double assigned = previous.volumeCubicMeters
-                * area / totalArea;
-            result.volumeByCurrentStableId[stableId] += assigned;
-            result.assignedVolumeCubicMeters += assigned;
-        }
+        const double sourceVolume = previousVolumes.cellRegionVolumes[
+            recipient.disappearedPreviousControlVolumeIndex]
+                .volumeCubicMeters;
+        const double assigned = sourceVolume * recipient.normalizedWeight;
+        result.sourceVolumeCubicMeters += sourceVolume;
+        result.assignedVolumeCubicMeters += assigned;
+        result.volumeByCurrentStableId[
+            currentPressureVolumes.controlVolumes[
+                recipient.retainedCurrentControlVolumeIndex]
+                    .stableId] += assigned;
     }
     const double tolerance = 1.0e-12
         + 64.0 * std::numeric_limits<double>::epsilon()
@@ -395,6 +356,7 @@ SceneFluidPressureVolumeRateSet buildRates(
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
     const std::map<std::uint64_t, double>& retiredVolumeByCurrentStableId,
     const std::size_t disappearedControlVolumeCount,
+    const std::uint64_t pressureTopologyTransitionFingerprint,
     const SceneFluidPressureVolumeRateLimits& limits) {
     const std::size_t controlCount =
         currentPressureVolumes.controlVolumes.size();
@@ -425,6 +387,8 @@ SceneFluidPressureVolumeRateSet buildRates(
     result.currentCellVolumeFingerprint = currentVolumes.fingerprint;
     result.currentPressureControlVolumeFingerprint =
         currentPressureVolumes.fingerprint;
+    result.pressureTopologyTransitionFingerprint =
+        pressureTopologyTransitionFingerprint;
     result.previousAcceptedStepCount = previousVolumes.acceptedStepCount;
     result.currentAcceptedStepCount = currentVolumes.acceptedStepCount;
     result.previousSimulationTimeSeconds =
@@ -570,7 +534,7 @@ SceneFluidPressureVolumeRateSet buildSceneFluidPressureVolumeRates(
         previousVolumes, currentVolumes, currentPressureVolumes, false);
     auto result = buildRates(
         previousVolumes, currentVolumes, currentPressureVolumes,
-        {}, 0, limits);
+        {}, 0, 0, limits);
     validateSceneFluidPressureVolumeRates(
         result, previousVolumes, currentVolumes, currentPressureVolumes);
     return result;
@@ -579,22 +543,21 @@ SceneFluidPressureVolumeRateSet buildSceneFluidPressureVolumeRates(
 SceneFluidPressureVolumeRateSet buildSceneFluidPressureVolumeRates(
     const SceneFluidCellVolumeSet& previousVolumes,
     const SceneFluidCellVolumeSet& currentVolumes,
-    const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& previousFaceLinks,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
+    const SceneFluidPressureTopologyTransition& topologyTransition,
     const SceneFluidPressureVolumeRateLimits& limits) {
     validateSources(
         previousVolumes, currentVolumes, currentPressureVolumes, true);
     const auto retirement = buildRetirementPlan(
-        previousVolumes, previousPressureVolumes, previousFaceLinks,
-        currentPressureVolumes);
+        previousVolumes, currentPressureVolumes, topologyTransition);
     auto result = buildRates(
         previousVolumes, currentVolumes, currentPressureVolumes,
         retirement.volumeByCurrentStableId,
-        retirement.disappearedControlVolumeCount, limits);
+        retirement.disappearedControlVolumeCount,
+        topologyTransition.fingerprint, limits);
     validateSceneFluidPressureVolumeRates(
-        result, previousVolumes, currentVolumes, previousPressureVolumes,
-        previousFaceLinks, currentPressureVolumes);
+        result, previousVolumes, currentVolumes, currentPressureVolumes,
+        topologyTransition);
     return result;
 }
 
@@ -607,6 +570,9 @@ void validateSceneFluidPressureVolumeRateIntegrity(
         || rates.controlVolumes.empty()
         || rates.components.empty()
         || rates.previousControlVolumeCount == 0
+        || (rates.disappearedControlVolumeCount != 0
+            && (rates.pressureTopologyTransitionFingerprint == 0
+                || !(rates.retiredPreviousVolumeCubicMeters > 0.0)))
         || rates.retainedControlVolumeCount
                 + rates.disappearedControlVolumeCount
             != rates.previousControlVolumeCount
@@ -635,7 +601,7 @@ void validateSceneFluidPressureVolumeRates(
     };
     const auto expected = buildRates(
         previousVolumes, currentVolumes, currentPressureVolumes,
-        {}, 0, unlimited);
+        {}, 0, 0, unlimited);
     if (rates != expected) {
         throw std::invalid_argument(
             "scene fluid pressure-volume-rate payload is invalid");
@@ -646,15 +612,13 @@ void validateSceneFluidPressureVolumeRates(
     const SceneFluidPressureVolumeRateSet& rates,
     const SceneFluidCellVolumeSet& previousVolumes,
     const SceneFluidCellVolumeSet& currentVolumes,
-    const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& previousFaceLinks,
-    const SceneFluidPressureControlVolumeSet& currentPressureVolumes) {
+    const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
+    const SceneFluidPressureTopologyTransition& topologyTransition) {
     validateSources(
         previousVolumes, currentVolumes, currentPressureVolumes, true);
     validateSceneFluidPressureVolumeRateIntegrity(rates);
     const auto retirement = buildRetirementPlan(
-        previousVolumes, previousPressureVolumes, previousFaceLinks,
-        currentPressureVolumes);
+        previousVolumes, currentPressureVolumes, topologyTransition);
     const SceneFluidPressureVolumeRateLimits unlimited{
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
@@ -663,7 +627,8 @@ void validateSceneFluidPressureVolumeRates(
     const auto expected = buildRates(
         previousVolumes, currentVolumes, currentPressureVolumes,
         retirement.volumeByCurrentStableId,
-        retirement.disappearedControlVolumeCount, unlimited);
+        retirement.disappearedControlVolumeCount,
+        topologyTransition.fingerprint, unlimited);
     if (rates != expected) {
         throw std::invalid_argument(
             "scene fluid pressure-volume rebased payload is invalid");

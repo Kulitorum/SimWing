@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
-#include <map>
 #include <stdexcept>
 #include <type_traits>
 
@@ -83,10 +82,9 @@ std::uint64_t rebaseFingerprint(const SceneFluidRegionRebase& rebase) {
     fingerprint.integer(rebase.version);
     for (const std::uint64_t value : {
              rebase.sourceTransportFingerprint,
+             rebase.sourceTopologyTransitionFingerprint,
              rebase.previousPressureControlVolumeFingerprint,
-             rebase.previousPressureFaceLinkFingerprint,
              rebase.currentPressureControlVolumeFingerprint,
-             rebase.currentPressureFaceLinkFingerprint,
              rebase.surfaceDefinitionFingerprint,
              rebase.structureDefinitionFingerprint,
              rebase.previousAcceptedStepCount,
@@ -190,14 +188,13 @@ std::uint64_t rebaseFingerprint(const SceneFluidRegionRebase& rebase) {
 void validateSources(
     const SceneFluidRegionTransport& transport,
     const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& previousFaceLinks,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& currentFaceLinks) {
+    const SceneFluidPressureTopologyTransition& topologyTransition) {
     validateSceneFluidRegionTransportIntegrity(transport);
     validateSceneFluidPressureControlVolumeIntegrity(previousPressureVolumes);
     validateSceneFluidPressureControlVolumeIntegrity(currentPressureVolumes);
-    validateSceneFluidPressureFaceLinkIntegrity(previousFaceLinks);
-    validateSceneFluidPressureFaceLinkIntegrity(currentFaceLinks);
+    validateSceneFluidPressureTopologyTransitionIntegrity(
+        topologyTransition);
     if (!transport.diagnostics.accepted
         || previousPressureVolumes.surfaceDefinitionFingerprint == 0
         || previousPressureVolumes.surfaceDefinitionFingerprint
@@ -224,26 +221,21 @@ void validateSources(
             > previousPressureVolumes.simulationTimeSeconds)
         || previousPressureVolumes.controlVolumes.size()
             != transport.controlVolumes.size()
-        || previousFaceLinks.pressureControlVolumeFingerprint
+        || topologyTransition.previousPressureControlVolumeFingerprint
             != previousPressureVolumes.fingerprint
-        || previousFaceLinks.acceptedStepCount
-            != previousPressureVolumes.acceptedStepCount
-        || previousFaceLinks.simulationTimeSeconds
-            != previousPressureVolumes.simulationTimeSeconds
-        || previousFaceLinks.cellCounts != previousPressureVolumes.cellCounts
-        || previousFaceLinks.lowerMeters != previousPressureVolumes.lowerMeters
-        || previousFaceLinks.upperMeters != previousPressureVolumes.upperMeters
-        || currentFaceLinks.version != sceneFluidPressureFaceLinkVersion
-        || currentFaceLinks.fingerprint == 0
-        || currentFaceLinks.pressureControlVolumeFingerprint
+        || topologyTransition.currentPressureControlVolumeFingerprint
             != currentPressureVolumes.fingerprint
-        || currentFaceLinks.acceptedStepCount
+        || topologyTransition.previousAcceptedStepCount
+            != previousPressureVolumes.acceptedStepCount
+        || topologyTransition.currentAcceptedStepCount
             != currentPressureVolumes.acceptedStepCount
-        || currentFaceLinks.simulationTimeSeconds
+        || topologyTransition.previousSimulationTimeSeconds
+            != previousPressureVolumes.simulationTimeSeconds
+        || topologyTransition.currentSimulationTimeSeconds
             != currentPressureVolumes.simulationTimeSeconds
-        || currentFaceLinks.cellCounts != currentPressureVolumes.cellCounts
-        || currentFaceLinks.lowerMeters != currentPressureVolumes.lowerMeters
-        || currentFaceLinks.upperMeters != currentPressureVolumes.upperMeters) {
+        || topologyTransition.cellCounts != currentPressureVolumes.cellCounts
+        || topologyTransition.lowerMeters != currentPressureVolumes.lowerMeters
+        || topologyTransition.upperMeters != currentPressureVolumes.upperMeters) {
         throw std::invalid_argument(
             "scene fluid region rebase source identity is invalid");
     }
@@ -258,40 +250,21 @@ void validateSources(
                 "scene fluid region rebase source binding is invalid");
         }
     }
-    const auto validateLinks = [](const auto& links,
-                                  const std::size_t controlCount) {
-        for (std::size_t index = 0;
-             index < links.links.size(); ++index) {
-            const auto& link = links.links[index];
-            if (link.linkIndex != index || link.stableId == 0
-                || link.faceIndex >= links.faces.size()
-                || link.minusControlVolumeIndex >= controlCount
-                || link.plusControlVolumeIndex >= controlCount
-                || !std::isfinite(link.areaSquareMeters)
-                || !(link.areaSquareMeters > 0.0)) {
-                throw std::invalid_argument(
-                    "scene fluid region rebase face-link binding is invalid");
-            }
-        }
-    };
-    validateLinks(
-        previousFaceLinks, previousPressureVolumes.controlVolumes.size());
-    validateLinks(
-        currentFaceLinks, currentPressureVolumes.controlVolumes.size());
 }
 
 SceneFluidRegionRebase buildRebase(
     const SceneFluidRegionTransport& transport,
     const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& previousFaceLinks,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& currentFaceLinks,
+    const SceneFluidPressureTopologyTransition& topologyTransition,
     const SceneFluidRegionRebaseLimits& limits) {
     if (currentPressureVolumes.controlVolumes.size()
             > limits.maximumControlVolumes
-        || previousFaceLinks.links.size() > limits.maximumLinks
-        || currentFaceLinks.links.size()
-            > limits.maximumLinks - previousFaceLinks.links.size()) {
+        || topologyTransition.appearanceDonors.size()
+            > limits.maximumMappings
+        || topologyTransition.retirementRecipients.size()
+            > limits.maximumMappings
+                - topologyTransition.appearanceDonors.size()) {
         throw std::length_error(
             "scene fluid region rebase exceeds its count limit");
     }
@@ -304,12 +277,12 @@ SceneFluidRegionRebase buildRebase(
 
     SceneFluidRegionRebase result;
     result.sourceTransportFingerprint = transport.fingerprint;
+    result.sourceTopologyTransitionFingerprint =
+        topologyTransition.fingerprint;
     result.previousPressureControlVolumeFingerprint =
         previousPressureVolumes.fingerprint;
-    result.previousPressureFaceLinkFingerprint = previousFaceLinks.fingerprint;
     result.currentPressureControlVolumeFingerprint =
         currentPressureVolumes.fingerprint;
-    result.currentPressureFaceLinkFingerprint = currentFaceLinks.fingerprint;
     result.surfaceDefinitionFingerprint =
         currentPressureVolumes.surfaceDefinitionFingerprint;
     result.structureDefinitionFingerprint =
@@ -336,13 +309,12 @@ SceneFluidRegionRebase buildRebase(
     diagnostics.sourceKineticEnergyJoules =
         transport.diagnostics.kineticEnergyAfterJoules;
 
-    std::map<std::uint64_t, std::size_t> sourceById;
-    for (const auto& source : transport.controlVolumes) {
-        sourceById.emplace(source.stableId, source.controlVolumeIndex);
-    }
-    std::map<std::uint64_t, std::size_t> currentById;
-    for (const auto& current : currentPressureVolumes.controlVolumes) {
-        currentById.emplace(current.stableId, current.controlVolumeIndex);
+    std::vector<std::size_t> sourceIndexByCurrent(
+        currentPressureVolumes.controlVolumes.size(),
+        std::numeric_limits<std::size_t>::max());
+    for (const auto& retained : topologyTransition.retainedControls) {
+        sourceIndexByCurrent[retained.currentControlVolumeIndex] =
+            retained.previousControlVolumeIndex;
     }
     struct WorkingControl {
         SceneFluidRegionRebaseControlVolume control;
@@ -350,6 +322,7 @@ SceneFluidRegionRebase buildRebase(
     };
     std::vector<WorkingControl> working;
     working.reserve(currentPressureVolumes.controlVolumes.size());
+    std::size_t appearanceDonorCursor = 0;
     for (const auto& current : currentPressureVolumes.controlVolumes) {
         WorkingControl entry;
         auto& control = entry.control;
@@ -359,61 +332,53 @@ SceneFluidRegionRebase buildRebase(
         control.regionId = current.regionId;
         control.componentIndex = current.componentIndex;
         control.volumeCubicMeters = current.volumeCubicMeters;
-        const auto retained = sourceById.find(current.stableId);
-        control.appearedThisEpoch = retained == sourceById.end();
+        const std::size_t retained =
+            sourceIndexByCurrent[current.controlVolumeIndex];
+        control.appearedThisEpoch =
+            retained == std::numeric_limits<std::size_t>::max();
         if (!control.appearedThisEpoch) {
-            control.sourceControlVolumeIndex = retained->second;
+            control.sourceControlVolumeIndex = retained;
             control.donorControlVolumeCount = 1;
             entry.geometricSeedVelocityMetersPerSecond =
-                transport.controlVolumes[retained->second]
+                transport.controlVolumes[retained]
                     .velocityMetersPerSecond;
             control.mappedSourceVolumeCubicMeters =
-                transport.controlVolumes[retained->second]
+                transport.controlVolumes[retained]
                     .volumeCubicMeters;
             control.mappedSourceMomentumKilogramMetersPerSecond =
-                transport.controlVolumes[retained->second]
+                transport.controlVolumes[retained]
                     .momentumKilogramMetersPerSecond;
             ++diagnostics.retainedControlVolumeCount;
         } else {
             fluid::Vector3 weightedVelocity;
-            for (const auto& link : currentFaceLinks.links) {
-                if (link.kind
-                        != SceneFluidPressureFaceLinkKind::SameRegion
-                    || (link.minusControlVolumeIndex
-                            != current.controlVolumeIndex
-                        && link.plusControlVolumeIndex
-                            != current.controlVolumeIndex)) {
-                    continue;
-                }
-                const std::size_t donorIndex =
-                    link.minusControlVolumeIndex
-                            == current.controlVolumeIndex
-                        ? link.plusControlVolumeIndex
-                        : link.minusControlVolumeIndex;
-                const auto& donorCurrent =
-                    currentPressureVolumes.controlVolumes[donorIndex];
-                const auto donorSource = sourceById.find(
-                    donorCurrent.stableId);
-                if (donorCurrent.regionId != current.regionId
-                    || donorSource == sourceById.end()) {
-                    continue;
-                }
+            while (appearanceDonorCursor
+                    < topologyTransition.appearanceDonors.size()
+                && topologyTransition.appearanceDonors[
+                       appearanceDonorCursor]
+                       .appearedCurrentControlVolumeIndex
+                    == current.controlVolumeIndex) {
+                const auto& donor = topologyTransition.appearanceDonors[
+                    appearanceDonorCursor++];
                 weightedVelocity = add(
                     weightedVelocity,
                     scale(
-                        transport.controlVolumes[donorSource->second]
+                        transport.controlVolumes[
+                            donor.retainedPreviousControlVolumeIndex]
                             .velocityMetersPerSecond,
-                        link.areaSquareMeters));
-                control.donorLinkAreaSquareMeters += link.areaSquareMeters;
+                        donor.linkAreaSquareMeters));
+                control.donorLinkAreaSquareMeters +=
+                    donor.linkAreaSquareMeters;
                 ++control.donorControlVolumeCount;
             }
             if (control.donorControlVolumeCount == 0
                 || !(control.donorLinkAreaSquareMeters > 0.0)) {
                 throw std::invalid_argument(
-                    "scene fluid region rebase appeared control lacks a retained same-region donor");
+                    "scene fluid region rebase appeared control lacks a "
+                    "retained same-region donor");
             }
             entry.geometricSeedVelocityMetersPerSecond = scale(
-                weightedVelocity, 1.0 / control.donorLinkAreaSquareMeters);
+                weightedVelocity,
+                1.0 / control.donorLinkAreaSquareMeters);
             ++diagnostics.appearedControlVolumeCount;
             diagnostics.maximumAppearedVolumeCubicMeters = std::max(
                 diagnostics.maximumAppearedVolumeCubicMeters,
@@ -425,63 +390,27 @@ SceneFluidRegionRebase buildRebase(
         working.push_back(entry);
     }
 
-    for (const auto& previous : previousPressureVolumes.controlVolumes) {
-        if (currentById.contains(previous.stableId)) {
-            continue;
-        }
-        std::map<std::size_t, double> recipientAreaByCurrentIndex;
-        for (const auto& link : previousFaceLinks.links) {
-            if (link.kind != SceneFluidPressureFaceLinkKind::SameRegion
-                || (link.minusControlVolumeIndex
-                        != previous.controlVolumeIndex
-                    && link.plusControlVolumeIndex
-                        != previous.controlVolumeIndex)) {
-                continue;
-            }
-            const std::size_t neighbourPreviousIndex =
-                link.minusControlVolumeIndex == previous.controlVolumeIndex
-                ? link.plusControlVolumeIndex
-                : link.minusControlVolumeIndex;
-            const auto& neighbourPrevious =
-                previousPressureVolumes.controlVolumes[
-                    neighbourPreviousIndex];
-            const auto recipient = currentById.find(
-                neighbourPrevious.stableId);
-            if (neighbourPrevious.regionId != previous.regionId
-                || recipient == currentById.end()) {
-                continue;
-            }
-            recipientAreaByCurrentIndex[recipient->second] +=
-                link.areaSquareMeters;
-        }
-        double totalRecipientArea = 0.0;
-        for (const auto& [recipient, area] : recipientAreaByCurrentIndex) {
-            static_cast<void>(recipient);
-            totalRecipientArea += area;
-        }
-        if (recipientAreaByCurrentIndex.size() != 1
-            || !(totalRecipientArea > 0.0)
-            || !std::isfinite(totalRecipientArea)) {
-            throw std::invalid_argument(
-                "scene fluid region rebase disappeared control lacks one unique retained same-region recipient");
-        }
-        ++diagnostics.disappearedControlVolumeCount;
-        diagnostics.maximumRetirementRecipientCount = std::max(
-            diagnostics.maximumRetirementRecipientCount,
-            recipientAreaByCurrentIndex.size());
+    diagnostics.disappearedControlVolumeCount =
+        topologyTransition.disappearedControlVolumeCount;
+    diagnostics.maximumRetirementRecipientCount =
+        topologyTransition.maximumRetirementRecipientCount;
+    for (const auto& recipient :
+         topologyTransition.retirementRecipients) {
         const auto& source =
-            transport.controlVolumes[previous.controlVolumeIndex];
-        for (const auto& [recipient, area] : recipientAreaByCurrentIndex) {
-            const double share = area / totalRecipientArea;
-            auto& control = working[recipient].control;
-            control.mappedSourceVolumeCubicMeters +=
-                share * source.volumeCubicMeters;
-            control.mappedSourceMomentumKilogramMetersPerSecond = add(
-                control.mappedSourceMomentumKilogramMetersPerSecond,
-                scale(source.momentumKilogramMetersPerSecond, share));
-            ++control.retiredSourceControlVolumeCount;
-            control.retiredSourceLinkAreaSquareMeters += area;
-        }
+            transport.controlVolumes[
+                recipient.disappearedPreviousControlVolumeIndex];
+        auto& control = working[
+            recipient.retainedCurrentControlVolumeIndex].control;
+        control.mappedSourceVolumeCubicMeters +=
+            recipient.normalizedWeight * source.volumeCubicMeters;
+        control.mappedSourceMomentumKilogramMetersPerSecond = add(
+            control.mappedSourceMomentumKilogramMetersPerSecond,
+            scale(
+                source.momentumKilogramMetersPerSecond,
+                recipient.normalizedWeight));
+        ++control.retiredSourceControlVolumeCount;
+        control.retiredSourceLinkAreaSquareMeters +=
+            recipient.linkAreaSquareMeters;
     }
 
     result.controlVolumes.reserve(working.size());
@@ -599,22 +528,18 @@ SceneFluidRegionRebase buildRebase(
 SceneFluidRegionRebase rebaseSceneFluidRegionTransport(
     const SceneFluidRegionTransport& transport,
     const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& previousFaceLinks,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& currentFaceLinks,
+    const SceneFluidPressureTopologyTransition& topologyTransition,
     const SceneFluidRegionRebaseLimits& limits) {
     validateSources(
-        transport, previousPressureVolumes, previousFaceLinks,
-        currentPressureVolumes,
-        currentFaceLinks);
+        transport, previousPressureVolumes, currentPressureVolumes,
+        topologyTransition);
     auto result = buildRebase(
-        transport, previousPressureVolumes, previousFaceLinks,
-        currentPressureVolumes,
-        currentFaceLinks, limits);
+        transport, previousPressureVolumes, currentPressureVolumes,
+        topologyTransition, limits);
     validateSceneFluidRegionRebase(
-        result, transport, previousPressureVolumes, previousFaceLinks,
-        currentPressureVolumes,
-        currentFaceLinks);
+        result, transport, previousPressureVolumes,
+        currentPressureVolumes, topologyTransition);
     return result;
 }
 
@@ -645,13 +570,11 @@ void validateSceneFluidRegionRebase(
     const SceneFluidRegionRebase& rebase,
     const SceneFluidRegionTransport& transport,
     const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& previousFaceLinks,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& currentFaceLinks) {
+    const SceneFluidPressureTopologyTransition& topologyTransition) {
     validateSources(
-        transport, previousPressureVolumes, previousFaceLinks,
-        currentPressureVolumes,
-        currentFaceLinks);
+        transport, previousPressureVolumes, currentPressureVolumes,
+        topologyTransition);
     validateSceneFluidRegionRebaseIntegrity(rebase);
     const SceneFluidRegionRebaseLimits unlimited{
         std::numeric_limits<std::size_t>::max(),
@@ -659,9 +582,8 @@ void validateSceneFluidRegionRebase(
         std::numeric_limits<std::size_t>::max(),
     };
     const auto expected = buildRebase(
-        transport, previousPressureVolumes, previousFaceLinks,
-        currentPressureVolumes,
-        currentFaceLinks, unlimited);
+        transport, previousPressureVolumes, currentPressureVolumes,
+        topologyTransition, unlimited);
     if (rebase != expected) {
         throw std::invalid_argument(
             "scene fluid region rebase payload is invalid");
@@ -671,11 +593,12 @@ void validateSceneFluidRegionRebase(
 std::vector<double> rebaseSceneFluidPressureWarmStart(
     const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
-    const SceneFluidPressureFaceLinkSet& currentFaceLinks,
+    const SceneFluidPressureTopologyTransition& topologyTransition,
     const std::span<const double> previousPressurePascals) {
     validateSceneFluidPressureControlVolumeIntegrity(previousPressureVolumes);
     validateSceneFluidPressureControlVolumeIntegrity(currentPressureVolumes);
-    validateSceneFluidPressureFaceLinkIntegrity(currentFaceLinks);
+    validateSceneFluidPressureTopologyTransitionIntegrity(
+        topologyTransition);
     if (previousPressurePascals.size()
             != previousPressureVolumes.controlVolumes.size()
         || previousPressureVolumes.surfaceDefinitionFingerprint
@@ -694,11 +617,13 @@ std::vector<double> rebaseSceneFluidPressureWarmStart(
             != previousPressureVolumes.acceptedStepCount + 1
         || !(currentPressureVolumes.simulationTimeSeconds
             > previousPressureVolumes.simulationTimeSeconds)
-        || currentFaceLinks.version != sceneFluidPressureFaceLinkVersion
-        || currentFaceLinks.fingerprint == 0
-        || currentFaceLinks.pressureControlVolumeFingerprint
+        || topologyTransition.previousPressureControlVolumeFingerprint
+            != previousPressureVolumes.fingerprint
+        || topologyTransition.currentPressureControlVolumeFingerprint
             != currentPressureVolumes.fingerprint
-        || currentFaceLinks.acceptedStepCount
+        || topologyTransition.previousAcceptedStepCount
+            != previousPressureVolumes.acceptedStepCount
+        || topologyTransition.currentAcceptedStepCount
             != currentPressureVolumes.acceptedStepCount
         || !std::ranges::all_of(
             previousPressurePascals,
@@ -706,66 +631,35 @@ std::vector<double> rebaseSceneFluidPressureWarmStart(
         throw std::invalid_argument(
             "scene fluid pressure warm-start rebase identity is invalid");
     }
-    std::map<std::uint64_t, std::size_t> previousById;
-    for (const auto& previous : previousPressureVolumes.controlVolumes) {
-        previousById.emplace(previous.stableId, previous.controlVolumeIndex);
-    }
-    for (std::size_t index = 0;
-         index < currentFaceLinks.links.size(); ++index) {
-        const auto& link = currentFaceLinks.links[index];
-        if (link.linkIndex != index || link.stableId == 0
-            || link.minusControlVolumeIndex
-                >= currentPressureVolumes.controlVolumes.size()
-            || link.plusControlVolumeIndex
-                >= currentPressureVolumes.controlVolumes.size()
-            || !std::isfinite(link.areaSquareMeters)
-            || !(link.areaSquareMeters > 0.0)) {
-            throw std::invalid_argument(
-                "scene fluid pressure warm-start rebase link is invalid");
-        }
-    }
 
     std::vector<double> result(
         currentPressureVolumes.controlVolumes.size(), 0.0);
-    for (const auto& current : currentPressureVolumes.controlVolumes) {
-        const auto retained = previousById.find(current.stableId);
-        if (retained != previousById.end()) {
-            result[current.controlVolumeIndex] =
-                previousPressurePascals[retained->second];
-            continue;
-        }
-        double weightedPressure = 0.0;
-        double donorArea = 0.0;
-        for (const auto& link : currentFaceLinks.links) {
-            if (link.kind != SceneFluidPressureFaceLinkKind::SameRegion
-                || (link.minusControlVolumeIndex
-                        != current.controlVolumeIndex
-                    && link.plusControlVolumeIndex
-                        != current.controlVolumeIndex)) {
-                continue;
-            }
-            const std::size_t donorIndex =
-                link.minusControlVolumeIndex == current.controlVolumeIndex
-                ? link.plusControlVolumeIndex
-                : link.minusControlVolumeIndex;
-            const auto& donor =
-                currentPressureVolumes.controlVolumes[donorIndex];
-            const auto previousDonor = previousById.find(donor.stableId);
-            if (donor.regionId != current.regionId
-                || previousDonor == previousById.end()) {
-                continue;
-            }
-            weightedPressure += link.areaSquareMeters
-                * previousPressurePascals[previousDonor->second];
-            donorArea += link.areaSquareMeters;
-        }
-        if (!(donorArea > 0.0) || !std::isfinite(weightedPressure)) {
-            throw std::invalid_argument(
-                "scene fluid pressure warm-start appeared control lacks a retained same-region donor");
-        }
-        result[current.controlVolumeIndex] = weightedPressure / donorArea;
+    std::vector<bool> initialized(result.size(), false);
+    std::vector<double> appearanceDonorArea(result.size(), 0.0);
+    for (const auto& retained : topologyTransition.retainedControls) {
+        result[retained.currentControlVolumeIndex] =
+            previousPressurePascals[
+                retained.previousControlVolumeIndex];
+        initialized[retained.currentControlVolumeIndex] = true;
     }
-    if (!std::ranges::all_of(
+    for (const auto& donor : topologyTransition.appearanceDonors) {
+        result[donor.appearedCurrentControlVolumeIndex] +=
+            donor.linkAreaSquareMeters
+            * previousPressurePascals[
+                donor.retainedPreviousControlVolumeIndex];
+        appearanceDonorArea[donor.appearedCurrentControlVolumeIndex] +=
+            donor.linkAreaSquareMeters;
+        initialized[donor.appearedCurrentControlVolumeIndex] = true;
+    }
+    for (std::size_t index = 0; index < result.size(); ++index) {
+        if (appearanceDonorArea[index] > 0.0) {
+            result[index] /= appearanceDonorArea[index];
+        }
+    }
+    if (!std::ranges::all_of(initialized, [](const bool value) {
+            return value;
+        })
+        || !std::ranges::all_of(
             result,
             [](const double pressure) { return std::isfinite(pressure); })) {
         throw std::overflow_error(

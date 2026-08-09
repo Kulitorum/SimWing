@@ -3,6 +3,7 @@
 #include "coupling.h"
 #include "scene_fluid_pressure_epoch.h"
 #include "scene_fluid_pressure_sampling.h"
+#include "scene_fluid_pressure_topology_transition.h"
 #include "scene_fluid_region_link_flow.h"
 
 #include <cstddef>
@@ -34,6 +35,7 @@ struct SceneFluidPressureCouplingSettings {
 struct SceneFluidPressureCouplingLimits {
     SceneFluidRegionConnectivityLimits connectivity;
     SceneFluidPressureEpochLimits pressureEpoch;
+    SceneFluidPressureTopologyTransitionLimits topologyTransition;
     SceneFluidPressureVolumeRateLimits volumeRates;
     SceneFluidOpeningFluxLimits openingFlux;
     SceneFluidPressureProjectionLimits pressureProjection;
@@ -126,8 +128,9 @@ struct SceneFluidPressureMacVelocityCollapse {
 // returns the resulting conservative pressure-plus-wall load to Aitken
 // relaxation.
 // Only a converged physical iterate becomes the next accepted baseline.
-// Exhaustion, topology change, projection failure, and exceptions restore the
-// caller's exact Structure checkpoint and leave this owner unchanged.
+// Exhaustion, unsupported topology change, projection failure, and exceptions
+// restore the caller's exact Structure checkpoint and leave this owner
+// unchanged.
 //
 // The predicted MAC field is held fixed across the nonlinear iteration. The
 // region-transport overload likewise holds one accepted transport fixed,
