@@ -1129,9 +1129,25 @@ complete control-cell epoch, and retains compensated component sums so a
 physically incompatible predictor remains diagnosable before the trace solver
 rejects it. Analytic tests split one continuity residual across geometry and
 flow terms and recover the same atomic solution as a direct integrated source;
-the real balanced-source audit enters through this product as well. Sampling
-one relative predicted flow per shared mimetic trace and adapting the accepted
-moving-volume-rate product remain future upstream stages.
+the real balanced-source audit enters through this product as well.
+
+`src/fsi/scene_fluid_mimetic_trace_flow.*` now supplies the fixed-epoch
+predictor stage. Every shared trace receives one positive
+MinusOrNegative-to-PlusOrPositive relative volume flow. Exact Cartesian
+partitions sample their owning MAC face. Face-owned openings and cell-owned
+embedded openings instead consume the accepted patch ledger's
+fluid-minus-cap-sweep flux, so an opening never needs the graph operator's
+rejected two-point coefficient. Material-wall traces remain exactly absent.
+The product is bounded and fingerprinted to the shells, trace system, face
+links, opening ledger, MAC field, and accepted epoch. Its oriented flows are
+accumulated with compensation into per-control net-outward flow, and the
+pressure-source adapter maps the accepted consecutive-epoch `dV/dt` field by
+stable control identity while requiring its duration to equal the pressure
+timestep. The coarse real wing samples all 42,927 shared traces: 101 Cartesian
+traces and 42,826 cell-owned opening traces, including the apertures rejected
+by the old two-point graph. Sampling from the transported material-wall-
+adjusted region predictor, rather than the fixed-epoch MAC field, and worker
+integration remain future stages.
 
 The first immutable scene adapter now assembles each sparse cell/region's
 unwrapped half-face shell from exact Cartesian region subfaces, cell- and
@@ -1172,9 +1188,11 @@ runs on that reduced real system as well. It rolls back exactly after a
 deliberately truncated iteration, and a separate manufactured solve reaches
 `1e-5` relative RMS within 300 iterations before reconstructing the complete
 191,579-row operator below `2e-4` maximum residual. Further local or multilevel
-preconditioning, link-flow/GCL sampling, and production integration remain
-open. The atomic source-bound transaction additionally converges a balanced
-real source pair and publishes only after reconstructed full-space closure.
+preconditioning, transported-region predictor sampling, and production
+integration remain open. The fixed-epoch MAC/opening predictor and accepted
+GCL volume-rate product now assemble a fully fingerprinted physical source.
+The atomic source-bound transaction additionally converges a balanced real
+source pair and publishes only after reconstructed full-space closure.
 The current graph operator and all worker arithmetic are unchanged.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness

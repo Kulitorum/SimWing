@@ -1,3 +1,5 @@
+#include "scene_fluid_mimetic_pressure_source.h"
+#include "scene_fluid_mimetic_trace_flow.h"
 #include "scene_fluid_pressure_projection.h"
 #include "scene_fluid_pressure_link_flow.h"
 #include "scene_fluid_pressure_epoch.h"
@@ -1133,6 +1135,63 @@ void testAreaChangingLinkContinuation() {
     const auto volumeRates = buildSceneFluidPressureVolumeRates(
         fixture.volumes, currentEpoch.cellVolumes,
         currentEpoch.pressureControlVolumes);
+    const auto mimeticControls = buildSceneFluidMimeticControlCells(
+        fixture.surface.definition, currentState, grid(),
+        currentEpoch.gridEpoch, currentEpoch.openingCaps,
+        currentEpoch.openingQuadrature, currentEpoch.openingPatches,
+        currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks);
+    const auto mimeticSystem = buildSceneFluidMimeticTraceSystem(
+        mimeticControls);
+    const auto mimeticTraceFlows = sampleSceneFluidMimeticTraceFlows(
+        mimeticControls, mimeticSystem,
+        currentEpoch.pressureFaceLinks, currentFlux, grid(), velocity);
+    SceneFluidMimeticPressureSourceSettings mimeticSourceSettings;
+    mimeticSourceSettings.densityKgPerCubicMeter =
+        strictSettings().densityKgPerCubicMeter;
+    mimeticSourceSettings.timeStepSeconds =
+        strictSettings().timeStepSeconds;
+    const auto mimeticSources = buildSceneFluidMimeticPressureSources(
+        mimeticControls, mimeticSystem, mimeticTraceFlows, volumeRates,
+        mimeticSourceSettings);
+    bool exactMimeticVolumeRates = mimeticSources.controls.size()
+        == mimeticControls.controlCells.size();
+    for (std::size_t index = 0;
+         exactMimeticVolumeRates && index < mimeticSources.controls.size();
+         ++index) {
+        const auto& control = mimeticControls.controlCells[index];
+        const auto& source = mimeticSources.controls[index];
+        const auto& rate = volumeRates.controlVolumes[
+            control.controlVolumeIndex];
+        exactMimeticVolumeRates =
+            source.geometryVolumeChangeRateCubicMetersPerSecond
+                == rate.volumeChangeRateCubicMetersPerSecond
+            && source.predictedContinuityResidualCubicMetersPerSecond
+                == source.geometryVolumeChangeRateCubicMetersPerSecond
+                    + source
+                        .predictedNetOutwardVolumeFlowRateCubicMetersPerSecond
+            && source.integratedSourcePascalsMeters
+                == -mimeticSourceSettings.densityKgPerCubicMeter
+                    / mimeticSourceSettings.timeStepSeconds
+                    * source
+                        .predictedContinuityResidualCubicMetersPerSecond;
+    }
+    check(mimeticSources.mimeticTraceFlowFingerprint
+              == mimeticTraceFlows.fingerprint
+              && mimeticSources.pressureVolumeRateFingerprint
+                  == volumeRates.fingerprint
+              && exactMimeticVolumeRates
+              && mimeticSources
+                    .maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond
+                  < 2.0e-12,
+          "mimetic pressure sources bind exact shared-trace flow and accepted consecutive-epoch GCL rates");
+    auto wrongMimeticSourceSettings = mimeticSourceSettings;
+    wrongMimeticSourceSettings.timeStepSeconds *= 0.5;
+    expectInvalid(
+        [&] { static_cast<void>(buildSceneFluidMimeticPressureSources(
+            mimeticControls, mimeticSystem, mimeticTraceFlows, volumeRates,
+            wrongMimeticSourceSettings)); },
+        "mimetic pressure sources reject a volume-rate duration mismatch");
     std::vector<double> currentWarm(
         currentEpoch.pressureOperator.rows.size(), 0.0);
     const auto regionProjection = projectSceneFluidPressureLinkFlows(

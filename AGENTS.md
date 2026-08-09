@@ -416,6 +416,15 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   component-constant null mode and a compatible source-derived right-hand
   side. The coarse real wing has 191,579 trace unknowns and 13,132,336 bytes of
   compact local factors.
+- `scene_fluid_mimetic_trace_flow.{h,cpp}` samples one immutable oriented
+  relative predictor flow for every shared mimetic trace. Exact Cartesian
+  partitions read their owning MAC face, while both face-owned and cell-owned
+  authored openings consume the accepted per-patch fluid-minus-cap-sweep flux;
+  material-wall traces stay absent and impermeable. The sampler is bounded and
+  fingerprinted to the control shells, trace topology, face links, opening
+  ledger, MAC field, and accepted epoch. On the coarse real wing it covers all
+  42,927 shared traces: 101 Cartesian traces plus 42,826 cell-owned opening
+  traces, including every aperture omitted by the rejected two-point graph.
 - `scene_fluid_mimetic_trace_solve.{h,cpp}` is the audit-only transactional
   gauge-fixed Jacobi-PCG solve shared by the full and material-wall-condensed
   matrix-free systems. It admits only bounded component-sum roundoff, uses the
@@ -431,7 +440,7 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   trusted PCG loop validates the immutable product once, then uses the internal
   assuming-validated action; public one-shot actions still validate every
   call. Jacobi is not practical on the uncondensed full system. Stronger
-  local/multilevel preconditioning, predictor/GCL-to-source assembly, and
+  local/multilevel preconditioning, transported-region predictor sampling, and
   production integration remain open.
 - `scene_fluid_mimetic_condensed_trace_system.{h,cpp}` composes the local wall
   Schur products into an immutable shared Cartesian/opening trace topology. It
@@ -464,9 +473,11 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   the integrated source `-(rho/dt)*(dV/dt + net_outward)` in `Pa*m`. It is
   bounded and fingerprinted to the complete mimetic control topology, retains
   compensated per-component compatibility sums, and can feed the atomic solve
-  without a raw field. Sampling link-relative predictor flows and mapping the
-  accepted moving-volume-rate product into its two input arrays remain outside
-  this boundary.
+  without a raw field. It now also accumulates the oriented shared-trace flow
+  product into exact per-control net-outward flow and maps an accepted
+  consecutive-epoch pressure-volume-rate product by stable control identity.
+  Source provenance retains both optional upstream fingerprints and rejects a
+  volume-rate duration inconsistent with the pressure timestep.
 - `simwing_scene_fluid_pressure_face_link`: binds those pressure unknowns
    across Cartesian faces. Exact resolved partitions create one same-region
    link per positive region area and retain its exact subface centroid. Capped material-plus-opening partitions

@@ -101,6 +101,8 @@ std::uint64_t productFingerprint(
     Fingerprint fingerprint;
     fingerprint.integer(sources.version);
     fingerprint.integer(sources.mimeticControlCellFingerprint);
+    fingerprint.integer(sources.mimeticTraceFlowFingerprint);
+    fingerprint.integer(sources.pressureVolumeRateFingerprint);
     fingerprint.integer(sources.structureDefinitionFingerprint);
     fingerprint.integer(sources.acceptedStepCount);
     fingerprint.real(sources.simulationTimeSeconds);
@@ -160,7 +162,9 @@ SceneFluidMimeticPressureSourceSet buildSources(
     const std::span<const double> predictedRates,
     const std::span<const double> geometryRates,
     const SceneFluidMimeticPressureSourceSettings& settings,
-    const SceneFluidMimeticPressureSourceLimits& limits) {
+    const SceneFluidMimeticPressureSourceLimits& limits,
+    const std::uint64_t mimeticTraceFlowFingerprint,
+    const std::uint64_t pressureVolumeRateFingerprint) {
     validateSceneFluidMimeticControlCellIntegrity(controlCells);
     validateSettings(settings);
     if (controlCells.controlCells.size() > limits.maximumControlCells) {
@@ -182,6 +186,8 @@ SceneFluidMimeticPressureSourceSet buildSources(
 
     SceneFluidMimeticPressureSourceSet result;
     result.mimeticControlCellFingerprint = controlCells.fingerprint;
+    result.mimeticTraceFlowFingerprint = mimeticTraceFlowFingerprint;
+    result.pressureVolumeRateFingerprint = pressureVolumeRateFingerprint;
     result.structureDefinitionFingerprint =
         controlCells.structureDefinitionFingerprint;
     result.acceptedStepCount = controlCells.acceptedStepCount;
@@ -276,6 +282,103 @@ SceneFluidMimeticPressureSourceSet buildSources(
     return result;
 }
 
+std::vector<double> accumulatePredictedNetOutwardFlows(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidMimeticTraceFlowPrediction& predictedTraceFlows) {
+    validateSceneFluidMimeticTraceSystem(traceSystem, controlCells);
+    validateSceneFluidMimeticTraceFlowPredictionIntegrity(
+        predictedTraceFlows);
+    if (predictedTraceFlows.mimeticControlCellFingerprint
+            != controlCells.fingerprint
+        || predictedTraceFlows.mimeticTraceSystemFingerprint
+            != traceSystem.fingerprint
+        || predictedTraceFlows.structureDefinitionFingerprint
+            != controlCells.structureDefinitionFingerprint
+        || predictedTraceFlows.acceptedStepCount
+            != controlCells.acceptedStepCount
+        || predictedTraceFlows.simulationTimeSeconds
+            != controlCells.simulationTimeSeconds
+        || predictedTraceFlows.componentCount != traceSystem.componentCount
+        || predictedTraceFlows.traces.size()
+            != traceSystem.sharedTraceCount) {
+        throw std::invalid_argument(
+            "scene fluid mimetic pressure-source trace flow is foreign");
+    }
+    std::vector<CompensatedSum> sums(controlCells.controlCells.size());
+    for (const auto& trace : predictedTraceFlows.traces) {
+        if (trace.minusControlCellIndex >= sums.size()
+            || trace.plusControlCellIndex >= sums.size()
+            || controlCells.controlCells[trace.minusControlCellIndex]
+                    .componentIndex
+                != trace.componentIndex
+            || controlCells.controlCells[trace.plusControlCellIndex]
+                    .componentIndex
+                != trace.componentIndex) {
+            throw std::invalid_argument(
+                "scene fluid mimetic pressure-source trace control is invalid");
+        }
+        const double flow =
+            trace.predictedRelativeVolumeFlowRateCubicMetersPerSecond;
+        sums[trace.minusControlCellIndex].add(flow);
+        sums[trace.plusControlCellIndex].add(-flow);
+    }
+    std::vector<double> result(sums.size(), 0.0);
+    for (std::size_t index = 0; index < sums.size(); ++index) {
+        result[index] = sums[index].value();
+    }
+    return result;
+}
+
+std::vector<double> mapGeometryVolumeRates(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidPressureVolumeRateSet& geometryVolumeRates,
+    const SceneFluidMimeticPressureSourceSettings& settings) {
+    validateSceneFluidPressureVolumeRateIntegrity(geometryVolumeRates);
+    if (geometryVolumeRates.currentPressureControlVolumeFingerprint
+            != controlCells.pressureControlVolumeFingerprint
+        || geometryVolumeRates.surfaceDefinitionFingerprint
+            != controlCells.surfaceDefinitionFingerprint
+        || geometryVolumeRates.structureDefinitionFingerprint
+            != controlCells.structureDefinitionFingerprint
+        || geometryVolumeRates.currentSurfaceStateFingerprint
+            != controlCells.surfaceStateFingerprint
+        || geometryVolumeRates.currentAcceptedStepCount
+            != controlCells.acceptedStepCount
+        || geometryVolumeRates.currentSimulationTimeSeconds
+            != controlCells.simulationTimeSeconds
+        || geometryVolumeRates.durationSeconds != settings.timeStepSeconds
+        || geometryVolumeRates.cellCounts != controlCells.cellCounts
+        || geometryVolumeRates.lowerMeters != controlCells.lowerMeters
+        || geometryVolumeRates.upperMeters != controlCells.upperMeters
+        || geometryVolumeRates.controlVolumes.size()
+            != controlCells.controlCells.size()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic pressure-source volume rate is foreign");
+    }
+    std::vector<double> result(controlCells.controlCells.size(), 0.0);
+    for (const auto& cell : controlCells.controlCells) {
+        if (cell.controlVolumeIndex
+            >= geometryVolumeRates.controlVolumes.size()) {
+            throw std::invalid_argument(
+                "scene fluid mimetic pressure-source volume-rate index is invalid");
+        }
+        const auto& rate = geometryVolumeRates.controlVolumes[
+            cell.controlVolumeIndex];
+        if (rate.controlVolumeIndex != cell.controlVolumeIndex
+            || rate.stableId != cell.stableId
+            || rate.cellIndex != cell.cellIndex
+            || rate.regionId != cell.regionId
+            || rate.componentIndex != cell.componentIndex) {
+            throw std::invalid_argument(
+                "scene fluid mimetic pressure-source volume-rate topology is invalid");
+        }
+        result[cell.controlCellIndex] =
+            rate.volumeChangeRateCubicMetersPerSecond;
+    }
+    return result;
+}
+
 } // namespace
 
 SceneFluidMimeticPressureSourceSet buildSceneFluidMimeticPressureSources(
@@ -284,7 +387,7 @@ SceneFluidMimeticPressureSourceSet buildSceneFluidMimeticPressureSources(
     const SceneFluidMimeticPressureSourceSettings& settings,
     const SceneFluidMimeticPressureSourceLimits& limits) {
     const auto result = buildSources(
-        controlCells, predictedRates, {}, settings, limits);
+        controlCells, predictedRates, {}, settings, limits, 0, 0);
     validateSceneFluidMimeticPressureSources(result, controlCells);
     return result;
 }
@@ -296,7 +399,40 @@ SceneFluidMimeticPressureSourceSet buildSceneFluidMimeticPressureSources(
     const SceneFluidMimeticPressureSourceSettings& settings,
     const SceneFluidMimeticPressureSourceLimits& limits) {
     const auto result = buildSources(
-        controlCells, predictedRates, geometryRates, settings, limits);
+        controlCells, predictedRates, geometryRates, settings, limits, 0, 0);
+    validateSceneFluidMimeticPressureSources(result, controlCells);
+    return result;
+}
+
+SceneFluidMimeticPressureSourceSet buildSceneFluidMimeticPressureSources(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidMimeticTraceFlowPrediction& predictedTraceFlows,
+    const SceneFluidMimeticPressureSourceSettings& settings,
+    const SceneFluidMimeticPressureSourceLimits& limits) {
+    const auto predictedRates = accumulatePredictedNetOutwardFlows(
+        controlCells, traceSystem, predictedTraceFlows);
+    const auto result = buildSources(
+        controlCells, predictedRates, {}, settings, limits,
+        predictedTraceFlows.fingerprint, 0);
+    validateSceneFluidMimeticPressureSources(result, controlCells);
+    return result;
+}
+
+SceneFluidMimeticPressureSourceSet buildSceneFluidMimeticPressureSources(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidMimeticTraceFlowPrediction& predictedTraceFlows,
+    const SceneFluidPressureVolumeRateSet& geometryVolumeRates,
+    const SceneFluidMimeticPressureSourceSettings& settings,
+    const SceneFluidMimeticPressureSourceLimits& limits) {
+    const auto predictedRates = accumulatePredictedNetOutwardFlows(
+        controlCells, traceSystem, predictedTraceFlows);
+    const auto geometryRates = mapGeometryVolumeRates(
+        controlCells, geometryVolumeRates, settings);
+    const auto result = buildSources(
+        controlCells, predictedRates, geometryRates, settings, limits,
+        predictedTraceFlows.fingerprint, geometryVolumeRates.fingerprint);
     validateSceneFluidMimeticPressureSources(result, controlCells);
     return result;
 }

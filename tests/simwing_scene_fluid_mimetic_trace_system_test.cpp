@@ -1,6 +1,7 @@
 #include "scene_fluid_mimetic_trace_system.h"
 #include "scene_fluid_mimetic_condensed_trace_system.h"
 #include "scene_fluid_mimetic_pressure_solve.h"
+#include "scene_fluid_mimetic_trace_flow.h"
 #include "scene_fluid_mimetic_trace_solve.h"
 #include "scene_structure.h"
 
@@ -219,14 +220,26 @@ struct Fixture {
 
     SceneFluidMimeticControlCellSet shells(
         const SceneFluidPressureFaceLinkSettings& linkSettings = {}) const {
-        const auto links = buildSceneFluidPressureFaceLinks(
+        const auto links = faceLinks(linkSettings);
+        return buildSceneFluidMimeticControlCells(
+            surface.definition, state, grid(), epoch, caps,
+            openingQuadrature, openingPatches, pressureVolumes, links);
+    }
+
+    SceneFluidPressureFaceLinkSet faceLinks(
+        const SceneFluidPressureFaceLinkSettings& linkSettings = {}) const {
+        return buildSceneFluidPressureFaceLinks(
             surface.definition, state, grid(), transfer, epoch, caps,
             openingQuadrature, openingPatches, openingFaceCrossings,
             cappedFacePartitions, volumes, connectivity, pressureVolumes,
             linkSettings);
-        return buildSceneFluidMimeticControlCells(
-            surface.definition, state, grid(), epoch, caps,
-            openingQuadrature, openingPatches, pressureVolumes, links);
+    }
+
+    SceneFluidOpeningFluxSet flux(
+        const fluid::MacVelocityField& velocity) const {
+        return evaluateSceneFluidOpeningFlux(
+            surface.definition, state, caps, openingQuadrature,
+            openingPatches, grid(), velocity);
     }
 };
 
@@ -962,6 +975,118 @@ void testTraceSolveRollbackAndValidation() {
           "non-finite trace-solve arithmetic preserves the warm start exactly");
 }
 
+void testTraceFlowSamplingAndSourceAssembly() {
+    Fixture fixture(tiltedOpenScene());
+    SceneFluidPressureFaceLinkSettings rejectedSettings;
+    rejectedSettings.minimumCenterDistanceMeters = 10.0;
+    const auto faceLinks = fixture.faceLinks(rejectedSettings);
+    const auto shells = fixture.shells(rejectedSettings);
+    const auto system = buildSceneFluidMimeticTraceSystem(shells);
+    fluid::MacVelocityField velocity(grid());
+    for (std::size_t index = 0; index < grid().cellCount(); ++index) {
+        const double sample = static_cast<double>(index + 1);
+        velocity.xFaces()[index] = 0.2 + 0.01 * sample;
+        velocity.yFaces()[index] = -0.1 + 0.002 * sample;
+        velocity.zFaces()[index] = 0.05 - 0.001 * sample;
+    }
+    const auto openingFlux = fixture.flux(velocity);
+    const auto prediction = sampleSceneFluidMimeticTraceFlows(
+        shells, system, faceLinks, openingFlux, grid(), velocity);
+    const auto repeated = sampleSceneFluidMimeticTraceFlows(
+        shells, system, faceLinks, openingFlux, grid(), velocity);
+    const auto opening = std::ranges::find(
+        prediction.traces,
+        SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace,
+        &SceneFluidMimeticPredictedTraceFlow::kind);
+    check(prediction == repeated
+              && prediction.fingerprint != 0
+              && prediction.mimeticControlCellFingerprint
+                  == shells.fingerprint
+              && prediction.mimeticTraceSystemFingerprint
+                  == system.fingerprint
+              && prediction.pressureFaceLinkFingerprint
+                  == faceLinks.fingerprint
+              && prediction.openingFluxFingerprint
+                  == openingFlux.fingerprint
+              && prediction.traces.size() == system.sharedTraceCount
+              && prediction.authoredOpeningTraceCount == 1
+              && opening != prediction.traces.end()
+              && openingFlux.samples.size() == 1
+              && opening
+                    ->predictedRelativeVolumeFlowRateCubicMetersPerSecond
+                  == openingFlux.samples.front()
+                        .relativeVolumeFlowRateCubicMetersPerSecond
+              && prediction
+                    .maximumAbsoluteComponentBalanceResidualCubicMetersPerSecond
+                  == 0.0,
+          "mimetic trace-flow sampling covers the rejected two-point opening with exact accepted relative flux");
+
+    std::vector<double> expectedNetOutward(shells.controlCells.size(), 0.0);
+    for (const auto& trace : prediction.traces) {
+        const double flow =
+            trace.predictedRelativeVolumeFlowRateCubicMetersPerSecond;
+        expectedNetOutward[trace.minusControlCellIndex] += flow;
+        expectedNetOutward[trace.plusControlCellIndex] -= flow;
+    }
+    SceneFluidMimeticPressureSourceSettings sourceSettings;
+    sourceSettings.densityKgPerCubicMeter = 2.0;
+    sourceSettings.timeStepSeconds = 0.5;
+    const auto sources = buildSceneFluidMimeticPressureSources(
+        shells, system, prediction, sourceSettings);
+    bool exactControlAssembly = sources.controls.size()
+        == expectedNetOutward.size();
+    std::vector<double> assembledNetOutward(
+        sources.controls.size(), 0.0);
+    for (std::size_t index = 0;
+         exactControlAssembly && index < sources.controls.size(); ++index) {
+        assembledNetOutward[index] = sources.controls[index]
+            .predictedNetOutwardVolumeFlowRateCubicMetersPerSecond;
+        exactControlAssembly = sources.controls[index]
+                    .predictedContinuityResidualCubicMetersPerSecond
+                == assembledNetOutward[index]
+            && sources.controls[index].integratedSourcePascalsMeters
+                == -4.0 * assembledNetOutward[index];
+    }
+    check(sources.mimeticTraceFlowFingerprint == prediction.fingerprint
+              && sources.pressureVolumeRateFingerprint == 0
+              && exactControlAssembly
+              && maximumError(
+                     assembledNetOutward, expectedNetOutward) < 2.0e-16
+              && sources
+                    .maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond
+                  < 2.0e-16,
+          "oriented shared-trace flows assemble exact per-control physical pressure sources");
+
+    auto corrupt = prediction;
+    corrupt.traces.front()
+        .predictedRelativeVolumeFlowRateCubicMetersPerSecond += 0.01;
+    expectInvalid(
+        [&] { validateSceneFluidMimeticTraceFlowPredictionIntegrity(
+            corrupt); },
+        "mimetic trace-flow integrity rejects predicted-flow corruption");
+    auto changedVelocity = velocity;
+    changedVelocity.xFaces().front() += 0.1;
+    expectInvalid(
+        [&] { static_cast<void>(sampleSceneFluidMimeticTraceFlows(
+            shells, system, faceLinks, openingFlux, grid(),
+            changedVelocity)); },
+        "mimetic trace-flow sampling rejects a foreign MAC predictor");
+    SceneFluidMimeticTraceFlowLimits limits;
+    limits.maximumSharedTraces = prediction.traces.size() - 1;
+    expectLimited(
+        [&] { static_cast<void>(sampleSceneFluidMimeticTraceFlows(
+            shells, system, faceLinks, openingFlux, grid(), velocity,
+            limits)); },
+        "mimetic trace-flow sampling bounds shared trace count");
+    limits = {};
+    limits.maximumOwnedBytes = prediction.ownedStorageBytes - 1;
+    expectLimited(
+        [&] { static_cast<void>(sampleSceneFluidMimeticTraceFlows(
+            shells, system, faceLinks, openingFlux, grid(), velocity,
+            limits)); },
+        "mimetic trace-flow sampling bounds owned storage");
+}
+
 void testLimitsCorruptionAndInputValidation() {
     Fixture fixture(nestedScene());
     const auto shells = fixture.shells();
@@ -1045,6 +1170,7 @@ int main() {
         testGlobalMaterialWallCondensation();
         testGlobalWallCondensationLimitsAndCorruption();
         testSourceDrivenTraceBalance();
+        testTraceFlowSamplingAndSourceAssembly();
         testTraceSolveRollbackAndValidation();
         testLimitsCorruptionAndInputValidation();
     } catch (const std::exception& exception) {

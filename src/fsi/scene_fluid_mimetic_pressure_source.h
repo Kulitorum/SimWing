@@ -1,6 +1,7 @@
 #pragma once
 
-#include "scene_fluid_mimetic_control_cell.h"
+#include "scene_fluid_mimetic_trace_flow.h"
+#include "scene_fluid_pressure_volume_rate.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -9,7 +10,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidMimeticPressureSourceVersion = 1;
+inline constexpr std::uint32_t sceneFluidMimeticPressureSourceVersion = 2;
 
 struct SceneFluidMimeticPressureSourceSettings {
     double densityKgPerCubicMeter = 1.225;
@@ -48,6 +49,8 @@ struct SceneFluidMimeticPressureSourceSet {
     std::uint32_t version = sceneFluidMimeticPressureSourceVersion;
     std::uint64_t fingerprint = 0;
     std::uint64_t mimeticControlCellFingerprint = 0;
+    std::uint64_t mimeticTraceFlowFingerprint = 0;
+    std::uint64_t pressureVolumeRateFingerprint = 0;
     std::uint64_t structureDefinitionFingerprint = 0;
     std::uint64_t acceptedStepCount = 0;
     double simulationTimeSeconds = 0.0;
@@ -75,6 +78,23 @@ buildSceneFluidMimeticPressureSources(
     const SceneFluidMimeticControlCellSet& controlCells,
     std::span<const double>
         predictedNetOutwardVolumeFlowRatesCubicMetersPerSecond,
+    const SceneFluidMimeticPressureSourceSettings& settings = {},
+    const SceneFluidMimeticPressureSourceLimits& limits = {});
+
+[[nodiscard]] SceneFluidMimeticPressureSourceSet
+buildSceneFluidMimeticPressureSources(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidMimeticTraceFlowPrediction& predictedTraceFlows,
+    const SceneFluidMimeticPressureSourceSettings& settings = {},
+    const SceneFluidMimeticPressureSourceLimits& limits = {});
+
+[[nodiscard]] SceneFluidMimeticPressureSourceSet
+buildSceneFluidMimeticPressureSources(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidMimeticTraceFlowPrediction& predictedTraceFlows,
+    const SceneFluidPressureVolumeRateSet& geometryVolumeRates,
     const SceneFluidMimeticPressureSourceSettings& settings = {},
     const SceneFluidMimeticPressureSourceLimits& limits = {});
 

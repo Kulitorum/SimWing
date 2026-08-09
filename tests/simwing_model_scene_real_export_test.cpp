@@ -6,6 +6,7 @@
 #include "scene_fluid_mimetic_condensed_trace_system.h"
 #include "scene_fluid_mimetic_control_cell.h"
 #include "scene_fluid_mimetic_pressure_solve.h"
+#include "scene_fluid_mimetic_trace_flow.h"
 #include "scene_fluid_mimetic_trace_solve.h"
 #include "scene_fluid_mimetic_trace_system.h"
 #include "scene_fluid_opening_cap.h"
@@ -493,6 +494,46 @@ void testRealDesignCapture(const std::filesystem::path &input,
     const simwing::fsi::SceneFluidMimeticTraceSystem mimeticTraceSystem =
         simwing::fsi::buildSceneFluidMimeticTraceSystem(
             mimeticControlCells);
+    simwing::fsi::fluid::MacVelocityField mimeticPredictedVelocity(
+        fluidGrid);
+    for (std::size_t index = 0;
+         index < fluidGrid.cellCount(); ++index) {
+        const double sample = static_cast<double>(index + 1);
+        mimeticPredictedVelocity.xFaces()[index] = -0.85 + 0.01 * sample;
+        mimeticPredictedVelocity.yFaces()[index] = 0.02 * sample;
+        mimeticPredictedVelocity.zFaces()[index] = -0.015 * sample;
+    }
+    const auto mimeticOpeningFlux =
+        simwing::fsi::evaluateSceneFluidOpeningFlux(
+            fluidSurface.definition, fluidState, openingCaps,
+            openingQuadrature, openingPatches, fluidGrid,
+            mimeticPredictedVelocity);
+    const auto mimeticTraceFlow =
+        simwing::fsi::sampleSceneFluidMimeticTraceFlows(
+            mimeticControlCells, mimeticTraceSystem, pressureFaceLinks,
+            mimeticOpeningFlux, fluidGrid, mimeticPredictedVelocity);
+    const auto mimeticSampledSources =
+        simwing::fsi::buildSceneFluidMimeticPressureSources(
+            mimeticControlCells, mimeticTraceSystem, mimeticTraceFlow);
+    check(mimeticTraceFlow.traces.size()
+                  == mimeticTraceSystem.sharedTraceCount
+              && mimeticTraceFlow.authoredOpeningTraceCount
+                  == cellOwnedOpeningPatchCount
+              && mimeticTraceFlow.cartesianTraceCount
+                      + mimeticTraceFlow.authoredOpeningTraceCount
+                  == mimeticTraceSystem.sharedTraceCount
+              && mimeticTraceFlow.openingFluxFingerprint
+                  == mimeticOpeningFlux.fingerprint
+              && mimeticTraceFlow
+                    .maximumAbsoluteComponentBalanceResidualCubicMetersPerSecond
+                  == 0.0
+              && mimeticSampledSources.mimeticTraceFlowFingerprint
+                  == mimeticTraceFlow.fingerprint
+              && mimeticSampledSources.pressureVolumeRateFingerprint == 0
+              && mimeticSampledSources
+                    .maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond
+                  < 1.0e-12,
+          "real mimetic predictor samples every Cartesian and previously rejected opening trace into compatible physical sources");
     const auto condensedTraceSystem =
         simwing::fsi::buildSceneFluidMimeticCondensedTraceSystem(
             mimeticTraceSystem);
