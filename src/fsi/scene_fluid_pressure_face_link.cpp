@@ -249,10 +249,12 @@ std::vector<StableId> commonRegions(
 
 std::size_t storageBytesForCounts(const std::size_t faceCount,
                                   const std::size_t linkCount,
-                                  const std::size_t rejectionCount = 0) {
+                                  const std::size_t rejectionCount = 0,
+                                  const std::size_t supportCount = 0) {
     std::size_t faceBytes = 0;
     std::size_t linkBytes = 0;
     std::size_t rejectionBytes = 0;
+    std::size_t supportBytes = 0;
     std::size_t total = 0;
     if (!checkedMultiply(faceCount, sizeof(SceneFluidPressureFace), faceBytes)
         || !checkedMultiply(linkCount, sizeof(SceneFluidPressureFaceLink),
@@ -260,8 +262,12 @@ std::size_t storageBytesForCounts(const std::size_t faceCount,
         || !checkedMultiply(
             rejectionCount,
             sizeof(SceneFluidEmbeddedOpeningRejection), rejectionBytes)
+        || !checkedMultiply(
+            supportCount,
+            sizeof(SceneFluidEmbeddedOpeningOneRingSupport), supportBytes)
         || !checkedAdd(faceBytes, linkBytes, total)
-        || !checkedAdd(total, rejectionBytes, total)) {
+        || !checkedAdd(total, rejectionBytes, total)
+        || !checkedAdd(total, supportBytes, total)) {
         throw std::length_error(
             "scene fluid pressure-face-link storage size overflows");
     }
@@ -271,7 +277,8 @@ std::size_t storageBytesForCounts(const std::size_t faceCount,
 std::size_t storageBytes(const SceneFluidPressureFaceLinkSet& faceLinks) {
     return storageBytesForCounts(
         faceLinks.faces.size(), faceLinks.links.size(),
-        faceLinks.embeddedOpeningRejections.size());
+        faceLinks.embeddedOpeningRejections.size(),
+        faceLinks.embeddedOpeningOneRingSupports.size());
 }
 
 std::uint64_t faceLinkFingerprint(
@@ -313,6 +320,9 @@ std::uint64_t faceLinkFingerprint(
              faceLinks.resolvedOpeningFaceCount,
              faceLinks.embeddedOpeningLinkCount,
              faceLinks.unresolvedEmbeddedOpeningPatchCount,
+             faceLinks.embeddedOpeningBothSideOneRingCount,
+             faceLinks.embeddedOpeningSingleSideOneRingCount,
+             faceLinks.embeddedOpeningNoSideOneRingCount,
              faceLinks.unresolvedActiveFaceCount,
              faceLinks.unresolvedCappedFaceCount,
              faceLinks.unresolvedAmbiguousFaceCount,
@@ -379,12 +389,51 @@ std::uint64_t faceLinkFingerprint(
         fingerprint.integer(static_cast<std::uint64_t>(
             rejection.positiveControlVolumeIndex));
         fingerprint.enumeration(rejection.status);
+        fingerprint.enumeration(rejection.oneRingStatus);
+        fingerprint.integer(static_cast<std::uint64_t>(
+            rejection.firstOneRingSupport));
+        fingerprint.integer(static_cast<std::uint64_t>(
+            rejection.oneRingSupportCount));
+        fingerprint.integer(static_cast<std::uint64_t>(
+            rejection.negativeOneRingSupportCount));
+        fingerprint.integer(static_cast<std::uint64_t>(
+            rejection.positiveOneRingSupportCount));
+        fingerprint.integer(static_cast<std::uint64_t>(
+            rejection.negativeAdmissibleOneRingSupportCount));
+        fingerprint.integer(static_cast<std::uint64_t>(
+            rejection.positiveAdmissibleOneRingSupportCount));
         fingerprint.real(rejection.areaSquareMeters);
         fingerprint.real(rejection.projectedCenterDistanceMeters);
         fingerprint.real(
             rejection.negativeCentroidSignedDistanceMeters);
         fingerprint.real(
             rejection.positiveCentroidSignedDistanceMeters);
+    }
+    fingerprint.integer(static_cast<std::uint64_t>(
+        faceLinks.embeddedOpeningOneRingSupports.size()));
+    for (const auto& support :
+         faceLinks.embeddedOpeningOneRingSupports) {
+        fingerprint.integer(static_cast<std::uint64_t>(
+            support.supportIndex));
+        fingerprint.integer(static_cast<std::uint64_t>(
+            support.rejectionIndex));
+        fingerprint.enumeration(support.side);
+        fingerprint.integer(static_cast<std::uint64_t>(
+            support.cartesianFaceLinkIndex));
+        fingerprint.integer(support.cartesianFaceLinkStableId);
+        fingerprint.integer(static_cast<std::uint64_t>(
+            support.rootControlVolumeIndex));
+        fingerprint.integer(static_cast<std::uint64_t>(
+            support.donorControlVolumeIndex));
+        fingerprint.real(
+            support.donorOffsetFromOpeningCentroidMeters.x);
+        fingerprint.real(
+            support.donorOffsetFromOpeningCentroidMeters.y);
+        fingerprint.real(
+            support.donorOffsetFromOpeningCentroidMeters.z);
+        fingerprint.real(support.donorProjectedDistanceMeters);
+        fingerprint.integer(static_cast<std::uint8_t>(
+            support.isCorrectlySided));
     }
     return fingerprint.value();
 }
@@ -586,7 +635,8 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
         }
         if (storageBytesForCounts(
                 faceCount, result.links.size() + 1,
-                result.embeddedOpeningRejections.size())
+                result.embeddedOpeningRejections.size(),
+                result.embeddedOpeningOneRingSupports.size())
             > limits.maximumLinkBytes) {
             throw std::length_error(
                 "scene fluid pressure-face-link exceeds its byte limit");
@@ -850,6 +900,141 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
         }
     }
 
+    const auto collectOneRingSupports = [&result, &pressureVolumes, &grid,
+                                         &settings](
+        const SceneFluidOpeningGridPatch& patch,
+        const SceneFluidPressureControlVolume& root,
+        const SceneFluidEmbeddedOpeningOneRingSide side,
+        const std::size_t rejectionIndex) {
+        std::vector<SceneFluidEmbeddedOpeningOneRingSupport> supports;
+        supports.reserve(6);
+        const auto counts = grid.cellCounts();
+        const auto lower = grid.lowerMeters();
+        const auto upper = grid.upperMeters();
+        const auto cell = pressureVolumes.cells[root.cellIndex].cell;
+        for (const fluid::GridFaceAxis axis : {
+                 fluid::GridFaceAxis::X,
+                 fluid::GridFaceAxis::Y,
+                 fluid::GridFaceAxis::Z}) {
+            for (const bool positiveDirection : {false, true}) {
+                std::size_t i = cell.i;
+                std::size_t j = cell.j;
+                std::size_t k = cell.k;
+                if (positiveDirection) {
+                    switch (axis) {
+                    case fluid::GridFaceAxis::X:
+                        i = i + 1 == counts.x ? 0 : i + 1;
+                        break;
+                    case fluid::GridFaceAxis::Y:
+                        j = j + 1 == counts.y ? 0 : j + 1;
+                        break;
+                    case fluid::GridFaceAxis::Z:
+                        k = k + 1 == counts.z ? 0 : k + 1;
+                        break;
+                    }
+                }
+                const auto& face = result.faces[
+                    faceOrdinal(grid, axis, i, j, k)];
+                for (std::size_t offset = 0;
+                     offset < face.linkCount; ++offset) {
+                    const auto& link = result.links[
+                        face.firstLink + offset];
+                    if (link.kind
+                            != SceneFluidPressureFaceLinkKind::SameRegion
+                        || link.geometryKind
+                            != SceneFluidPressureLinkGeometryKind::
+                                CartesianFace) {
+                        continue;
+                    }
+                    std::size_t donorControlVolumeIndex = 0;
+                    bool rootIsMinus = false;
+                    if (link.minusControlVolumeIndex
+                        == root.controlVolumeIndex) {
+                        donorControlVolumeIndex =
+                            link.plusControlVolumeIndex;
+                        rootIsMinus = true;
+                    } else if (link.plusControlVolumeIndex
+                               == root.controlVolumeIndex) {
+                        donorControlVolumeIndex =
+                            link.minusControlVolumeIndex;
+                    } else {
+                        continue;
+                    }
+                    if (donorControlVolumeIndex
+                        >= pressureVolumes.controlVolumes.size()
+                        || donorControlVolumeIndex
+                            == root.controlVolumeIndex) {
+                        throw std::logic_error(
+                            "scene fluid embedded-opening one-ring link "
+                            "has invalid ownership");
+                    }
+                    const auto& donor = pressureVolumes.controlVolumes[
+                        donorControlVolumeIndex];
+                    fluid::Vector3 donorOffset{
+                        donor.centroidMeters.x - patch.centroidMeters.x,
+                        donor.centroidMeters.y - patch.centroidMeters.y,
+                        donor.centroidMeters.z - patch.centroidMeters.z,
+                    };
+                    const bool periodicFace =
+                        (axis == fluid::GridFaceAxis::X && i == 0)
+                        || (axis == fluid::GridFaceAxis::Y && j == 0)
+                        || (axis == fluid::GridFaceAxis::Z && k == 0);
+                    if (periodicFace) {
+                        const double imageOffset = rootIsMinus ? 1.0 : -1.0;
+                        switch (axis) {
+                        case fluid::GridFaceAxis::X:
+                            donorOffset.x += imageOffset
+                                * (upper.x - lower.x);
+                            break;
+                        case fluid::GridFaceAxis::Y:
+                            donorOffset.y += imageOffset
+                                * (upper.y - lower.y);
+                            break;
+                        case fluid::GridFaceAxis::Z:
+                            donorOffset.z += imageOffset
+                                * (upper.z - lower.z);
+                            break;
+                        }
+                    }
+                    const double projectedDistance =
+                        donorOffset.x
+                            * patch.unitNormalNegativeToPositive.x
+                        + donorOffset.y
+                            * patch.unitNormalNegativeToPositive.y
+                        + donorOffset.z
+                            * patch.unitNormalNegativeToPositive.z;
+                    if (!std::isfinite(projectedDistance)) {
+                        throw std::invalid_argument(
+                            "scene fluid embedded-opening one-ring "
+                            "projection is invalid");
+                    }
+                    SceneFluidEmbeddedOpeningOneRingSupport support;
+                    support.rejectionIndex = rejectionIndex;
+                    support.side = side;
+                    support.cartesianFaceLinkIndex = link.linkIndex;
+                    support.cartesianFaceLinkStableId = link.stableId;
+                    support.rootControlVolumeIndex =
+                        root.controlVolumeIndex;
+                    support.donorControlVolumeIndex =
+                        donorControlVolumeIndex;
+                    support.donorOffsetFromOpeningCentroidMeters =
+                        donorOffset;
+                    support.donorProjectedDistanceMeters =
+                        projectedDistance;
+                    support.isCorrectlySided = side
+                            == SceneFluidEmbeddedOpeningOneRingSide::
+                                NegativeRegion
+                        ? projectedDistance
+                            <= -settings.minimumCenterDistanceMeters
+                        : projectedDistance
+                            >= settings.minimumCenterDistanceMeters;
+                    supports.push_back(support);
+                }
+            }
+        }
+        return supports;
+    };
+
     for (const auto& patch : openingPatches.patches) {
         if (patch.ownerKind != SceneFluidOpeningPatchOwnerKind::Cell) {
             continue;
@@ -897,16 +1082,43 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                     "scene fluid pressure-face-link exceeds its "
                     "embedded-opening rejection limit");
             }
+            const std::size_t rejectionIndex =
+                result.embeddedOpeningRejections.size();
+            auto negativeSupports = collectOneRingSupports(
+                patch, *minus,
+                SceneFluidEmbeddedOpeningOneRingSide::NegativeRegion,
+                rejectionIndex);
+            auto positiveSupports = collectOneRingSupports(
+                patch, *plus,
+                SceneFluidEmbeddedOpeningOneRingSide::PositiveRegion,
+                rejectionIndex);
+            std::size_t additionalSupportCount = 0;
+            std::size_t resultingSupportCount = 0;
+            if (!checkedAdd(negativeSupports.size(), positiveSupports.size(),
+                            additionalSupportCount)
+                || !checkedAdd(
+                    result.embeddedOpeningOneRingSupports.size(),
+                    additionalSupportCount, resultingSupportCount)) {
+                throw std::length_error(
+                    "scene fluid embedded-opening one-ring support count "
+                    "overflows");
+            }
+            if (resultingSupportCount
+                > limits.maximumEmbeddedOpeningOneRingSupports) {
+                throw std::length_error(
+                    "scene fluid pressure-face-link exceeds its "
+                    "embedded-opening one-ring support limit");
+            }
             if (storageBytesForCounts(
                     faceCount, result.links.size(),
-                    result.embeddedOpeningRejections.size() + 1)
+                    result.embeddedOpeningRejections.size() + 1,
+                    resultingSupportCount)
                 > limits.maximumLinkBytes) {
                 throw std::length_error(
                     "scene fluid pressure-face-link exceeds its byte limit");
             }
             SceneFluidEmbeddedOpeningRejection rejection;
-            rejection.rejectionIndex =
-                result.embeddedOpeningRejections.size();
+            rejection.rejectionIndex = rejectionIndex;
             rejection.openingPatchStableId = patch.stableId;
             rejection.openingId = patch.openingId;
             rejection.cellIndex = patch.cellIndex;
@@ -923,6 +1135,41 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                     NonPositiveProjectedDistance
                 : SceneFluidEmbeddedOpeningRejectionStatus::
                     BelowMinimumProjectedDistance;
+            rejection.firstOneRingSupport =
+                result.embeddedOpeningOneRingSupports.size();
+            rejection.oneRingSupportCount = additionalSupportCount;
+            rejection.negativeOneRingSupportCount =
+                negativeSupports.size();
+            rejection.positiveOneRingSupportCount =
+                positiveSupports.size();
+            rejection.negativeAdmissibleOneRingSupportCount =
+                std::ranges::count(
+                    negativeSupports, true,
+                    &SceneFluidEmbeddedOpeningOneRingSupport::
+                        isCorrectlySided);
+            rejection.positiveAdmissibleOneRingSupportCount =
+                std::ranges::count(
+                    positiveSupports, true,
+                    &SceneFluidEmbeddedOpeningOneRingSupport::
+                        isCorrectlySided);
+            const bool hasNegativeSupport =
+                rejection.negativeAdmissibleOneRingSupportCount != 0;
+            const bool hasPositiveSupport =
+                rejection.positiveAdmissibleOneRingSupportCount != 0;
+            if (hasNegativeSupport && hasPositiveSupport) {
+                rejection.oneRingStatus =
+                    SceneFluidEmbeddedOpeningOneRingStatus::BothSides;
+                ++result.embeddedOpeningBothSideOneRingCount;
+            } else if (hasNegativeSupport || hasPositiveSupport) {
+                rejection.oneRingStatus = hasNegativeSupport
+                    ? SceneFluidEmbeddedOpeningOneRingStatus::NegativeSideOnly
+                    : SceneFluidEmbeddedOpeningOneRingStatus::PositiveSideOnly;
+                ++result.embeddedOpeningSingleSideOneRingCount;
+            } else {
+                rejection.oneRingStatus =
+                    SceneFluidEmbeddedOpeningOneRingStatus::NeitherSide;
+                ++result.embeddedOpeningNoSideOneRingCount;
+            }
             rejection.areaSquareMeters = patch.areaSquareMeters;
             rejection.projectedCenterDistanceMeters = distance;
             rejection.negativeCentroidSignedDistanceMeters =
@@ -930,6 +1177,15 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
             rejection.positiveCentroidSignedDistanceMeters =
                 positiveSignedDistance;
             result.embeddedOpeningRejections.push_back(rejection);
+            const auto appendSupports = [&result](auto& supports) {
+                for (auto& support : supports) {
+                    support.supportIndex =
+                        result.embeddedOpeningOneRingSupports.size();
+                    result.embeddedOpeningOneRingSupports.push_back(support);
+                }
+            };
+            appendSupports(negativeSupports);
+            appendSupports(positiveSupports);
             ++result.unresolvedEmbeddedOpeningPatchCount;
             result.unresolvedEmbeddedOpeningAreaSquareMeters +=
                 patch.areaSquareMeters;
@@ -941,7 +1197,8 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
         }
         if (storageBytesForCounts(
                 faceCount, result.links.size() + 1,
-                result.embeddedOpeningRejections.size())
+                result.embeddedOpeningRejections.size(),
+                result.embeddedOpeningOneRingSupports.size())
             > limits.maximumLinkBytes) {
             throw std::length_error(
                 "scene fluid pressure-face-link exceeds its byte limit");
@@ -1084,6 +1341,7 @@ void validateSceneFluidPressureFaceLinks(
             "scene fluid pressure-face-link identity is invalid");
     }
     const SceneFluidPressureFaceLinkLimits unlimited{
+        std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),

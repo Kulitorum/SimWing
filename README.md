@@ -598,8 +598,11 @@ internal-sheet chains remain audited material topology but do not split a
 pressure region, and stitched interior multi-region chains raise the result to
 58 resolved partitions (15 material-only and 43 cap-touched). Its remaining
 294 embedded-opening rejections are explicitly non-admissible centroid
-stencils, not unresolved material faces. A face-aligned authored opening now
-contributes its
+stencils, not unresolved material faces. Every one has correctly sided
+same-region Cartesian support within one ring on both authored sides after
+periodic-image unwrapping. That support is retained as bounded immutable
+provenance; it is evidence for a future multipoint reconstruction, not a
+replacement conductance. A face-aligned authored opening now contributes its
 exact oriented cross-region aperture area plus an unambiguous same-region link
 over the rest of that Cartesian face. The analytic intake therefore retains
 `0.18 m²` of opening and `0.82 m²` of Outside flow area instead of smearing the
@@ -608,7 +611,11 @@ cross-region link inside its cut cell. Its authored normal and exact area are
 retained, while conductance distance is the positive projected separation of
 the two cell-region pressure centroids. When that separation is not positive,
 the patch count and exact area remain explicitly unresolved and no conductance
-link is fabricated. Material/interface ambiguity remains unlinked, and the
+link is fabricated. The rejection additionally owns deterministic ranges of
+all same-region Cartesian neighbors reached from each side control, their
+source link/control identities, periodic-image offsets from the aperture
+centroid, signed normal projections, and correctly-sided flags.
+Material/interface ambiguity remains unlinked, and the
 pressure operator rejects either incomplete topology. Physical pressure
 coefficients enter only in the downstream fixed-epoch projection. For fully
 resolved geometry,
@@ -805,8 +812,11 @@ distances, exact count and area, and no conductance link. The current coarse
 fixture has 24 non-positive patches across its two mirrored intake openings;
 both region centroids lie on the positive side of each local cap plane, so an
 absolute-value coefficient would hide a non-admissible two-point stencil.
-Resolving those embedded conductances and subsequent worker integration remain
-open.
+All 24 publish correctly sided one-ring support on both authored sides,
+including validated periodic-image geometry. Direct donor substitution would
+place flux in the wrong control-volume row, so resolving these apertures still
+requires a conservative symmetric multipoint or hybrid pressure formulation.
+Subsequent worker integration remains open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

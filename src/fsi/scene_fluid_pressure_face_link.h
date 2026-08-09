@@ -10,7 +10,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureFaceLinkVersion = 6;
+inline constexpr std::uint32_t sceneFluidPressureFaceLinkVersion = 7;
 inline constexpr std::size_t invalidSceneFluidPressureFaceIndex =
     std::numeric_limits<std::size_t>::max();
 
@@ -25,6 +25,7 @@ struct SceneFluidPressureFaceLinkLimits {
     std::size_t maximumFaces = 30'000'000;
     std::size_t maximumLinks = 100'000'000;
     std::size_t maximumEmbeddedOpeningRejections = 10'000'000;
+    std::size_t maximumEmbeddedOpeningOneRingSupports = 120'000'000;
     std::size_t maximumLinkBytes = 2048ULL * 1024ULL * 1024ULL;
 };
 
@@ -51,6 +52,18 @@ enum class SceneFluidPressureLinkGeometryKind : std::uint8_t {
 enum class SceneFluidEmbeddedOpeningRejectionStatus : std::uint8_t {
     NonPositiveProjectedDistance = 1,
     BelowMinimumProjectedDistance = 2,
+};
+
+enum class SceneFluidEmbeddedOpeningOneRingSide : std::uint8_t {
+    NegativeRegion = 1,
+    PositiveRegion = 2,
+};
+
+enum class SceneFluidEmbeddedOpeningOneRingStatus : std::uint8_t {
+    NeitherSide = 1,
+    NegativeSideOnly = 2,
+    PositiveSideOnly = 3,
+    BothSides = 4,
 };
 
 struct SceneFluidPressureFace {
@@ -110,6 +123,14 @@ struct SceneFluidEmbeddedOpeningRejection {
     SceneFluidEmbeddedOpeningRejectionStatus status =
         SceneFluidEmbeddedOpeningRejectionStatus::
             NonPositiveProjectedDistance;
+    SceneFluidEmbeddedOpeningOneRingStatus oneRingStatus =
+        SceneFluidEmbeddedOpeningOneRingStatus::NeitherSide;
+    std::size_t firstOneRingSupport = 0;
+    std::size_t oneRingSupportCount = 0;
+    std::size_t negativeOneRingSupportCount = 0;
+    std::size_t positiveOneRingSupportCount = 0;
+    std::size_t negativeAdmissibleOneRingSupportCount = 0;
+    std::size_t positiveAdmissibleOneRingSupportCount = 0;
     double areaSquareMeters = 0.0;
     double projectedCenterDistanceMeters = 0.0;
     double negativeCentroidSignedDistanceMeters = 0.0;
@@ -117,6 +138,23 @@ struct SceneFluidEmbeddedOpeningRejection {
 
     bool operator==(
         const SceneFluidEmbeddedOpeningRejection&) const = default;
+};
+
+struct SceneFluidEmbeddedOpeningOneRingSupport {
+    std::size_t supportIndex = 0;
+    std::size_t rejectionIndex = 0;
+    SceneFluidEmbeddedOpeningOneRingSide side =
+        SceneFluidEmbeddedOpeningOneRingSide::NegativeRegion;
+    std::size_t cartesianFaceLinkIndex = 0;
+    std::uint64_t cartesianFaceLinkStableId = 0;
+    std::size_t rootControlVolumeIndex = 0;
+    std::size_t donorControlVolumeIndex = 0;
+    fluid::Vector3 donorOffsetFromOpeningCentroidMeters;
+    double donorProjectedDistanceMeters = 0.0;
+    bool isCorrectlySided = false;
+
+    bool operator==(
+        const SceneFluidEmbeddedOpeningOneRingSupport&) const = default;
 };
 
 // Conservative pressure-face subset. Exact active-face partitions create one
@@ -130,7 +168,11 @@ struct SceneFluidEmbeddedOpeningRejection {
 // same-cell pressure controls along the authored normal, using their projected
 // centroid separation. A patch without admissible positive projected
 // separation remains an explicit typed rejection with source identity and
-// signed centroid-to-patch distances, and publishes no link.
+// signed centroid-to-patch distances, and publishes no link. Such a rejection
+// also retains every same-region Cartesian one-ring neighbor of both side
+// controls, with periodic-image geometry and explicit sidedness. This is
+// bounded reconstruction evidence only; it does not reroute aperture flux or
+// claim that a conservative symmetric multipoint stencil exists.
 // Material/open-chain/coplanar overlap, unresolved capped arrangements, and
 // ambiguous faces likewise remain explicit and unresolved; no dominant-cell or
 // smeared-interface fallback is permitted.
@@ -156,6 +198,9 @@ struct SceneFluidPressureFaceLinkSet {
     std::size_t resolvedOpeningFaceCount = 0;
     std::size_t embeddedOpeningLinkCount = 0;
     std::size_t unresolvedEmbeddedOpeningPatchCount = 0;
+    std::size_t embeddedOpeningBothSideOneRingCount = 0;
+    std::size_t embeddedOpeningSingleSideOneRingCount = 0;
+    std::size_t embeddedOpeningNoSideOneRingCount = 0;
     std::size_t unresolvedActiveFaceCount = 0;
     std::size_t unresolvedCappedFaceCount = 0;
     std::size_t unresolvedAmbiguousFaceCount = 0;
@@ -169,6 +214,8 @@ struct SceneFluidPressureFaceLinkSet {
     std::vector<SceneFluidPressureFaceLink> links;
     std::vector<SceneFluidEmbeddedOpeningRejection>
         embeddedOpeningRejections;
+    std::vector<SceneFluidEmbeddedOpeningOneRingSupport>
+        embeddedOpeningOneRingSupports;
 
     bool operator==(const SceneFluidPressureFaceLinkSet&) const = default;
 };

@@ -515,6 +515,65 @@ void testRealDesignCapture(const std::filesystem::path &input,
                     && rejection.negativeCentroidSignedDistanceMeters > 0.0
                     && rejection.positiveCentroidSignedDistanceMeters > 0.0;
             });
+    const bool embeddedOneRingSupportIsTwoSided =
+        std::ranges::all_of(
+            pressureFaceLinks.embeddedOpeningRejections,
+            [&](const simwing::fsi::SceneFluidEmbeddedOpeningRejection&
+                    rejection) {
+                if (rejection.oneRingStatus
+                        != simwing::fsi::
+                            SceneFluidEmbeddedOpeningOneRingStatus::BothSides
+                    || rejection.negativeAdmissibleOneRingSupportCount == 0
+                    || rejection.positiveAdmissibleOneRingSupportCount == 0
+                    || rejection.firstOneRingSupport
+                        > pressureFaceLinks
+                            .embeddedOpeningOneRingSupports.size()
+                    || rejection.oneRingSupportCount
+                        > pressureFaceLinks
+                                .embeddedOpeningOneRingSupports.size()
+                            - rejection.firstOneRingSupport) {
+                    return false;
+                }
+                for (std::size_t offset = 0;
+                     offset < rejection.oneRingSupportCount; ++offset) {
+                    const auto& support = pressureFaceLinks
+                        .embeddedOpeningOneRingSupports[
+                            rejection.firstOneRingSupport + offset];
+                    if (support.rejectionIndex != rejection.rejectionIndex
+                        || support.cartesianFaceLinkIndex
+                            >= pressureFaceLinks.links.size()) {
+                        return false;
+                    }
+                    const auto& link = pressureFaceLinks.links[
+                        support.cartesianFaceLinkIndex];
+                    if (link.stableId
+                            != support.cartesianFaceLinkStableId
+                        || link.faceIndex
+                            >= pressureFaceLinks.faces.size()
+                        || link.kind
+                            != simwing::fsi::
+                                SceneFluidPressureFaceLinkKind::SameRegion
+                        || link.geometryKind
+                            != simwing::fsi::
+                                SceneFluidPressureLinkGeometryKind::
+                                    CartesianFace) {
+                        return false;
+                    }
+                    const bool rootIsMinus =
+                        link.minusControlVolumeIndex
+                            == support.rootControlVolumeIndex;
+                    if ((!rootIsMinus
+                            && link.plusControlVolumeIndex
+                                != support.rootControlVolumeIndex)
+                        || (rootIsMinus
+                                ? link.plusControlVolumeIndex
+                                : link.minusControlVolumeIndex)
+                            != support.donorControlVolumeIndex) {
+                        return false;
+                    }
+                }
+                return true;
+            });
     check(fluidVolumes.regionVolumes.size() == result.scene.regions.size()
               && fluidVolumes.openingCapCount
                   == result.scene.openings.size()
@@ -555,8 +614,13 @@ void testRealDesignCapture(const std::filesystem::path &input,
               && pressureFaceLinks.resolvedPartitionFaceCount == 10
               && pressureFaceLinks.unresolvedEmbeddedOpeningPatchCount == 24
               && pressureFaceLinks.embeddedOpeningRejections.size() == 24
+              && pressureFaceLinks.embeddedOpeningBothSideOneRingCount == 24
+              && pressureFaceLinks.embeddedOpeningSingleSideOneRingCount == 0
+              && pressureFaceLinks.embeddedOpeningNoSideOneRingCount == 0
+              && !pressureFaceLinks.embeddedOpeningOneRingSupports.empty()
               && rejectedEmbeddedOpeningIds.size() == 2
               && embeddedRejectionsAreNonAdmissible
+              && embeddedOneRingSupportIsTwoSided
               && pressureFaceLinks.unresolvedEmbeddedOpeningAreaSquareMeters
                   > 0.0,
           "real wing closes cap-crossed pressure faces and retains explicit embedded-opening limits");

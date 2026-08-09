@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <utility>
@@ -147,6 +148,16 @@ Scene tiltedOpenScene() {
     scene.vertices[1].positionMeters.x = 2.6;
     scene.vertices[2].positionMeters.x = 2.8;
     scene.vertices[3].positionMeters.x = 2.7;
+    return scene;
+}
+
+Scene periodicTiltedOpenScene() {
+    auto scene = tiltedOpenScene();
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-pressure-face-periodic-tilted-open";
+    for (auto& vertex : scene.vertices) {
+        vertex.positionMeters.x += 1.1;
+    }
     return scene;
 }
 
@@ -479,6 +490,172 @@ void testCorruptionSettingsAndLimits() {
         "pressure-face-link assembly rejects zero centroid distance tolerance");
 
     Fixture tilted(tiltedOpenScene());
+    const auto tiltedAccepted = tilted.links();
+    const auto tiltedEmbedded = std::ranges::find(
+        tiltedAccepted.links,
+        SceneFluidPressureLinkGeometryKind::EmbeddedOpening,
+        &SceneFluidPressureFaceLink::geometryKind);
+    check(tiltedEmbedded != tiltedAccepted.links.end(),
+          "one-ring fixture starts with an admissible embedded link");
+    if (tiltedEmbedded == tiltedAccepted.links.end()) return;
+    SceneFluidPressureFaceLinkSettings oneRingThreshold;
+    oneRingThreshold.minimumCenterDistanceMeters = std::nextafter(
+        tiltedEmbedded->centerDistanceMeters,
+        std::numeric_limits<double>::infinity());
+    const auto oneRingRejected = tilted.links(oneRingThreshold);
+    check(oneRingRejected.embeddedOpeningRejections.size() == 1,
+          "one-ring threshold rejects exactly one embedded opening");
+    if (oneRingRejected.embeddedOpeningRejections.size() != 1) return;
+    const auto& oneRingDiagnostic =
+        oneRingRejected.embeddedOpeningRejections.front();
+    check(oneRingRejected.embeddedOpeningLinkCount == 0
+              && oneRingDiagnostic.oneRingStatus
+                  == SceneFluidEmbeddedOpeningOneRingStatus::BothSides
+              && oneRingDiagnostic.firstOneRingSupport == 0
+              && oneRingDiagnostic.oneRingSupportCount == 7
+              && oneRingDiagnostic.negativeOneRingSupportCount == 1
+              && oneRingDiagnostic.positiveOneRingSupportCount == 6
+              && oneRingDiagnostic.negativeAdmissibleOneRingSupportCount == 1
+              && oneRingDiagnostic.positiveAdmissibleOneRingSupportCount == 2
+              && oneRingRejected.embeddedOpeningBothSideOneRingCount == 1
+              && oneRingRejected.embeddedOpeningSingleSideOneRingCount == 0
+              && oneRingRejected.embeddedOpeningNoSideOneRingCount == 0
+              && oneRingRejected.embeddedOpeningOneRingSupports.size() == 7,
+          "rejected direct stencil retains deterministic two-sided one-ring support");
+    const auto& oneRingPatch = tilted.openingPatches.patches.front();
+    std::size_t countedNegativeAdmissible = 0;
+    std::size_t countedPositiveAdmissible = 0;
+    for (const auto& support :
+         oneRingRejected.embeddedOpeningOneRingSupports) {
+        const auto& link = oneRingRejected.links[
+            support.cartesianFaceLinkIndex];
+        const bool negativeSide = support.side
+            == SceneFluidEmbeddedOpeningOneRingSide::NegativeRegion;
+        const std::size_t expectedRoot = negativeSide
+            ? oneRingDiagnostic.negativeControlVolumeIndex
+            : oneRingDiagnostic.positiveControlVolumeIndex;
+        const std::size_t expectedDonor =
+            link.minusControlVolumeIndex == expectedRoot
+            ? link.plusControlVolumeIndex
+            : link.minusControlVolumeIndex;
+        const double projection =
+            support.donorOffsetFromOpeningCentroidMeters.x
+                * oneRingPatch.unitNormalNegativeToPositive.x
+            + support.donorOffsetFromOpeningCentroidMeters.y
+                * oneRingPatch.unitNormalNegativeToPositive.y
+            + support.donorOffsetFromOpeningCentroidMeters.z
+                * oneRingPatch.unitNormalNegativeToPositive.z;
+        check(support.supportIndex
+                      == &support
+                          - oneRingRejected
+                                .embeddedOpeningOneRingSupports.data()
+                  && support.rejectionIndex == 0
+                  && link.kind
+                      == SceneFluidPressureFaceLinkKind::SameRegion
+                  && link.geometryKind
+                      == SceneFluidPressureLinkGeometryKind::CartesianFace
+                  && support.cartesianFaceLinkStableId == link.stableId
+                  && support.rootControlVolumeIndex == expectedRoot
+                  && support.donorControlVolumeIndex == expectedDonor,
+              "one-ring support binds its exact Cartesian link and side control");
+        checkNear(support.donorProjectedDistanceMeters,
+                  projection, 0.0,
+                  "one-ring support preserves projected periodic-image geometry");
+        if (support.isCorrectlySided) {
+            if (negativeSide) {
+                ++countedNegativeAdmissible;
+            } else {
+                ++countedPositiveAdmissible;
+            }
+        }
+    }
+    check(countedNegativeAdmissible
+                  == oneRingDiagnostic
+                      .negativeAdmissibleOneRingSupportCount
+              && countedPositiveAdmissible
+                  == oneRingDiagnostic
+                      .positiveAdmissibleOneRingSupportCount,
+          "one-ring rejection sidedness counts close their support range");
+    auto corruptOneRing = oneRingRejected;
+    corruptOneRing.embeddedOpeningOneRingSupports.front()
+        .cartesianFaceLinkStableId ^= 1U;
+    expectInvalid(
+        [&] {
+            validateSceneFluidPressureFaceLinkIntegrity(corruptOneRing);
+        },
+        "pressure-face-link integrity rejects one-ring provenance corruption");
+
+    Fixture periodic(periodicTiltedOpenScene());
+    const auto periodicAccepted = periodic.links();
+    const auto periodicEmbedded = std::ranges::find(
+        periodicAccepted.links,
+        SceneFluidPressureLinkGeometryKind::EmbeddedOpening,
+        &SceneFluidPressureFaceLink::geometryKind);
+    check(periodicEmbedded != periodicAccepted.links.end(),
+          "periodic one-ring fixture starts with an embedded link");
+    if (periodicEmbedded != periodicAccepted.links.end()) {
+        SceneFluidPressureFaceLinkSettings periodicThreshold;
+        periodicThreshold.minimumCenterDistanceMeters = std::nextafter(
+            periodicEmbedded->centerDistanceMeters,
+            std::numeric_limits<double>::infinity());
+        const auto periodicRejected = periodic.links(periodicThreshold);
+        check(periodicRejected.embeddedOpeningRejections.size() == 1,
+              "periodic one-ring threshold rejects one embedded opening");
+        bool foundPeriodicImage = false;
+        if (periodicRejected.embeddedOpeningRejections.size() == 1) {
+            const auto& rejection =
+                periodicRejected.embeddedOpeningRejections.front();
+            const auto patch = std::ranges::find(
+                periodic.openingPatches.patches,
+                rejection.openingPatchStableId,
+                &SceneFluidOpeningGridPatch::stableId);
+            check(patch != periodic.openingPatches.patches.end(),
+                  "periodic one-ring rejection retains its opening patch");
+            if (patch != periodic.openingPatches.patches.end()) {
+                for (const auto& support :
+                     periodicRejected.embeddedOpeningOneRingSupports) {
+                    const auto& link = periodicRejected.links[
+                        support.cartesianFaceLinkIndex];
+                    const auto& face = periodicRejected.faces[
+                        link.faceIndex];
+                    if (face.axis != fluid::GridFaceAxis::X
+                        || face.i != 0) {
+                        continue;
+                    }
+                    const bool rootIsMinus =
+                        link.minusControlVolumeIndex
+                            == support.rootControlVolumeIndex;
+                    const auto& donor =
+                        periodic.pressureVolumes.controlVolumes[
+                            support.donorControlVolumeIndex];
+                    const double rawX = donor.centroidMeters.x
+                        - patch->centroidMeters.x;
+                    const auto periodicGrid = grid();
+                    const double expectedImageX = rawX
+                        + (rootIsMinus ? 1.0 : -1.0)
+                            * (periodicGrid.upperMeters().x
+                               - periodicGrid.lowerMeters().x);
+                    checkNear(
+                        support.donorOffsetFromOpeningCentroidMeters.x,
+                        expectedImageX, 0.0,
+                        "one-ring support unwraps the exact periodic x image");
+                    checkNear(
+                        support.donorOffsetFromOpeningCentroidMeters.y,
+                        donor.centroidMeters.y - patch->centroidMeters.y,
+                        0.0,
+                        "one-ring periodic image preserves transverse y");
+                    checkNear(
+                        support.donorOffsetFromOpeningCentroidMeters.z,
+                        donor.centroidMeters.z - patch->centroidMeters.z,
+                        0.0,
+                        "one-ring periodic image preserves transverse z");
+                    foundPeriodicImage = true;
+                }
+            }
+        }
+        check(foundPeriodicImage,
+              "one-ring support retains a periodic-image Cartesian donor");
+    }
     SceneFluidPressureFaceLinkSettings excessiveDistance;
     excessiveDistance.minimumCenterDistanceMeters = 10.0;
     const auto unresolvedEmbedded = tilted.links(excessiveDistance);
@@ -486,6 +663,10 @@ void testCorruptionSettingsAndLimits() {
               && unresolvedEmbedded.embeddedOpeningLinkCount == 0
               && unresolvedEmbedded.unresolvedEmbeddedOpeningPatchCount == 1
               && unresolvedEmbedded.embeddedOpeningRejections.size() == 1
+              && unresolvedEmbedded.embeddedOpeningBothSideOneRingCount == 0
+              && unresolvedEmbedded.embeddedOpeningSingleSideOneRingCount == 0
+              && unresolvedEmbedded.embeddedOpeningNoSideOneRingCount == 1
+              && unresolvedEmbedded.embeddedOpeningOneRingSupports.size() == 7
               && unresolvedEmbedded.unresolvedEmbeddedOpeningAreaSquareMeters
                   == tilted.openingPatches.totalAreaSquareMeters,
           "embedded pressure link retains typed source geometry below its admissible distance");
@@ -504,6 +685,10 @@ void testCorruptionSettingsAndLimits() {
                   && rejection.status
                       == SceneFluidEmbeddedOpeningRejectionStatus::
                           BelowMinimumProjectedDistance
+                  && rejection.oneRingStatus
+                      == SceneFluidEmbeddedOpeningOneRingStatus::NeitherSide
+                  && rejection.negativeAdmissibleOneRingSupportCount == 0
+                  && rejection.positiveAdmissibleOneRingSupportCount == 0
                   && rejection.projectedCenterDistanceMeters > 0.0
                   && rejection.projectedCenterDistanceMeters
                       < excessiveDistance.minimumCenterDistanceMeters,
@@ -545,6 +730,13 @@ void testCorruptionSettingsAndLimits() {
             static_cast<void>(tilted.links(excessiveDistance, limits));
         },
         "pressure-face-link assembly bounds embedded-opening rejections");
+    limits = {};
+    limits.maximumEmbeddedOpeningOneRingSupports = 0;
+    expectLimited(
+        [&] {
+            static_cast<void>(tilted.links(oneRingThreshold, limits));
+        },
+        "pressure-face-link assembly bounds embedded-opening one-ring support");
     limits = {};
     limits.maximumLinkBytes = unresolvedEmbedded.ownedStorageBytes - 1;
     expectLimited(

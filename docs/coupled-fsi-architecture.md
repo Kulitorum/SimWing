@@ -997,9 +997,19 @@ conductance link. All 24 patches across the two mirrored intake openings are
 non-positive in the current coarse fixture: both pressure centroids lie on the
 positive side of each local cap plane. This is a non-admissible two-point
 stencil, not a near-zero tolerance case, so taking an absolute value is not an
-accepted closure. Pressure-operator assembly rejects the incomplete topology.
-Resolving those embedded conductances and subsequent worker integration remain
-open.
+accepted closure. Each rejection also retains a bounded deterministic range of
+every same-region Cartesian one-ring neighbor reached from its two side
+controls. The provenance binds the exact Cartesian link and root/donor
+controls, stores the periodic-image donor offset from the cap centroid, and
+classifies signed sidedness without changing operator arithmetic. All 24
+coarse patches, and all 294 patches in the refined 4-by-4-by-4 audit, have at
+least one correctly sided neighbor on both authored sides. Direct donor
+replacement would nevertheless move aperture flux into a neighboring
+control-volume row; whole-ring or pairwise volume agglomeration also does not
+restore admissible geometry consistently. Pressure-operator assembly therefore
+continues to reject the incomplete topology. Resolving it requires a derived
+locally conservative symmetric multipoint or hybrid formulation; subsequent
+worker integration remains open.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy
