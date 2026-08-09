@@ -9,13 +9,14 @@
 namespace simwing::fsi {
 
 inline constexpr char scenePressureCellCaseChecksum[] =
-    "sha256:simwing-scene-pressure-feedback-cell-v1";
+    "sha256:simwing-scene-pressure-feedback-cell-v2";
 inline constexpr char scenePressureCellCaseSolverId[] =
-    "simwing-fsi-scene-pressure-feedback-worker-v1";
-inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 1;
+    "simwing-fsi-scene-pressure-feedback-worker-v2";
+inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 2;
 
 struct ScenePressureCellDiagnostics {
     SceneFluidPressureCouplingStepDiagnostics coupling;
+    SceneFluidPressureMacVelocityCollapseDiagnostics macVelocity;
     double actuatorForceNewtons = 0.0;
     StructureVector3 pressureForceNewtons;
     double maximumAbsolutePressurePascals = 0.0;
@@ -50,6 +51,8 @@ public:
     [[nodiscard]] const StructureStepSettings& stepSettings() const noexcept;
     [[nodiscard]] std::uint64_t acceptedStepCount() const noexcept;
     [[nodiscard]] double simulationTimeSeconds() const noexcept;
+    [[nodiscard]] const fluid::MacVelocityField& predictedVelocity()
+        const noexcept;
     [[nodiscard]] const ScenePressureCellDiagnostics& diagnostics()
         const noexcept;
     [[nodiscard]] ScenePressureCellCheckpoint checkpoint() const;

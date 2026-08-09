@@ -72,6 +72,8 @@ void testVisibleStrongPressureCellAndReplay() {
     double peakDisplacement = 0.0;
     double peakPressure = 0.0;
     double peakPressureForce = 0.0;
+    double peakMacSpeed = 0.0;
+    double peakMacSubfaceDeviation = 0.0;
     std::uint64_t peakIterations = 0;
     for (std::size_t step = 0; step < 120; ++step) {
         frame = first.advance();
@@ -85,6 +87,12 @@ void testVisibleStrongPressureCellAndReplay() {
             peakPressure, diagnostics.maximumAbsolutePressurePascals);
         peakPressureForce = std::max(
             peakPressureForce, norm(diagnostics.pressureForceNewtons));
+        peakMacSpeed = std::max(
+            peakMacSpeed, diagnostics.macVelocity
+                .maximumAbsoluteVelocityMetersPerSecond);
+        peakMacSubfaceDeviation = std::max(
+            peakMacSubfaceDeviation, diagnostics.macVelocity
+                .maximumSubfaceVelocityDeviationMetersPerSecond);
         peakIterations = std::max(
             peakIterations, diagnostics.coupling.solverRunCount);
         check(diagnostics.finite
@@ -105,8 +113,10 @@ void testVisibleStrongPressureCellAndReplay() {
     check(peakDisplacement > 1.0e-5
               && peakPressure > 1.0e-4
               && peakPressureForce > 1.0e-6
+              && peakMacSpeed > 1.0e-6
+              && peakMacSubfaceDeviation > 1.0e-8
               && peakIterations >= 2,
-          "visible cell develops motion, sparse pressure, and conservative feedback load");
+          "visible cell develops motion, sparse pressure, conservative load, and an evolving bulk MAC predictor");
     check(frame.step == 120
               && frame.vertices.size() == 4
               && frame.triangles.size() == 3
@@ -122,6 +132,10 @@ void testVisibleStrongPressureCellAndReplay() {
         frame, "pressure_cell.maximum_pressure");
     const auto* iterations = scalarField(
         frame, "pressure_cell.coupling_iterations");
+    const auto* macSpeed = scalarField(
+        frame, "pressure_cell.maximum_mac_speed");
+    const auto* macDeviation = scalarField(
+        frame, "pressure_cell.mac_subface_deviation");
     const auto* nodalForce = vectorField(
         frame, "pressure_cell.nodal_pressure_force");
     const auto* totalForce = vectorField(
@@ -139,13 +153,16 @@ void testVisibleStrongPressureCellAndReplay() {
               && maximumPressure != nullptr
               && maximumPressure->values.size() == 1
               && iterations != nullptr && iterations->values.size() == 1
+              && macSpeed != nullptr && macSpeed->values.size() == 1
+              && macDeviation != nullptr
+              && macDeviation->values.size() == 1
               && nodalForce != nullptr
               && nodalForce->association
                   == viewer::FieldAssociation::Vertex
               && nodalForce->values.size() == frame.vertices.size()
               && totalForce != nullptr && totalForce->values.size() == 1
               && actuator != nullptr && actuator->values.size() == 1,
-          "scene pressure cell frame exposes deformation, pressure, loads, and iteration count");
+          "scene pressure cell frame exposes deformation, pressure, loads, MAC continuation, and iteration count");
 
     const auto checkpoint = first.checkpoint();
     const auto expected = first.advance();
@@ -186,6 +203,8 @@ void testPersistentCheckpointAndRejection() {
           "scene pressure cell checkpoint has a canonical bounded round trip");
     fsi::ScenePressureCellCase restored;
     restored.restore(decoded);
+    check(restored.predictedVelocity() == source.predictedVelocity(),
+          "persisted scene pressure cell reconstructs its accepted MAC predictor");
     const auto expected = source.advance();
     const auto replay = restored.advance();
     check(serialized(replay) == serialized(expected)

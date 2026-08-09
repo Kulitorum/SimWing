@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <utility>
 
@@ -239,6 +240,187 @@ const SceneFluidPressureSampleSet*
 SceneFluidPressureCoupling::acceptedPressureSamples() const noexcept {
     return acceptedPressureSamples_
         ? &*acceptedPressureSamples_ : nullptr;
+}
+
+SceneFluidPressureMacVelocityCollapse
+SceneFluidPressureCoupling::acceptedPressureCorrectedMacVelocity() const {
+    if (!acceptedPressureProjection_) {
+        throw std::logic_error(
+            "scene pressure coupling has no accepted pressure velocity");
+    }
+    const auto& projection = *acceptedPressureProjection_;
+    validateSceneFluidPressureProjectionIntegrity(projection);
+    const auto& faceLinks = acceptedPressureEpoch_.pressureFaceLinks;
+    const auto& patches = acceptedPressureEpoch_.openingPatches;
+    if (!projection.diagnostics.accepted
+        || projection.pressureFaceLinkFingerprint != faceLinks.fingerprint
+        || projection.acceptedStepCount != faceLinks.acceptedStepCount
+        || projection.simulationTimeSeconds
+            != faceLinks.simulationTimeSeconds
+        || projection.cellCounts != grid_.cellCounts()
+        || projection.lowerMeters != grid_.lowerMeters()
+        || projection.upperMeters != grid_.upperMeters()
+        || projection.links.size() != faceLinks.links.size()) {
+        throw std::invalid_argument(
+            "scene pressure corrected MAC velocity identity is invalid");
+    }
+
+    std::map<std::uint64_t, const SceneFluidOpeningGridPatch*>
+        openingPatches;
+    for (const auto& patch : patches.patches) {
+        if (patch.stableId == 0
+            || !openingPatches.emplace(patch.stableId, &patch).second) {
+            throw std::invalid_argument(
+                "scene pressure corrected MAC opening identity is invalid");
+        }
+    }
+
+    SceneFluidPressureMacVelocityCollapse result(grid_);
+    auto& diagnostics = result.diagnostics;
+    diagnostics.pressureProjectionFingerprint = projection.fingerprint;
+    diagnostics.pressureFaceLinkFingerprint = faceLinks.fingerprint;
+    diagnostics.openingPatchFingerprint = patches.fingerprint;
+    diagnostics.acceptedStepCount = projection.acceptedStepCount;
+    diagnostics.simulationTimeSeconds = projection.simulationTimeSeconds;
+    diagnostics.faceCount = faceLinks.faces.size();
+    diagnostics.linkCount = faceLinks.links.size();
+
+    const auto axisComponent = [](const Vec3& value,
+                                  const fluid::GridFaceAxis axis) {
+        switch (axis) {
+        case fluid::GridFaceAxis::X:
+            return value.x;
+        case fluid::GridFaceAxis::Y:
+            return value.y;
+        case fluid::GridFaceAxis::Z:
+            return value.z;
+        }
+        throw std::invalid_argument(
+            "scene pressure corrected MAC face axis is invalid");
+    };
+    const auto absoluteFlow = [&](
+        const SceneFluidPressureFaceLink& source,
+        const SceneFluidPressureProjectedLink& projected,
+        const fluid::GridFaceAxis axis) {
+        double flow = projected
+            .correctedRelativeVolumeFlowRateCubicMetersPerSecond;
+        if (source.kind
+            == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
+            const auto found = openingPatches.find(
+                source.openingPatchStableId);
+            if (found == openingPatches.end()) {
+                throw std::invalid_argument(
+                    "scene pressure corrected MAC opening patch is missing");
+            }
+            const auto& patch = *found->second;
+            const double normal = axisComponent(
+                patch.unitNormalNegativeToPositive, axis);
+            if (patch.openingId != source.openingId
+                || patch.areaSquareMeters != source.areaSquareMeters
+                || std::abs(std::abs(normal) - 1.0) > 1.0e-10) {
+                throw std::invalid_argument(
+                    "scene pressure corrected MAC opening patch is foreign");
+            }
+            flow += (normal > 0.0 ? 1.0 : -1.0)
+                * patch.surfaceSweepRateCubicMetersPerSecond;
+        }
+        return flow;
+    };
+
+    for (const auto& face : faceLinks.faces) {
+        if (!(face.faceAreaSquareMeters > 0.0)
+            || face.linkCount == 0
+            || face.firstLink > faceLinks.links.size()
+            || face.linkCount
+                > faceLinks.links.size() - face.firstLink) {
+            throw std::invalid_argument(
+                "scene pressure corrected MAC face is unresolved");
+        }
+        if (face.linkCount > 1) {
+            ++diagnostics.multiLinkFaceCount;
+        }
+        double totalFlow = 0.0;
+        for (std::size_t offset = 0; offset < face.linkCount; ++offset) {
+            const std::size_t index = face.firstLink + offset;
+            const auto& source = faceLinks.links[index];
+            const auto& projected = projection.links[index];
+            if (source.linkIndex != index
+                || source.faceIndex != face.faceIndex
+                || projected.linkIndex != index
+                || projected.stableId != source.stableId
+                || projected.faceIndex != face.faceIndex
+                || projected.kind != source.kind
+                || projected.minusControlVolumeIndex
+                    != source.minusControlVolumeIndex
+                || projected.plusControlVolumeIndex
+                    != source.plusControlVolumeIndex
+                || projected.openingPatchStableId
+                    != source.openingPatchStableId
+                || !(source.areaSquareMeters > 0.0)) {
+                throw std::invalid_argument(
+                    "scene pressure corrected MAC link binding is invalid");
+            }
+            if (source.kind
+                == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
+                ++diagnostics.openingLinkCount;
+            }
+            totalFlow += absoluteFlow(source, projected, face.axis);
+        }
+        const double collapsedVelocity =
+            totalFlow / face.faceAreaSquareMeters;
+        if (!std::isfinite(collapsedVelocity)) {
+            throw std::overflow_error(
+                "scene pressure corrected MAC velocity is non-finite");
+        }
+        diagnostics.maximumAbsoluteVelocityMetersPerSecond = std::max(
+            diagnostics.maximumAbsoluteVelocityMetersPerSecond,
+            std::abs(collapsedVelocity));
+        diagnostics.maximumVolumeFlowClosureCubicMetersPerSecond = std::max(
+            diagnostics.maximumVolumeFlowClosureCubicMetersPerSecond,
+            std::abs(collapsedVelocity * face.faceAreaSquareMeters
+                     - totalFlow));
+        for (std::size_t offset = 0; offset < face.linkCount; ++offset) {
+            const std::size_t index = face.firstLink + offset;
+            const auto& source = faceLinks.links[index];
+            const double subfaceVelocity = absoluteFlow(
+                source, projection.links[index], face.axis)
+                / source.areaSquareMeters;
+            diagnostics.maximumSubfaceVelocityDeviationMetersPerSecond =
+                std::max(
+                    diagnostics
+                        .maximumSubfaceVelocityDeviationMetersPerSecond,
+                    std::abs(subfaceVelocity - collapsedVelocity));
+        }
+
+        const std::size_t cellIndex = grid_.cellIndex(
+            face.i, face.j, face.k);
+        switch (face.axis) {
+        case fluid::GridFaceAxis::X:
+            result.velocityMetersPerSecond.xFaces()[cellIndex] =
+                collapsedVelocity;
+            break;
+        case fluid::GridFaceAxis::Y:
+            result.velocityMetersPerSecond.yFaces()[cellIndex] =
+                collapsedVelocity;
+            break;
+        case fluid::GridFaceAxis::Z:
+            result.velocityMetersPerSecond.zFaces()[cellIndex] =
+                collapsedVelocity;
+            break;
+        }
+    }
+    diagnostics.finite = fluid::isFinite(result.velocityMetersPerSecond)
+        && std::isfinite(
+            diagnostics.maximumAbsoluteVelocityMetersPerSecond)
+        && std::isfinite(
+            diagnostics.maximumSubfaceVelocityDeviationMetersPerSecond)
+        && std::isfinite(
+            diagnostics.maximumVolumeFlowClosureCubicMetersPerSecond);
+    if (!diagnostics.finite) {
+        throw std::overflow_error(
+            "scene pressure corrected MAC diagnostics are non-finite");
+    }
+    return result;
 }
 
 const SceneFluidPressureCouplingSettings&

@@ -14,6 +14,8 @@ namespace simwing::fsi {
 inline constexpr std::uint32_t sceneFluidPressureCouplingVersion = 1;
 inline constexpr std::uint32_t
     sceneFluidPressureCouplingCheckpointVersion = 1;
+inline constexpr std::uint32_t
+    sceneFluidPressureMacVelocityCollapseVersion = 1;
 
 struct SceneFluidPressureCouplingSettings {
     SceneFluidPressureCouplingSettings();
@@ -71,6 +73,40 @@ struct SceneFluidPressureCouplingCheckpoint {
     std::optional<SceneFluidPressureProjection> pressureProjection;
 };
 
+struct SceneFluidPressureMacVelocityCollapseDiagnostics {
+    std::uint32_t version =
+        sceneFluidPressureMacVelocityCollapseVersion;
+    std::uint64_t pressureProjectionFingerprint = 0;
+    std::uint64_t pressureFaceLinkFingerprint = 0;
+    std::uint64_t openingPatchFingerprint = 0;
+    std::uint64_t acceptedStepCount = 0;
+    double simulationTimeSeconds = 0.0;
+    std::size_t faceCount = 0;
+    std::size_t linkCount = 0;
+    std::size_t openingLinkCount = 0;
+    std::size_t multiLinkFaceCount = 0;
+    double maximumAbsoluteVelocityMetersPerSecond = 0.0;
+    double maximumSubfaceVelocityDeviationMetersPerSecond = 0.0;
+    double maximumVolumeFlowClosureCubicMetersPerSecond = 0.0;
+    bool finite = false;
+
+    bool operator==(
+        const SceneFluidPressureMacVelocityCollapseDiagnostics&) const =
+        default;
+};
+
+struct SceneFluidPressureMacVelocityCollapse {
+    explicit SceneFluidPressureMacVelocityCollapse(
+        const fluid::PeriodicCartesianGrid& grid)
+        : velocityMetersPerSecond(grid) {}
+
+    fluid::MacVelocityField velocityMetersPerSecond;
+    SceneFluidPressureMacVelocityCollapseDiagnostics diagnostics;
+
+    bool operator==(
+        const SceneFluidPressureMacVelocityCollapse&) const = default;
+};
+
 // First topology-stable strong feedback owner for the scene-v2 pressure path.
 // The interface iterate is the canonical end-of-step pressure nodal load.
 // Every solve restores the same Structure baseline, applies the trapezoidal
@@ -114,6 +150,13 @@ public:
     acceptedPressureProjection() const noexcept;
     [[nodiscard]] const SceneFluidPressureSampleSet*
     acceptedPressureSamples() const noexcept;
+    // Collapses accepted link-resolved corrected flow back onto one bulk MAC
+    // normal velocity per Cartesian face. Opening links first restore cap
+    // sweep so the MAC value is absolute fluid velocity. Mixed-region
+    // subface differences are area-averaged and reported, not hidden. This is
+    // a deterministic continuation state, not cut-cell advection/diffusion.
+    [[nodiscard]] SceneFluidPressureMacVelocityCollapse
+    acceptedPressureCorrectedMacVelocity() const;
     [[nodiscard]] const SceneFluidPressureCouplingSettings& settings()
         const noexcept;
     [[nodiscard]] SceneFluidPressureCouplingCheckpoint checkpoint(

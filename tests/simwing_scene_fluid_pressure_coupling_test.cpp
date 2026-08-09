@@ -196,6 +196,10 @@ void testStrongPressureFeedbackConvergesDeterministically() {
     const double coupledApexX =
         first.structure.nodeStates()[apexNode(first)].positionMeters.x;
     const auto& transfer = firstCoupling.acceptedPressureTransfer();
+    const auto firstMac =
+        firstCoupling.acceptedPressureCorrectedMacVelocity();
+    const auto secondMac =
+        secondCoupling.acceptedPressureCorrectedMacVelocity();
 
     check(firstResult == secondResult
               && samePublicCheckpoint(firstState, secondState)
@@ -234,6 +238,28 @@ void testStrongPressureFeedbackConvergesDeterministically() {
                   <= settings.convergence
                          .absoluteTractionToleranceNewtons,
           "accepted feedback closes pressure load, force, moment, and interface iteration");
+    check(firstMac == secondMac
+              && firstMac.diagnostics.finite
+              && firstMac.diagnostics.acceptedStepCount == 1
+              && firstMac.diagnostics.simulationTimeSeconds
+                  == settings.structure.timeStepSeconds
+              && firstMac.diagnostics.pressureProjectionFingerprint
+                  == projection->fingerprint
+              && firstMac.diagnostics.openingPatchFingerprint
+                  == firstCoupling.acceptedPressureEpoch()
+                         .openingPatches.fingerprint
+              && firstMac.diagnostics.faceCount
+                  == 3 * grid.cellCount()
+              && firstMac.diagnostics.linkCount
+                  == projection->links.size()
+              && firstMac.diagnostics.openingLinkCount > 0
+              && firstMac.diagnostics.multiLinkFaceCount > 0
+              && firstMac.diagnostics
+                     .maximumAbsoluteVelocityMetersPerSecond > 1.0e-6
+              && firstMac.diagnostics
+                     .maximumVolumeFlowClosureCubicMetersPerSecond
+                  < 1.0e-15,
+          "accepted link flow collapses deterministically onto a conservative bulk MAC continuation");
     check(controlDiagnostics.finite
               && coupledApexX > controlApexX
               && coupledApexX - controlApexX > 1.0e-8,
@@ -242,9 +268,9 @@ void testStrongPressureFeedbackConvergesDeterministically() {
     const std::uint64_t firstEpochFingerprint =
         firstCoupling.acceptedPressureEpoch().fingerprint;
     const auto firstContinuation = firstCoupling.advance(
-        first.structure, velocity);
+        first.structure, firstMac.velocityMetersPerSecond);
     const auto secondContinuation = secondCoupling.advance(
-        second.structure, velocity);
+        second.structure, secondMac.velocityMetersPerSecond);
     check(firstContinuation == secondContinuation
               && firstContinuation.accepted
               && firstContinuation.previousPressureEpochFingerprint
@@ -390,11 +416,18 @@ void testCheckpointReplayAndTransactionalRejection() {
           "initial pressure-coupling checkpoint reproduces the exact first macro-step");
 
     const auto accepted = coupling.checkpoint(fixture.structure);
-    const auto expectedNext = coupling.advance(fixture.structure, velocity);
+    const auto acceptedMac =
+        coupling.acceptedPressureCorrectedMacVelocity();
+    const auto expectedNext = coupling.advance(
+        fixture.structure, acceptedMac.velocityMetersPerSecond);
     const auto expectedNextStructure = fixture.structure.checkpoint();
     coupling.restore(fixture.structure, accepted);
-    const auto replayNext = coupling.advance(fixture.structure, velocity);
+    const auto replayMac =
+        coupling.acceptedPressureCorrectedMacVelocity();
+    const auto replayNext = coupling.advance(
+        fixture.structure, replayMac.velocityMetersPerSecond);
     check(replayNext == expectedNext
+              && replayMac == acceptedMac
               && samePublicCheckpoint(
                   fixture.structure.checkpoint(), expectedNextStructure),
           "accepted pressure-coupling checkpoint reproduces the exact next macro-step");
@@ -405,9 +438,13 @@ void testCheckpointReplayAndTransactionalRejection() {
         equivalentFixture.assembly.mappings,
         equivalentFixture.structure, grid, settings);
     equivalent.restore(equivalentFixture.structure, accepted);
+    const auto equivalentMac =
+        equivalent.acceptedPressureCorrectedMacVelocity();
     const auto equivalentNext = equivalent.advance(
-        equivalentFixture.structure, velocity);
+        equivalentFixture.structure,
+        equivalentMac.velocityMetersPerSecond);
     check(equivalentNext == expectedNext
+              && equivalentMac == acceptedMac
               && samePublicCheckpoint(
                   equivalentFixture.structure.checkpoint(),
                   expectedNextStructure),

@@ -113,7 +113,8 @@ void printUsage(FILE* stream) {
         "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"
         "shared-node open XPBD fabric cell;\n"
         "'pressure-cell' strongly couples scene-v2 moving cut-volume pressure\n"
-        "back to a driven open XPBD cell while holding its MAC predictor fixed;\n"
+        "back to a driven open XPBD cell and advances a pressure-corrected bulk\n"
+        "MAC predictor between accepted steps;\n"
         "'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
         "'strong-piston' strongly iterates that chain for a light added-mass plate;\n"
@@ -1589,6 +1590,7 @@ int main(int argc, char* argv[]) {
                         "t=%.9g s, actuator=%.6g N, pressure-force="
                         "[%.6g %.6g %.6g] N, max-pressure=%.6g Pa, "
                         "max-motion=%.6g m, coupling-iterations=%llu, "
+                        "mac-speed=%.6g m/s, subface-spread=%.3g m/s, "
                         "load-closure=%.3g N, checkpoint-writes=%llu, "
                         "trace=%s\n",
                         static_cast<unsigned long long>(
@@ -1602,6 +1604,10 @@ int main(int argc, char* argv[]) {
                         coupled.maximumDisplacementMeters,
                         static_cast<unsigned long long>(
                             coupled.coupling.solverRunCount),
+                        coupled.macVelocity
+                            .maximumAbsoluteVelocityMetersPerSecond,
+                        coupled.macVelocity
+                            .maximumSubfaceVelocityDeviationMetersPerSecond,
                         coupled.coupling.interfaceForceClosureNewtons,
                         static_cast<unsigned long long>(
                             checkpointWriteCount),

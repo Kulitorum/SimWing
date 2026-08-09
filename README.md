@@ -611,8 +611,12 @@ flow, and returns the conservative scene pressure load. Only a converged
 iterate commits. The expanding open-tetra regression proves pressure opposes
 the imposed expansion, continues deterministically into the next macro-step,
 and restores both Structure and pressure ownership on iteration exhaustion or
-projection failure. The MAC predictor is still held fixed during this first
-feedback loop; momentum evolution and topology rebasing remain later work.
+projection failure. The MAC predictor is held fixed inside each nonlinear
+feedback loop. Accepted corrected link flows can now be conservatively
+area-collapsed back onto one absolute bulk MAC velocity per Cartesian face,
+including oriented intake-cap sweep. The visible pressure-cell canonical uses
+that field as its next predictor; general cut-cell momentum transport,
+advection, viscosity, and topology rebasing remain later work.
 Its in-memory composite checkpoint retains Structure plus the accepted sparse
 pressure projection; restore rebuilds and validates the complete pressure
 epoch and conservative load before committing either owner. Initial and
@@ -623,13 +627,16 @@ The selectable `pressure-cell` worker makes this path visible. A soft
 three-panel tetrahedral cell has one triangular intake, three fixed mouth
 vertices, and a sinusoidally driven apex. Its immutable frames publish
 deformation, area-averaged triangle pressure jump, nodal/total pressure force,
-actuator force, and strong-iteration count. A 600-step headless run remains
-topology-stable for 10 simulated seconds and reaches centimetre-scale motion;
+actuator force, strong-iteration count, bulk MAC speed, and the maximum
+mixed-subface velocity spread discarded by the area collapse. A 600-step
+headless run remains topology-stable for 10 simulated seconds and reaches
+centimetre-scale motion;
 this is a diagnostic of the new feedback path, not wing aerodynamics.
-Its bounded `SWPCELL1` checkpoint stores the trusted Structure state and the
+Its bounded `SWPCELL2` checkpoint stores the trusted Structure state and the
 complete accepted sparse pressure projection. Initial and accepted files
 round-trip deterministically, reject foreign/corrupt input transactionally,
-and resume through the normal worker checkpoint flags.
+resume through the normal worker checkpoint flags, and reconstruct the exact
+derived MAC continuation without duplicating it on the wire.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own

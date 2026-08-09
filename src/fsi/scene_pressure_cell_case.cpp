@@ -189,6 +189,7 @@ double maximumDisplacement(const Structure& structure) {
 
 bool finite(const ScenePressureCellDiagnostics& diagnostics) {
     return diagnostics.coupling.finite
+        && diagnostics.macVelocity.finite
         && std::isfinite(diagnostics.actuatorForceNewtons)
         && std::isfinite(diagnostics.pressureForceNewtons.x)
         && std::isfinite(diagnostics.pressureForceNewtons.y)
@@ -228,9 +229,13 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
         throw std::runtime_error(
             "scene pressure cell exhausted its coupling iteration budget");
     }
+    const auto correctedMac =
+        coupling_.acceptedPressureCorrectedMacVelocity();
+    predictedVelocity_ = correctedMac.velocityMetersPerSecond;
 
     ScenePressureCellDiagnostics nextDiagnostics;
     nextDiagnostics.coupling = coupled;
+    nextDiagnostics.macVelocity = correctedMac.diagnostics;
     nextDiagnostics.actuatorForceNewtons = actuatorForce;
     nextDiagnostics.pressureForceNewtons =
         coupling_.acceptedPressureTransfer().diagnostics()
@@ -341,6 +346,18 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
         viewer::FieldAssociation::Global,
         {static_cast<double>(diagnostics_.coupling.solverRunCount)},
     });
+    frame.scalarFields.push_back({
+        "pressure_cell.maximum_mac_speed", "m/s",
+        viewer::FieldAssociation::Global,
+        {diagnostics_.macVelocity
+             .maximumAbsoluteVelocityMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "pressure_cell.mac_subface_deviation", "m/s",
+        viewer::FieldAssociation::Global,
+        {diagnostics_.macVelocity
+             .maximumSubfaceVelocityDeviationMetersPerSecond},
+    });
 
     std::vector<viewer::Vec3d> nodalPressureForces(
         structure_.definition().nodes.size());
@@ -391,6 +408,11 @@ double ScenePressureCellCase::simulationTimeSeconds() const noexcept {
     return structure_.simulationTimeSeconds();
 }
 
+const fluid::MacVelocityField&
+ScenePressureCellCase::predictedVelocity() const noexcept {
+    return predictedVelocity_;
+}
+
 const ScenePressureCellDiagnostics&
 ScenePressureCellCase::diagnostics() const noexcept {
     return diagnostics_;
@@ -409,6 +431,12 @@ void ScenePressureCellCase::restore(
             "scene pressure cell checkpoint version is invalid");
     }
     coupling_.restore(structure_, checkpointValue.coupling);
+    predictedVelocity_ = fluid::MacVelocityField(coupling_.grid());
+    if (coupling_.acceptedPressureProjection() != nullptr) {
+        predictedVelocity_ = coupling_
+            .acceptedPressureCorrectedMacVelocity()
+            .velocityMetersPerSecond;
+    }
     diagnostics_ = {};
 }
 

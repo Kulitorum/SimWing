@@ -12,7 +12,7 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint16_t
-    scenePressureCellCheckpointProtocolVersion = 1;
+    scenePressureCellCheckpointProtocolVersion = 2;
 
 struct ScenePressureCellCheckpointPersistenceLimits {
     std::size_t maximumEncodedBytes = 256u * 1024u * 1024u;
@@ -45,7 +45,9 @@ struct ScenePressureCellCheckpointPersistenceError {
 // Canonical pressure-cell persistence. Identity and solver settings are taken
 // from a freshly rebuilt case rather than trusted from the wire. The nested
 // Structure codec and the pressure-projection integrity validator both run
-// before serialization or decoded state is published.
+// before serialization or decoded state is published. The bulk MAC predictor
+// is deterministically derived from that accepted projection after restore;
+// it is intentionally not duplicated in the envelope.
 [[nodiscard]] bool serializeScenePressureCellCheckpoint(
     const ScenePressureCellCheckpoint& checkpoint,
     std::vector<std::uint8_t>& bytes,
