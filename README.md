@@ -627,6 +627,14 @@ It is deliberately not enabled in the worker: a static carry has no
 region-resolved convective update and strongly drains the repeated pressure
 load. The regression records that failure mode so this bookkeeping adapter
 cannot be mistaken for the missing cut-region momentum equation.
+Accepted corrected links can now also be reconstructed into an immutable
+cell/region momentum state. Each vector component is the area-weighted mean of
+incident absolute link velocities; components without an incident face retain
+the cell-centred value from the exact MAC predictor bound to the projection.
+The state reports momentum, kinetic energy, fallback coverage, and the loss in
+mapping staggered link normals to collocated region vectors. It is the explicit
+input boundary for conservative region transport and does not yet advance or
+apply a wall model.
 Its in-memory composite checkpoint retains Structure plus the accepted sparse
 pressure projection; restore rebuilds and validates the complete pressure
 epoch and conservative load before committing either owner. Initial and

@@ -1,6 +1,7 @@
 #include "scene_fluid_pressure_projection.h"
 #include "scene_fluid_pressure_link_flow.h"
 #include "scene_fluid_pressure_epoch.h"
+#include "scene_fluid_region_momentum.h"
 
 #include <algorithm>
 #include <array>
@@ -656,6 +657,92 @@ void testAreaChangingLinkContinuation() {
           "area-changing link continuation recenters carried deviations without changing face-total flow");
 }
 
+void testRegionMomentumReconstruction() {
+    Fixture fixture(openScene(), true);
+    fluid::MacVelocityField velocity(grid());
+    std::ranges::fill(velocity.xFaces(), 2.0);
+    std::ranges::fill(velocity.yFaces(), -0.25);
+    std::ranges::fill(velocity.zFaces(), 0.5);
+    const auto openingFlux = fixture.flux(velocity);
+    std::vector<double> warm(
+        fixture.pressureOperator.rows.size(), 0.0);
+    const auto projection = fixture.project(
+        velocity, openingFlux, warm, strictSettings());
+    const auto momentum = reconstructSceneFluidRegionMomentumState(
+        grid(), fixture.pressureVolumes, fixture.faceLinks,
+        fixture.openingPatches, projection, velocity);
+    const auto repeated = reconstructSceneFluidRegionMomentumState(
+        grid(), fixture.pressureVolumes, fixture.faceLinks,
+        fixture.openingPatches, projection, velocity);
+    check(momentum == repeated
+              && momentum.fingerprint != 0
+              && momentum.diagnostics.finite
+              && momentum.diagnostics.controlVolumeCount
+                  == fixture.pressureVolumes.controlVolumes.size()
+              && momentum.diagnostics.linkCount
+                  == fixture.faceLinks.links.size()
+              && momentum.diagnostics.openingLinkCount == 1
+              && momentum.diagnostics.sampledComponentCount
+                     + momentum.diagnostics.fallbackComponentCount
+                  == 3 * momentum.controlVolumes.size()
+              && momentum.diagnostics.kineticEnergyJoules > 0.0
+              && momentum.diagnostics
+                     .maximumAbsoluteVelocityMetersPerSecond > 0.0,
+          "region momentum deterministically reconstructs finite cell-region vectors from corrected links");
+    validateSceneFluidRegionMomentumState(
+        momentum, grid(), fixture.pressureVolumes, fixture.faceLinks,
+        fixture.openingPatches, projection, velocity);
+
+    auto corrupt = momentum;
+    corrupt.controlVolumes.front().velocityMetersPerSecond.x += 0.01;
+    expectInvalid(
+        [&] { validateSceneFluidRegionMomentumStateIntegrity(corrupt); },
+        "region momentum integrity rejects velocity corruption");
+
+    auto foreignVelocity = velocity;
+    foreignVelocity.xFaces().front() += 0.01;
+    expectInvalid(
+        [&] {
+            static_cast<void>(reconstructSceneFluidRegionMomentumState(
+                grid(), fixture.pressureVolumes, fixture.faceLinks,
+                fixture.openingPatches, projection, foreignVelocity));
+        },
+        "region momentum rejects fallback velocity foreign to the pressure projection");
+
+    SceneFluidRegionMomentumLimits limits;
+    limits.maximumControlVolumes =
+        fixture.pressureVolumes.controlVolumes.size() - 1;
+    expectLimited(
+        [&] {
+            static_cast<void>(reconstructSceneFluidRegionMomentumState(
+                grid(), fixture.pressureVolumes, fixture.faceLinks,
+                fixture.openingPatches, projection, velocity, limits));
+        },
+        "region momentum bounds its control-volume state");
+
+    Fixture zeroFixture(nestedScene(), true);
+    fluid::MacVelocityField zeroVelocity(grid());
+    const auto zeroFlux = zeroFixture.flux(zeroVelocity);
+    std::vector<double> zeroWarm(
+        zeroFixture.pressureOperator.rows.size(), 0.0);
+    const auto zeroProjection = zeroFixture.project(
+        zeroVelocity, zeroFlux, zeroWarm, strictSettings());
+    const auto zeroMomentum = reconstructSceneFluidRegionMomentumState(
+        grid(), zeroFixture.pressureVolumes, zeroFixture.faceLinks,
+        zeroFixture.openingPatches, zeroProjection, zeroVelocity);
+    check(zeroMomentum.diagnostics.finite
+              && zeroMomentum.diagnostics
+                     .totalMomentumKilogramMetersPerSecond
+                  == fluid::Vector3{}
+              && zeroMomentum.diagnostics.kineticEnergyJoules == 0.0
+              && zeroMomentum.diagnostics
+                     .maximumAbsoluteVelocityMetersPerSecond == 0.0
+              && zeroMomentum.diagnostics
+                     .maximumLinkNormalVelocityResidualMetersPerSecond
+                  == 0.0,
+          "zero corrected flow reconstructs exact zero region momentum");
+}
+
 void testValidationAndLimits() {
     Fixture fixture(openScene());
     fluid::MacVelocityField velocity(grid());
@@ -708,6 +795,7 @@ int main() {
         testZeroFlowAndRejectedAttempt();
         testLinkResolvedContinuation();
         testAreaChangingLinkContinuation();
+        testRegionMomentumReconstruction();
         testValidationAndLimits();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

@@ -732,7 +732,15 @@ This path is not used by the strong worker: in a static open-cell regression,
 reusing corrected subface flow without convecting it strongly reduces the next
 pressure solve, and repeated use drains the physical pressure load. That
 negative oracle makes region-resolved momentum transport—not static state
-carry—the required next owner. The
+carry—the required next owner. The first input product for that owner is now
+explicit: accepted corrected absolute link velocities are reconstructed into
+one immutable momentum vector per positive cell/region control volume.
+Incident link normals are area-averaged by Cartesian component, while a
+component with no incident face retains the cell-centred value of the exact
+MAC predictor used by the projection. The product is bound to the pressure,
+volume, face-link, opening-patch, and predictor fingerprints and reports total
+momentum, kinetic energy, fallback coverage, and link-to-collocated
+reconstruction residual. It deliberately performs no time advance yet. The
 first composite in-memory checkpoint stores Structure and the accepted sparse
 pressure projection. Restore uses a temporary Structure, rebuilds the entire
 pressure epoch, resamples the validated projection, and reconstructs the
