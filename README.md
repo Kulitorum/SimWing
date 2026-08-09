@@ -520,13 +520,15 @@ cells, including cells wholly inside a region and cases whose face-local chains
 remain open at tile boundaries. Every tetrahedron closes across its clipped
 cells, every cell closes across its regions, and the global sum is compared with
 an independent whole-surface divergence volume. A separate immutable opening-cap
-owner now closes an explicitly authored planar, strictly convex intake or
-crossport loop for volume accounting only. Its winding comes from the adjacent
-fabric boundary, follows accepted Structure motion, and never becomes fabric or
-traction. The analytic open-tetrahedron regression therefore has a finite cell
-volume. Stable one-point triangle samples now exactly integrate the accepted
-piecewise-linear cap velocity into per-opening surface-sweep rates; a rigid
-material-plus-cap surface closes that geometric ledger. The exact barycentric
+owner now closes an explicitly authored planar simple intake or crossport loop
+for volume accounting only. Convex loops retain their exact fan; concave loops
+use deterministic reference-geometry ear clipping, so triangle identity stays
+fixed under accepted motion. Its winding comes from the adjacent fabric
+boundary and it never becomes fabric or traction. The analytic open-tetrahedron
+regression therefore has a finite cell volume. Stable one-point triangle
+samples now exactly integrate the accepted piecewise-linear cap velocity into
+per-opening surface-sweep rates; a rigid material-plus-cap surface closes that
+geometric ledger. The exact barycentric
 triangle/box clipper is shared with material geometry and partitions each cap
 into bounded positive-area grid patches. Off-face pieces have unique cell
 owners; paired grid-plane copies become one canonical non-periodic face owner,
@@ -734,7 +736,7 @@ pressure on the wire. Version 9 preserves transported-region and wall-exchange
 projection provenance, including explicit-normal embedded-opening momentum,
 and bounds/revalidates every momentum control volume and material quadrature
 traction before publication.
-Nonplanar or concave openings, surface
+Nonplanar or self-intersecting openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own
 geometry and transfer only.

@@ -986,6 +986,8 @@ void validateSceneFluidCellVolumes(
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
+        std::numeric_limits<std::size_t>::max(),
+        std::numeric_limits<std::size_t>::max(),
     };
     const auto caps = buildSceneFluidOpeningCaps(
         surface, state, volumes.settings.openingCaps, unlimitedCapLimits);

@@ -594,9 +594,12 @@ cells and surfaces whose face-local contours cross tile boundaries. A separate
 whole-surface divergence calculation verifies the global region totals. Nested
 analytic tetrahedra, a rigid accepted remap, and a large cavity with 24 full
 interior cells are regressions. A topology-only opening owner now closes an
-authored planar strictly convex loop by matching every edge to one separating
-surface boundary, deriving winding from the adjacent fabric, and triangulating
-the accepted moving geometry without creating Structure or traction entities.
+authored planar simple loop by matching every edge to one separating surface
+boundary and deriving winding from the adjacent fabric. Convex loops preserve
+their exact fan; planar concave loops use bounded deterministic ear clipping
+from reference geometry so accepted motion cannot change triangle identity.
+Folded, intersecting, degenerate, and nonplanar caps reject without creating
+Structure or traction entities.
 The capped open-tetrahedron regression closes analytic volume and exposes its
 mouth area. A second immutable opening epoch gives every cap triangle a stable
 centroid sample, interpolates the accepted piecewise-linear vertex velocity,
@@ -616,9 +619,9 @@ balances for the negative- and positive-side regions, including cell-to-cell
 crossports, and verifies exact global cancellation. Partial-face tiles integrate
 analytically, linear off-face flow is recovered, reversed velocity reverses
 sign, and co-moving air/mouth motion has zero relative flux.
-Nonplanar/concave openings, surface junctions, inconsistent winding, and
-projection-connected opening flow or moving-boundary fluid equations remain
-open. A bounded two-epoch continuity owner now binds
+Nonplanar or self-intersecting openings, surface junctions, inconsistent
+winding, and general moving-boundary fluid equations remain open. A bounded
+two-epoch continuity owner now binds
 consecutive accepted volume and flux products by their exact surface-state and
 producer fingerprints. It trapezoidally integrates endpoint outward relative
 flow and reports `delta volume + integrated flow` per region. An analytically

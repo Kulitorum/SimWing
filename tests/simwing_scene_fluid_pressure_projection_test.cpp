@@ -157,6 +157,45 @@ Scene tiltedOpenScene() {
     return scene;
 }
 
+Scene concaveOpenScene() {
+    Scene scene;
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-pressure-projection-concave-open";
+    scene.metadata.exporterVersion =
+        "scene-fluid-pressure-projection-test/1";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "cell"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900.0, 650.0, 220.0, 0.015,
+         0.041, 0.02, 0.0125, 2.5e-12},
+    };
+    scene.vertices = {
+        {10, {1.2, 1.5, 1.45}},
+        {11, {2.4, 1.2, 1.2}},
+        {12, {2.4, 1.8, 1.2}},
+        {13, {2.4, 1.5, 1.38}},
+        {14, {2.4, 1.2, 1.8}},
+    };
+    const std::array<Vec2, 3> chart{{
+        {0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0}}};
+    const std::array<std::array<StableId, 3>, 4> faces{{
+        {{10, 12, 11}}, {{10, 13, 12}},
+        {{10, 14, 13}}, {{10, 11, 14}},
+    }};
+    for (std::size_t index = 0; index < faces.size(); ++index) {
+        scene.triangles.push_back({
+            500 + index, faces[index], chart,
+            2, 1, 100, 900, SurfaceRole::Skin,
+        });
+    }
+    scene.openings = {
+        {700, {11, 12, 13, 14}, 2, 1, OpeningRole::Intake},
+    };
+    return scene;
+}
+
 Scene reversedOpenScene() {
     auto scene = openScene();
     scene.metadata.designChecksum =
@@ -613,6 +652,38 @@ void testEmbeddedOpeningProjection() {
     check(wallPrediction.diagnostics.embeddedOpeningLinkCount == 1
               && wallPrediction.links == prediction.links,
           "zero wall exchange preserves tilted aperture prediction exactly");
+}
+
+void testConcaveEmbeddedOpeningProjection() {
+    Fixture fixture(concaveOpenScene(), true);
+    fluid::MacVelocityField velocity(grid());
+    std::ranges::fill(velocity.xFaces(), 1.25);
+    std::ranges::fill(velocity.yFaces(), -0.1);
+    std::ranges::fill(velocity.zFaces(), 0.2);
+    const auto openingFlux = fixture.flux(velocity);
+    std::vector<double> warm(fixture.pressureOperator.rows.size(), 0.0);
+    const auto projection = fixture.project(
+        velocity, openingFlux, warm, strictSettings());
+    const auto momentum = reconstructSceneFluidRegionMomentumState(
+        grid(), fixture.pressureVolumes, fixture.faceLinks,
+        fixture.openingPatches, projection, velocity);
+    check(fixture.caps.caps.size() == 1
+              && fixture.caps.caps.front().triangleCount == 2
+              && fixture.openingQuadrature.points.size() == 2
+              && fixture.openingPatches.patches.size() == 2
+              && fixture.faceLinks.embeddedOpeningLinkCount == 2,
+          "concave intake triangulation reaches two exact off-face pressure links");
+    check(projection.diagnostics.accepted
+              && projection.diagnostics.authoredOpeningLinkCount == 2
+              && projection.diagnostics
+                     .correctedNetOutwardVolumeRateMaximumCubicMetersPerSecond
+                  < 2.0e-11
+              && momentum.diagnostics.embeddedOpeningLinkCount == 2
+              && momentum.diagnostics.normalEquationControlCount == 2,
+          "concave off-face intake closes pressure and explicit-normal region momentum");
+    validateSceneFluidRegionMomentumState(
+        momentum, grid(), fixture.pressureVolumes, fixture.faceLinks,
+        fixture.openingPatches, projection, velocity);
 }
 
 void testZeroFlowAndRejectedAttempt() {
@@ -1390,6 +1461,7 @@ int main() {
         testClosedLinkProjection();
         testFaceAlignedOpeningProjection();
         testEmbeddedOpeningProjection();
+        testConcaveEmbeddedOpeningProjection();
         testZeroFlowAndRejectedAttempt();
         testLinkResolvedContinuation();
         testAreaChangingLinkContinuation();

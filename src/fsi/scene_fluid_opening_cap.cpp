@@ -6,6 +6,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <span>
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
@@ -116,6 +117,249 @@ Vec3 add(const Vec3& first, const Vec3& second) {
 
 Edge edgeKey(const std::size_t first, const std::size_t second) {
     return {std::min(first, second), std::max(first, second)};
+}
+
+struct PlanarLoopGeometry {
+    Vec3 unitNormal;
+    double scaleMeters = 0.0;
+};
+
+PlanarLoopGeometry planarLoopGeometry(
+    const std::span<const Vec3> positions,
+    const SceneFluidOpeningCapSettings& settings) {
+    Vec3 newell;
+    Vec3 minimum = positions.front();
+    Vec3 maximum = minimum;
+    for (std::size_t index = 0; index < positions.size(); ++index) {
+        const Vec3& current = positions[index];
+        const Vec3& next = positions[(index + 1) % positions.size()];
+        newell.x += (current.y - next.y) * (current.z + next.z);
+        newell.y += (current.z - next.z) * (current.x + next.x);
+        newell.z += (current.x - next.x) * (current.y + next.y);
+        minimum.x = std::min(minimum.x, current.x);
+        minimum.y = std::min(minimum.y, current.y);
+        minimum.z = std::min(minimum.z, current.z);
+        maximum.x = std::max(maximum.x, current.x);
+        maximum.y = std::max(maximum.y, current.y);
+        maximum.z = std::max(maximum.z, current.z);
+    }
+    const double normalLength = length(newell);
+    const double scale = length(subtract(maximum, minimum));
+    if (!std::isfinite(normalLength) || !(normalLength > 0.0)
+        || !std::isfinite(scale) || !(scale > 0.0)) {
+        throw std::invalid_argument(
+            "scene fluid opening cap has a degenerate boundary");
+    }
+    const Vec3 normal = scaled(newell, 1.0 / normalLength);
+    const Vec3& planePoint = positions.front();
+    for (const auto& position : positions) {
+        const double distance = dot(
+            subtract(position, planePoint), normal);
+        if (!std::isfinite(distance)
+            || std::abs(distance) > settings.planarityToleranceMeters) {
+            throw std::invalid_argument(
+                "scene fluid opening cap is not planar within tolerance");
+        }
+    }
+    return {normal, scale};
+}
+
+double signedTurn(const Vec3& first,
+                  const Vec3& second,
+                  const Vec3& third,
+                  const Vec3& normal) {
+    return dot(
+        cross(subtract(second, first), subtract(third, second)),
+        normal);
+}
+
+bool segmentIntersection(
+    const Vec3& first,
+    const Vec3& second,
+    const Vec3& third,
+    const Vec3& fourth,
+    const Vec3& normal,
+    const double tolerance) {
+    const double firstThird = signedTurn(first, second, third, normal);
+    const double firstFourth = signedTurn(first, second, fourth, normal);
+    const double thirdFirst = signedTurn(third, fourth, first, normal);
+    const double thirdSecond = signedTurn(third, fourth, second, normal);
+    const auto withinSegment = [tolerance](
+        const Vec3& begin, const Vec3& end, const Vec3& point) {
+        return dot(subtract(point, begin), subtract(point, end))
+            <= tolerance;
+    };
+    if ((std::abs(firstThird) <= tolerance
+            && withinSegment(first, second, third))
+        || (std::abs(firstFourth) <= tolerance
+            && withinSegment(first, second, fourth))
+        || (std::abs(thirdFirst) <= tolerance
+            && withinSegment(third, fourth, first))
+        || (std::abs(thirdSecond) <= tolerance
+            && withinSegment(third, fourth, second))) {
+        return true;
+    }
+    const auto strictlyStraddles = [tolerance](
+        const double firstSide, const double secondSide) {
+        return (firstSide > tolerance && secondSide < -tolerance)
+            || (firstSide < -tolerance && secondSide > tolerance);
+    };
+    return strictlyStraddles(firstThird, firstFourth)
+        && strictlyStraddles(thirdFirst, thirdSecond);
+}
+
+void validateSimpleLoop(
+    const std::span<const Vec3> positions,
+    const PlanarLoopGeometry geometry,
+    const SceneFluidOpeningCapSettings& settings,
+    std::size_t& intersectionTestCount,
+    const std::size_t maximumIntersectionTests) {
+    const double tolerance = settings.convexityTolerance
+        * geometry.scaleMeters * geometry.scaleMeters;
+    for (std::size_t index = 0; index < positions.size(); ++index) {
+        const Vec3& previous = positions[
+            (index + positions.size() - 1) % positions.size()];
+        const Vec3& current = positions[index];
+        const Vec3& next = positions[(index + 1) % positions.size()];
+        const double turn = signedTurn(
+            previous, current, next, geometry.unitNormal);
+        if (!std::isfinite(turn) || std::abs(turn) <= tolerance) {
+            throw std::invalid_argument(
+                "scene fluid opening cap has a degenerate boundary turn");
+        }
+    }
+    for (std::size_t first = 0; first < positions.size(); ++first) {
+        const std::size_t firstNext = (first + 1) % positions.size();
+        for (std::size_t second = first + 1;
+             second < positions.size(); ++second) {
+            const std::size_t secondNext =
+                (second + 1) % positions.size();
+            if (first == second || firstNext == second
+                || secondNext == first) {
+                continue;
+            }
+            if (intersectionTestCount == maximumIntersectionTests) {
+                throw std::length_error(
+                    "scene fluid opening-cap boundary intersection tests exceed their limit");
+            }
+            ++intersectionTestCount;
+            if (segmentIntersection(
+                    positions[first], positions[firstNext],
+                    positions[second], positions[secondNext],
+                    geometry.unitNormal, tolerance)) {
+                throw std::invalid_argument(
+                    "scene fluid opening cap boundary is not simple");
+            }
+        }
+    }
+}
+
+bool pointInsideTriangle(
+    const Vec3& point,
+    const Vec3& first,
+    const Vec3& second,
+    const Vec3& third,
+    const Vec3& normal,
+    const double tolerance) {
+    return signedTurn(first, second, point, normal) >= -tolerance
+        && signedTurn(second, third, point, normal) >= -tolerance
+        && signedTurn(third, first, point, normal) >= -tolerance;
+}
+
+std::vector<std::array<std::size_t, 3>> triangulateReferenceLoop(
+    const std::span<const std::size_t> vertexIndices,
+    const std::span<const Vec3> positions,
+    const PlanarLoopGeometry geometry,
+    const SceneFluidOpeningCapSettings& settings,
+    std::size_t& pointTestCount,
+    const std::size_t maximumPointTests) {
+    const double tolerance = settings.convexityTolerance
+        * geometry.scaleMeters * geometry.scaleMeters;
+    bool strictlyConvex = true;
+    for (std::size_t index = 0; index < positions.size(); ++index) {
+        strictlyConvex = strictlyConvex
+            && signedTurn(
+                   positions[(index + positions.size() - 1)
+                       % positions.size()],
+                   positions[index],
+                   positions[(index + 1) % positions.size()],
+                   geometry.unitNormal) > tolerance;
+    }
+    std::vector<std::array<std::size_t, 3>> result;
+    result.reserve(vertexIndices.size() - 2);
+    if (strictlyConvex) {
+        for (std::size_t ordinal = 0; ordinal + 2 < vertexIndices.size();
+             ++ordinal) {
+            result.push_back({
+                vertexIndices[0], vertexIndices[ordinal + 1],
+                vertexIndices[ordinal + 2]});
+        }
+        return result;
+    }
+
+    std::vector<std::size_t> active(positions.size());
+    for (std::size_t index = 0; index < active.size(); ++index) {
+        active[index] = index;
+    }
+    while (active.size() > 3) {
+        bool clipped = false;
+        for (std::size_t activeIndex = 0;
+             activeIndex < active.size(); ++activeIndex) {
+            const std::size_t previous = active[
+                (activeIndex + active.size() - 1) % active.size()];
+            const std::size_t current = active[activeIndex];
+            const std::size_t next = active[
+                (activeIndex + 1) % active.size()];
+            if (!(signedTurn(
+                    positions[previous], positions[current], positions[next],
+                    geometry.unitNormal) > tolerance)) {
+                continue;
+            }
+            bool containsVertex = false;
+            for (const std::size_t candidate : active) {
+                if (candidate == previous || candidate == current
+                    || candidate == next) {
+                    continue;
+                }
+                if (pointTestCount == maximumPointTests) {
+                    throw std::length_error(
+                        "scene fluid opening-cap triangulation point tests exceed their limit");
+                }
+                ++pointTestCount;
+                if (pointInsideTriangle(
+                        positions[candidate], positions[previous],
+                        positions[current], positions[next],
+                        geometry.unitNormal, tolerance)) {
+                    containsVertex = true;
+                    break;
+                }
+            }
+            if (containsVertex) {
+                continue;
+            }
+            result.push_back({
+                vertexIndices[previous], vertexIndices[current],
+                vertexIndices[next]});
+            active.erase(active.begin()
+                         + static_cast<std::ptrdiff_t>(activeIndex));
+            clipped = true;
+            break;
+        }
+        if (!clipped) {
+            throw std::invalid_argument(
+                "scene fluid opening cap triangulation is ambiguous");
+        }
+    }
+    if (!(signedTurn(
+            positions[active[0]], positions[active[1]], positions[active[2]],
+            geometry.unitNormal) > tolerance)) {
+        throw std::invalid_argument(
+            "scene fluid opening cap triangulation is invalid");
+    }
+    result.push_back({
+        vertexIndices[active[0]], vertexIndices[active[1]],
+        vertexIndices[active[2]]});
+    return result;
 }
 
 void validateSettings(const SceneFluidOpeningCapSettings& settings) {
@@ -246,6 +490,8 @@ SceneFluidOpeningCapSet buildCaps(
     result.separatingBoundaryEdgeCount = boundaryEdges.size();
 
     std::set<Edge> claimedBoundaryEdges;
+    std::size_t boundaryIntersectionTestCount = 0;
+    std::size_t triangulationPointTestCount = 0;
     result.caps.reserve(surface.openings.size());
     for (std::size_t openingIndex = 0;
          openingIndex < surface.openings.size(); ++openingIndex) {
@@ -291,60 +537,40 @@ SceneFluidOpeningCapSet buildCaps(
         if (!capOrderMatchesOpening) {
             std::ranges::reverse(capOrder);
         }
-        Vec3 newell;
-        Vec3 minimum = state.vertices[capOrder.front()].positionMeters;
-        Vec3 maximum = minimum;
-        for (std::size_t index = 0; index < capOrder.size(); ++index) {
-            const Vec3& current =
-                state.vertices[capOrder[index]].positionMeters;
-            const Vec3& next = state.vertices[
-                capOrder[(index + 1) % capOrder.size()]].positionMeters;
-            newell.x += (current.y - next.y) * (current.z + next.z);
-            newell.y += (current.z - next.z) * (current.x + next.x);
-            newell.z += (current.x - next.x) * (current.y + next.y);
-            minimum.x = std::min(minimum.x, current.x);
-            minimum.y = std::min(minimum.y, current.y);
-            minimum.z = std::min(minimum.z, current.z);
-            maximum.x = std::max(maximum.x, current.x);
-            maximum.y = std::max(maximum.y, current.y);
-            maximum.z = std::max(maximum.z, current.z);
-        }
-        const double normalLength = length(newell);
-        const double scale = length(subtract(maximum, minimum));
-        if (!std::isfinite(normalLength) || !(normalLength > 0.0)
-            || !std::isfinite(scale) || !(scale > 0.0)) {
-            throw std::invalid_argument(
-                "scene fluid opening cap has a degenerate boundary");
-        }
-        const Vec3 normal = scaled(newell, 1.0 / normalLength);
-        const Vec3& planePoint =
-            state.vertices[capOrder.front()].positionMeters;
+        std::vector<Vec3> currentPositions;
+        std::vector<Vec3> referencePositions;
+        currentPositions.reserve(capOrder.size());
+        referencePositions.reserve(capOrder.size());
         for (const std::size_t vertex : capOrder) {
-            const double distance = dot(
-                subtract(state.vertices[vertex].positionMeters, planePoint),
-                normal);
-            if (!std::isfinite(distance)
-                || std::abs(distance) > settings.planarityToleranceMeters) {
-                throw std::invalid_argument(
-                    "scene fluid opening cap is not planar within tolerance");
-            }
+            currentPositions.push_back(
+                state.vertices[vertex].positionMeters);
+            referencePositions.push_back(
+                surface.vertices[vertex].referencePositionMeters);
         }
-        for (std::size_t index = 0; index < capOrder.size(); ++index) {
-            const Vec3& previous = state.vertices[capOrder[
-                (index + capOrder.size() - 1) % capOrder.size()]].positionMeters;
-            const Vec3& current =
-                state.vertices[capOrder[index]].positionMeters;
-            const Vec3& next = state.vertices[
-                capOrder[(index + 1) % capOrder.size()]].positionMeters;
-            const double turn = dot(
-                cross(subtract(current, previous), subtract(next, current)),
-                normal);
-            if (!std::isfinite(turn)
-                || !(turn > settings.convexityTolerance * scale * scale)) {
-                throw std::invalid_argument(
-                    "scene fluid opening cap requires a strictly convex boundary");
-            }
+        const auto currentGeometry = planarLoopGeometry(
+            currentPositions, settings);
+        const auto referenceGeometry = planarLoopGeometry(
+            referencePositions, settings);
+        validateSimpleLoop(
+            currentPositions, currentGeometry, settings,
+            boundaryIntersectionTestCount,
+            limits.maximumBoundaryIntersectionTests);
+        validateSimpleLoop(
+            referencePositions, referenceGeometry, settings,
+            boundaryIntersectionTestCount,
+            limits.maximumBoundaryIntersectionTests);
+        const std::size_t requiredTriangles = capOrder.size() - 2;
+        if (result.triangles.size() > limits.maximumCapTriangles
+            || requiredTriangles
+                > limits.maximumCapTriangles - result.triangles.size()) {
+            throw std::length_error(
+                "scene fluid opening-cap triangles exceed their limit");
         }
+        const auto triangleVertices = triangulateReferenceLoop(
+            capOrder, referencePositions, referenceGeometry, settings,
+            triangulationPointTestCount,
+            limits.maximumTriangulationPointTests);
+        const Vec3 normal = currentGeometry.unitNormal;
 
         SceneFluidOpeningCap cap;
         cap.openingIndex = openingIndex;
@@ -355,14 +581,13 @@ SceneFluidOpeningCapSet buildCaps(
         cap.firstTriangle = result.triangles.size();
         cap.unitNormalNegativeToPositive = normal;
         Vec3 weightedCentroid;
-        for (std::size_t ordinal = 0; ordinal + 2 < capOrder.size();
-             ++ordinal) {
+        for (std::size_t ordinal = 0;
+             ordinal < triangleVertices.size(); ++ordinal) {
             if (result.triangles.size() == limits.maximumCapTriangles) {
                 throw std::length_error(
                     "scene fluid opening-cap triangles exceed their limit");
             }
-            const std::array<std::size_t, 3> vertices{
-                capOrder[0], capOrder[ordinal + 1], capOrder[ordinal + 2]};
+            const auto vertices = triangleVertices[ordinal];
             const Vec3& first = state.vertices[vertices[0]].positionMeters;
             const Vec3& second = state.vertices[vertices[1]].positionMeters;
             const Vec3& third = state.vertices[vertices[2]].positionMeters;
@@ -444,6 +669,8 @@ void validateSceneFluidOpeningCaps(
             "scene fluid opening-cap identity is invalid");
     }
     const SceneFluidOpeningCapLimits unlimited{
+        std::numeric_limits<std::size_t>::max(),
+        std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),

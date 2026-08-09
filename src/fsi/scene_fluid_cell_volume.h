@@ -92,7 +92,7 @@ struct SceneFluidRegionVolume {
 };
 
 // First bounded cut-cell volume subset. Separating fabric plus optional planar,
-// strictly convex authored opening caps must form consistently wound two-sided
+// simple authored opening caps must form consistently wound two-sided
 // triangle manifolds around one Outside root. Sparse positive region volumes
 // are published for every cell. Each oriented material/cap triangle defines
 // one signed tetrahedron against the grid origin; exact convex clipping

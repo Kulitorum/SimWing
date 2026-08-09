@@ -14,6 +14,9 @@ inline constexpr std::uint32_t sceneFluidOpeningCapVersion = 1;
 struct SceneFluidOpeningCapSettings {
     double planarityToleranceMeters = 1.0e-10;
     double minimumTriangleAreaSquareMeters = 1.0e-18;
+    // Compatibility name retained from the convex-only v1 subset. This is the
+    // scale-relative orientation tolerance for simple-loop validation and
+    // deterministic triangulation as well as convexity classification.
     double convexityTolerance = 1.0e-12;
 
     bool operator==(const SceneFluidOpeningCapSettings&) const = default;
@@ -24,6 +27,8 @@ struct SceneFluidOpeningCapLimits {
     std::size_t maximumCaps = 1'000'000;
     std::size_t maximumCapTriangles = 10'000'000;
     std::size_t maximumCapBytes = 512ULL * 1024ULL * 1024ULL;
+    std::size_t maximumBoundaryIntersectionTests = 100'000'000;
+    std::size_t maximumTriangulationPointTests = 100'000'000;
 };
 
 struct SceneFluidOpeningCapTriangle {
@@ -84,11 +89,14 @@ struct SceneFluidOpeningCap {
     }
 };
 
-// A virtual cap is fluid topology, not fabric. This first subset accepts only
-// strictly convex planar opening loops that exactly own every boundary edge of
-// an otherwise closed, consistently wound separating surface. Cap winding is
-// derived from the adjacent authored triangle edge and retains the opening's
-// negative/positive region order. No cap enters Structure or traction transfer.
+// A virtual cap is fluid topology, not fabric. Planar simple opening loops
+// exactly own every boundary edge of an otherwise closed, consistently wound
+// separating surface. Convex loops retain the exact fan triangulation;
+// concave loops receive deterministic ear clipping from reference geometry so
+// triangle identity cannot change with accepted motion. Cap winding is derived
+// from the adjacent authored triangle edge and retains the opening's
+// negative/positive region order. Nonplanar loops require authored interior
+// geometry and remain rejected. No cap enters Structure or traction transfer.
 struct SceneFluidOpeningCapSet {
     std::uint32_t version = sceneFluidOpeningCapVersion;
     std::uint64_t fingerprint = 0;

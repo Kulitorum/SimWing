@@ -190,6 +190,51 @@ Scene concaveOpeningScene() {
     return scene;
 }
 
+Scene selfIntersectingOpeningScene() {
+    Scene scene;
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-self-intersecting-cap";
+    scene.metadata.exporterVersion = "scene-fluid-opening-cap-test/1";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "cell"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900.0, 650.0, 220.0, 0.015,
+         0.041, 0.02, 0.0125, 2.5e-12},
+    };
+    constexpr double pi = 3.14159265358979323846;
+    std::array<Vec3, 6> positions;
+    positions[0] = {1.0, 1.0, 1.0};
+    const std::array<std::size_t, 5> starOrder{{0, 2, 4, 1, 3}};
+    for (std::size_t index = 0; index < starOrder.size(); ++index) {
+        const double angle = 0.5 * pi
+            + 2.0 * pi * static_cast<double>(starOrder[index]) / 5.0;
+        positions[index + 1] = {
+            2.0,
+            1.0 + 0.4 * std::cos(angle),
+            1.0 + 0.4 * std::sin(angle),
+        };
+    }
+    for (std::size_t vertex = 0; vertex < positions.size(); ++vertex) {
+        scene.vertices.push_back({10 + vertex, positions[vertex]});
+    }
+    for (std::size_t edge = 0; edge < starOrder.size(); ++edge) {
+        const std::array<std::size_t, 3> face{{
+            0, 1 + (edge + 1) % starOrder.size(), 1 + edge}};
+        scene.triangles.push_back({
+            500 + edge,
+            {10 + face[0], 10 + face[1], 10 + face[2]},
+            intrinsicChart(positions, face),
+            2, 1, 100, 900, SurfaceRole::Skin,
+        });
+    }
+    scene.openings = {
+        {700, {11, 12, 13, 14, 15}, 2, 1, OpeningRole::Intake},
+    };
+    return scene;
+}
+
 struct Fixture {
     Scene scene;
     SceneFluidSurfaceAssembly surface;
@@ -308,13 +353,91 @@ void testRejectionCorruptionAndLimits() {
 
     Fixture concave(concaveOpeningScene());
     check(concave.surface.ok() && concave.structureAssembly.ok(),
-          "concave opening fixture assembles before cap rejection");
+          "concave opening fixture assembles");
     if (concave.surface.ok() && concave.structureAssembly.ok()) {
         const auto concaveState = concave.state();
+        const auto concaveCaps = buildSceneFluidOpeningCaps(
+            concave.surface.definition, concaveState);
+        const auto repeatedConcaveCaps = buildSceneFluidOpeningCaps(
+            concave.surface.definition, concaveState);
+        check(concaveCaps == repeatedConcaveCaps
+                  && concaveCaps.caps.size() == 1
+                  && concaveCaps.triangles.size() == 2
+                  && concaveCaps.triangles[0].vertexIndices
+                      == std::array<std::size_t, 3>({1, 2, 3})
+                  && concaveCaps.triangles[1].vertexIndices
+                      == std::array<std::size_t, 3>({1, 3, 4}),
+              "planar concave opening receives deterministic reference-geometry ear clipping");
+        checkNear(
+            concaveCaps.caps.front().areaSquareMeters, 0.4, 1.0e-14,
+            "concave virtual cap has its analytic polygon area");
+        checkNear(
+            concaveCaps.caps.front().centroidMeters.y,
+            19.0 / 24.0, 1.0e-14,
+            "concave virtual cap has its analytic area centroid y");
+        checkNear(
+            concaveCaps.caps.front().centroidMeters.z,
+            97.0 / 120.0, 1.0e-14,
+            "concave virtual cap has its analytic area centroid z");
+        validateSceneFluidOpeningCaps(
+            concaveCaps, concave.surface.definition, concaveState);
+
+        auto reversedConcaveScene = concaveOpeningScene();
+        std::ranges::reverse(
+            reversedConcaveScene.openings.front().orderedVertexIds);
+        Fixture reversedConcave(std::move(reversedConcaveScene));
+        const auto reversedConcaveCaps = buildSceneFluidOpeningCaps(
+            reversedConcave.surface.definition, reversedConcave.state());
+        check(reversedConcaveCaps.triangles[0].vertexIndices
+                      == concaveCaps.triangles[0].vertexIndices
+                  && reversedConcaveCaps.triangles[1].vertexIndices
+                      == concaveCaps.triangles[1].vertexIndices,
+              "surface boundary fixes concave ear clipping independently of authored loop direction");
+
+        for (std::size_t node = 0;
+             node < concave.structure.definition().nodes.size(); ++node) {
+            concave.structure.addExternalForce(
+                node,
+                {concave.structure.definition().nodes[node].massKg,
+                 0.0, 0.0});
+        }
+        StructureStepSettings motion;
+        motion.timeStepSeconds = 0.1;
+        motion.substeps = 1;
+        motion.constraintIterations = 4;
+        motion.gravityMetersPerSecondSquared = {};
+        motion.velocityDampingPerSecond = 0.0;
+        const auto motionDiagnostics = concave.structure.step(motion);
+        const auto movedConcaveCaps = buildSceneFluidOpeningCaps(
+            concave.surface.definition, concave.state());
+        check(motionDiagnostics.finite
+                  && movedConcaveCaps.triangles[0].vertexIndices
+                      == concaveCaps.triangles[0].vertexIndices
+                  && movedConcaveCaps.triangles[1].vertexIndices
+                      == concaveCaps.triangles[1].vertexIndices,
+              "accepted motion retains concave reference triangulation identity");
+        checkNear(
+            movedConcaveCaps.caps.front().areaSquareMeters,
+            concaveCaps.caps.front().areaSquareMeters, 1.0e-14,
+            "rigid concave opening translation preserves cap area");
+        checkNear(
+            movedConcaveCaps.caps.front().centroidMeters.x,
+            concaveCaps.caps.front().centroidMeters.x + 0.01, 1.0e-13,
+            "concave virtual cap follows accepted opening motion");
+    }
+
+    Fixture selfIntersecting(selfIntersectingOpeningScene());
+    check(selfIntersecting.surface.ok()
+              && selfIntersecting.structureAssembly.ok(),
+          "self-intersecting opening fixture assembles topologically before cap rejection");
+    if (selfIntersecting.surface.ok()
+        && selfIntersecting.structureAssembly.ok()) {
+        const auto selfIntersectingState = selfIntersecting.state();
         expectInvalid(
             [&] { static_cast<void>(buildSceneFluidOpeningCaps(
-                concave.surface.definition, concaveState)); },
-            "concave opening is outside the first virtual-cap subset");
+                selfIntersecting.surface.definition,
+                selfIntersectingState)); },
+            "self-intersecting planar opening is rejected before triangulation");
     }
 
     auto duplicateOpeningScene = openTetraScene();
@@ -370,6 +493,23 @@ void testRejectionCorruptionAndLimits() {
         [&] { static_cast<void>(buildSceneFluidOpeningCaps(
             fixture.surface.definition, state, {}, limits)); },
         "opening-cap result bytes are bounded");
+
+    Fixture concaveLimits(concaveOpeningScene());
+    const auto concaveLimitState = concaveLimits.state();
+    limits = {};
+    limits.maximumBoundaryIntersectionTests = 0;
+    expectLimited(
+        [&] { static_cast<void>(buildSceneFluidOpeningCaps(
+            concaveLimits.surface.definition, concaveLimitState,
+            {}, limits)); },
+        "opening-cap simple-boundary work is bounded");
+    limits = {};
+    limits.maximumTriangulationPointTests = 0;
+    expectLimited(
+        [&] { static_cast<void>(buildSceneFluidOpeningCaps(
+            concaveLimits.surface.definition, concaveLimitState,
+            {}, limits)); },
+        "opening-cap ear-clipping work is bounded");
 }
 
 } // namespace
