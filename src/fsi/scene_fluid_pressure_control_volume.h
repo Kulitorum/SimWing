@@ -114,6 +114,12 @@ buildSceneFluidPressureControlVolumes(
     const SceneFluidRegionConnectivity& connectivity,
     const SceneFluidPressureControlVolumeLimits& limits = {});
 
+// Lightweight immutable-product check for consecutive-epoch adapters that
+// already received an accepted pressure-volume topology and need to reject
+// accidental mutation without rebuilding the complete geometry chain.
+void validateSceneFluidPressureControlVolumeIntegrity(
+    const SceneFluidPressureControlVolumeSet& pressureVolumes);
+
 void validateSceneFluidPressureControlVolumes(
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
     const SceneFluidSurfaceDefinition& surface,

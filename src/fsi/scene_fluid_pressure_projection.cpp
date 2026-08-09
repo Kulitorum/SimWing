@@ -153,6 +153,7 @@ std::uint64_t projectionFingerprint(
     fingerprint.integer(projection.pressureOperatorFingerprint);
     fingerprint.integer(projection.pressureFaceLinkFingerprint);
     fingerprint.integer(projection.pressureControlVolumeFingerprint);
+    fingerprint.integer(projection.pressureVolumeRateFingerprint);
     fingerprint.integer(projection.openingFluxFingerprint);
     fingerprint.integer(projection.velocityFingerprint);
     fingerprint.integer(projection.acceptedStepCount);
@@ -193,6 +194,9 @@ std::uint64_t projectionFingerprint(
     fingerprint.integer(static_cast<std::uint64_t>(diagnostics.linkCount));
     fingerprint.integer(static_cast<std::uint64_t>(
         diagnostics.authoredOpeningLinkCount));
+    fingerprint.boolean(diagnostics.usesMovingVolumeRates);
+    fingerprint.real(
+        diagnostics.maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond);
     fingerprint.real(
         diagnostics.predictedNetOutwardVolumeRateL2CubicMetersPerSecond);
     fingerprint.real(
@@ -200,11 +204,23 @@ std::uint64_t projectionFingerprint(
     fingerprint.real(diagnostics
         .maximumPredictedComponentBalanceResidualCubicMetersPerSecond);
     fingerprint.real(
+        diagnostics.predictedContinuityResidualL2CubicMetersPerSecond);
+    fingerprint.real(
+        diagnostics.predictedContinuityResidualMaximumCubicMetersPerSecond);
+    fingerprint.real(diagnostics
+        .maximumPredictedComponentContinuityResidualCubicMetersPerSecond);
+    fingerprint.real(
         diagnostics.correctedNetOutwardVolumeRateL2CubicMetersPerSecond);
     fingerprint.real(
         diagnostics.correctedNetOutwardVolumeRateMaximumCubicMetersPerSecond);
     fingerprint.real(diagnostics
         .maximumCorrectedComponentBalanceResidualCubicMetersPerSecond);
+    fingerprint.real(
+        diagnostics.correctedContinuityResidualL2CubicMetersPerSecond);
+    fingerprint.real(
+        diagnostics.correctedContinuityResidualMaximumCubicMetersPerSecond);
+    fingerprint.real(diagnostics
+        .maximumCorrectedComponentContinuityResidualCubicMetersPerSecond);
     fingerprintSolveDiagnostics(fingerprint, diagnostics.pressureSolve);
     fingerprint.integer(static_cast<std::uint64_t>(
         projection.pressurePascals.size()));
@@ -220,10 +236,16 @@ std::uint64_t projectionFingerprint(
         fingerprint.integer(static_cast<std::uint64_t>(
             control.componentIndex));
         fingerprint.real(
+            control.geometryVolumeChangeRateCubicMetersPerSecond);
+        fingerprint.real(
             control.predictedNetOutwardVolumeFlowRateCubicMetersPerSecond);
+        fingerprint.real(
+            control.predictedContinuityResidualCubicMetersPerSecond);
         fingerprint.real(control.integratedRightHandSidePascalsMeters);
         fingerprint.real(
             control.correctedNetOutwardVolumeFlowRateCubicMetersPerSecond);
+        fingerprint.real(
+            control.correctedContinuityResidualCubicMetersPerSecond);
     }
     fingerprint.integer(static_cast<std::uint64_t>(projection.links.size()));
     for (const auto& link : projection.links) {
@@ -324,6 +346,32 @@ double vectorMaximum(
     return maximum;
 }
 
+double continuityL2(
+    const std::vector<SceneFluidPressureProjectedControlVolume>& controls,
+    const bool corrected) {
+    double squared = 0.0;
+    for (const auto& control : controls) {
+        const double value = corrected
+            ? control.correctedContinuityResidualCubicMetersPerSecond
+            : control.predictedContinuityResidualCubicMetersPerSecond;
+        squared += value * value;
+    }
+    return std::sqrt(squared / static_cast<double>(controls.size()));
+}
+
+double continuityMaximum(
+    const std::vector<SceneFluidPressureProjectedControlVolume>& controls,
+    const bool corrected) {
+    double maximum = 0.0;
+    for (const auto& control : controls) {
+        const double value = corrected
+            ? control.correctedContinuityResidualCubicMetersPerSecond
+            : control.predictedContinuityResidualCubicMetersPerSecond;
+        maximum = std::max(maximum, std::abs(value));
+    }
+    return maximum;
+}
+
 double maximumComponentBalance(
     const SceneFluidPressureOperator& pressureOperator,
     const std::vector<SceneFluidPressureProjectedControlVolume>& controls,
@@ -348,6 +396,28 @@ double maximumComponentBalance(
     return maximum;
 }
 
+double maximumComponentContinuity(
+    const SceneFluidPressureOperator& pressureOperator,
+    const std::vector<SceneFluidPressureProjectedControlVolume>& controls,
+    const bool corrected) {
+    double maximum = 0.0;
+    for (const auto& component : pressureOperator.components) {
+        double balance = 0.0;
+        for (std::size_t offset = 0;
+             offset < component.controlVolumeCount; ++offset) {
+            const std::size_t controlIndex =
+                pressureOperator.componentControlVolumeIndices[
+                    component.firstControlVolumeMember + offset];
+            const auto& control = controls[controlIndex];
+            balance += corrected
+                ? control.correctedContinuityResidualCubicMetersPerSecond
+                : control.predictedContinuityResidualCubicMetersPerSecond;
+        }
+        maximum = std::max(maximum, std::abs(balance));
+    }
+    return maximum;
+}
+
 void addOrientedFlow(
     std::vector<SceneFluidPressureProjectedControlVolume>& controls,
     const SceneFluidPressureProjectedLink& link,
@@ -366,7 +436,7 @@ void addOrientedFlow(
 
 } // namespace
 
-SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
+static SceneFluidPressureProjection projectSceneFluidPressureLinkFlowsImpl(
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& state,
     const fluid::PeriodicCartesianGrid& grid,
@@ -382,6 +452,7 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidPressureOperator& pressureOperator,
+    const SceneFluidPressureVolumeRateSet* const volumeRates,
     const std::span<const double> warmPressurePascals,
     const SceneFluidPressureProjectionSettings& settings,
     const SceneFluidPressureProjectionLimits& limits) {
@@ -393,6 +464,43 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
     validateSceneFluidOpeningFlux(
         openingFlux, surface, state, caps, openingQuadrature,
         openingPatches, grid, predictedVelocityMetersPerSecond);
+    if (volumeRates != nullptr) {
+        validateSceneFluidPressureVolumeRateIntegrity(*volumeRates);
+        if (volumeRates->currentPressureControlVolumeFingerprint
+                != pressureVolumes.fingerprint
+            || volumeRates->surfaceDefinitionFingerprint
+                != surface.fingerprint
+            || volumeRates->structureDefinitionFingerprint
+                != pressureVolumes.structureDefinitionFingerprint
+            || volumeRates->currentSurfaceStateFingerprint
+                != state.fingerprint
+            || volumeRates->currentAcceptedStepCount
+                != pressureOperator.acceptedStepCount
+            || volumeRates->currentSimulationTimeSeconds
+                != pressureOperator.simulationTimeSeconds
+            || volumeRates->durationSeconds != settings.timeStepSeconds
+            || volumeRates->cellCounts != grid.cellCounts()
+            || volumeRates->lowerMeters != grid.lowerMeters()
+            || volumeRates->upperMeters != grid.upperMeters()
+            || volumeRates->controlVolumes.size()
+                != pressureVolumes.controlVolumes.size()) {
+            throw std::invalid_argument(
+                "scene fluid pressure projection has invalid volume-rate identity");
+        }
+        for (std::size_t index = 0;
+             index < pressureVolumes.controlVolumes.size(); ++index) {
+            const auto& control = pressureVolumes.controlVolumes[index];
+            const auto& rate = volumeRates->controlVolumes[index];
+            if (rate.controlVolumeIndex != index
+                || rate.stableId != control.stableId
+                || rate.cellIndex != control.cellIndex
+                || rate.regionId != control.regionId
+                || rate.componentIndex != control.componentIndex) {
+                throw std::invalid_argument(
+                    "scene fluid pressure projection volume-rate topology is invalid");
+            }
+        }
+    }
     if (pressureVolumes.controlVolumes.size() > limits.maximumControlVolumes
         || faceLinks.links.size() > limits.maximumLinks) {
         throw std::length_error(
@@ -417,6 +525,8 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
     result.pressureOperatorFingerprint = pressureOperator.fingerprint;
     result.pressureFaceLinkFingerprint = faceLinks.fingerprint;
     result.pressureControlVolumeFingerprint = pressureVolumes.fingerprint;
+    result.pressureVolumeRateFingerprint =
+        volumeRates == nullptr ? 0 : volumeRates->fingerprint;
     result.openingFluxFingerprint = openingFlux.fingerprint;
     result.velocityFingerprint = openingFlux.velocityFingerprint;
     result.acceptedStepCount = pressureOperator.acceptedStepCount;
@@ -428,13 +538,27 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
     result.diagnostics.controlVolumeCount =
         pressureVolumes.controlVolumes.size();
     result.diagnostics.linkCount = faceLinks.links.size();
+    result.diagnostics.usesMovingVolumeRates = volumeRates != nullptr;
     result.controlVolumes.reserve(pressureVolumes.controlVolumes.size());
     for (const auto& source : pressureVolumes.controlVolumes) {
-        result.controlVolumes.push_back({
+        SceneFluidPressureProjectedControlVolume control{
             source.controlVolumeIndex,
             source.stableId,
             source.componentIndex,
-        });
+        };
+        if (volumeRates != nullptr) {
+            control.geometryVolumeChangeRateCubicMetersPerSecond =
+                volumeRates->controlVolumes[source.controlVolumeIndex]
+                    .volumeChangeRateCubicMetersPerSecond;
+            result.diagnostics
+                .maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond =
+                std::max(
+                    result.diagnostics
+                        .maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond,
+                    std::abs(control
+                        .geometryVolumeChangeRateCubicMetersPerSecond));
+        }
+        result.controlVolumes.push_back(control);
     }
     result.links.reserve(faceLinks.links.size());
 
@@ -512,10 +636,16 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
     const double rightHandSideScale =
         -settings.densityKgPerCubicMeter / settings.timeStepSeconds;
     for (auto& control : result.controlVolumes) {
+        control.predictedContinuityResidualCubicMetersPerSecond =
+            control.geometryVolumeChangeRateCubicMetersPerSecond
+            + control.predictedNetOutwardVolumeFlowRateCubicMetersPerSecond;
         control.integratedRightHandSidePascalsMeters =
             rightHandSideScale
-            * control.predictedNetOutwardVolumeFlowRateCubicMetersPerSecond;
-        if (!std::isfinite(control.integratedRightHandSidePascalsMeters)) {
+            * control.predictedContinuityResidualCubicMetersPerSecond;
+        if (!std::isfinite(
+                control.predictedContinuityResidualCubicMetersPerSecond)
+            || !std::isfinite(
+                control.integratedRightHandSidePascalsMeters)) {
             throw std::overflow_error(
                 "scene fluid pressure projection right-hand side overflowed");
         }
@@ -528,6 +658,15 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
     result.diagnostics
         .maximumPredictedComponentBalanceResidualCubicMetersPerSecond =
         maximumComponentBalance(
+            pressureOperator, result.controlVolumes, false);
+    result.diagnostics.predictedContinuityResidualL2CubicMetersPerSecond =
+        continuityL2(result.controlVolumes, false);
+    result.diagnostics
+        .predictedContinuityResidualMaximumCubicMetersPerSecond =
+        continuityMaximum(result.controlVolumes, false);
+    result.diagnostics
+        .maximumPredictedComponentContinuityResidualCubicMetersPerSecond =
+        maximumComponentContinuity(
             pressureOperator, result.controlVolumes, false);
 
     std::vector<double> rightHandSide;
@@ -570,6 +709,18 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
         }
         result.diagnostics.finite = correctedFinite;
         if (correctedFinite) {
+            for (auto& control : result.controlVolumes) {
+                control.correctedContinuityResidualCubicMetersPerSecond =
+                    control.geometryVolumeChangeRateCubicMetersPerSecond
+                    + control
+                        .correctedNetOutwardVolumeFlowRateCubicMetersPerSecond;
+                correctedFinite = correctedFinite
+                    && std::isfinite(control
+                        .correctedContinuityResidualCubicMetersPerSecond);
+            }
+        }
+        result.diagnostics.finite = correctedFinite;
+        if (correctedFinite) {
             result.diagnostics
                 .correctedNetOutwardVolumeRateL2CubicMetersPerSecond =
                 vectorL2(result.controlVolumes, true);
@@ -580,15 +731,25 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
                 .maximumCorrectedComponentBalanceResidualCubicMetersPerSecond =
                 maximumComponentBalance(
                     pressureOperator, result.controlVolumes, true);
+            result.diagnostics
+                .correctedContinuityResidualL2CubicMetersPerSecond =
+                continuityL2(result.controlVolumes, true);
+            result.diagnostics
+                .correctedContinuityResidualMaximumCubicMetersPerSecond =
+                continuityMaximum(result.controlVolumes, true);
+            result.diagnostics
+                .maximumCorrectedComponentContinuityResidualCubicMetersPerSecond =
+                maximumComponentContinuity(
+                    pressureOperator, result.controlVolumes, true);
             const double tolerance = std::max(
                 settings
                     .absoluteCorrectedVolumeRateToleranceCubicMetersPerSecond,
                 settings.relativeCorrectedVolumeRateTolerance
                     * result.diagnostics
-                        .predictedNetOutwardVolumeRateMaximumCubicMetersPerSecond);
+                        .predictedContinuityResidualMaximumCubicMetersPerSecond);
             result.diagnostics.accepted =
                 result.diagnostics
-                    .correctedNetOutwardVolumeRateMaximumCubicMetersPerSecond
+                    .correctedContinuityResidualMaximumCubicMetersPerSecond
                 <= tolerance;
         }
         if (result.diagnostics.accepted) {
@@ -597,6 +758,7 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
             for (auto& control : result.controlVolumes) {
                 control.correctedNetOutwardVolumeFlowRateCubicMetersPerSecond =
                     0.0;
+                control.correctedContinuityResidualCubicMetersPerSecond = 0.0;
             }
             for (auto& link : result.links) {
                 link.pressureCorrectionVolumeFlowRateCubicMetersPerSecond =
@@ -617,6 +779,59 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
     return result;
 }
 
+SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidGridEpoch& epoch,
+    const SceneFluidOpeningCapSet& caps,
+    const SceneFluidOpeningQuadratureSet& openingQuadrature,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidCellVolumeSet& volumes,
+    const SceneFluidRegionConnectivity& connectivity,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidPressureOperator& pressureOperator,
+    const std::span<const double> warmPressurePascals,
+    const SceneFluidPressureProjectionSettings& settings,
+    const SceneFluidPressureProjectionLimits& limits) {
+    return projectSceneFluidPressureLinkFlowsImpl(
+        surface, state, grid, transfer, epoch, caps, openingQuadrature,
+        openingPatches, openingFlux, predictedVelocityMetersPerSecond,
+        volumes, connectivity, pressureVolumes, faceLinks, pressureOperator,
+        nullptr, warmPressurePascals, settings, limits);
+}
+
+SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidGridEpoch& epoch,
+    const SceneFluidOpeningCapSet& caps,
+    const SceneFluidOpeningQuadratureSet& openingQuadrature,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidCellVolumeSet& volumes,
+    const SceneFluidRegionConnectivity& connectivity,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidPressureOperator& pressureOperator,
+    const SceneFluidPressureVolumeRateSet& volumeRates,
+    const std::span<const double> warmPressurePascals,
+    const SceneFluidPressureProjectionSettings& settings,
+    const SceneFluidPressureProjectionLimits& limits) {
+    return projectSceneFluidPressureLinkFlowsImpl(
+        surface, state, grid, transfer, epoch, caps, openingQuadrature,
+        openingPatches, openingFlux, predictedVelocityMetersPerSecond,
+        volumes, connectivity, pressureVolumes, faceLinks, pressureOperator,
+        &volumeRates, warmPressurePascals, settings, limits);
+}
+
 void validateSceneFluidPressureProjectionIntegrity(
     const SceneFluidPressureProjection& projection) {
     validateSettings(projection.settings);
@@ -629,6 +844,8 @@ void validateSceneFluidPressureProjectionIntegrity(
         || projection.pressureOperatorFingerprint == 0
         || projection.pressureFaceLinkFingerprint == 0
         || projection.pressureControlVolumeFingerprint == 0
+        || diagnostics.usesMovingVolumeRates
+            != (projection.pressureVolumeRateFingerprint != 0)
         || projection.openingFluxFingerprint == 0
         || projection.velocityFingerprint == 0
         || !finite(projection.simulationTimeSeconds)
@@ -643,17 +860,31 @@ void validateSceneFluidPressureProjectionIntegrity(
         || diagnostics.linkCount != projection.links.size()
         || projection.controlVolumes.empty()
         || !finite(diagnostics
+            .maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond)
+        || !finite(diagnostics
             .predictedNetOutwardVolumeRateL2CubicMetersPerSecond)
         || !finite(diagnostics
             .predictedNetOutwardVolumeRateMaximumCubicMetersPerSecond)
         || !finite(diagnostics
             .maximumPredictedComponentBalanceResidualCubicMetersPerSecond)
         || !finite(diagnostics
+            .predictedContinuityResidualL2CubicMetersPerSecond)
+        || !finite(diagnostics
+            .predictedContinuityResidualMaximumCubicMetersPerSecond)
+        || !finite(diagnostics
+            .maximumPredictedComponentContinuityResidualCubicMetersPerSecond)
+        || !finite(diagnostics
             .correctedNetOutwardVolumeRateL2CubicMetersPerSecond)
         || !finite(diagnostics
             .correctedNetOutwardVolumeRateMaximumCubicMetersPerSecond)
         || !finite(diagnostics
             .maximumCorrectedComponentBalanceResidualCubicMetersPerSecond)
+        || !finite(diagnostics
+            .correctedContinuityResidualL2CubicMetersPerSecond)
+        || !finite(diagnostics
+            .correctedContinuityResidualMaximumCubicMetersPerSecond)
+        || !finite(diagnostics
+            .maximumCorrectedComponentContinuityResidualCubicMetersPerSecond)
         || diagnostics.pressureSolve.pressureOperatorFingerprint
             != projection.pressureOperatorFingerprint
         || diagnostics.pressureSolve.rowCount
@@ -672,15 +903,28 @@ void validateSceneFluidPressureProjectionIntegrity(
             -projection.settings.densityKgPerCubicMeter
             / projection.settings.timeStepSeconds
             * control
-                .predictedNetOutwardVolumeFlowRateCubicMetersPerSecond;
+                .predictedContinuityResidualCubicMetersPerSecond;
         if (control.controlVolumeIndex != index || control.stableId == 0
             || !finite(control
+                .geometryVolumeChangeRateCubicMetersPerSecond)
+            || !finite(control
                 .predictedNetOutwardVolumeFlowRateCubicMetersPerSecond)
+            || !finite(control
+                .predictedContinuityResidualCubicMetersPerSecond)
+            || control.predictedContinuityResidualCubicMetersPerSecond
+                != control.geometryVolumeChangeRateCubicMetersPerSecond
+                    + control
+                        .predictedNetOutwardVolumeFlowRateCubicMetersPerSecond
             || !finite(control.integratedRightHandSidePascalsMeters)
             || control.integratedRightHandSidePascalsMeters
                 != expectedRightHandSide
             || !finite(control
-                .correctedNetOutwardVolumeFlowRateCubicMetersPerSecond)) {
+                .correctedNetOutwardVolumeFlowRateCubicMetersPerSecond)
+            || !finite(control
+                .correctedContinuityResidualCubicMetersPerSecond)
+            || (!diagnostics.usesMovingVolumeRates
+                && control.geometryVolumeChangeRateCubicMetersPerSecond
+                    != 0.0)) {
             throw std::invalid_argument(
                 "scene fluid pressure-projection control ledger is invalid");
         }
@@ -758,7 +1002,12 @@ void validateSceneFluidPressureProjectionIntegrity(
             || (projection.diagnostics.accepted
                 && correctedLedger[index]
                     != control
-                        .correctedNetOutwardVolumeFlowRateCubicMetersPerSecond)) {
+                        .correctedNetOutwardVolumeFlowRateCubicMetersPerSecond)
+            || (projection.diagnostics.accepted
+                && control.correctedContinuityResidualCubicMetersPerSecond
+                    != control.geometryVolumeChangeRateCubicMetersPerSecond
+                        + control
+                            .correctedNetOutwardVolumeFlowRateCubicMetersPerSecond)) {
             throw std::invalid_argument(
                 "scene fluid pressure-projection incidence ledger is invalid");
         }
@@ -769,12 +1018,12 @@ void validateSceneFluidPressureProjectionIntegrity(
                 .absoluteCorrectedVolumeRateToleranceCubicMetersPerSecond,
             projection.settings.relativeCorrectedVolumeRateTolerance
                 * projection.diagnostics
-                    .predictedNetOutwardVolumeRateMaximumCubicMetersPerSecond);
+                    .predictedContinuityResidualMaximumCubicMetersPerSecond);
         if (projection.pressurePascals.size()
                 != projection.controlVolumes.size()
             || !std::ranges::all_of(projection.pressurePascals, finite)
             || projection.diagnostics
-                .correctedNetOutwardVolumeRateMaximumCubicMetersPerSecond
+                .correctedContinuityResidualMaximumCubicMetersPerSecond
                 > tolerance) {
             throw std::invalid_argument(
                 "scene fluid pressure-projection pressure is invalid");
@@ -786,7 +1035,10 @@ void validateSceneFluidPressureProjectionIntegrity(
                 [](const auto& control) {
                     return control
                         .correctedNetOutwardVolumeFlowRateCubicMetersPerSecond
-                        != 0.0;
+                            != 0.0
+                        || control
+                            .correctedContinuityResidualCubicMetersPerSecond
+                            != 0.0;
                 })
             || std::ranges::any_of(
                 projection.links,

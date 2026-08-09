@@ -665,9 +665,18 @@ is published only when the independently accumulated corrected control-volume
 rates meet an explicit absolute/relative bound. The open analytic face keeps
 its `0.18 m²` aperture and `0.82 m²` complement as separate projected flows.
 Rejected solves retain the predicted diagnostic ledger but expose neither
-pressure nor corrected flow. This is deliberately a frozen accepted epoch:
-moving control-volume/GCL source terms, a unique corrected MAC reconstruction
-for partitioned faces, and off-face opening transmissibility remain absent. A
+pressure nor corrected flow. A consecutive-epoch pressure-volume-rate owner
+now matches stable cell/region pressure IDs and publishes exact geometry
+`dV/dt` for every retained unknown plus component/global ledgers. It requires
+identical sparse topology and rejects a cell crossing that creates or removes
+a positive region volume. The moving projection overload adds that rate to
+the predicted net outward link flow before RHS assembly and accepts only when
+`dV/dt + corrected net outward flow` closes locally. Starting from zero air
+velocity, the expanding open tetrahedron develops nonzero pressure and draws
+flow inward through its authored intake; omitting the rate remains the exact
+frozen zero-flow baseline. Conservative topology rebase/remap, a unique
+corrected MAC reconstruction for partitioned faces, and off-face opening
+transmissibility remain absent. A
 canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded

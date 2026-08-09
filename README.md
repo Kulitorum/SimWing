@@ -579,9 +579,15 @@ flow as the pressure RHS, and applies the solved pressure difference back to
 each link. It publishes pressure and corrected flow only after explicit
 control-volume continuity closes; non-convergence exposes diagnostics without
 a partial corrected state. The analytic intake retains separate aperture and
-complement flows rather than collapsing its cut face back to one MAC value.
-Moving control-volume/GCL source terms, corrected-MAC reconstruction across
-partitioned faces, and general moving-boundary projection remain future work.
+complement flows rather than collapsing its cut face back to one MAC value. A
+consecutive-epoch owner now derives exact per-control-volume `dV/dt` from
+stable cell/region identities. The moving projection overload targets
+`dV/dt + net relative flow = 0`; with zero predicted air velocity, the
+expanding analytic cell develops pressure and draws corrected flow inward
+through its intake. Sparse cell/region appearance or disappearance rejects as
+a topology rebase. Conservative rebase/remap, corrected-MAC reconstruction
+across partitioned faces, off-face opening transmissibility, and general
+moving-boundary projection remain future work.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own

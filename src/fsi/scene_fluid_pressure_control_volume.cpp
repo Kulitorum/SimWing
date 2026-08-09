@@ -481,11 +481,26 @@ SceneFluidPressureControlVolumeSet buildSceneFluidPressureControlVolumes(
     return result;
 }
 
+void validateSceneFluidPressureControlVolumeIntegrity(
+    const SceneFluidPressureControlVolumeSet& pressureVolumes) {
+    if (pressureVolumes.version
+            != sceneFluidPressureControlVolumeVersion
+        || pressureVolumes.fingerprint == 0
+        || pressureVolumes.ownedStorageBytes
+            != storageBytes(pressureVolumes)
+        || pressureVolumes.fingerprint
+            != pressureVolumeFingerprint(pressureVolumes)) {
+        throw std::invalid_argument(
+            "scene fluid pressure-control-volume integrity is invalid");
+    }
+}
+
 void validateSceneFluidPressureControlVolumes(
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidCellVolumeSet& volumes,
     const SceneFluidRegionConnectivity& connectivity) {
+    validateSceneFluidPressureControlVolumeIntegrity(pressureVolumes);
     if (pressureVolumes.version != sceneFluidPressureControlVolumeVersion
         || pressureVolumes.fingerprint == 0
         || pressureVolumes.surfaceDefinitionFingerprint != surface.fingerprint
@@ -505,10 +520,7 @@ void validateSceneFluidPressureControlVolumes(
     };
     const auto expected = buildPressureVolumes(
         surface, volumes, connectivity, unlimited);
-    if (pressureVolumes != expected
-        || pressureVolumes.ownedStorageBytes != storageBytes(pressureVolumes)
-        || pressureVolumes.fingerprint
-            != pressureVolumeFingerprint(pressureVolumes)) {
+    if (pressureVolumes != expected) {
         throw std::invalid_argument(
             "scene fluid pressure-control-volume payload is invalid");
     }

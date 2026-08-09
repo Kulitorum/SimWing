@@ -2,6 +2,7 @@
 
 #include "scene_fluid_opening_flux.h"
 #include "scene_fluid_pressure_operator.h"
+#include "scene_fluid_pressure_volume_rate.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -10,7 +11,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureProjectionVersion = 1;
+inline constexpr std::uint32_t sceneFluidPressureProjectionVersion = 2;
 
 struct SceneFluidPressureProjectionSettings {
     double densityKgPerCubicMeter = 1.225;
@@ -51,9 +52,12 @@ struct SceneFluidPressureProjectedControlVolume {
     std::size_t controlVolumeIndex = 0;
     std::uint64_t stableId = 0;
     std::size_t componentIndex = 0;
+    double geometryVolumeChangeRateCubicMetersPerSecond = 0.0;
     double predictedNetOutwardVolumeFlowRateCubicMetersPerSecond = 0.0;
+    double predictedContinuityResidualCubicMetersPerSecond = 0.0;
     double integratedRightHandSidePascalsMeters = 0.0;
     double correctedNetOutwardVolumeFlowRateCubicMetersPerSecond = 0.0;
+    double correctedContinuityResidualCubicMetersPerSecond = 0.0;
 
     bool operator==(
         const SceneFluidPressureProjectedControlVolume&) const = default;
@@ -65,13 +69,23 @@ struct SceneFluidPressureProjectionDiagnostics {
     std::size_t controlVolumeCount = 0;
     std::size_t linkCount = 0;
     std::size_t authoredOpeningLinkCount = 0;
+    bool usesMovingVolumeRates = false;
+    double maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond = 0.0;
     double predictedNetOutwardVolumeRateL2CubicMetersPerSecond = 0.0;
     double predictedNetOutwardVolumeRateMaximumCubicMetersPerSecond = 0.0;
     double maximumPredictedComponentBalanceResidualCubicMetersPerSecond =
         0.0;
+    double predictedContinuityResidualL2CubicMetersPerSecond = 0.0;
+    double predictedContinuityResidualMaximumCubicMetersPerSecond = 0.0;
+    double maximumPredictedComponentContinuityResidualCubicMetersPerSecond =
+        0.0;
     double correctedNetOutwardVolumeRateL2CubicMetersPerSecond = 0.0;
     double correctedNetOutwardVolumeRateMaximumCubicMetersPerSecond = 0.0;
     double maximumCorrectedComponentBalanceResidualCubicMetersPerSecond =
+        0.0;
+    double correctedContinuityResidualL2CubicMetersPerSecond = 0.0;
+    double correctedContinuityResidualMaximumCubicMetersPerSecond = 0.0;
+    double maximumCorrectedComponentContinuityResidualCubicMetersPerSecond =
         0.0;
     SceneFluidPressureSolveDiagnostics pressureSolve;
 
@@ -79,7 +93,7 @@ struct SceneFluidPressureProjectionDiagnostics {
         const SceneFluidPressureProjectionDiagnostics&) const = default;
 };
 
-// Fixed-epoch, link-resolved finite-volume projection. Same-region links read
+// Link-resolved finite-volume projection. Same-region links read
 // their owning MAC normal velocity. Authored-opening links instead reuse the
 // accepted negative-to-positive relative opening flux (fluid minus cap sweep)
 // and orient it from the spatial minus cell to the plus cell. The integrated
@@ -88,14 +102,17 @@ struct SceneFluidPressureProjectionDiagnostics {
 //
 // The result is an immutable attempt. Pressure and corrected flows are present
 // only when the pressure solve and the explicit post-correction continuity
-// check both succeed. This stage holds accepted geometry fixed; moving control
-// volume/GCL source terms are intentionally outside its contract.
+// check both succeed. The base overload holds accepted geometry fixed. The
+// consecutive-epoch overload additionally enforces dV/dt + net flow = 0 from
+// a topology-stable pressure-volume-rate product. Cell-crossing topology
+// rebases remain outside this contract.
 struct SceneFluidPressureProjection {
     std::uint32_t version = sceneFluidPressureProjectionVersion;
     std::uint64_t fingerprint = 0;
     std::uint64_t pressureOperatorFingerprint = 0;
     std::uint64_t pressureFaceLinkFingerprint = 0;
     std::uint64_t pressureControlVolumeFingerprint = 0;
+    std::uint64_t pressureVolumeRateFingerprint = 0;
     std::uint64_t openingFluxFingerprint = 0;
     std::uint64_t velocityFingerprint = 0;
     std::uint64_t acceptedStepCount = 0;
@@ -130,6 +147,28 @@ projectSceneFluidPressureLinkFlows(
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidPressureOperator& pressureOperator,
+    std::span<const double> warmPressurePascals,
+    const SceneFluidPressureProjectionSettings& settings = {},
+    const SceneFluidPressureProjectionLimits& limits = {});
+
+[[nodiscard]] SceneFluidPressureProjection
+projectSceneFluidPressureLinkFlows(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidGridEpoch& epoch,
+    const SceneFluidOpeningCapSet& caps,
+    const SceneFluidOpeningQuadratureSet& openingQuadrature,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidCellVolumeSet& volumes,
+    const SceneFluidRegionConnectivity& connectivity,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidPressureOperator& pressureOperator,
+    const SceneFluidPressureVolumeRateSet& volumeRates,
     std::span<const double> warmPressurePascals,
     const SceneFluidPressureProjectionSettings& settings = {},
     const SceneFluidPressureProjectionLimits& limits = {});
