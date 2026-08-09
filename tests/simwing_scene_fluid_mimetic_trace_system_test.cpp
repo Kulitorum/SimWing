@@ -1,4 +1,5 @@
 #include "scene_fluid_mimetic_trace_system.h"
+#include "scene_fluid_mimetic_condensed_trace_system.h"
 #include "scene_fluid_mimetic_trace_solve.h"
 #include "scene_structure.h"
 
@@ -447,6 +448,189 @@ void testGaugeFixedJacobiPcgRecovery() {
     }
 }
 
+void testGlobalMaterialWallCondensation() {
+    Fixture fixture(nestedScene());
+    const auto shells = fixture.shells();
+    const auto full = buildSceneFluidMimeticTraceSystem(shells);
+    const auto first = buildSceneFluidMimeticCondensedTraceSystem(full);
+    const auto repeated = buildSceneFluidMimeticCondensedTraceSystem(full);
+    check(first == repeated
+              && first.version
+                  == sceneFluidMimeticCondensedTraceSystemVersion
+              && first.fingerprint != 0
+              && first.fullTraceSystemFingerprint == full.fingerprint
+              && first.traces.size() == full.sharedTraceCount
+              && first.eliminatedMaterialWallTraceCount
+                  == full.materialWallTraceCount
+              && first.fullTraceReducedIndices.size()
+                  == full.traces.size()
+              && first.localCondensations.size()
+                  == full.localOperators.size()
+              && first.componentGaugeTraceIndices.size()
+                  == full.componentCount
+              && first.minimumPositiveOperatorDiagonal > 0.0
+              && first.maximumOperatorDiagonal
+                  >= first.minimumPositiveOperatorDiagonal,
+          "global wall condensation deterministically retains only shared traces");
+
+    std::vector<double> componentConstants(first.componentCount, 0.0);
+    for (std::size_t component = 0;
+         component < first.componentCount; ++component) {
+        componentConstants[component] = 0.75
+            + 0.5 * static_cast<double>(component);
+    }
+    std::vector<double> constant(first.traces.size(), 0.0);
+    for (const auto& trace : first.traces) {
+        constant[trace.traceIndex] =
+            componentConstants[trace.componentIndex];
+    }
+    const auto nullAction =
+        applySceneFluidMimeticCondensedTraceOperator(
+            first, full, constant);
+    check(std::ranges::all_of(
+              nullAction,
+              [](const double value) { return std::abs(value) < 3.0e-11; }),
+          "global wall condensation preserves every component constant null mode");
+
+    std::vector<double> firstVector(first.traces.size(), 0.0);
+    std::vector<double> secondVector(first.traces.size(), 0.0);
+    for (std::size_t trace = 0; trace < first.traces.size(); ++trace) {
+        firstVector[trace] = std::sin(
+            0.19 * static_cast<double>(trace + 1));
+        secondVector[trace] = std::cos(
+            0.27 * static_cast<double>(trace + 2));
+    }
+    const auto firstAction =
+        applySceneFluidMimeticCondensedTraceOperator(
+            first, full, firstVector);
+    const auto secondAction =
+        applySceneFluidMimeticCondensedTraceOperator(
+            first, full, secondVector);
+    const double forward = dot(firstVector, secondAction);
+    const double reverse = dot(secondVector, firstAction);
+    const double energy = dot(firstVector, firstAction);
+    const double tolerance = 5.0e-10
+        * std::max({1.0, std::abs(forward), std::abs(reverse)});
+    checkNear(forward, reverse, tolerance,
+              "global wall-condensed action is symmetric");
+    check(std::isfinite(energy) && energy >= -tolerance,
+          "global wall-condensed action is positive semidefinite");
+    for (std::size_t trace = 0;
+         trace < std::min<std::size_t>(first.traces.size(), 8); ++trace) {
+        std::vector<double> basis(first.traces.size(), 0.0);
+        basis[trace] = 1.0;
+        const auto action =
+            applySceneFluidMimeticCondensedTraceOperator(
+                first, full, basis);
+        checkNear(action[trace], first.traces[trace].operatorDiagonal,
+                  3.0e-10 * std::max(
+                      1.0, first.traces[trace].operatorDiagonal),
+                  "global condensed diagonal matches its basis action");
+    }
+
+    std::vector<double> expectedFull(full.traces.size(), 0.0);
+    for (std::size_t trace = 0; trace < expectedFull.size(); ++trace) {
+        expectedFull[trace] = 0.4 * std::sin(
+            0.13 * static_cast<double>(trace + 1))
+            + 0.03 * static_cast<double>(trace + 1);
+    }
+    for (std::size_t component = 0;
+         component < first.componentCount; ++component) {
+        const std::size_t reducedGauge =
+            first.componentGaugeTraceIndices[component];
+        const std::size_t fullGauge =
+            first.traces[reducedGauge].fullTraceIndex;
+        const double gaugeValue = expectedFull[fullGauge];
+        for (const auto& trace : full.traces) {
+            if (trace.componentIndex == component) {
+                expectedFull[trace.traceIndex] -= gaugeValue;
+            }
+        }
+        expectedFull[fullGauge] = 0.0;
+    }
+    std::vector<double> expectedReduced(first.traces.size(), 0.0);
+    for (const auto& trace : first.traces) {
+        expectedReduced[trace.traceIndex] =
+            expectedFull[trace.fullTraceIndex];
+    }
+    const auto fullRightHandSide = applySceneFluidMimeticTraceOperator(
+        full, expectedFull);
+    const auto condensedRightHandSide =
+        condenseSceneFluidMimeticTraceRightHandSide(
+            first, full, fullRightHandSide);
+    const auto expectedReducedAction =
+        applySceneFluidMimeticCondensedTraceOperator(
+            first, full, expectedReduced);
+    check(maximumError(
+              condensedRightHandSide, expectedReducedAction) < 3.0e-10,
+          "global RHS condensation matches the reduced manufactured action");
+    const auto reconstructed = reconstructSceneFluidMimeticFullTraces(
+        first, full, fullRightHandSide, expectedReduced);
+    check(maximumError(reconstructed, expectedFull) < 5.0e-9,
+          "global wall reconstruction recovers every manufactured full trace");
+    const auto reconstructedAction = applySceneFluidMimeticTraceOperator(
+        full, reconstructed);
+    check(maximumError(reconstructedAction, fullRightHandSide) < 3.0e-9,
+          "reconstructed full traces close every shared and wall equation");
+    validateSceneFluidMimeticCondensedTraceSystem(first, full);
+}
+
+void testGlobalWallCondensationLimitsAndCorruption() {
+    Fixture fixture(nestedScene());
+    const auto full = buildSceneFluidMimeticTraceSystem(
+        fixture.shells());
+    const auto accepted =
+        buildSceneFluidMimeticCondensedTraceSystem(full);
+    auto corrupt = accepted;
+    corrupt.traces.front().operatorDiagonal += 0.01;
+    expectInvalid(
+        [&] { validateSceneFluidMimeticCondensedTraceSystem(
+            corrupt, full); },
+        "global wall condensation rejects fingerprinted diagonal corruption");
+
+    SceneFluidMimeticCondensedTraceSystemLimits limits;
+    limits.maximumReducedTraces = accepted.traces.size() - 1;
+    expectLimited(
+        [&] { static_cast<void>(
+            buildSceneFluidMimeticCondensedTraceSystem(full, limits)); },
+        "global wall condensation bounds reduced trace count");
+    limits = {};
+    limits.maximumLocalCondensations =
+        accepted.localCondensations.size() - 1;
+    expectLimited(
+        [&] { static_cast<void>(
+            buildSceneFluidMimeticCondensedTraceSystem(full, limits)); },
+        "global wall condensation bounds local condensation count");
+    limits = {};
+    limits.maximumLocalCondensationBytes =
+        accepted.localCondensationStorageBytes - 1;
+    expectLimited(
+        [&] { static_cast<void>(
+            buildSceneFluidMimeticCondensedTraceSystem(full, limits)); },
+        "global wall condensation bounds nested linear storage");
+    limits = {};
+    limits.maximumOwnedBytes = accepted.ownedStorageBytes - 1;
+    expectLimited(
+        [&] { static_cast<void>(
+            buildSceneFluidMimeticCondensedTraceSystem(full, limits)); },
+        "global wall condensation bounds aggregate storage");
+
+    expectInvalid(
+        [&] { static_cast<void>(
+            applySceneFluidMimeticCondensedTraceOperator(
+                accepted, full,
+                std::vector<double>(accepted.traces.size() - 1, 0.0))); },
+        "global wall-condensed action rejects a short reduced field");
+    expectInvalid(
+        [&] { static_cast<void>(
+            condenseSceneFluidMimeticTraceRightHandSide(
+                accepted, full,
+                std::vector<double>(
+                    full.traces.size(),
+                    std::numeric_limits<double>::infinity()))); },
+        "global wall condensation rejects a non-finite full RHS");
+}
+
 void testSourceDrivenTraceBalance() {
     Fixture fixture(nestedScene());
     const auto shells = fixture.shells();
@@ -647,6 +831,8 @@ int main() {
         testNestedAssemblyAndMatrixFreeAction();
         testRejectedTwoPointOpeningStillBuildsHybridTrace();
         testGaugeFixedJacobiPcgRecovery();
+        testGlobalMaterialWallCondensation();
+        testGlobalWallCondensationLimitsAndCorruption();
         testSourceDrivenTraceBalance();
         testTraceSolveRollbackAndValidation();
         testLimitsCorruptionAndInputValidation();

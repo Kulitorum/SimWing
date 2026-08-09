@@ -849,6 +849,12 @@ matrix-free condensed action is symmetric
 positive semidefinite, preserves one exact constant null mode per component,
 and builds a source-compatible right-hand side without materializing either a
 global matrix or dense local matrices.
+An immutable global wall-condensed adapter now composes the exact local Schur
+kernels into a separate shared-trace system while retaining the full topology
+for reconstruction. Its matrix-free action is symmetric positive
+semidefinite, preserves the same component constant modes, publishes exact
+assembled diagonals and deterministic shared gauges, condenses a full trace
+right-hand side, and reconstructs wall values that close every original row.
 An isolated gauge-fixed solver now pins the retained trace in every component
 and applies deterministic Jacobi-preconditioned conjugate gradients directly
 to that matrix-free action. It admits and removes only bounded component-sum
@@ -876,11 +882,11 @@ local factors; its full matrix-free component-constant action is roundoff-null.
 The real-wing regression also executes one finite, residual-reducing PCG step
 over all 191,579 rows and proves truncated non-publication. All 138 local
 controls now accept exact wall condensation: 148,652 one-sided wall traces
-reduce to 42,927 shared global traces using 3,986,602 bytes of linear Schur
-data, and their assembled condensed diagonals are positive. Assembling that
-local elimination into the global solve, any further local/multilevel
-preconditioning, physical right-hand-side assembly, and production integration
-remain open. The production graph operator and worker are unchanged.
+reduce to a separately assembled 42,927-row shared system using 3,986,602 bytes
+of linear Schur data, and its assembled diagonals are positive. Solving that
+reduced system, any further local/multilevel preconditioning, physical
+right-hand-side assembly, and production integration remain open. The
+production graph operator and worker are unchanged.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,
