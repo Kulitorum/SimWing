@@ -1,5 +1,6 @@
 #include "scene_fluid_mimetic_trace_system.h"
 #include "scene_fluid_mimetic_condensed_trace_system.h"
+#include "scene_fluid_mimetic_pressure_solve.h"
 #include "scene_fluid_mimetic_trace_solve.h"
 #include "scene_structure.h"
 
@@ -733,6 +734,55 @@ void testSourceDrivenTraceBalance() {
               && reducedBalance.maximumTraceFluxImbalance < 3.0e-10
               && reducedBalance.maximumCellConservationResidual < 3.0e-13,
           "source-driven condensed solve reconstructs a conservative full trace field");
+
+    const std::vector<double> zeroWarmStart(
+        condensed.traces.size(), 0.0);
+    const auto pressure = solveSceneFluidMimeticPressureSystem(
+        condensed, system, sources, zeroWarmStart,
+        strictSolveSettings());
+    check(pressure.diagnostics.accepted
+              && pressure.diagnostics
+                    .reconstructedFullResidualConverged
+              && pressure.diagnostics.reducedTraceSolve.compatible
+              && pressure.diagnostics.reducedTraceSolve.converged
+              && pressure.reducedTracePascals == reducedTraces
+              && pressure.fullTracePascals == reconstructed
+              && pressure.evaluation.maximumTraceFluxImbalance < 3.0e-10
+              && pressure.evaluation.maximumCellConservationResidual
+                  < 3.0e-13,
+          "atomic mimetic pressure transaction publishes only the closed reconstructed state");
+
+    auto truncatedSettings = strictSolveSettings();
+    truncatedSettings.absoluteResidualTolerancePascalsMeters = 1.0e-30;
+    truncatedSettings.relativeResidualTolerance = 0.0;
+    truncatedSettings.maximumIterations = 1;
+    const auto truncatedPressure = solveSceneFluidMimeticPressureSystem(
+        condensed, system, sources, zeroWarmStart, truncatedSettings);
+    check(!truncatedPressure.diagnostics.accepted
+              && !truncatedPressure.diagnostics.reducedTraceSolve.converged
+              && truncatedPressure.diagnostics.reducedTraceSolve.finite
+              && truncatedPressure.reducedTracePascals.empty()
+              && truncatedPressure.fullTracePascals.empty()
+              && truncatedPressure.evaluation.cellScalars.empty(),
+          "truncated pressure transaction publishes no partial field");
+
+    std::vector<double> incompatibleSources(sources.size(), 0.0);
+    incompatibleSources[0] = 0.2;
+    const auto incompatiblePressure = solveSceneFluidMimeticPressureSystem(
+        condensed, system, incompatibleSources, zeroWarmStart,
+        strictSolveSettings());
+    check(!incompatiblePressure.diagnostics.accepted
+              && !incompatiblePressure.diagnostics
+                    .reducedTraceSolve.compatible
+              && incompatiblePressure.reducedTracePascals.empty()
+              && incompatiblePressure.fullTracePascals.empty(),
+          "incompatible pressure transaction publishes no state");
+    expectInvalid(
+        [&] { static_cast<void>(solveSceneFluidMimeticPressureSystem(
+            condensed, system,
+            std::vector<double>(sources.size() - 1, 0.0),
+            zeroWarmStart, strictSolveSettings())); },
+        "pressure transaction rejects a short cell-source field");
 }
 
 void testTraceSolveRollbackAndValidation() {

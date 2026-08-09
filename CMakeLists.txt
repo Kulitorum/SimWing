@@ -369,6 +369,8 @@ add_library(simwing_scene_fluid_cell_volume STATIC
     src/fsi/scene_fluid_mimetic_condensed_trace_system.cpp
     src/fsi/scene_fluid_mimetic_condensed_trace_system.h
     src/fsi/scene_fluid_mimetic_condensed_trace_system_detail.h
+    src/fsi/scene_fluid_mimetic_pressure_solve.cpp
+    src/fsi/scene_fluid_mimetic_pressure_solve.h
     src/fsi/scene_fluid_mimetic_trace_solve.cpp
     src/fsi/scene_fluid_mimetic_trace_solve.h
     src/fsi/scene_fluid_mimetic_trace_system.cpp

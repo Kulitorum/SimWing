@@ -5,6 +5,7 @@
 #include "scene_fluid_capped_face_partition.h"
 #include "scene_fluid_mimetic_condensed_trace_system.h"
 #include "scene_fluid_mimetic_control_cell.h"
+#include "scene_fluid_mimetic_pressure_solve.h"
 #include "scene_fluid_mimetic_trace_solve.h"
 #include "scene_fluid_mimetic_trace_system.h"
 #include "scene_fluid_opening_cap.h"
@@ -652,6 +653,31 @@ void testRealDesignCapture(const std::filesystem::path &input,
             std::abs(reconstructedConvergedFullAction[trace]
                      - manufacturedCondensedFullRightHandSide[trace]));
     }
+    std::vector<double> realIntegratedCellSources(
+        mimeticTraceSystem.localOperators.size(), 0.0);
+    std::size_t sourceReceiver = 1;
+    while (sourceReceiver < mimeticControlCells.controlCells.size()
+           && mimeticControlCells.controlCells[sourceReceiver]
+                   .componentIndex
+               != mimeticControlCells.controlCells[0].componentIndex) {
+        ++sourceReceiver;
+    }
+    simwing::fsi::SceneFluidMimeticPressureSolveResult
+        realSourcePressure;
+    if (sourceReceiver < realIntegratedCellSources.size()) {
+        realIntegratedCellSources[0] = 0.02;
+        realIntegratedCellSources[sourceReceiver] = -0.02;
+        auto realSourceSolveSettings =
+            convergedReducedTraceSolveSettings;
+        realSourceSolveSettings.maximumIterations = 1000;
+        realSourcePressure =
+            simwing::fsi::solveSceneFluidMimeticPressureSystem(
+                condensedTraceSystem, mimeticTraceSystem,
+                realIntegratedCellSources,
+                std::vector<double>(
+                    condensedTraceSystem.traces.size(), 0.0),
+                realSourceSolveSettings);
+    }
     const bool mimeticAuditMatches =
         mimeticControlCells.readyControlCellCount
             == mimeticControlCells.controlCells.size()
@@ -712,11 +738,21 @@ void testRealDesignCapture(const std::filesystem::path &input,
             <= 1.0e-5
                 * convergedReducedTraceSolveDiagnostics
                     .initialResidualL2PascalsMeters
-        && maximumReconstructedFullResidual < 2.0e-4;
+        && maximumReconstructedFullResidual < 2.0e-4
+        && sourceReceiver < realIntegratedCellSources.size()
+        && realSourcePressure.diagnostics.accepted
+        && realSourcePressure.diagnostics
+            .reconstructedFullResidualConverged
+        && realSourcePressure.diagnostics.reducedTraceSolve.converged
+        && realSourcePressure.diagnostics
+                .reconstructedFullResidualMaximumPascalsMeters
+            < 2.0e-4
+        && realSourcePressure.diagnostics.maximumCellConservationResidual
+            < 1.0e-9;
     if (!mimeticAuditMatches) {
         std::fprintf(
             stderr,
-            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu classified=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu traces=%zu shared=%zu walls=%zu compact-bytes=%zu wall-condensation-bytes=%zu condensed-traces=%zu condensed-locals=%zu max-null=%.17g max-condensed-null=%.17g solve-compatible=%d solve-converged=%d solve-finite=%d solve-iterations=%zu solve-compatibility=%.17g solve-initial=%.17g solve-final=%.17g solve-final-max=%.17g reduced-solve-compatible=%d reduced-solve-converged=%d reduced-solve-finite=%d reduced-solve-iterations=%zu reduced-solve-compatibility=%.17g reduced-solve-initial=%.17g reduced-solve-final=%.17g reduced-solve-final-max=%.17g converged-reduced-compatible=%d converged-reduced-converged=%d converged-reduced-finite=%d converged-reduced-iterations=%zu converged-reduced-compatibility=%.17g converged-reduced-initial=%.17g converged-reduced-final=%.17g converged-reduced-final-max=%.17g reconstructed-full-max=%.17g max-area=%.17g max-moment=%.17g\n",
+            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu classified=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu traces=%zu shared=%zu walls=%zu compact-bytes=%zu wall-condensation-bytes=%zu condensed-traces=%zu condensed-locals=%zu max-null=%.17g max-condensed-null=%.17g solve-compatible=%d solve-converged=%d solve-finite=%d solve-iterations=%zu solve-compatibility=%.17g solve-initial=%.17g solve-final=%.17g solve-final-max=%.17g reduced-solve-compatible=%d reduced-solve-converged=%d reduced-solve-finite=%d reduced-solve-iterations=%zu reduced-solve-compatibility=%.17g reduced-solve-initial=%.17g reduced-solve-final=%.17g reduced-solve-final-max=%.17g converged-reduced-compatible=%d converged-reduced-converged=%d converged-reduced-finite=%d converged-reduced-iterations=%zu converged-reduced-compatibility=%.17g converged-reduced-initial=%.17g converged-reduced-final=%.17g converged-reduced-final-max=%.17g reconstructed-full-max=%.17g source-pair=%d source-accepted=%d source-full-converged=%d source-reduced-compatible=%d source-reduced-converged=%d source-reduced-iterations=%zu source-reduced-initial=%.17g source-reduced-final=%.17g source-full-tolerance=%.17g source-full-rms=%.17g source-full-max=%.17g source-cell-max=%.17g max-area=%.17g max-moment=%.17g\n",
             mimeticControlCells.readyControlCellCount,
             mimeticControlCells.controlCells.size(),
             mimeticControlCells.incompleteTopologyControlCellCount,
@@ -774,6 +810,28 @@ void testRealDesignCapture(const std::filesystem::path &input,
             convergedReducedTraceSolveDiagnostics
                 .finalResidualMaximumPascalsMeters,
             maximumReconstructedFullResidual,
+            sourceReceiver < realIntegratedCellSources.size() ? 1 : 0,
+            realSourcePressure.diagnostics.accepted ? 1 : 0,
+            realSourcePressure.diagnostics
+                    .reconstructedFullResidualConverged
+                ? 1 : 0,
+            realSourcePressure.diagnostics.reducedTraceSolve.compatible
+                ? 1 : 0,
+            realSourcePressure.diagnostics.reducedTraceSolve.converged
+                ? 1 : 0,
+            realSourcePressure.diagnostics.reducedTraceSolve.iterationCount,
+            realSourcePressure.diagnostics.reducedTraceSolve
+                .initialResidualL2PascalsMeters,
+            realSourcePressure.diagnostics.reducedTraceSolve
+                .finalResidualL2PascalsMeters,
+            realSourcePressure.diagnostics
+                .reconstructedFullResidualTolerancePascalsMeters,
+            realSourcePressure.diagnostics
+                .reconstructedFullResidualL2PascalsMeters,
+            realSourcePressure.diagnostics
+                .reconstructedFullResidualMaximumPascalsMeters,
+            realSourcePressure.diagnostics
+                .maximumCellConservationResidual,
             mimeticControlCells.maximumAreaClosureErrorSquareMeters,
             mimeticControlCells.maximumDivergenceTheoremErrorCubicMeters);
         for (const auto& cell : mimeticControlCells.controlCells) {
