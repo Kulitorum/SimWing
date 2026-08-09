@@ -571,10 +571,11 @@ ambiguity. A bounded sparse index groups crossing and coplanar references under
 stable grid-bound MAC-face IDs while retaining each sheet separately and making
 no false union-coverage claim. A provenance-keyed graph canonically stitches
 shared authored edges, retains opening and grid-edge endpoints, and reports
-node degree without claiming an open graph is a closed region. Degree-two
-components then become deterministic winding-directed open chains or closed
-loops only while one authored region pair remains consistent; branches and
-conflicts reject. Simple loops gain signed area, centroid, and winding-derived
+node degree without claiming an open graph is a closed region. Segments then
+become deterministic winding-directed open chains or closed loops independently
+per authored region pair. Valid multi-region junctions may terminate several
+pair-specific chains at one physical higher-degree node; a branch or winding
+conflict within one pair rejects. Simple loops gain signed area, centroid, and winding-derived
 enclosed/exterior region identity with self-intersection and degenerate-area
 rejection. A bounded containment stage rejects touching loops, requires
 authored parent/child region continuity, and closes exact per-region areas on
@@ -594,9 +595,9 @@ cells and surfaces whose face-local contours cross tile boundaries. A separate
 whole-surface divergence calculation verifies the global region totals. Nested
 analytic tetrahedra, a rigid accepted remap, a valid three-region junction,
 and a large cavity with 24 full interior cells are regressions. The complete
-real-wing region ledger also closes on a coarse grid whose internal planes
-remain outside the canopy; a junction crossing a Cartesian face still reaches
-the separate face-graph branch rejection. Scene-v2.2 can attach one oriented
+real-wing region ledger also closes on a centered coarse grid that crosses the
+canopy. Junction nodes there terminate pair-specific open chains and remain
+explicit unresolved face partitions. Scene-v2.2 can attach one oriented
 boundary-vertex cap disk to an opening. A topology-only owner requires one
 closed oriented region cycle around every finite-area material-plus-cap edge,
 including valid three-region sheet/cap junctions, and derives final winding
@@ -934,8 +935,9 @@ opening-only vertices. The real 3.28 regression verifies oriented nondegenerate
 cap facets and captures every opening vertex through the live Structure-to-fluid
 surface adapter. The cap owner validates the three-region skin/rib mouth cycles
 and consumes the complete real-wing opening set. Pairwise cell-volume measures
-close its complete region ledger when grid faces avoid the canopy; junction-
-aware face-graph construction and subsequent worker integration remain open.
+close its complete region ledger on a centered coarse grid; grid-face junctions
+remain explicit unresolved partitions. Resolving their per-region face areas
+and subsequent worker integration remain open.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy

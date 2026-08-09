@@ -62,11 +62,12 @@ struct SceneFluidFaceChainSet {
     bool operator==(const SceneFluidFaceChainSet&) const = default;
 };
 
-// Converts each degree-at-most-two face graph into consistently directed open
-// chains and closed loops. Direction follows triangle winding and therefore the
-// authored negative-to-positive region convention. Branched nodes, conflicting
-// directions, or a region-pair change inside one stitched chain are rejected
-// rather than silently choosing a fluid partition.
+// Converts each face graph into consistently directed open chains and closed
+// loops independently for every authored region pair. Direction follows
+// triangle winding and therefore the negative-to-positive convention. A
+// multi-region junction may terminate several pair-specific chains at one
+// physical graph node; a branch or conflicting direction within one region
+// pair still rejects rather than silently choosing a fluid partition.
 [[nodiscard]] SceneFluidFaceChainSet buildSceneFluidFaceChains(
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& state,

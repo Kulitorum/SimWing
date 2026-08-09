@@ -495,9 +495,11 @@ grid-bound MAC face while keeping multiple sheets separate; its summed length
 and area are diagnostics, not union coverage. A face-local graph now stitches
 adjacent triangle segments through stable authored vertex/edge provenance,
 recomputes shared-edge intersections canonically, and keeps opening-boundary
-and grid-edge endpoints explicit. Degree-two components are now extracted as
-winding-directed open chains or closed loops only when their authored region
-pair stays consistent; branches and conflicts are rejected. Open chains are
+and grid-edge endpoints explicit. Segments are now extracted as
+winding-directed open chains or closed loops independently per authored region
+pair. A valid multi-region junction may terminate several pair-specific chains
+at one physical higher-degree node; branching within one region pair still
+rejects. Open chains are
 not falsely treated as closed regions. Simple closed loops now carry signed
 area, centroid, and winding-derived enclosed/exterior region identity;
 self-intersections and degenerate loops reject, while nested loops remain
@@ -752,9 +754,10 @@ lip and rib-mesh boundary vertices, so every exported opening vertex reaches
 the live Structure-to-fluid surface state. The cap owner now validates the
 full real wing's three-region skin/rib cycles and consumes its complete opening
 set. Pairwise signed cell-volume accounting also closes the complete real-wing
-region ledger when internal grid planes remain outside the canopy. Junctions
-that cross a Cartesian face still reach a branch in the grid-face graph, so
-that topology stage and subsequent worker integration remain open.
+region ledger on a centered coarse grid that crosses the canopy. Junctions on
+a Cartesian face survive as pair-specific open chains and explicit unresolved
+partitions; resolving their per-region face areas and subsequent worker
+integration remain open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

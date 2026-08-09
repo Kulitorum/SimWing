@@ -4,8 +4,10 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <set>
 #include <stdexcept>
+#include <tuple>
 #include <type_traits>
 
 namespace simwing::fsi::fluid {
@@ -225,48 +227,65 @@ SceneFluidFaceChainSet buildChains(
     std::set<std::uint64_t> chainStableIds;
     for (const auto& range : graph.faceRanges) {
         const auto& face = topology.activeFaces[range.activeFaceIndex];
-        std::vector<std::size_t> incoming(range.nodeCount, missingReference);
-        std::vector<std::size_t> outgoing(range.nodeCount, missingReference);
+        using RegionPair = std::pair<StableId, StableId>;
+        struct PairDirections {
+            std::map<std::size_t, std::size_t> incoming;
+            std::map<std::size_t, std::size_t> outgoing;
+        };
+        std::map<RegionPair, PairDirections> pairDirections;
         std::vector<DirectedSegment> directions(range.segmentCount);
 
         for (std::size_t offset = 0; offset < range.segmentCount; ++offset) {
             const std::size_t segmentIndex = range.firstSegment + offset;
             const auto& segment = graph.segments[segmentIndex];
+            const auto& crossing = crossings.crossings[
+                segment.crossingIndex];
             const DirectedSegment direction = directedSegment(
                 graph, segment, crossings, face);
             directions[offset] = direction;
+            const RegionPair regions{
+                crossing.negativeSideRegionId,
+                crossing.positiveSideRegionId};
+            auto& pair = pairDirections[regions];
             const std::size_t from = direction.fromNode - range.firstNode;
             const std::size_t to = direction.toNode - range.firstNode;
             if (from >= range.nodeCount || to >= range.nodeCount
-                || outgoing[from] != missingReference
-                || incoming[to] != missingReference) {
+                || pair.outgoing.contains(from)
+                || pair.incoming.contains(to)) {
                 throw std::invalid_argument(
-                    "scene fluid face graph has a branch or conflicting winding");
+                    "scene fluid face graph has a same-region-pair branch or conflicting winding");
             }
-            outgoing[from] = segmentIndex;
-            incoming[to] = segmentIndex;
+            pair.outgoing.emplace(from, segmentIndex);
+            pair.incoming.emplace(to, segmentIndex);
         }
 
         auto appendChain = [&](const std::size_t startNode,
-                               const bool expectedClosed) {
+                               const bool expectedClosed,
+                               const RegionPair regions) {
             if (result.chains.size() == limits.maximumChains) {
                 throw std::length_error(
                     "scene fluid face chains exceed their count limit");
             }
             SceneFluidFaceChain chain;
             chain.activeFaceIndex = range.activeFaceIndex;
+            chain.negativeSideRegionId = regions.first;
+            chain.positiveSideRegionId = regions.second;
             chain.firstNodeReference = result.nodeReferences.size();
             chain.firstSegmentReference = result.segmentReferences.size();
             std::size_t currentNode = startNode;
             result.nodeReferences.push_back(currentNode);
+            const PairDirections& topologyForPair =
+                pairDirections.at(regions);
 
             while (true) {
                 const std::size_t localNode = currentNode - range.firstNode;
-                const std::size_t segmentIndex = outgoing[localNode];
-                if (segmentIndex == missingReference) {
+                const auto outgoing =
+                    topologyForPair.outgoing.find(localNode);
+                if (outgoing == topologyForPair.outgoing.end()) {
                     chain.kind = SceneFluidFaceChainKind::Open;
                     break;
                 }
+                const std::size_t segmentIndex = outgoing->second;
                 if (globallyVisited[segmentIndex]) {
                     throw std::invalid_argument(
                         "scene fluid face chain revisits a segment");
@@ -275,15 +294,10 @@ SceneFluidFaceChainSet buildChains(
                 result.segmentReferences.push_back(segmentIndex);
                 const auto& crossing = crossings.crossings[
                     graph.segments[segmentIndex].crossingIndex];
-                if (chain.negativeSideRegionId == invalidStableId) {
-                    chain.negativeSideRegionId =
-                        crossing.negativeSideRegionId;
-                    chain.positiveSideRegionId =
-                        crossing.positiveSideRegionId;
-                } else if (chain.negativeSideRegionId
-                               != crossing.negativeSideRegionId
-                           || chain.positiveSideRegionId
-                               != crossing.positiveSideRegionId) {
+                if (chain.negativeSideRegionId
+                        != crossing.negativeSideRegionId
+                    || chain.positiveSideRegionId
+                        != crossing.positiveSideRegionId) {
                     throw std::invalid_argument(
                         "scene fluid face chain changes authored region pair");
                 }
@@ -348,43 +362,54 @@ SceneFluidFaceChainSet buildChains(
             result.chains.push_back(chain);
         };
 
-        std::vector<std::size_t> starts;
-        for (std::size_t localNode = 0;
-             localNode < range.nodeCount; ++localNode) {
-            if (incoming[localNode] == missingReference
-                && outgoing[localNode] != missingReference) {
-                starts.push_back(range.firstNode + localNode);
+        std::vector<std::pair<std::size_t, RegionPair>> starts;
+        for (const auto& [regions, pair] : pairDirections) {
+            for (const auto& [localNode, segmentIndex] : pair.outgoing) {
+                static_cast<void>(segmentIndex);
+                if (!pair.incoming.contains(localNode)) {
+                    starts.push_back({
+                        range.firstNode + localNode, regions});
+                }
             }
         }
         std::sort(starts.begin(), starts.end(),
-                  [&](const std::size_t first, const std::size_t second) {
-                      return graph.nodes[first].stableId
-                          < graph.nodes[second].stableId;
+                  [&](const auto& first, const auto& second) {
+                      return std::tie(graph.nodes[first.first].stableId,
+                                      first.second)
+                          < std::tie(graph.nodes[second.first].stableId,
+                                     second.second);
                   });
-        for (const std::size_t start : starts) {
-            const std::size_t firstSegment = outgoing[start - range.firstNode];
+        for (const auto& [start, regions] : starts) {
+            const std::size_t firstSegment = pairDirections.at(regions)
+                .outgoing.at(start - range.firstNode);
             if (!globallyVisited[firstSegment]) {
-                appendChain(start, false);
+                appendChain(start, false, regions);
             }
         }
 
         while (true) {
             std::size_t cycleStart = missingReference;
-            for (std::size_t localNode = 0;
-                 localNode < range.nodeCount; ++localNode) {
-                const std::size_t segmentIndex = outgoing[localNode];
-                if (segmentIndex != missingReference
-                    && !globallyVisited[segmentIndex]
-                    && (cycleStart == missingReference
-                        || graph.nodes[range.firstNode + localNode].stableId
-                            < graph.nodes[cycleStart].stableId)) {
-                    cycleStart = range.firstNode + localNode;
+            RegionPair cycleRegions{};
+            for (const auto& [regions, pair] : pairDirections) {
+                for (const auto& [localNode, segmentIndex] : pair.outgoing) {
+                    const std::size_t candidateNode =
+                        range.firstNode + localNode;
+                    if (!globallyVisited[segmentIndex]
+                        && (cycleStart == missingReference
+                            || std::tie(graph.nodes[candidateNode].stableId,
+                                        regions)
+                                < std::tie(
+                                    graph.nodes[cycleStart].stableId,
+                                    cycleRegions))) {
+                        cycleStart = candidateNode;
+                        cycleRegions = regions;
+                    }
                 }
             }
             if (cycleStart == missingReference) {
                 break;
             }
-            appendChain(cycleStart, true);
+            appendChain(cycleStart, true, cycleRegions);
         }
     }
 

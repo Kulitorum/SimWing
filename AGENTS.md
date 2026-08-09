@@ -285,8 +285,10 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   references without treating their summed measures as unions. A provenance-
   keyed graph then stitches adjacent triangle segments through stable authored
   vertices/edges and explicitly marks opening and grid-edge endpoints. Its
-  degree-two components become winding-directed open chains or closed loops
-  with one consistent authored region pair. Simple closed loops then gain
+  segments become winding-directed open chains or closed loops independently
+  per authored region pair. Valid multi-region junctions may terminate several
+  pair-specific chains at one physical higher-degree node; branching within
+  one region pair still rejects. Simple closed loops then gain
   signed area, centroid, and enclosed/exterior region identity without merging
   nested loops or sealing open chains. Eligible non-touching loop nests are
   finally resolved into exact per-region MAC-face areas with a containment
@@ -329,8 +331,9 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
 - `simwing_scene_fluid_cell_volume`: reconstructs bounded deterministic sparse
   per-cell region volumes for the first capped-manifold subset. It requires one
   Outside region and closed oriented material-plus-cap region cycles. Pairwise
-  signed measures support valid multi-region junctions when the supplied grid
-  epoch has no junction branch on a Cartesian face.
+  signed measures support valid multi-region junctions. Grid-face crossings
+  split into pair-specific open chains at those junctions and remain explicit
+  unresolved face partitions.
   Each oriented triangle becomes a signed tetrahedron against the grid origin;
   bounded convex clipping distributes it across exact cells, including full
   interior cells and open face-local tile chains. The same clipped tetrahedra
@@ -338,7 +341,7 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   volume, and cell first moment closes independently before the result agrees
   with whole-surface region volumes. General swept-volume remap, unauthored
   nonplanar or folded/self-intersecting mouths, opening-only cap vertices,
-  junction branches on grid faces, and periodic-boundary ambiguity remain
+  resolved junction face partitions, and periodic-boundary ambiguity remain
   unsupported.
 - `simwing_scene_fluid_region_continuity`: binds two consecutive accepted
   volume and opening-flux epochs. It trapezoidally integrates each region's
@@ -950,8 +953,10 @@ makes this a certified aerodynamic solver.
   present local intrinsic charts are not manufacturing flat-pattern UVs, and
   it does not yet author paired seam chains. The cap owner now consumes the
   complete real-wing opening set. Its full multi-region volume ledger closes
-  on a coarse grid with all internal planes outside the canopy; junction-aware
-  grid-face graph construction and the subsequent worker path remain open.
+  on a centered coarse grid that crosses the canopy; grid-face junctions are
+  preserved as pair-specific chains and explicit unresolved partitions.
+  Resolving their per-region face areas and the subsequent worker path remain
+  open.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
   loads/state, trusted constraint/membrane/bending assembly, explicit optional
   fabric self-contact, rigid-pilot suspension, diagnostics, and composite

@@ -94,11 +94,11 @@ struct SceneFluidRegionVolume {
 // First bounded cut-cell volume subset. Separating fabric plus optional simple
 // planar automatic or explicitly tessellated nonplanar opening caps must form
 // closed oriented region cycles around one Outside root. Pairwise signed
-// measures support valid multi-region junctions when the supplied grid epoch
-// has no unresolved junction branch on a Cartesian face. Sparse positive
-// region volumes are published for every cell. Each oriented material/cap
-// triangle defines one signed tetrahedron against the grid origin; exact
-// convex clipping distributes that chain into intersected cells, including
+// measures support valid multi-region junctions even when their pair-specific
+// grid-face chains leave the face partition explicitly unresolved. Sparse
+// positive region volumes are published for every cell. Each oriented
+// material/cap triangle defines one signed tetrahedron against the grid origin;
+// exact convex clipping distributes that chain into intersected cells, including
 // cells wholly inside a region. The same exact tetrahedral decomposition
 // publishes first moments and cell-local centroids and closes both volume and
 // first moment per cell.

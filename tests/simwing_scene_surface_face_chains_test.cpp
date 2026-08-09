@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <set>
 #include <stdexcept>
 #include <utility>
 
@@ -112,6 +113,37 @@ Scene closedTetrahedronScene() {
         {501, {10, 11, 13}, chart, 2, 1, 100, 900, SurfaceRole::Skin},
         {502, {10, 13, 12}, chart, 2, 1, 100, 900, SurfaceRole::Skin},
         {503, {11, 12, 13}, chart, 2, 1, 100, 900, SurfaceRole::Skin},
+    };
+    return scene;
+}
+
+Scene threeRegionJunctionScene() {
+    Scene scene;
+    scene.metadata.designChecksum =
+        "sha256:scene-surface-face-chains-three-region";
+    scene.metadata.exporterVersion = "scene-surface-face-chains-test/2";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "cell-a"},
+        {3, RegionKind::Cell, "cell-b"},
+    };
+    scene.vertices = {
+        {10, {1.5, 1.5, 1.5}},
+        {11, {2.5, 1.5, 1.5}},
+        {12, {2.5, 1.8, 1.5}},
+        {13, {2.5, 1.35, 1.7598076211353315}},
+        {14, {2.5, 1.35, 1.2401923788646685}},
+    };
+    scene.fabricMaterials = {material()};
+    const std::array<Vec2, 3> chart{{
+        {0.0, 0.0}, {1.0, 0.0}, {1.0, 0.3}}};
+    scene.triangles = {
+        {500, {10, 11, 12}, chart,
+         1, 2, 100, 900, SurfaceRole::Skin},
+        {501, {10, 11, 13}, chart,
+         2, 3, 100, 901, SurfaceRole::Rib},
+        {502, {10, 11, 14}, chart,
+         3, 1, 100, 902, SurfaceRole::Skin},
     };
     return scene;
 }
@@ -242,6 +274,65 @@ void testClosedLoop() {
               "scene face chains: closed loop perimeter is analytic");
 }
 
+void testThreeRegionJunction() {
+    Pipeline pipeline(threeRegionJunctionScene());
+    check(pipeline.graph.higherDegreeNodeCount == 1
+              && pipeline.graph.segments.size() == 3,
+          "scene face chains: geometric graph retains one degree-three junction");
+    const auto result = chains(pipeline);
+    std::set<std::pair<StableId, StableId>> regionPairs;
+    bool everyChainEndsAtJunction = true;
+    std::size_t junctionNode = pipeline.graph.nodes.size();
+    for (std::size_t node = 0; node < pipeline.graph.nodes.size(); ++node) {
+        if (pipeline.graph.nodes[node].incidentSegmentReferenceCount == 3) {
+            junctionNode = node;
+        }
+    }
+    for (const auto& chain : result.chains) {
+        regionPairs.emplace(
+            chain.negativeSideRegionId, chain.positiveSideRegionId);
+        const std::size_t first = result.nodeReferences[
+            chain.firstNodeReference];
+        const std::size_t last = result.nodeReferences[
+            chain.firstNodeReference + chain.nodeReferenceCount - 1];
+        everyChainEndsAtJunction = everyChainEndsAtJunction
+            && chain.kind == SceneFluidFaceChainKind::Open
+            && chain.segmentReferenceCount == 1
+            && chain.nodeReferenceCount == 2
+            && (first == junctionNode || last == junctionNode);
+    }
+    check(junctionNode < pipeline.graph.nodes.size()
+              && result.openChainCount == 3
+              && result.closedChainCount == 0
+              && result.segmentReferences.size() == 3
+              && regionPairs == std::set<std::pair<StableId, StableId>>{
+                  {1, 2}, {2, 3}, {3, 1}}
+              && everyChainEndsAtJunction,
+          "scene face chains: one physical junction terminates three region-pair chains");
+    validateSceneFluidFaceChains(
+        result,
+        pipeline.surface.definition,
+        pipeline.state,
+        grid(),
+        pipeline.candidates,
+        pipeline.intersections,
+        pipeline.patches,
+        pipeline.ownership,
+        pipeline.crossings,
+        pipeline.topology,
+        pipeline.graph);
+
+    auto branchScene = threeRegionJunctionScene();
+    for (auto& triangle : branchScene.triangles) {
+        triangle.negativeSideRegionId = 1;
+        triangle.positiveSideRegionId = 2;
+    }
+    Pipeline branch(std::move(branchScene));
+    expectInvalid(
+        [&] { static_cast<void>(chains(branch)); },
+        "scene face chains: a degree-three branch within one region pair rejects");
+}
+
 void testLimitsAndTransactionalValidation() {
     Pipeline pipeline(openQuadScene());
     SceneFluidFaceChainLimits limits;
@@ -302,6 +393,7 @@ void testLimitsAndTransactionalValidation() {
 int main() {
     testDirectedOpenChain();
     testClosedLoop();
+    testThreeRegionJunction();
     testLimitsAndTransactionalValidation();
     if (failures != 0) {
         std::fprintf(stderr,

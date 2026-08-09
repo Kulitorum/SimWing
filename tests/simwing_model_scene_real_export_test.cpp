@@ -426,18 +426,11 @@ void testRealDesignCapture(const std::filesystem::path &input,
         maximum.z = std::max(maximum.z, vertex.positionMeters.z);
     }
     constexpr double fluidDomainPaddingMeters = 0.5;
-    const simwing::fsi::Vec3 fluidDomainSpan{
-        maximum.x - minimum.x + 2.0 * fluidDomainPaddingMeters,
-        maximum.y - minimum.y + 2.0 * fluidDomainPaddingMeters,
-        maximum.z - minimum.z + 2.0 * fluidDomainPaddingMeters};
-    // PeriodicCartesianGrid requires two cells per axis. Put each internal
-    // split below the wing so this regression isolates the complete region
-    // volume ledger from the separate junction-on-grid-face graph problem.
     const simwing::fsi::fluid::PeriodicCartesianGrid fluidGrid(
         {2, 2, 2},
-        {minimum.x - fluidDomainPaddingMeters - fluidDomainSpan.x,
-         minimum.y - fluidDomainPaddingMeters - fluidDomainSpan.y,
-         minimum.z - fluidDomainPaddingMeters - fluidDomainSpan.z},
+        {minimum.x - fluidDomainPaddingMeters,
+         minimum.y - fluidDomainPaddingMeters,
+         minimum.z - fluidDomainPaddingMeters},
         {maximum.x + fluidDomainPaddingMeters,
          maximum.y + fluidDomainPaddingMeters,
          maximum.z + fluidDomainPaddingMeters});
@@ -451,11 +444,13 @@ void testRealDesignCapture(const std::filesystem::path &input,
     check(fluidVolumes.regionVolumes.size() == result.scene.regions.size()
               && fluidVolumes.openingCapCount
                   == result.scene.openings.size()
+              && fluidEpoch.faceGraph.higherDegreeNodeCount > 0
+              && fluidEpoch.facePartitions.unresolvedActiveFaceCount > 0
               && fluidVolumes.maximumCellVolumeResidualCubicMeters
                   < 1.0e-10
               && fluidVolumes.maximumRegionVolumeResidualCubicMeters
                   < 1.0e-10,
-          "real multi-region wing closes its complete coarse-grid volume ledger");
+          "real multi-region wing retains junction faces and closes its coarse-grid volume ledger");
     const simwing::viewer::StructureFrameMapping mapping =
         simwing::viewer::makeStructureFrameMapping(
             result.scene, assembly, structure);
