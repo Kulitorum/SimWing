@@ -23,6 +23,8 @@ struct SceneFluidPressureSolveSettings {
     double relativeResidualTolerance = 1.0e-10;
     double absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-12;
     std::size_t maximumIterations = 4000;
+
+    bool operator==(const SceneFluidPressureSolveSettings&) const = default;
 };
 
 struct SceneFluidPressureSolveComponentDiagnostics {

@@ -655,8 +655,19 @@ removes just that admitted roundoff, and commits only after recomputing the true
 residual. The committed result shifts each existing gauge control volume to
 exact zero. Three disconnected manufactured regions and the connected
 face-aligned intake recover their prescribed pressure fields; incompatible and
-truncated solves preserve the warm start exactly. Physical RHS construction,
-off-face opening transmissibility, and velocity projection are still absent. A
+truncated solves preserve the warm start exactly. A subsequent bounded
+fixed-epoch adapter now reads one predicted spatial MAC flow per same-region
+link and the already accepted fluid-minus-cap-sweep flow per oriented
+face-aligned opening patch. Its integrated RHS is `-rho/dt` times each control
+volume's net outward predicted flow. After the existing transactional solve,
+every link receives `dt/rho * area/distance * (p_minus - p_plus)` and the result
+is published only when the independently accumulated corrected control-volume
+rates meet an explicit absolute/relative bound. The open analytic face keeps
+its `0.18 m²` aperture and `0.82 m²` complement as separate projected flows.
+Rejected solves retain the predicted diagnostic ledger but expose neither
+pressure nor corrected flow. This is deliberately a frozen accepted epoch:
+moving control-volume/GCL source terms, a unique corrected MAC reconstruction
+for partitioned faces, and off-face opening transmissibility remain absent. A
 canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded

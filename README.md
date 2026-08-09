@@ -558,7 +558,8 @@ exact oriented cross-region aperture area plus an unambiguous same-region link
 over the rest of that Cartesian face. The analytic intake therefore retains
 `0.18 m²` of opening and `0.82 m²` of Outside flow area instead of smearing the
 whole face into either one. Material/interface ambiguity remains unlinked, and
-physical pressure coefficients are still absent. For fully resolved geometry,
+physical pressure coefficients enter only in the downstream fixed-epoch
+projection. For fully resolved geometry,
 those links assemble into a bounded symmetric integrated graph Laplacian. Its exact
 constant nullspace, positive link energy, component conservation, and retained
 gauge owners are tested. Assembly requires one connected link graph per
@@ -570,8 +571,17 @@ manufactured integrated systems on both the nested closed regions and that open
 intake. It rejects incompatible component sources, removes only admitted
 roundoff, explicitly recomputes the final residual, sets every canonical gauge
 to exactly zero, and leaves warm pressure unchanged on failure. Off-face
-opening transmissibility, physical RHS construction, and velocity projection
-remain future work.
+opening transmissibility remains future work. A first physical fixed-epoch
+adapter now maps the predicted MAC field into one oriented volume flow per
+resolved link, substitutes accepted fluid-minus-cap-sweep flow on each exact
+face-aligned aperture patch, assembles `-rho/dt` times the integrated outward
+flow as the pressure RHS, and applies the solved pressure difference back to
+each link. It publishes pressure and corrected flow only after explicit
+control-volume continuity closes; non-convergence exposes diagnostics without
+a partial corrected state. The analytic intake retains separate aperture and
+complement flows rather than collapsing its cut face back to one MAC value.
+Moving control-volume/GCL source terms, corrected-MAC reconstruction across
+partitioned faces, and general moving-boundary projection remain future work.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own
