@@ -714,7 +714,14 @@ or an exception restores the exact Structure baseline and leaves accepted
 pressure ownership unchanged. The analytic open cell deforms less than its
 no-pressure control and repeats its next accepted macro-step bit-for-bit. This
 first feedback owner holds the predicted MAC field fixed across nonlinear
-iterations; it is not yet a momentum-evolving, topology-rebasing CFD step. A
+iterations; it is not yet a momentum-evolving, topology-rebasing CFD step. Its
+first composite in-memory checkpoint stores Structure and the accepted sparse
+pressure projection. Restore uses a temporary Structure, rebuilds the entire
+pressure epoch, resamples the validated projection, and reconstructs the
+conservative baseline load before committing either owner. Both initial and
+accepted checkpoints replay the exact next result in the original or an
+equivalent owner; foreign solver settings, corrupt pressure, and a missing
+noninitial projection leave the current accepted run untouched. A
 canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded

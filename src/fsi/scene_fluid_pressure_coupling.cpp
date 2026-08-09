@@ -120,6 +120,46 @@ bool finite(const SceneFluidPressureCouplingStepDiagnostics& diagnostics) {
         && std::isfinite(diagnostics.interfaceForceReferenceNewtons);
 }
 
+bool sameVector(const StructureVector3& first,
+                const StructureVector3& second) {
+    return first.x == second.x
+        && first.y == second.y
+        && first.z == second.z;
+}
+
+bool sameSettings(const SceneFluidPressureCouplingSettings& first,
+                  const SceneFluidPressureCouplingSettings& second) {
+    return first.structure.timeStepSeconds
+               == second.structure.timeStepSeconds
+        && first.structure.substeps == second.structure.substeps
+        && first.structure.constraintIterations
+               == second.structure.constraintIterations
+        && first.structure.cableConstraintSweepPairs
+               == second.structure.cableConstraintSweepPairs
+        && sameVector(
+            first.structure.gravityMetersPerSecondSquared,
+            second.structure.gravityMetersPerSecondSquared)
+        && first.structure.velocityDampingPerSecond
+               == second.structure.velocityDampingPerSecond
+        && sameVector(
+            first.structure.dampingReferenceVelocityMetersPerSecond,
+            second.structure.dampingReferenceVelocityMetersPerSecond)
+        && first.structure.workerThreads == second.structure.workerThreads
+        && first.relaxation == second.relaxation
+        && first.convergence == second.convergence
+        && first.pressureEpoch == second.pressureEpoch
+        && first.pressureProjection == second.pressureProjection
+        && sameVector(
+            first.transfer.momentReferenceMeters,
+            second.transfer.momentReferenceMeters)
+        && first.transfer.minimumTriangleAreaSquareMeters
+               == second.transfer.minimumTriangleAreaSquareMeters
+        && first.transfer.minimumQuadratureAreaSquareMeters
+               == second.transfer.minimumQuadratureAreaSquareMeters
+        && first.transfer.barycentricTolerance
+               == second.transfer.barycentricTolerance;
+}
+
 } // namespace
 
 SceneFluidPressureCouplingSettings::SceneFluidPressureCouplingSettings() {
@@ -198,6 +238,115 @@ SceneFluidPressureCoupling::acceptedPressureProjection() const noexcept {
 const SceneFluidPressureCouplingSettings&
 SceneFluidPressureCoupling::settings() const noexcept {
     return settings_;
+}
+
+SceneFluidPressureCouplingCheckpoint
+SceneFluidPressureCoupling::checkpoint(const Structure& target) const {
+    const auto currentState = captureSceneFluidSurfaceState(
+        surface_, structureMappings_, target);
+    if (currentState != acceptedSurfaceState_) {
+        throw std::invalid_argument(
+            "scene pressure coupling checkpoint Structure state is foreign");
+    }
+    SceneFluidPressureCouplingCheckpoint result;
+    result.surfaceDefinitionFingerprint = surface_.fingerprint;
+    result.couplingSurfaceFingerprint =
+        transfer_.couplingSurfaceFingerprint();
+    result.structureDefinitionFingerprint =
+        transfer_.targetDefinitionFingerprint();
+    result.cellCounts = grid_.cellCounts();
+    result.lowerMeters = grid_.lowerMeters();
+    result.upperMeters = grid_.upperMeters();
+    result.settings = settings_;
+    result.structure = target.checkpoint();
+    result.pressureProjection = acceptedPressureProjection_;
+    return result;
+}
+
+void SceneFluidPressureCoupling::restore(
+    Structure& target,
+    const SceneFluidPressureCouplingCheckpoint& checkpointValue) {
+    if (checkpointValue.version
+            != sceneFluidPressureCouplingCheckpointVersion
+        || checkpointValue.surfaceDefinitionFingerprint
+            != surface_.fingerprint
+        || checkpointValue.couplingSurfaceFingerprint
+            != transfer_.couplingSurfaceFingerprint()
+        || checkpointValue.structureDefinitionFingerprint
+            != transfer_.targetDefinitionFingerprint()
+        || checkpointValue.cellCounts != grid_.cellCounts()
+        || checkpointValue.lowerMeters != grid_.lowerMeters()
+        || checkpointValue.upperMeters != grid_.upperMeters()
+        || !sameSettings(checkpointValue.settings, settings_)
+        || target.definitionFingerprint()
+            != transfer_.targetDefinitionFingerprint()) {
+        throw std::invalid_argument(
+            "scene pressure coupling checkpoint identity is invalid");
+    }
+
+    Structure restoredStructure(target.definition());
+    restoredStructure.restore(checkpointValue.structure);
+    auto restoredState = captureSceneFluidSurfaceState(
+        surface_, structureMappings_, restoredStructure);
+    auto restoredEpoch = buildSceneFluidPressureEpoch(
+        surface_, restoredState, grid_, transfer_, connectivity_,
+        settings_.pressureEpoch, limits_.pressureEpoch);
+    std::vector<double> restoredPressure(
+        restoredEpoch.pressureOperator.rows.size(), 0.0);
+    std::optional<ConservativeTransferResult> restoredTransfer;
+    std::optional<SceneFluidPressureProjection> restoredProjection;
+    if (checkpointValue.pressureProjection) {
+        validateSceneFluidPressureProjectionIntegrity(
+            *checkpointValue.pressureProjection);
+        if (checkpointValue.pressureProjection->acceptedStepCount
+                != restoredState.acceptedStepCount
+            || checkpointValue.pressureProjection->simulationTimeSeconds
+                != restoredState.simulationTimeSeconds
+            || checkpointValue.pressureProjection
+                   ->pressureControlVolumeFingerprint
+                != restoredEpoch.pressureControlVolumes.fingerprint
+            || checkpointValue.pressureProjection
+                   ->pressureFaceLinkFingerprint
+                != restoredEpoch.pressureFaceLinks.fingerprint
+            || checkpointValue.pressureProjection
+                   ->pressureOperatorFingerprint
+                != restoredEpoch.pressureOperator.fingerprint) {
+            throw std::invalid_argument(
+                "scene pressure coupling checkpoint projection is foreign");
+        }
+        auto samples = sampleSceneFluidProjectedPressure(
+            restoredEpoch.gridEpoch.quadrature,
+            restoredEpoch.pressureControlVolumes,
+            *checkpointValue.pressureProjection,
+            limits_.pressureSampling);
+        restoredTransfer.emplace(
+            evaluateSceneFluidProjectedPressureQuadrature(
+                surface_, restoredState, transfer_,
+                restoredEpoch.gridEpoch.quadrature, samples,
+                settings_.transfer));
+        restoredPressure =
+            checkpointValue.pressureProjection->pressurePascals;
+        restoredProjection = checkpointValue.pressureProjection;
+    } else {
+        if (restoredState.acceptedStepCount != 0
+            || restoredState.simulationTimeSeconds != 0.0) {
+            throw std::invalid_argument(
+                "scene pressure coupling noninitial checkpoint lacks pressure");
+        }
+        const auto pressures = zeroPressures(
+            restoredEpoch.gridEpoch.quadrature);
+        restoredTransfer.emplace(evaluateSceneFluidPressureQuadrature(
+            surface_, restoredState, transfer_,
+            restoredEpoch.gridEpoch.quadrature, pressures,
+            settings_.transfer));
+    }
+
+    target.restore(checkpointValue.structure);
+    acceptedSurfaceState_ = std::move(restoredState);
+    acceptedPressureEpoch_ = std::move(restoredEpoch);
+    acceptedPressurePascals_ = std::move(restoredPressure);
+    acceptedPressureTransfer_ = std::move(restoredTransfer);
+    acceptedPressureProjection_ = std::move(restoredProjection);
 }
 
 SceneFluidPressureCouplingStepDiagnostics

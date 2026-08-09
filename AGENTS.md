@@ -395,6 +395,10 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   the moving pressure epoch, and commits only when displacement, velocity, and
   applied-versus-solved load residuals converge. Exhaustion and all failures
   restore the exact structural baseline and preserve accepted pressure state.
+  Its in-memory checkpoint composes Structure with the accepted sparse
+  projection; restore rebuilds the epoch and conservative baseline load before
+  committing, and exact-next-step replay is required from initial and accepted
+  checkpoints in both the original and an equivalent owner.
   Its predicted MAC field is fixed during the iteration; it does not yet own
   momentum evolution or topology rebase/remap.
 - `simwing_fluid`: Qt-free periodic staggered-grid field operators and

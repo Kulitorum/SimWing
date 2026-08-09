@@ -12,6 +12,8 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t sceneFluidPressureCouplingVersion = 1;
+inline constexpr std::uint32_t
+    sceneFluidPressureCouplingCheckpointVersion = 1;
 
 struct SceneFluidPressureCouplingSettings {
     SceneFluidPressureCouplingSettings();
@@ -23,8 +25,6 @@ struct SceneFluidPressureCouplingSettings {
     SceneFluidPressureProjectionSettings pressureProjection;
     ConservativeTransferSettings transfer;
 
-    bool operator==(
-        const SceneFluidPressureCouplingSettings&) const = default;
 };
 
 struct SceneFluidPressureCouplingLimits {
@@ -38,7 +38,6 @@ struct SceneFluidPressureCouplingLimits {
     std::size_t maximumInterfaceBytes =
         1024ULL * 1024ULL * 1024ULL;
 
-    bool operator==(const SceneFluidPressureCouplingLimits&) const = default;
 };
 
 struct SceneFluidPressureCouplingStepDiagnostics {
@@ -57,6 +56,19 @@ struct SceneFluidPressureCouplingStepDiagnostics {
 
     bool operator==(
         const SceneFluidPressureCouplingStepDiagnostics&) const = default;
+};
+
+struct SceneFluidPressureCouplingCheckpoint {
+    std::uint32_t version = sceneFluidPressureCouplingCheckpointVersion;
+    std::uint64_t surfaceDefinitionFingerprint = 0;
+    std::uint64_t couplingSurfaceFingerprint = 0;
+    std::uint64_t structureDefinitionFingerprint = 0;
+    fluid::GridCellCounts cellCounts;
+    fluid::Vector3 lowerMeters;
+    fluid::Vector3 upperMeters;
+    SceneFluidPressureCouplingSettings settings;
+    StructureCheckpoint structure;
+    std::optional<SceneFluidPressureProjection> pressureProjection;
 };
 
 // First topology-stable strong feedback owner for the scene-v2 pressure path.
@@ -102,6 +114,11 @@ public:
     acceptedPressureProjection() const noexcept;
     [[nodiscard]] const SceneFluidPressureCouplingSettings& settings()
         const noexcept;
+    [[nodiscard]] SceneFluidPressureCouplingCheckpoint checkpoint(
+        const Structure& target) const;
+    void restore(
+        Structure& target,
+        const SceneFluidPressureCouplingCheckpoint& checkpoint);
 
     [[nodiscard]] SceneFluidPressureCouplingStepDiagnostics advance(
         Structure& target,

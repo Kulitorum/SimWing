@@ -366,6 +366,113 @@ void testCouplingInterfaceLimits() {
           "scene pressure coupling bounds its nonlinear interface storage");
 }
 
+void testCheckpointReplayAndTransactionalRejection() {
+    Fixture fixture;
+    const auto settings = couplingSettings();
+    const fluid::PeriodicCartesianGrid grid(
+        {4, 4, 4}, {}, {4.0, 4.0, 4.0});
+    SceneFluidPressureCoupling coupling(
+        fixture.surface.definition, fixture.assembly.mappings,
+        fixture.structure, grid, settings);
+    fluid::MacVelocityField velocity(grid);
+
+    const auto initial = coupling.checkpoint(fixture.structure);
+    const auto expectedFirst = coupling.advance(fixture.structure, velocity);
+    const auto expectedFirstStructure = fixture.structure.checkpoint();
+    coupling.restore(fixture.structure, initial);
+    check(fixture.structure.acceptedStepCount() == 0
+              && coupling.acceptedPressureProjection() == nullptr,
+          "initial pressure-coupling checkpoint restores the zero-pressure baseline");
+    const auto replayFirst = coupling.advance(fixture.structure, velocity);
+    check(replayFirst == expectedFirst
+              && samePublicCheckpoint(
+                  fixture.structure.checkpoint(), expectedFirstStructure),
+          "initial pressure-coupling checkpoint reproduces the exact first macro-step");
+
+    const auto accepted = coupling.checkpoint(fixture.structure);
+    const auto expectedNext = coupling.advance(fixture.structure, velocity);
+    const auto expectedNextStructure = fixture.structure.checkpoint();
+    coupling.restore(fixture.structure, accepted);
+    const auto replayNext = coupling.advance(fixture.structure, velocity);
+    check(replayNext == expectedNext
+              && samePublicCheckpoint(
+                  fixture.structure.checkpoint(), expectedNextStructure),
+          "accepted pressure-coupling checkpoint reproduces the exact next macro-step");
+
+    Fixture equivalentFixture;
+    SceneFluidPressureCoupling equivalent(
+        equivalentFixture.surface.definition,
+        equivalentFixture.assembly.mappings,
+        equivalentFixture.structure, grid, settings);
+    equivalent.restore(equivalentFixture.structure, accepted);
+    const auto equivalentNext = equivalent.advance(
+        equivalentFixture.structure, velocity);
+    check(equivalentNext == expectedNext
+              && samePublicCheckpoint(
+                  equivalentFixture.structure.checkpoint(),
+                  expectedNextStructure),
+          "an equivalent owner restores accepted pressure state and replays exactly");
+
+    const auto preservedStructure = fixture.structure.checkpoint();
+    const std::uint64_t preservedEpoch =
+        coupling.acceptedPressureEpoch().fingerprint;
+    const std::uint64_t preservedProjection =
+        coupling.acceptedPressureProjection()->fingerprint;
+    const auto rejectedPreservesState = [&] {
+        return samePublicCheckpoint(
+                   fixture.structure.checkpoint(), preservedStructure)
+            && coupling.acceptedPressureEpoch().fingerprint
+                == preservedEpoch
+            && coupling.acceptedPressureProjection() != nullptr
+            && coupling.acceptedPressureProjection()->fingerprint
+                == preservedProjection;
+    };
+
+    auto corrupt = accepted;
+    ++corrupt.version;
+    bool rejected = false;
+    try {
+        coupling.restore(fixture.structure, corrupt);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected && rejectedPreservesState(),
+          "checkpoint version rejection preserves current coupled state");
+
+    corrupt = accepted;
+    corrupt.settings.structure.gravityMetersPerSecondSquared.x -= 1.0;
+    rejected = false;
+    try {
+        coupling.restore(fixture.structure, corrupt);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected && rejectedPreservesState(),
+          "foreign solver settings reject without changing coupled state");
+
+    corrupt = accepted;
+    corrupt.pressureProjection->pressurePascals.front() += 1.0;
+    rejected = false;
+    try {
+        coupling.restore(fixture.structure, corrupt);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected && rejectedPreservesState(),
+          "corrupt accepted pressure payload rejects transactionally");
+
+    corrupt = accepted;
+    corrupt.pressureProjection.reset();
+    rejected = false;
+    try {
+        coupling.restore(fixture.structure, corrupt);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected && rejectedPreservesState(),
+          "noninitial checkpoint cannot silently discard accepted pressure");
+}
+
 } // namespace
 
 int main() {
@@ -373,6 +480,7 @@ int main() {
         testStrongPressureFeedbackConvergesDeterministically();
         testExhaustionAndProjectionFailureRollback();
         testCouplingInterfaceLimits();
+        testCheckpointReplayAndTransactionalRejection();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
         return 1;

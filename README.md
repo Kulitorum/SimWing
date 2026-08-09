@@ -613,6 +613,12 @@ the imposed expansion, continues deterministically into the next macro-step,
 and restores both Structure and pressure ownership on iteration exhaustion or
 projection failure. The MAC predictor is still held fixed during this first
 feedback loop; momentum evolution and topology rebasing remain later work.
+Its in-memory composite checkpoint retains Structure plus the accepted sparse
+pressure projection; restore rebuilds and validates the complete pressure
+epoch and conservative load before committing either owner. Initial and
+post-step checkpoints reproduce the exact next coupled result in the same or
+an equivalent owner, while foreign settings and corrupt or missing accepted
+pressure reject transactionally.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own
