@@ -374,10 +374,11 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   transmissibility.
 - `scene_fluid_pressure_volume_rate.{h,cpp}` matches two consecutive accepted
   pressure-volume epochs by stable cell/region identity and publishes exact
-  per-control-volume, component, and global geometry-volume rates. Every old
-  row must remain; a newly positive row is explicitly marked and receives an
-  exact zero-volume previous endpoint. Disappearance still rejects until a
-  conservative retirement/remap owner exists.
+  per-control-volume, component, and global geometry-volume rates. A newly
+  positive row is explicitly marked and receives an exact zero-volume previous
+  endpoint. The topology-aware overload retires a disappeared row's complete
+  previous volume to its unique retained same-region neighbour; ambiguous or
+  donorless retirement rejects.
 - `scene_fluid_pressure_sampling.{h,cpp}` resolves both authored sides of each
   quadrature-v2 patch to exact cell/region pressure unknowns from an accepted
   projection. Both controls must share one pressure component before their
@@ -402,10 +403,11 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   committing, and exact-next-step replay is required from initial and accepted
   checkpoints in both the original and an equivalent owner.
   The bounded first crossing subset admits current pressure controls that
-  appear while every accepted row remains. It rebases the pressure warm start
-  and, when region transport is active, consumes the explicit one-ring region
-  rebase below before wall exchange. Disappearance and unsupported donor
-  topology still roll back the entire macro step.
+  appear through current one-ring donors and accepted controls that disappear
+  into one unique previous one-ring recipient. It rebases the pressure warm
+  start and, when region transport is active, consumes the explicit region
+  rebase below before wall exchange. Ambiguous or unsupported donor topology
+  still rolls back the entire macro step.
   Its predicted MAC field is fixed during each nonlinear iteration. Accepted
   corrected link flows can be conservatively area-collapsed back to one
   absolute bulk MAC velocity per Cartesian face, including oriented intake-cap
@@ -439,15 +441,17 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   transport owner still does not perform topology rebase or the next pressure
   projection.
 - `scene_fluid_region_rebase.{h,cpp}` owns the bounded first current-topology
-  rebase. Every old stable cell/region control must remain. Retained controls
-  keep transported velocity; each appeared control receives an area-weighted
-  velocity only from directly linked retained controls in the same authored
-  region, then recomputes momentum from current volume with an explicit
-  geometric-change ledger. Pressure warm starts use the identical donor rule.
-  Disappearance, cross-material donation, an appeared cluster without a
-  retained one-ring donor, corruption, and configured limits reject before
-  publication. This is a first-order geometric rebase, not a general
-  conservative swept-volume remap.
+  rebase. Retained controls keep transported velocity; each appeared control
+  receives an area-weighted velocity only from directly linked retained
+  controls in the same authored region. Each disappeared control transfers its
+  complete transported volume
+  and momentum to one unique directly linked retained same-region control from
+  the previous topology. The mapped source ledger closes before current-volume
+  geometric correction. Pressure warm starts retain stable rows, seed appeared
+  rows, and drop retired values. Cross-material donation, missing/ambiguous
+  one-ring ownership, corruption, and configured limits reject before
+  publication. This is a bounded conservative state rebase, not a general
+  swept-volume remap.
 - `scene_fluid_region_wall.{h,cpp}` remaps one immutable accepted transport to
   each current strong-coupling geometry, or consumes the explicit current-
   topology region rebase, and applies two-sided tangential

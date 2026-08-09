@@ -10,7 +10,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidRegionRebaseVersion = 1;
+inline constexpr std::uint32_t sceneFluidRegionRebaseVersion = 2;
 
 struct SceneFluidRegionRebaseLimits {
     std::size_t maximumControlVolumes = 50'000'000;
@@ -30,6 +30,10 @@ struct SceneFluidRegionRebaseControlVolume {
         std::numeric_limits<std::size_t>::max();
     std::size_t donorControlVolumeCount = 0;
     double donorLinkAreaSquareMeters = 0.0;
+    std::size_t retiredSourceControlVolumeCount = 0;
+    double retiredSourceLinkAreaSquareMeters = 0.0;
+    double mappedSourceVolumeCubicMeters = 0.0;
+    fluid::Vector3 mappedSourceMomentumKilogramMetersPerSecond;
     double volumeCubicMeters = 0.0;
     fluid::Vector3 velocityMetersPerSecond;
     fluid::Vector3 momentumKilogramMetersPerSecond;
@@ -43,8 +47,16 @@ struct SceneFluidRegionRebaseDiagnostics {
     std::size_t currentControlVolumeCount = 0;
     std::size_t retainedControlVolumeCount = 0;
     std::size_t appearedControlVolumeCount = 0;
+    std::size_t disappearedControlVolumeCount = 0;
     std::size_t maximumDonorControlVolumeCount = 0;
+    std::size_t maximumRetirementRecipientCount = 0;
+    double sourceVolumeCubicMeters = 0.0;
+    double mappedSourceVolumeCubicMeters = 0.0;
+    double sourceVolumeMappingResidualCubicMeters = 0.0;
     fluid::Vector3 sourceMomentumKilogramMetersPerSecond;
+    fluid::Vector3 mappedSourceMomentumKilogramMetersPerSecond;
+    fluid::Vector3 sourceMomentumMappingResidualKilogramMetersPerSecond;
+    double sourceMomentumMappingResidualNormKilogramMetersPerSecond = 0.0;
     fluid::Vector3 rebasedMomentumKilogramMetersPerSecond;
     fluid::Vector3 geometricMomentumChangeKilogramMetersPerSecond;
     double sourceKineticEnergyJoules = 0.0;
@@ -59,18 +71,19 @@ struct SceneFluidRegionRebaseDiagnostics {
 };
 
 // Transactionally maps one accepted transported region state onto a current
-// pressure topology in which old controls are retained and one or more new
-// positive controls may appear. Retained rows keep their transported velocity.
-// Each appeared row receives the area-weighted velocity of directly linked,
-// retained controls in the same authored region; no cross-material or opening
-// donor is admitted. Momentum is then recomputed from current physical volume,
-// matching the topology-stable geometric remap. A disappeared old row or an
-// appeared row without a retained one-ring donor rejects before publication.
+// pressure topology. Retained rows preserve their source state. Each appeared
+// row receives the area-weighted velocity of directly linked retained controls
+// in the same authored region on the current topology. Each disappeared source
+// transfers its complete volume and momentum to one unique directly linked
+// retained control in the same authored region on the previous topology. The
+// mapped source ledger closes before current-volume geometric correction. No
+// cross-material/opening donor or donorless one-ring event is admitted.
 struct SceneFluidRegionRebase {
     std::uint32_t version = sceneFluidRegionRebaseVersion;
     std::uint64_t fingerprint = 0;
     std::uint64_t sourceTransportFingerprint = 0;
     std::uint64_t previousPressureControlVolumeFingerprint = 0;
+    std::uint64_t previousPressureFaceLinkFingerprint = 0;
     std::uint64_t currentPressureControlVolumeFingerprint = 0;
     std::uint64_t currentPressureFaceLinkFingerprint = 0;
     std::uint64_t surfaceDefinitionFingerprint = 0;
@@ -93,6 +106,7 @@ struct SceneFluidRegionRebase {
 [[nodiscard]] SceneFluidRegionRebase rebaseSceneFluidRegionTransport(
     const SceneFluidRegionTransport& transport,
     const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
+    const SceneFluidPressureFaceLinkSet& previousFaceLinks,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
     const SceneFluidPressureFaceLinkSet& currentFaceLinks,
     const SceneFluidRegionRebaseLimits& limits = {});
@@ -104,11 +118,13 @@ void validateSceneFluidRegionRebase(
     const SceneFluidRegionRebase& rebase,
     const SceneFluidRegionTransport& transport,
     const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
+    const SceneFluidPressureFaceLinkSet& previousFaceLinks,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
     const SceneFluidPressureFaceLinkSet& currentFaceLinks);
 
-// Maps an accepted pressure warm start onto the same supported retained-plus-
-// appearance subset. Retained stable IDs keep their exact pressure; an
+// Maps an accepted pressure warm start onto the supported topology subset.
+// Retained stable IDs keep their exact pressure; a disappeared value retires
+// with its row, while an
 // appeared control receives the area-weighted pressure of its retained,
 // same-region one-ring neighbours. This is solver initialization only and
 // does not publish or alter an accepted pressure state.

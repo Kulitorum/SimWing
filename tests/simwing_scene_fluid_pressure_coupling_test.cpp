@@ -473,6 +473,34 @@ void testTransportedTopologyAppearance() {
                      .pressureControlVolumes.controlVolumes.size() == 66
               && coupling.acceptedPressureProjection() != nullptr,
           "transported coupling accepts a one-row appearance through region rebase and wall exchange");
+    if (!second.accepted || coupling.acceptedPressureProjection() == nullptr) {
+        return;
+    }
+    const auto& crossingEpoch = coupling.acceptedPressureEpoch();
+    const auto crossingMomentum = reconstructSceneFluidRegionMomentumState(
+        grid, crossingEpoch.pressureControlVolumes,
+        crossingEpoch.pressureFaceLinks, crossingEpoch.openingPatches,
+        *coupling.acceptedPressureProjection(), velocity);
+    const auto crossingTransport = advanceSceneFluidRegionMomentum(
+        crossingMomentum, crossingEpoch.pressureFaceLinks,
+        *coupling.acceptedPressureProjection(), transportSettings);
+    check(crossingTransport.diagnostics.accepted,
+          "transported retirement fixture advances its crossing momentum");
+    fixture.structure.addExternalForce(
+        apex, {200.0 * apexMass, 0.0, 0.0});
+    const auto third = coupling.advance(
+        fixture.structure, velocity, crossingTransport);
+    check(third.accepted
+              && third.usesRegionRebase
+              && third.regionRebase.appearedControlVolumeCount == 0
+              && third.regionRebase.disappearedControlVolumeCount == 1
+              && third.regionRebase
+                     .sourceMomentumMappingResidualNormKilogramMetersPerSecond
+                  < 1.0e-12
+              && third.usesRegionWall
+              && coupling.acceptedPressureEpoch()
+                     .pressureControlVolumes.controlVolumes.size() == 65,
+          "transported coupling conservatively retires a disappearing row through wall exchange and pressure projection");
 }
 
 void testCheckpointReplayAndTransactionalRejection() {

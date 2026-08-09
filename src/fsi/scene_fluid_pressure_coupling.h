@@ -133,9 +133,10 @@ struct SceneFluidPressureMacVelocityCollapse {
 // region-transport overload likewise holds one accepted transport fixed,
 // remaps it to every current geometry iterate, exchanges tangential momentum
 // with the material wall, and projects the adjusted link flow. Its bounded
-// first crossing subset admits appeared controls only while every old control
-// remains, using same-region one-ring donors for velocity and pressure warm
-// state. This is not a general swept-volume topology remap.
+// first crossing subset admits appeared controls using current same-region
+// one-ring donors, and retires a disappeared control only to one unique
+// previous same-region neighbour. This is not a general swept-volume topology
+// remap.
 class SceneFluidPressureCoupling final {
 public:
     SceneFluidPressureCoupling(

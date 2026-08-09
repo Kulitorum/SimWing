@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scene_fluid_pressure_control_volume.h"
+#include "scene_fluid_pressure_face_link.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -8,7 +8,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureVolumeRateVersion = 2;
+inline constexpr std::uint32_t sceneFluidPressureVolumeRateVersion = 3;
 
 struct SceneFluidPressureVolumeRateLimits {
     std::size_t maximumControlVolumes = 50'000'000;
@@ -24,6 +24,7 @@ struct SceneFluidPressureControlVolumeRate {
     StableId regionId = invalidStableId;
     std::size_t componentIndex = 0;
     bool appearedThisEpoch = false;
+    double retiredPreviousVolumeCubicMeters = 0.0;
     double previousVolumeCubicMeters = 0.0;
     double currentVolumeCubicMeters = 0.0;
     double volumeChangeCubicMeters = 0.0;
@@ -48,11 +49,10 @@ struct SceneFluidPressureComponentVolumeRate {
 // Consecutive accepted sparse pressure volumes are reduced to one exact
 // geometry-volume rate per current cell/region unknown. Retained rows preserve
 // their cell-major stable IDs. A newly positive row receives an exact zero
-// previous volume and is marked explicitly, which is sufficient for the
-// current pressure equation when no old row disappears. Disappearance remains
-// an unsupported topology rebase and rejects until a conservative remap can
-// retire its momentum and pressure state. This immutable product supplies only
-// dV/dt; it does not sample velocity, construct a pressure RHS, or modify
+// previous volume and is marked explicitly. The topology-rebase overload can
+// additionally assign a disappeared row's previous volume to one unique
+// retained same-region one-ring recipient. This immutable product supplies
+// only dV/dt; it does not sample velocity, construct a pressure RHS, or modify
 // either endpoint.
 struct SceneFluidPressureVolumeRateSet {
     std::uint32_t version = sceneFluidPressureVolumeRateVersion;
@@ -76,6 +76,8 @@ struct SceneFluidPressureVolumeRateSet {
     std::size_t previousControlVolumeCount = 0;
     std::size_t retainedControlVolumeCount = 0;
     std::size_t appearedControlVolumeCount = 0;
+    std::size_t disappearedControlVolumeCount = 0;
+    double retiredPreviousVolumeCubicMeters = 0.0;
     double maximumAbsoluteControlVolumeChangeCubicMeters = 0.0;
     double maximumAbsoluteControlVolumeRateCubicMetersPerSecond = 0.0;
     double maximumAbsoluteComponentVolumeRateCubicMetersPerSecond = 0.0;
@@ -95,6 +97,19 @@ buildSceneFluidPressureVolumeRates(
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
     const SceneFluidPressureVolumeRateLimits& limits = {});
 
+// Topology-rebase overload. Previous pressure controls and face links provide
+// the exact previous one-ring needed to retire a disappeared row onto retained
+// controls in the same authored region. Appearance uses the zero-volume rule
+// above. Every retired previous volume is assigned once before rates publish.
+[[nodiscard]] SceneFluidPressureVolumeRateSet
+buildSceneFluidPressureVolumeRates(
+    const SceneFluidCellVolumeSet& previousVolumes,
+    const SceneFluidCellVolumeSet& currentVolumes,
+    const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
+    const SceneFluidPressureFaceLinkSet& previousFaceLinks,
+    const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
+    const SceneFluidPressureVolumeRateLimits& limits = {});
+
 void validateSceneFluidPressureVolumeRateIntegrity(
     const SceneFluidPressureVolumeRateSet& rates);
 
@@ -102,6 +117,14 @@ void validateSceneFluidPressureVolumeRates(
     const SceneFluidPressureVolumeRateSet& rates,
     const SceneFluidCellVolumeSet& previousVolumes,
     const SceneFluidCellVolumeSet& currentVolumes,
+    const SceneFluidPressureControlVolumeSet& currentPressureVolumes);
+
+void validateSceneFluidPressureVolumeRates(
+    const SceneFluidPressureVolumeRateSet& rates,
+    const SceneFluidCellVolumeSet& previousVolumes,
+    const SceneFluidCellVolumeSet& currentVolumes,
+    const SceneFluidPressureControlVolumeSet& previousPressureVolumes,
+    const SceneFluidPressureFaceLinkSet& previousFaceLinks,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes);
 
 } // namespace simwing::fsi

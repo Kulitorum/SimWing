@@ -581,10 +581,12 @@ void testAppearedControlRegionRebase() {
         fixture.connectivity);
     const auto rebase = rebaseSceneFluidRegionTransport(
         transport, previousEpoch.pressureControlVolumes,
+        previousEpoch.pressureFaceLinks,
         currentEpoch.pressureControlVolumes,
         currentEpoch.pressureFaceLinks);
     const auto repeated = rebaseSceneFluidRegionTransport(
         transport, previousEpoch.pressureControlVolumes,
+        previousEpoch.pressureFaceLinks,
         currentEpoch.pressureControlVolumes,
         currentEpoch.pressureFaceLinks);
     check(rebase == repeated
@@ -626,6 +628,7 @@ void testAppearedControlRegionRebase() {
           "region rebase preserves every retained stable-ID velocity across index insertion");
     validateSceneFluidRegionRebase(
         rebase, transport, previousEpoch.pressureControlVolumes,
+        previousEpoch.pressureFaceLinks,
         currentEpoch.pressureControlVolumes,
         currentEpoch.pressureFaceLinks);
     std::vector<double> previousWarm(
@@ -686,6 +689,7 @@ void testAppearedControlRegionRebase() {
     expectInvalid(
         [&] { static_cast<void>(rebaseSceneFluidRegionTransport(
             transport, previousEpoch.pressureControlVolumes,
+            previousEpoch.pressureFaceLinks,
             currentEpoch.pressureControlVolumes, corruptLinks)); },
         "region rebase rejects nested face-link corruption");
     SceneFluidRegionRebaseLimits limits;
@@ -693,9 +697,143 @@ void testAppearedControlRegionRebase() {
     expectLimited(
         [&] { static_cast<void>(rebaseSceneFluidRegionTransport(
             transport, previousEpoch.pressureControlVolumes,
+            previousEpoch.pressureFaceLinks,
             currentEpoch.pressureControlVolumes,
             currentEpoch.pressureFaceLinks, limits)); },
         "region rebase bounds its current control count");
+
+    const auto crossingFlux = evaluateSceneFluidOpeningFlux(
+        fixture.surface.definition, currentState,
+        currentEpoch.openingCaps, currentEpoch.openingQuadrature,
+        currentEpoch.openingPatches, grid(), velocity);
+    std::vector<double> crossingWarm(
+        currentEpoch.pressureOperator.rows.size(), 0.0);
+    const auto crossingProjection = projectSceneFluidPressureLinkFlows(
+        fixture.surface.definition, currentState, grid(), fixture.transfer,
+        currentEpoch.gridEpoch, currentEpoch.openingCaps,
+        currentEpoch.openingQuadrature, currentEpoch.openingPatches,
+        crossingFlux, velocity, currentEpoch.cellVolumes,
+        fixture.connectivity, currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentEpoch.pressureOperator,
+        crossingWarm, projectionSettings);
+    check(crossingProjection.diagnostics.accepted,
+          "region-retirement source pressure projection is accepted");
+    const auto crossingMomentum = reconstructSceneFluidRegionMomentumState(
+        grid(), currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentEpoch.openingPatches,
+        crossingProjection, velocity);
+    const auto crossingTransport = advanceSceneFluidRegionMomentum(
+        crossingMomentum, currentEpoch.pressureFaceLinks,
+        crossingProjection, transportSettings);
+    check(crossingTransport.diagnostics.accepted,
+          "region-retirement source momentum transport is accepted");
+    advanceApex(fixture, 16.0);
+    const auto retreatState = captureSceneFluidSurfaceState(
+        fixture.surface.definition,
+        fixture.structureAssembly.mappings,
+        fixture.structure);
+    const auto retreatEpoch = buildSceneFluidPressureEpoch(
+        fixture.surface.definition, retreatState, grid(), fixture.transfer,
+        fixture.connectivity);
+    const auto retirementRates = buildSceneFluidPressureVolumeRates(
+        currentEpoch.cellVolumes, retreatEpoch.cellVolumes,
+        currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks,
+        retreatEpoch.pressureControlVolumes);
+    check(retirementRates.previousControlVolumeCount == 66
+              && retirementRates.retainedControlVolumeCount == 65
+              && retirementRates.appearedControlVolumeCount == 0
+              && retirementRates.disappearedControlVolumeCount == 1
+              && retirementRates.retiredPreviousVolumeCubicMeters > 0.0
+              && std::abs(retirementRates.globalVolumeChangeCubicMeters)
+                  < 3.0e-12,
+          "pressure-volume rates conservatively retire one disappeared row");
+    const auto retirementRateRecipient = std::ranges::find_if(
+        retirementRates.controlVolumes,
+        [](const auto& control) {
+            return control.cellIndex == 21 && control.regionId == 2;
+        });
+    check(retirementRateRecipient
+                  != retirementRates.controlVolumes.end()
+              && retirementRateRecipient
+                     ->retiredPreviousVolumeCubicMeters > 0.0
+              && retirementRateRecipient->previousVolumeCubicMeters
+                  > retirementRateRecipient
+                        ->retiredPreviousVolumeCubicMeters,
+          "retained pressure row owns the retired previous volume endpoint");
+    validateSceneFluidPressureVolumeRates(
+        retirementRates, currentEpoch.cellVolumes,
+        retreatEpoch.cellVolumes,
+        currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks,
+        retreatEpoch.pressureControlVolumes);
+    const auto retirement = rebaseSceneFluidRegionTransport(
+        crossingTransport, currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks,
+        retreatEpoch.pressureControlVolumes,
+        retreatEpoch.pressureFaceLinks);
+    check(retirement.diagnostics.previousControlVolumeCount == 66
+              && retirement.diagnostics.currentControlVolumeCount == 65
+              && retirement.diagnostics.retainedControlVolumeCount == 65
+              && retirement.diagnostics.appearedControlVolumeCount == 0
+              && retirement.diagnostics.disappearedControlVolumeCount == 1
+              && retirement.diagnostics
+                     .maximumRetirementRecipientCount > 0
+              && std::abs(retirement.diagnostics
+                     .sourceVolumeMappingResidualCubicMeters) < 1.0e-12
+              && retirement.diagnostics
+                     .sourceMomentumMappingResidualNormKilogramMetersPerSecond
+                  < 1.0e-12,
+          "region transport conservatively retires one disappeared control onto retained same-region recipients");
+    const auto recipient = std::ranges::find_if(
+        retirement.controlVolumes,
+        [](const auto& control) {
+            return control.cellIndex == 21 && control.regionId == 2;
+        });
+    check(recipient != retirement.controlVolumes.end()
+              && recipient->retiredSourceControlVolumeCount == 1
+              && recipient->retiredSourceLinkAreaSquareMeters > 0.0
+              && recipient->mappedSourceVolumeCubicMeters
+                  > crossingTransport.controlVolumes[
+                        recipient->sourceControlVolumeIndex]
+                        .volumeCubicMeters,
+          "retained same-region neighbour owns the retired source volume and momentum");
+    validateSceneFluidRegionRebase(
+        retirement, crossingTransport,
+        currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks,
+        retreatEpoch.pressureControlVolumes,
+        retreatEpoch.pressureFaceLinks);
+    std::vector<double> retirementWarm(
+        currentEpoch.pressureControlVolumes.controlVolumes.size(), 0.0);
+    const auto retainedPressure = std::ranges::find_if(
+        currentEpoch.pressureControlVolumes.controlVolumes,
+        [](const auto& control) {
+            return control.cellIndex == 21 && control.regionId == 2;
+        });
+    const auto disappearedPressure = std::ranges::find_if(
+        currentEpoch.pressureControlVolumes.controlVolumes,
+        [](const auto& control) {
+            return control.cellIndex == 20 && control.regionId == 2;
+        });
+    check(retainedPressure
+                  != currentEpoch.pressureControlVolumes.controlVolumes.end()
+              && disappearedPressure
+                  != currentEpoch.pressureControlVolumes.controlVolumes.end(),
+          "pressure-retirement fixture finds retained and disappeared rows");
+    if (retainedPressure
+            != currentEpoch.pressureControlVolumes.controlVolumes.end()
+        && disappearedPressure
+            != currentEpoch.pressureControlVolumes.controlVolumes.end()) {
+        retirementWarm[retainedPressure->controlVolumeIndex] = 17.0;
+        retirementWarm[disappearedPressure->controlVolumeIndex] = 99.0;
+        const auto retiredWarm = rebaseSceneFluidPressureWarmStart(
+            currentEpoch.pressureControlVolumes,
+            retreatEpoch.pressureControlVolumes,
+            retreatEpoch.pressureFaceLinks, retirementWarm);
+        check(retiredWarm[recipient->controlVolumeIndex] == 17.0,
+              "pressure warm-start retirement preserves the retained row and drops the retired value");
+    }
 }
 
 void testIndependentGaugeSamplingRejection() {

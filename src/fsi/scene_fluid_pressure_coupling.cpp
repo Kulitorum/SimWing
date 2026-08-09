@@ -753,6 +753,8 @@ SceneFluidPressureCoupling::advanceImpl(
             const auto rates = buildSceneFluidPressureVolumeRates(
                 acceptedPressureEpoch_.cellVolumes,
                 currentEpoch.cellVolumes,
+                acceptedPressureEpoch_.pressureControlVolumes,
+                acceptedPressureEpoch_.pressureFaceLinks,
                 currentEpoch.pressureControlVolumes,
                 limits_.volumeRates);
             const auto openingFlux = evaluateSceneFluidOpeningFlux(
@@ -784,6 +786,7 @@ SceneFluidPressureCoupling::advanceImpl(
                     regionRebase.emplace(rebaseSceneFluidRegionTransport(
                         *transportedRegionMomentum,
                         acceptedPressureEpoch_.pressureControlVolumes,
+                        acceptedPressureEpoch_.pressureFaceLinks,
                         currentEpoch.pressureControlVolumes,
                         currentEpoch.pressureFaceLinks,
                         limits_.regionRebase));

@@ -585,8 +585,9 @@ stable cell/region identities. The moving projection overload targets
 `dV/dt + net relative flow = 0`; with zero predicted air velocity, the
 expanding analytic cell develops pressure and draws corrected flow inward
 through its intake. A newly positive cell/region row is now marked explicitly
-and receives a zero-volume previous endpoint as long as every old row remains;
-disappearance still rejects. General conservative swept-volume remap,
+and receives a zero-volume previous endpoint. A disappeared row can retire its
+complete previous volume to one unique retained same-region neighbour;
+ambiguous or donorless retirement rejects. General swept-volume remap,
 corrected-MAC reconstruction across partitioned faces, off-face opening
 transmissibility, and general moving-boundary projection remain future work.
 Accepted projection pressure now also returns through the authoritative
@@ -651,16 +652,18 @@ moving-epoch adapter then retains transported cell/region velocities while
 remapping momentum to current physical volumes, averages them onto current
 pressure links, subtracts exact opening-cap sweep, and supplies the
 fingerprinted predictor to pressure projection alongside dV/dt.
-A bounded first crossing adapter now handles the appearance-only subset in
-which all accepted controls remain. Retained controls keep transported
+A bounded first crossing adapter now handles one-ring appearance and
+retirement. Retained controls keep transported
 velocity; each newly positive control receives the area-weighted velocity of
 directly linked retained controls in the same authored region. Momentum is
-recomputed from current volume with an explicit geometric-change ledger, and
-the pressure warm start follows the same one-ring donor rule. The strong
+recomputed from current volume with an explicit geometric-change ledger. A
+disappeared control transfers its complete source volume and momentum to one
+unique previous same-region neighbour, and that source mapping closes before
+geometric correction. The pressure warm start seeds appearances, preserves
+retained rows, and drops retired values. The strong
 coupling owner composes this rebase with wall exchange and pressure projection
-transactionally. Disappearance, cross-material donation, and appeared clusters
-without a retained one-ring donor still reject; this is not a general
-conservative swept-volume remap.
+transactionally. Cross-material donation and missing or ambiguous one-ring
+ownership still reject; this is not a general swept-volume remap.
 A separate material-wall operator remaps that fixed transport to each current
 strong-coupling geometry, applies two-sided tangential viscous exchange at the
 authoritative material quadrature, and returns both adjusted region momentum
