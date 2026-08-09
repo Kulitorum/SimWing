@@ -423,6 +423,10 @@ src/fsi/
     scene_fluid_pressure_control_volume.* sparse volume-weighted unknowns
     scene_fluid_pressure_face_link.* exact same-region Cartesian links
     scene_fluid_pressure_operator.* symmetric integrated graph Laplacian
+    scene_fluid_pressure_epoch.* atomic accepted pressure geometry/operator
+    scene_fluid_pressure_volume_rate.* consecutive sparse geometry rates
+    scene_fluid_pressure_projection.* link-resolved pressure/flow correction
+    scene_fluid_pressure_sampling.* gauge-safe surface pressure return path
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -688,6 +692,14 @@ moving open tetra produces a nonzero load with closed force and moment
 ledgers; a uniform pressure warm-start shift is bit-identical after gauge
 normalization, and sealed independently gauged sides reject explicitly. This
 does not add shear, a polar force, or a second aerodynamic load path. A
+versioned bounded pressure epoch now composes the grid remap, opening cap and
+patch topology, sparse volumes, pressure controls, face links, and graph
+operator under one accepted Structure-state fingerprint. Construction uses
+local candidates and publishes only the complete fully resolved chain; nested
+corruption, a foreign accepted state, and an excessive aggregate payload all
+reject. This is the atomic geometry/operator input for the next transactional
+coupling owner and still samples no velocity, solves no pressure, and applies
+no load. A
 canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded

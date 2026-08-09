@@ -1,3 +1,4 @@
+#include "scene_fluid_pressure_epoch.h"
 #include "scene_fluid_pressure_sampling.h"
 
 #include <algorithm>
@@ -529,6 +530,65 @@ void testIndependentGaugeSamplingRejection() {
         "surface sampling rejects pressure differences across independent gauges");
 }
 
+void testComposedPressureEpoch() {
+    Fixture fixture;
+    const auto state = captureSceneFluidSurfaceState(
+        fixture.surface.definition,
+        fixture.structureAssembly.mappings,
+        fixture.structure);
+    const auto first = buildSceneFluidPressureEpoch(
+        fixture.surface.definition, state, grid(), fixture.transfer,
+        fixture.connectivity);
+    const auto repeated = buildSceneFluidPressureEpoch(
+        fixture.surface.definition, state, grid(), fixture.transfer,
+        fixture.connectivity);
+    check(first == repeated
+              && first.version == sceneFluidPressureEpochVersion
+              && first.fingerprint != 0
+              && first.surfaceStateFingerprint == state.fingerprint
+              && first.gridEpoch.fingerprint != 0
+              && first.openingCaps.caps.size() == 1
+              && first.openingPatches.patches.size() == 1
+              && first.cellVolumes.cellRegionVolumes.size()
+                  == first.pressureControlVolumes.controlVolumes.size()
+              && first.pressureFaceLinks.unresolvedActiveFaceCount == 0
+              && first.pressureFaceLinks.unresolvedAmbiguousFaceCount == 0
+              && first.pressureFaceLinks.unresolvedOpeningFaceCount == 0
+              && first.pressureOperator.rows.size()
+                  == first.pressureControlVolumes.controlVolumes.size(),
+          "pressure epoch atomically composes one fully resolved accepted topology");
+    validateSceneFluidPressureEpoch(
+        first, fixture.surface.definition, state, grid(), fixture.transfer,
+        fixture.connectivity);
+
+    auto corrupt = first;
+    ++corrupt.pressureOperator.entries.front().columnControlVolumeIndex;
+    expectInvalid(
+        [&] { validateSceneFluidPressureEpoch(
+            corrupt, fixture.surface.definition, state, grid(),
+            fixture.transfer, fixture.connectivity); },
+        "pressure epoch rejects nested operator corruption");
+
+    SceneFluidPressureEpochLimits limits;
+    limits.maximumEpochBytes = first.ownedStorageBytes - 1;
+    expectLimited(
+        [&] { static_cast<void>(buildSceneFluidPressureEpoch(
+            fixture.surface.definition, state, grid(), fixture.transfer,
+            fixture.connectivity, {}, limits)); },
+        "pressure epoch enforces its aggregate owned-storage limit");
+
+    advanceApex(fixture, -0.8);
+    const auto movedState = captureSceneFluidSurfaceState(
+        fixture.surface.definition,
+        fixture.structureAssembly.mappings,
+        fixture.structure);
+    expectInvalid(
+        [&] { validateSceneFluidPressureEpoch(
+            first, fixture.surface.definition, movedState, grid(),
+            fixture.transfer, fixture.connectivity); },
+        "pressure epoch rejects a foreign accepted Structure state");
+}
+
 void testCorruptionAndLimits() {
     Fixture fixture;
     const auto previous = captureEndpoint(fixture);
@@ -572,6 +632,9 @@ int main(const int argc, const char* const argv[]) {
         if (argc == 2 && std::string_view(argv[1]) == "--sampling") {
             testMovingVolumeProjection();
             testIndependentGaugeSamplingRejection();
+        } else if (argc == 2
+                   && std::string_view(argv[1]) == "--epoch") {
+            testComposedPressureEpoch();
         } else if (argc == 1) {
             testTopologyStableMovingRates();
             testStationaryAndTopologyRebase();

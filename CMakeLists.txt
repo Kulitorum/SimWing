@@ -364,6 +364,8 @@ add_library(simwing_scene_fluid_cell_volume STATIC
     src/fsi/scene_fluid_region_connectivity.h
     src/fsi/scene_fluid_pressure_control_volume.cpp
     src/fsi/scene_fluid_pressure_control_volume.h
+    src/fsi/scene_fluid_pressure_epoch.cpp
+    src/fsi/scene_fluid_pressure_epoch.h
     src/fsi/scene_fluid_pressure_face_link.cpp
     src/fsi/scene_fluid_pressure_face_link.h
     src/fsi/scene_fluid_pressure_operator.cpp
@@ -1880,6 +1882,8 @@ add_test(NAME simwing_scene_fluid_pressure_volume_rate
     COMMAND simwing-scene-fluid-pressure-volume-rate-test)
 add_test(NAME simwing_scene_fluid_pressure_sampling
     COMMAND simwing-scene-fluid-pressure-volume-rate-test --sampling)
+add_test(NAME simwing_scene_fluid_pressure_epoch
+    COMMAND simwing-scene-fluid-pressure-volume-rate-test --epoch)
 add_test(NAME simwing_scene_fluid_opening_cap
     COMMAND simwing-scene-fluid-opening-cap-test)
 add_test(NAME simwing_scene_fluid_opening_quadrature

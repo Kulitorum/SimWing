@@ -597,6 +597,12 @@ tetra therefore produces a nonzero, force/moment-conservative XPBD load from
 its scene-derived pressure. Uniform pressure-gauge warm starts give identical
 samples and loads, while a sealed inside/outside pair with independent gauges
 rejects rather than inventing an arbitrary pressure jump.
+A versioned pressure epoch now composes the entire accepted geometry side of
+that solve atomically: grid remap, opening caps and patches, sparse region
+volumes, pressure controls, conservative links, and the ungauged operator all
+share one Structure-state identity and an aggregate storage bound. Downstream
+macro-step code can no longer accidentally mix those products across accepted
+surface states.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own
