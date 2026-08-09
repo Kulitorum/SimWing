@@ -119,7 +119,8 @@ void printUsage(FILE* stream) {
         "symmetric viscous/projected nonlinear flow advance its bulk MAC predictor;\n"
         "--mimetic-pressure-audit additionally runs the mixed-hybrid pressure\n"
         "path as a read-only pressure-cell shadow after graph convergence; it\n"
-        "persists its compact accepted state in pressure-cell checkpoints;\n"
+        "reports graph-versus-shadow pressure/load deltas and persists its\n"
+        "compact accepted state in pressure-cell checkpoints;\n"
         "'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
         "'strong-piston' strongly iterates that chain for a light added-mass plate;\n"
@@ -1650,7 +1651,9 @@ int main(int argc, char* argv[]) {
                     if (options.mimeticPressureAudit) {
                         const auto* audit =
                             simulation.acceptedMimeticPressureAudit();
-                        if (audit == nullptr) {
+                        const auto* comparison =
+                            simulation.acceptedMimeticPressureComparison();
+                        if (audit == nullptr || comparison == nullptr) {
                             std::printf(
                                 "simwing-fsi mimetic-pressure-audit not run\n");
                         } else {
@@ -1658,6 +1661,10 @@ int main(int argc, char* argv[]) {
                                 "simwing-fsi mimetic-pressure-audit accepted, "
                                 "controls=%zu, shared-traces=%zu, "
                                 "wall-traces=%zu, iterations=%zu, "
+                                "pressure-rms-delta=%.6g Pa, "
+                                "pressure-relative-delta=%.6g, "
+                                "force-delta=%.6g N, "
+                                "force-relative-delta=%.6g, "
                                 "consecutive=%u, wall-predictor=%u\n",
                                 audit->controlCells.controlCells.size(),
                                 audit->condensedTraceSystem.traces.size(),
@@ -1665,6 +1672,13 @@ int main(int argc, char* argv[]) {
                                     .eliminatedMaterialWallTraceCount,
                                 audit->pressureEpoch.diagnostics.pressureSolve
                                     .reducedTraceSolve.iterationCount,
+                                comparison->diagnostics
+                                    .pressureDifferenceDeltaRmsPascals,
+                                comparison->diagnostics
+                                    .relativePressureDifferenceDeltaL2,
+                                comparison->diagnostics
+                                    .forceDeltaNormNewtons,
+                                comparison->diagnostics.relativeForceDelta,
                                 audit->usesConsecutiveWarmStart ? 1U : 0U,
                                 audit->usesRegionWallPrediction ? 1U : 0U);
                         }

@@ -796,6 +796,14 @@ operator to accept inadmissible embedded-opening coefficients. The bounded
 graph restart. Restore rebuilds trusted control/full/condensed topology from
 the Structure payload before decoding those rows, then resumes the exact
 consecutive wall-predicted endpoint without persisting transient topology.
+Before any load switch, the same opt-in path now compares every graph and
+mimetic material pressure jump and evaluates both through the unchanged
+conservative Structure transfer. It retains bounded per-sample and per-node
+deltas and reports pressure, force, moment, and power disagreement without
+applying the shadow load. The diagnostic is decisive on the current pressure
+cell: relative pressure-jump and net-force differences are about `0.60` both
+at step 4 and after 600 steps. Mimetic load selection therefore remains
+disabled rather than treating solver acceptance as physical agreement.
 Its checkpoint also stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and

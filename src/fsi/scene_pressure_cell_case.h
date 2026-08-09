@@ -77,6 +77,8 @@ public:
         const noexcept;
     [[nodiscard]] const SceneFluidMimeticPressureAuditEndpoint*
     acceptedMimeticPressureAudit() const noexcept;
+    [[nodiscard]] const SceneFluidPressureShadowComparison*
+    acceptedMimeticPressureComparison() const noexcept;
     [[nodiscard]] SceneFluidMimeticPressureAuditTopology
     rebuildMimeticPressureAuditTopology(
         const StructureCheckpoint& structureCheckpoint) const;

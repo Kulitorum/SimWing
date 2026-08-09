@@ -641,6 +641,11 @@ ScenePressureCellCase::acceptedMimeticPressureAudit() const noexcept {
     return coupling_.acceptedMimeticPressureAudit();
 }
 
+const SceneFluidPressureShadowComparison*
+ScenePressureCellCase::acceptedMimeticPressureComparison() const noexcept {
+    return coupling_.acceptedMimeticPressureComparison();
+}
+
 SceneFluidMimeticPressureAuditTopology
 ScenePressureCellCase::rebuildMimeticPressureAuditTopology(
     const StructureCheckpoint& structureCheckpoint) const {

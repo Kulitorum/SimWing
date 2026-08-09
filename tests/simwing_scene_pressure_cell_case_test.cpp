@@ -473,10 +473,13 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
     fsi::ScenePressureCellCase production;
     fsi::ScenePressureCellCase audited(true);
     std::uint64_t previousAuditFingerprint = 0;
+    std::uint64_t previousComparisonFingerprint = 0;
     for (std::size_t step = 0; step < 4; ++step) {
         const auto productionFrame = production.advance();
         const auto auditedFrame = audited.advance();
         const auto* endpoint = audited.acceptedMimeticPressureAudit();
+        const auto* comparison =
+            audited.acceptedMimeticPressureComparison();
         const auto productionCheckpoint = production.checkpoint();
         const auto auditedCheckpoint = audited.checkpoint();
         auto auditedGraphOnly = auditedCheckpoint;
@@ -498,13 +501,23 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
                          .mimeticPressureAuditFingerprint
                       == endpoint->fingerprint
                   && endpoint->pressureEpoch.diagnostics.accepted
+                  && comparison != nullptr
+                  && audited.diagnostics().coupling
+                         .mimeticPressureComparisonFingerprint
+                      == comparison->fingerprint
+                  && comparison->diagnostics.finite
+                  && comparison->samples.size()
+                      == endpoint->pressureEpoch
+                             .acceptedPressureSamples.bindings.size()
                   && 2 * endpoint->pressureEpoch
                              .acceptedPressureSamples.bindings.size()
                       == endpoint->controlCells.materialWallHalfFaceCount,
               "opt-in mimetic audit publishes one complete accepted endpoint after the graph step converges");
-        if (endpoint != nullptr) {
+        if (endpoint != nullptr && comparison != nullptr) {
             fsi::validateSceneFluidMimeticPressureAuditEndpointIntegrity(
                 *endpoint);
+            fsi::validateSceneFluidPressureShadowComparisonIntegrity(
+                *comparison);
             check(endpoint->usesConsecutiveWarmStart == (step != 0)
                       && endpoint->usesRegionWallPrediction == (step != 0)
                       && endpoint->pressureEpoch
@@ -513,9 +526,12 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
                                   ? 0
                                   : endpoint
                                         ->pressureTopologyTransitionFingerprint)
-                      && endpoint->fingerprint != previousAuditFingerprint,
+                      && endpoint->fingerprint != previousAuditFingerprint
+                      && comparison->fingerprint
+                          != previousComparisonFingerprint,
                   "mimetic audit bootstraps once then advances through the transported wall predictor and consecutive warm state");
             previousAuditFingerprint = endpoint->fingerprint;
+            previousComparisonFingerprint = comparison->fingerprint;
         }
     }
     auto corrupted = *audited.acceptedMimeticPressureAudit();
@@ -530,6 +546,18 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
     }
     check(rejected,
           "mimetic pressure-audit endpoint fingerprints complete nested solve diagnostics");
+    auto corruptedComparison =
+        *audited.acceptedMimeticPressureComparison();
+    corruptedComparison.samples.front().shadowMinusReferencePascals += 0.01;
+    rejected = false;
+    try {
+        fsi::validateSceneFluidPressureShadowComparisonIntegrity(
+            corruptedComparison);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected,
+          "mimetic pressure comparison rejects per-sample delta corruption");
 
     fsi::SceneFluidMimeticPressureAuditConfiguration limitedConfiguration;
     limitedConfiguration.enabled = true;
@@ -551,6 +579,32 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
               && serializedCheckpoint(limited.checkpoint())
                   == beforeRejection,
           "mimetic pressure-audit limit failure rolls Structure and graph pressure back transactionally");
+
+    fsi::SceneFluidMimeticPressureAuditConfiguration
+        comparisonLimitedConfiguration;
+    comparisonLimitedConfiguration.enabled = true;
+    comparisonLimitedConfiguration.settings.pressureSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-10;
+    comparisonLimitedConfiguration.settings.pressureSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    comparisonLimitedConfiguration.comparisonLimits.maximumOwnedBytes = 0;
+    fsi::ScenePressureCellCase comparisonLimited(
+        comparisonLimitedConfiguration);
+    const auto beforeComparisonRejection = serializedCheckpoint(
+        comparisonLimited.checkpoint());
+    rejected = false;
+    try {
+        static_cast<void>(comparisonLimited.advance());
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected
+              && comparisonLimited.acceptedMimeticPressureAudit() == nullptr
+              && comparisonLimited.acceptedMimeticPressureComparison()
+                  == nullptr
+              && serializedCheckpoint(comparisonLimited.checkpoint())
+                  == beforeComparisonRejection,
+          "mimetic pressure-comparison limit failure rolls Structure and every accepted owner back transactionally");
 }
 
 void testPersistentMimeticPressureAuditRestart() {
@@ -590,17 +644,24 @@ void testPersistentMimeticPressureAuditRestart() {
     fsi::ScenePressureCellCase restored(true);
     restored.restore(decoded);
     check(restored.acceptedMimeticPressureAudit() == nullptr
+              && restored.acceptedMimeticPressureComparison() == nullptr
               && serializedCheckpoint(restored.checkpoint()) == bytes,
           "audited restore retains rebuilt warm topology without fabricating transient endpoint diagnostics");
     const auto expectedFrame = source.advance();
     const auto expectedDiagnostics = source.diagnostics();
     const auto expectedEndpoint = *source.acceptedMimeticPressureAudit();
+    const auto expectedComparison =
+        *source.acceptedMimeticPressureComparison();
     const auto replayFrame = restored.advance();
     const auto* replayEndpoint = restored.acceptedMimeticPressureAudit();
+    const auto* replayComparison =
+        restored.acceptedMimeticPressureComparison();
     check(serialized(replayFrame) == serialized(expectedFrame)
               && restored.diagnostics() == expectedDiagnostics
               && replayEndpoint != nullptr
               && *replayEndpoint == expectedEndpoint
+              && replayComparison != nullptr
+              && *replayComparison == expectedComparison
               && replayEndpoint->usesConsecutiveWarmStart
               && replayEndpoint->usesRegionWallPrediction,
           "restored compact SWMP state reproduces the exact next consecutive wall-predicted endpoint");

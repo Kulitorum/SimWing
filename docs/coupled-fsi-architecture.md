@@ -1217,6 +1217,21 @@ the graph-owned portion of their composite checkpoints are byte-identical
 while the shadow changes from fixed bootstrap to transported-wall consecutive
 mode.
 
+`src/fsi/scene_fluid_pressure_shadow_comparison.*` makes the next transition
+criterion explicit without changing selection. One bounded fingerprinted
+product pairs every reference/graph and shadow/mimetic pressure jump by exact
+material sample plus cell/region identity, evaluates both through the existing
+conservative quadrature transfer, and retains every sample and nodal-force
+delta. Diagnostics report reference/shadow transfer closure, pressure
+L2/RMS/maximum and relative delta, nodal L2/maximum delta, net force and moment
+vectors/norms/relative deltas, and power difference. Corruption or count/byte
+failure prevents the endpoint transaction from committing. An independent
+coarse real-wing comparison covers all 74,326 material samples, closes both
+force and moment transfers below `1e-8`, and has an exact zero-delta self
+oracle. The live pressure-cell disagreement is not small: relative pressure
+and force delta are about `0.605` at step 4 and `0.601` after 600 steps. This
+is evidence against enabling mimetic loads yet, not a tolerance to waive.
+
 The experiment is exposed as `simwing-fsi --case pressure-cell
 --mimetic-pressure-audit` and reports control/trace counts plus iteration and
 predictor mode separately from the established worker summary. The flag is

@@ -10,6 +10,7 @@
 #include "scene_fluid_mimetic_pressure_solve.h"
 #include "scene_fluid_mimetic_pressure_state.h"
 #include "scene_fluid_mimetic_pressure_state_persistence.h"
+#include "scene_fluid_pressure_shadow_comparison.h"
 #include "scene_fluid_mimetic_trace_flow.h"
 #include "scene_fluid_mimetic_trace_solve.h"
 #include "scene_fluid_mimetic_trace_system.h"
@@ -736,6 +737,7 @@ void testRealDesignCapture(const std::filesystem::path &input,
     simwing::fsi::SceneFluidMimeticPressureSampleSet realPressureSamples;
     bool realPressureTransferCloses = false;
     bool realPressureStatePersists = false;
+    bool realPressureComparisonCloses = false;
     if (sourceReceiver < realPredictedContinuityRates.size()) {
         simwing::fsi::SceneFluidMimeticPressureSourceSettings
             realSourceSettings;
@@ -779,6 +781,58 @@ void testRealDesignCapture(const std::filesystem::path &input,
                     .forceResidualNormNewtons < 1.0e-9
             && realPressureTransfer.diagnostics()
                     .momentResidualNormNewtonMeters < 1.0e-9;
+        const auto realPressureComparison =
+            simwing::fsi::compareSceneFluidPressureShadow(
+                fluidSurface.definition, fluidState, fluidTransfer,
+                fluidEpoch.quadrature, realPressureSamples,
+                realPressureAudit.pressureEpoch.acceptedPressureSamples);
+        const auto realPressureZeroComparison =
+            simwing::fsi::compareSceneFluidPressureShadow(
+                fluidSurface.definition, fluidState, fluidTransfer,
+                fluidEpoch.quadrature, realPressureSamples,
+                realPressureSamples);
+        simwing::fsi::validateSceneFluidPressureShadowComparisonIntegrity(
+            realPressureComparison);
+        simwing::fsi::validateSceneFluidPressureShadowComparisonIntegrity(
+            realPressureZeroComparison);
+        realPressureComparisonCloses =
+            realPressureComparison.diagnostics.finite
+            && realPressureComparison.samples.size()
+                == fluidEpoch.quadrature.points.size()
+            && realPressureComparison.diagnostics
+                    .maximumAbsolutePressureDifferenceDeltaPascals > 0.0
+            && realPressureZeroComparison.diagnostics
+                    .pressureDifferenceDeltaL2Pascals == 0.0
+            && realPressureZeroComparison.diagnostics
+                    .forceDeltaNormNewtons == 0.0
+            && realPressureZeroComparison.diagnostics
+                    .momentDeltaNormNewtonMeters == 0.0
+            && realPressureZeroComparison.diagnostics
+                    .maximumNodalForceDeltaNewtons == 0.0
+            && realPressureComparison.diagnostics.referenceTransfer
+                    .forceResidualNormNewtons < 1.0e-8
+            && realPressureComparison.diagnostics.shadowTransfer
+                    .forceResidualNormNewtons < 1.0e-8
+            && realPressureComparison.diagnostics.referenceTransfer
+                    .momentResidualNormNewtonMeters < 1.0e-8
+            && realPressureComparison.diagnostics.shadowTransfer
+                    .momentResidualNormNewtonMeters < 1.0e-8;
+        if (!realPressureComparisonCloses) {
+            std::fprintf(
+                stderr,
+                "real pressure comparison: samples=%zu max-delta=%.17g reference-force-residual=%.17g shadow-force-residual=%.17g reference-moment-residual=%.17g shadow-moment-residual=%.17g\n",
+                realPressureComparison.samples.size(),
+                realPressureComparison.diagnostics
+                    .maximumAbsolutePressureDifferenceDeltaPascals,
+                realPressureComparison.diagnostics.referenceTransfer
+                    .forceResidualNormNewtons,
+                realPressureComparison.diagnostics.shadowTransfer
+                    .forceResidualNormNewtons,
+                realPressureComparison.diagnostics.referenceTransfer
+                    .momentResidualNormNewtonMeters,
+                realPressureComparison.diagnostics.shadowTransfer
+                    .momentResidualNormNewtonMeters);
+        }
         std::vector<std::uint8_t> encodedRealPressureState;
         simwing::fsi::SceneFluidMimeticPressureState decodedRealPressureState;
         simwing::fsi::SceneFluidMimeticPressureStatePersistenceError
@@ -893,6 +947,7 @@ void testRealDesignCapture(const std::filesystem::path &input,
         && realPressureSamples.pressures.size()
             == fluidEpoch.quadrature.points.size()
         && realPressureTransferCloses
+        && realPressureComparisonCloses
         && realPressureStatePersists;
     if (!mimeticAuditMatches) {
         std::fprintf(

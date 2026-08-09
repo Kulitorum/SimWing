@@ -4,6 +4,7 @@
 #include "scene_fluid_mimetic_pressure_audit.h"
 #include "scene_fluid_pressure_epoch.h"
 #include "scene_fluid_pressure_sampling.h"
+#include "scene_fluid_pressure_shadow_comparison.h"
 #include "scene_fluid_pressure_topology_transition.h"
 #include "scene_fluid_region_link_flow.h"
 
@@ -54,6 +55,7 @@ struct SceneFluidMimeticPressureAuditConfiguration {
     bool enabled = false;
     SceneFluidMimeticPressureAuditSettings settings;
     SceneFluidMimeticPressureAuditLimits limits;
+    SceneFluidPressureShadowComparisonLimits comparisonLimits;
 };
 
 struct SceneFluidPressureCouplingStepDiagnostics {
@@ -72,6 +74,9 @@ struct SceneFluidPressureCouplingStepDiagnostics {
     bool usesMimeticPressureAudit = false;
     std::uint64_t mimeticPressureAuditFingerprint = 0;
     SceneFluidMimeticPressureEpochDiagnostics mimeticPressureAudit;
+    std::uint64_t mimeticPressureComparisonFingerprint = 0;
+    SceneFluidPressureShadowComparisonDiagnostics
+        mimeticPressureComparison;
     ConservativeTransferDiagnostics pressureTransfer;
     ConservativeTransferDiagnostics totalFluidTransfer;
     double interfaceForceClosureNewtons = 0.0;
@@ -191,6 +196,8 @@ public:
     acceptedWallTractions() const noexcept;
     [[nodiscard]] const SceneFluidMimeticPressureAuditEndpoint*
     acceptedMimeticPressureAudit() const noexcept;
+    [[nodiscard]] const SceneFluidPressureShadowComparison*
+    acceptedMimeticPressureComparison() const noexcept;
     // Rebuilds trusted topology for decoding the compact persistent SWMP
     // state. It does not mutate Structure or this accepted owner.
     [[nodiscard]] SceneFluidMimeticPressureAuditTopology
@@ -256,6 +263,8 @@ private:
         acceptedMimeticPressureAudit_;
     std::optional<SceneFluidMimeticPressureAuditWarmState>
         acceptedMimeticPressureAuditWarmState_;
+    std::optional<SceneFluidPressureShadowComparison>
+        acceptedMimeticPressureComparison_;
 };
 
 } // namespace simwing::fsi

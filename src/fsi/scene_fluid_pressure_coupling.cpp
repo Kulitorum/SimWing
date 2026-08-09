@@ -154,7 +154,8 @@ bool finite(const SceneFluidPressureCouplingStepDiagnostics& diagnostics) {
         && (!diagnostics.usesMimeticPressureAudit
             || (diagnostics.mimeticPressureAudit.accepted
                 && diagnostics.mimeticPressureAudit.pressureSolve
-                    .reducedTraceSolve.finite))
+                    .reducedTraceSolve.finite
+                && diagnostics.mimeticPressureComparison.finite))
         && diagnostics.pressureTransfer.finite
         && diagnostics.totalFluidTransfer.finite
         && std::isfinite(diagnostics.interfaceForceClosureNewtons)
@@ -355,6 +356,13 @@ const SceneFluidMimeticPressureAuditEndpoint*
 SceneFluidPressureCoupling::acceptedMimeticPressureAudit() const noexcept {
     return acceptedMimeticPressureAudit_
         ? &*acceptedMimeticPressureAudit_ : nullptr;
+}
+
+const SceneFluidPressureShadowComparison*
+SceneFluidPressureCoupling::acceptedMimeticPressureComparison()
+    const noexcept {
+    return acceptedMimeticPressureComparison_
+        ? &*acceptedMimeticPressureComparison_ : nullptr;
 }
 
 std::uint64_t
@@ -834,6 +842,7 @@ void SceneFluidPressureCoupling::restore(
     acceptedMimeticPressureAudit_.reset();
     acceptedMimeticPressureAuditWarmState_ =
         std::move(restoredMimeticPressureWarmState);
+    acceptedMimeticPressureComparison_.reset();
 }
 
 SceneFluidPressureCouplingStepDiagnostics
@@ -1089,6 +1098,8 @@ SceneFluidPressureCoupling::advanceImpl(
                 currentEpoch.fingerprint;
             std::optional<SceneFluidMimeticPressureAuditEndpoint>
                 mimeticPressureAuditCandidate;
+            std::optional<SceneFluidPressureShadowComparison>
+                mimeticPressureComparisonCandidate;
             if (iterationResult.status
                     == StrongCouplingIterationStatus::Converged
                 && mimeticPressureAuditConfiguration_.enabled) {
@@ -1155,6 +1166,19 @@ SceneFluidPressureCoupling::advanceImpl(
                     mimeticPressureAuditCandidate->fingerprint;
                 diagnostics.mimeticPressureAudit =
                     mimeticPressureAuditCandidate->pressureEpoch.diagnostics;
+                mimeticPressureComparisonCandidate.emplace(
+                    compareSceneFluidPressureShadow(
+                        surface_, currentState, transfer_,
+                        currentEpoch.gridEpoch.quadrature, samples,
+                        mimeticPressureAuditCandidate->pressureEpoch
+                            .acceptedPressureSamples,
+                        settings_.transfer,
+                        mimeticPressureAuditConfiguration_
+                            .comparisonLimits));
+                diagnostics.mimeticPressureComparisonFingerprint =
+                    mimeticPressureComparisonCandidate->fingerprint;
+                diagnostics.mimeticPressureComparison =
+                    mimeticPressureComparisonCandidate->diagnostics;
             }
             diagnostics.finite = finite(diagnostics);
             if (!diagnostics.finite) {
@@ -1178,6 +1202,8 @@ SceneFluidPressureCoupling::advanceImpl(
                     acceptedMimeticPressureAudit_ =
                         std::move(mimeticPressureAuditCandidate);
                     acceptedMimeticPressureAuditWarmState_.reset();
+                    acceptedMimeticPressureComparison_ =
+                        std::move(mimeticPressureComparisonCandidate);
                 }
                 return diagnostics;
             }
