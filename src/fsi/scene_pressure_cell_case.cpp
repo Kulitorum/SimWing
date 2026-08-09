@@ -383,6 +383,14 @@ ScenePressureCellCase::stepSettings() const noexcept {
     return coupling_.settings().structure;
 }
 
+std::uint64_t ScenePressureCellCase::acceptedStepCount() const noexcept {
+    return structure_.acceptedStepCount();
+}
+
+double ScenePressureCellCase::simulationTimeSeconds() const noexcept {
+    return structure_.simulationTimeSeconds();
+}
+
 const ScenePressureCellDiagnostics&
 ScenePressureCellCase::diagnostics() const noexcept {
     return diagnostics_;

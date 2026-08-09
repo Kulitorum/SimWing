@@ -1,4 +1,5 @@
 #include "scene_pressure_cell_case.h"
+#include "scene_pressure_cell_checkpoint_persistence.h"
 #include "viewer_protocol.h"
 
 #include <algorithm>
@@ -33,6 +34,16 @@ std::vector<std::uint8_t> serialized(
     viewer::ProtocolError error;
     check(viewer::serializeFrame(frame, bytes, &error),
           "scene pressure cell frame serializes");
+    return bytes;
+}
+
+std::vector<std::uint8_t> serializedCheckpoint(
+    const fsi::ScenePressureCellCheckpoint& checkpoint) {
+    std::vector<std::uint8_t> bytes;
+    fsi::ScenePressureCellCheckpointPersistenceError error;
+    check(fsi::serializeScenePressureCellCheckpoint(
+              checkpoint, bytes, &error),
+          "scene pressure cell checkpoint serializes");
     return bytes;
 }
 
@@ -146,11 +157,108 @@ void testVisibleStrongPressureCellAndReplay() {
           "scene pressure cell checkpoint reproduces the exact next frame");
 }
 
+void testPersistentCheckpointAndRejection() {
+    fsi::ScenePressureCellCase initial;
+    const auto initialBytes = serializedCheckpoint(initial.checkpoint());
+    fsi::ScenePressureCellCheckpoint initialDecoded;
+    fsi::ScenePressureCellCheckpointPersistenceError error;
+    check(fsi::deserializeScenePressureCellCheckpoint(
+              initialBytes, initialDecoded, &error),
+          "initial scene pressure cell checkpoint decodes without pressure state");
+    fsi::ScenePressureCellCase initialReplay;
+    initialReplay.restore(initialDecoded);
+    check(serialized(initialReplay.advance()) == serialized(initial.advance()),
+          "persisted initial scene pressure cell reproduces the first frame");
+
+    fsi::ScenePressureCellCase source;
+    for (std::size_t step = 0; step < 35; ++step) {
+        static_cast<void>(source.advance());
+    }
+    const auto saved = source.checkpoint();
+    const auto bytes = serializedCheckpoint(saved);
+    check(!bytes.empty() && serializedCheckpoint(saved) == bytes,
+          "scene pressure cell checkpoint encoding is deterministic");
+
+    fsi::ScenePressureCellCheckpoint decoded;
+    check(fsi::deserializeScenePressureCellCheckpoint(
+              bytes, decoded, &error)
+              && serializedCheckpoint(decoded) == bytes,
+          "scene pressure cell checkpoint has a canonical bounded round trip");
+    fsi::ScenePressureCellCase restored;
+    restored.restore(decoded);
+    const auto expected = source.advance();
+    const auto replay = restored.advance();
+    check(serialized(replay) == serialized(expected)
+              && restored.diagnostics() == source.diagnostics(),
+          "persisted scene pressure cell reproduces the exact next frame");
+
+    const auto preserved = serializedCheckpoint(decoded);
+    const auto rejects = [&](std::vector<std::uint8_t> damaged,
+                             const fsi::ScenePressureCellCheckpointPersistenceErrorCode
+                                 expectedCode,
+                             const char* message,
+                             const fsi::ScenePressureCellCheckpointPersistenceLimits&
+                                 limits = {}) {
+        fsi::ScenePressureCellCheckpointPersistenceError rejection;
+        check(!fsi::deserializeScenePressureCellCheckpoint(
+                  damaged, decoded, &rejection, limits)
+                  && rejection.code == expectedCode
+                  && serializedCheckpoint(decoded) == preserved,
+              message);
+    };
+
+    auto damaged = bytes;
+    damaged.front() ^= 0xffU;
+    rejects(std::move(damaged),
+            fsi::ScenePressureCellCheckpointPersistenceErrorCode::InvalidMagic,
+            "scene pressure cell rejects foreign magic transactionally");
+    damaged = bytes;
+    damaged[8] ^= 0xffU;
+    rejects(std::move(damaged),
+            fsi::ScenePressureCellCheckpointPersistenceErrorCode::UnsupportedVersion,
+            "scene pressure cell rejects an unsupported wire version transactionally");
+    damaged = bytes;
+    damaged.back() ^= 0xffU;
+    rejects(std::move(damaged),
+            fsi::ScenePressureCellCheckpointPersistenceErrorCode::ChecksumMismatch,
+            "scene pressure cell rejects payload corruption transactionally");
+    damaged = bytes;
+    damaged.pop_back();
+    rejects(std::move(damaged),
+            fsi::ScenePressureCellCheckpointPersistenceErrorCode::Truncated,
+            "scene pressure cell rejects truncation transactionally");
+    damaged = bytes;
+    damaged.push_back(0);
+    rejects(std::move(damaged),
+            fsi::ScenePressureCellCheckpointPersistenceErrorCode::TrailingData,
+            "scene pressure cell rejects trailing data transactionally");
+
+    auto smallLimits =
+        fsi::ScenePressureCellCheckpointPersistenceLimits{};
+    smallLimits.maximumEncodedBytes = bytes.size() - 1;
+    rejects(bytes,
+            fsi::ScenePressureCellCheckpointPersistenceErrorCode::LimitExceeded,
+            "scene pressure cell rejects an oversized checkpoint transactionally",
+            smallLimits);
+
+    auto foreign = saved;
+    foreign.version += 1;
+    std::vector<std::uint8_t> unchanged{1, 2, 3};
+    const auto original = unchanged;
+    check(!fsi::serializeScenePressureCellCheckpoint(
+              foreign, unchanged, &error)
+              && error.code
+                  == fsi::ScenePressureCellCheckpointPersistenceErrorCode::InvalidData
+              && unchanged == original,
+          "scene pressure cell rejects foreign state before publishing bytes");
+}
+
 } // namespace
 
 int main() {
     try {
         testVisibleStrongPressureCellAndReplay();
+        testPersistentCheckpointAndRejection();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
         return 1;

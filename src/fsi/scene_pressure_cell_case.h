@@ -48,6 +48,8 @@ public:
 
     [[nodiscard]] const Structure& structure() const noexcept;
     [[nodiscard]] const StructureStepSettings& stepSettings() const noexcept;
+    [[nodiscard]] std::uint64_t acceptedStepCount() const noexcept;
+    [[nodiscard]] double simulationTimeSeconds() const noexcept;
     [[nodiscard]] const ScenePressureCellDiagnostics& diagnostics()
         const noexcept;
     [[nodiscard]] ScenePressureCellCheckpoint checkpoint() const;

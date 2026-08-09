@@ -17,6 +17,7 @@
 #include "projected_flag_case.h"
 #include "ram_air_cell_case.h"
 #include "scene_pressure_cell_case.h"
+#include "scene_pressure_cell_checkpoint_persistence.h"
 #include "strong_piston_checkpoint_persistence.h"
 #include "strong_piston_control.h"
 #include "viewer_protocol.h"
@@ -129,7 +130,7 @@ void printUsage(FILE* stream) {
         "periodic pump drives fluid through it across one MAC-face rebase.\n"
         "'pressure-jump' repeatedly verifies a static split-region slab and\n"
         "publishes each ordered sharp-interface layer. Moving-porous-flow,\n"
-        "strong-piston, porous-sheet, open-piston, and periodic-flow checkpoint\n"
+        "pressure-cell, strong-piston, porous-sheet, open-piston, and periodic-flow checkpoint\n"
         "paths\n"
         "restore/save exact accepted state;\n"
         "--checkpoint-every\n"
@@ -333,9 +334,10 @@ bool parseOptions(int argc,
         && options.workerCase != WorkerCase::PeriodicFlow
         && options.workerCase != WorkerCase::StrongPiston
         && options.workerCase != WorkerCase::OpenPiston
+        && options.workerCase != WorkerCase::ScenePressureCell
         && options.workerCase != WorkerCase::MovingPorousFlow
         && options.workerCase != WorkerCase::PorousSheet) {
-        error = "checkpoint paths require --case strong-piston, "
+        error = "checkpoint paths require --case pressure-cell, strong-piston, "
             "moving-porous-flow, open-piston, porous-sheet, or "
             "periodic-flow";
         return false;
@@ -774,6 +776,39 @@ bool writeStrongPistonCheckpoint(
     return atomicallyWriteCheckpointBytes(path, bytes, error);
 }
 
+bool readScenePressureCellCheckpoint(
+    const std::filesystem::path& path,
+    simwing::fsi::ScenePressureCellCheckpoint& checkpoint,
+    std::string& error) {
+    const simwing::fsi::ScenePressureCellCheckpointPersistenceLimits limits;
+    std::vector<std::uint8_t> bytes;
+    if (!readCheckpointBytes(
+            path, limits.maximumEncodedBytes, bytes, error)) {
+        return false;
+    }
+    simwing::fsi::ScenePressureCellCheckpointPersistenceError protocolError;
+    if (!simwing::fsi::deserializeScenePressureCellCheckpoint(
+            bytes, checkpoint, &protocolError, limits)) {
+        error = protocolError.message;
+        return false;
+    }
+    return true;
+}
+
+bool writeScenePressureCellCheckpoint(
+    const std::filesystem::path& path,
+    const simwing::fsi::ScenePressureCellCheckpoint& checkpoint,
+    std::string& error) {
+    std::vector<std::uint8_t> bytes;
+    simwing::fsi::ScenePressureCellCheckpointPersistenceError protocolError;
+    if (!simwing::fsi::serializeScenePressureCellCheckpoint(
+            checkpoint, bytes, &protocolError)) {
+        error = protocolError.message;
+        return false;
+    }
+    return atomicallyWriteCheckpointBytes(path, bytes, error);
+}
+
 bool readPorousSheetCheckpoint(
     const std::filesystem::path& path,
     simwing::fsi::CoupledPorousSheetCheckpoint& checkpoint,
@@ -1082,6 +1117,8 @@ int main(int argc, char* argv[]) {
             restoredOpenPistonCheckpoint;
         std::optional<simwing::fsi::StrongCoupledPistonCheckpoint>
             restoredStrongPistonCheckpoint;
+        std::optional<simwing::fsi::ScenePressureCellCheckpoint>
+            restoredScenePressureCellCheckpoint;
         std::optional<simwing::fsi::MovingPorousFlowCaseCheckpoint>
             restoredMovingPorousFlowCheckpoint;
         std::optional<simwing::fsi::CoupledPorousSheetCheckpoint>
@@ -1103,6 +1140,12 @@ int main(int argc, char* argv[]) {
                 restored = readStrongPistonCheckpoint(
                     options.checkpointInputPath,
                     *restoredStrongPistonCheckpoint, error);
+            } else if (options.workerCase
+                       == WorkerCase::ScenePressureCell) {
+                restoredScenePressureCellCheckpoint.emplace();
+                restored = readScenePressureCellCheckpoint(
+                    options.checkpointInputPath,
+                    *restoredScenePressureCellCheckpoint, error);
             } else if (options.workerCase
                        == WorkerCase::MovingPorousFlow) {
                 restoredMovingPorousFlowCheckpoint.emplace();
@@ -1246,6 +1289,8 @@ int main(int argc, char* argv[]) {
                     || std::is_same_v<Simulation,
                                       simwing::fsi::StrongCoupledPistonWorkerCase>
                     || std::is_same_v<Simulation,
+                                      simwing::fsi::ScenePressureCellCase>
+                    || std::is_same_v<Simulation,
                                       simwing::fsi::MovingPorousFlowCase>
                     || std::is_same_v<Simulation,
                                       simwing::fsi::CoupledPorousSheetCase>) {
@@ -1269,6 +1314,12 @@ int main(int argc, char* argv[]) {
                                                      Simulation,
                                                      simwing::fsi::StrongCoupledPistonWorkerCase>) {
                                 return writeStrongPistonCheckpoint(
+                                    options.checkpointOutputPath,
+                                    simulation.checkpoint(), error);
+                            } else if constexpr (std::is_same_v<
+                                                     Simulation,
+                                                     simwing::fsi::ScenePressureCellCase>) {
+                                return writeScenePressureCellCheckpoint(
                                     options.checkpointOutputPath,
                                     simulation.checkpoint(), error);
                             } else if constexpr (std::is_same_v<
@@ -1323,6 +1374,8 @@ int main(int argc, char* argv[]) {
                 || std::is_same_v<Simulation,
                                   simwing::fsi::StrongCoupledPistonWorkerCase>
                 || std::is_same_v<Simulation,
+                                  simwing::fsi::ScenePressureCellCase>
+                || std::is_same_v<Simulation,
                                   simwing::fsi::MovingPorousFlowCase>
                 || std::is_same_v<Simulation,
                                   simwing::fsi::CoupledPorousSheetCase>) {
@@ -1346,6 +1399,12 @@ int main(int argc, char* argv[]) {
                                                  Simulation,
                                                  simwing::fsi::StrongCoupledPistonWorkerCase>) {
                             return writeStrongPistonCheckpoint(
+                                options.checkpointOutputPath,
+                                simulation.checkpoint(), error);
+                        } else if constexpr (std::is_same_v<
+                                                 Simulation,
+                                                 simwing::fsi::ScenePressureCellCase>) {
+                            return writeScenePressureCellCheckpoint(
                                 options.checkpointOutputPath,
                                 simulation.checkpoint(), error);
                         } else if constexpr (std::is_same_v<
@@ -1530,7 +1589,8 @@ int main(int argc, char* argv[]) {
                         "t=%.9g s, actuator=%.6g N, pressure-force="
                         "[%.6g %.6g %.6g] N, max-pressure=%.6g Pa, "
                         "max-motion=%.6g m, coupling-iterations=%llu, "
-                        "load-closure=%.3g N, trace=%s\n",
+                        "load-closure=%.3g N, checkpoint-writes=%llu, "
+                        "trace=%s\n",
                         static_cast<unsigned long long>(
                             checkpoint.acceptedStepCount),
                         checkpoint.simulationTimeSeconds,
@@ -1543,6 +1603,8 @@ int main(int argc, char* argv[]) {
                         static_cast<unsigned long long>(
                             coupled.coupling.solverRunCount),
                         coupled.coupling.interfaceForceClosureNewtons,
+                        static_cast<unsigned long long>(
+                            checkpointWriteCount),
                         options.tracePath.string().c_str());
                 } else if constexpr (std::is_same_v<
                                          Simulation,
@@ -1712,6 +1774,9 @@ int main(int argc, char* argv[]) {
         }
         if (options.workerCase == WorkerCase::ScenePressureCell) {
             simwing::fsi::ScenePressureCellCase simulation;
+            if (restoredScenePressureCellCheckpoint) {
+                simulation.restore(*restoredScenePressureCellCheckpoint);
+            }
             return run(simulation);
         }
         simwing::fsi::CanonicalStructuralCase simulation;

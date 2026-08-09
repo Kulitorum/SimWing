@@ -400,6 +400,8 @@ target_link_libraries(simwing_scene_fluid_pressure_coupling PUBLIC
 add_library(simwing_scene_pressure_cell_case STATIC
     src/fsi/scene_pressure_cell_case.cpp
     src/fsi/scene_pressure_cell_case.h
+    src/fsi/scene_pressure_cell_checkpoint_persistence.cpp
+    src/fsi/scene_pressure_cell_checkpoint_persistence.h
 )
 target_include_directories(simwing_scene_pressure_cell_case PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
@@ -2036,6 +2038,51 @@ add_test(NAME simwing_fsi_pressure_cell_headless
         --trace "${CMAKE_BINARY_DIR}/simwing-pressure-cell-headless.swtrace")
 set_tests_properties(simwing_fsi_pressure_cell_headless PROPERTIES
     PASS_REGULAR_EXPRESSION "completed 8 pressure-cell step\\(s\\)")
+add_test(NAME simwing_fsi_pressure_cell_checkpoint_write
+    COMMAND simwing-fsi
+        --case pressure-cell
+        --steps 8
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-pressure-cell-checkpoint-write.swtrace"
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-pressure-cell.swpcell"
+        --checkpoint-every 4)
+set_tests_properties(simwing_fsi_pressure_cell_checkpoint_write PROPERTIES
+    PASS_REGULAR_EXPRESSION
+        "completed 8 pressure-cell step\\(s\\).*checkpoint-writes=2")
+add_test(NAME simwing_fsi_pressure_cell_checkpoint_resume
+    COMMAND simwing-fsi
+        --case pressure-cell
+        --steps 3
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-pressure-cell-checkpoint-resume.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-pressure-cell.swpcell"
+        --checkpoint-out "${CMAKE_BINARY_DIR}/simwing-pressure-cell.swpcell"
+        --checkpoint-every 2)
+set_tests_properties(simwing_fsi_pressure_cell_checkpoint_resume PROPERTIES
+    DEPENDS simwing_fsi_pressure_cell_checkpoint_write
+    PASS_REGULAR_EXPRESSION
+        "completed 11 pressure-cell step\\(s\\).*checkpoint-writes=2")
+add_test(NAME simwing_fsi_pressure_cell_checkpoint_verify
+    COMMAND simwing-fsi
+        --case pressure-cell
+        --steps 0
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-pressure-cell-checkpoint-verify.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-pressure-cell.swpcell")
+set_tests_properties(simwing_fsi_pressure_cell_checkpoint_verify PROPERTIES
+    DEPENDS simwing_fsi_pressure_cell_checkpoint_resume
+    PASS_REGULAR_EXPRESSION "completed 11 pressure-cell step\\(s\\)")
+add_test(NAME simwing_fsi_pressure_cell_rejects_foreign_checkpoint
+    COMMAND simwing-fsi
+        --case pressure-cell
+        --steps 0
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-pressure-cell-foreign.swtrace"
+        --checkpoint-in "${CMAKE_BINARY_DIR}/simwing-strong-piston.swsp")
+set_tests_properties(simwing_fsi_pressure_cell_rejects_foreign_checkpoint
+    PROPERTIES
+        DEPENDS simwing_fsi_strong_piston_checkpoint_write
+        WILL_FAIL TRUE)
 add_test(NAME simwing_fsi_piston_headless
     COMMAND simwing-fsi
         --case piston

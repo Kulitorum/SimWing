@@ -626,6 +626,10 @@ deformation, area-averaged triangle pressure jump, nodal/total pressure force,
 actuator force, and strong-iteration count. A 600-step headless run remains
 topology-stable for 10 simulated seconds and reaches centimetre-scale motion;
 this is a diagnostic of the new feedback path, not wing aerodynamics.
+Its bounded `SWPCELL1` checkpoint stores the trusted Structure state and the
+complete accepted sparse pressure projection. Initial and accepted files
+round-trip deterministically, reject foreign/corrupt input transactionally,
+and resume through the normal worker checkpoint flags.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own
@@ -747,6 +751,8 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case open-piston --checkpoint-in open-piston.swop --steps 600 --checkpoint-out open-piston.swop --checkpoint-every 600
 .\build\bin\Release\simwing-fsi.exe --case pressure-jump --steps 4 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case pressure-cell --steps 600
+.\build\bin\Release\simwing-fsi.exe --case pressure-cell --steps 600 --no-viewer --checkpoint-out pressure-cell.swpcell --checkpoint-every 300
+.\build\bin\Release\simwing-fsi.exe --case pressure-cell --checkpoint-in pressure-cell.swpcell --steps 600
 .\build\bin\Release\simwing-fsi.exe --case porous-flow --steps 120 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case moving-porous-flow --steps 101 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case moving-porous-flow --steps 101 --no-viewer --checkpoint-out moving-porous-flow.swmf --checkpoint-every 50

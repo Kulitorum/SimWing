@@ -429,6 +429,7 @@ src/fsi/
     scene_fluid_pressure_sampling.* gauge-safe surface pressure return path
     scene_fluid_pressure_coupling.* topology-stable strong pressure feedback
     scene_pressure_cell_case.* visible open-cell pressure-feedback canonical
+    scene_pressure_cell_checkpoint_persistence.* bounded canonical restart
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -731,7 +732,11 @@ total pressure force, actuator force, and strong-iteration count. Two runs are
 byte-deterministic, its in-memory checkpoint reproduces the exact next frame,
 and the default 600-step/10-second headless run remains topology-stable while
 reaching centimetre-scale motion. It is deliberately a visible diagnostic of
-pressure feedback with a fixed MAC predictor, not aerodynamic truth. A
+pressure feedback with a fixed MAC predictor, not aerodynamic truth. Its
+bounded canonical checkpoint persists the complete accepted sparse pressure
+projection beside the trusted nested Structure payload. Deterministic initial
+and accepted round trips, exact next-frame replay, CLI autosave/resume, and
+transactional corruption/foreign-file rejection are covered. A
 canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded
