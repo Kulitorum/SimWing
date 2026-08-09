@@ -10,10 +10,10 @@
 namespace simwing::fsi {
 
 inline constexpr char scenePressureCellCaseChecksum[] =
-    "sha256:simwing-scene-pressure-feedback-cell-v7";
+    "sha256:simwing-scene-pressure-feedback-cell-v8";
 inline constexpr char scenePressureCellCaseSolverId[] =
-    "simwing-fsi-scene-pressure-feedback-worker-v7";
-inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 7;
+    "simwing-fsi-scene-pressure-feedback-worker-v8";
+inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 8;
 
 struct ScenePressureCellDiagnostics {
     SceneFluidPressureCouplingStepDiagnostics coupling;
@@ -25,6 +25,8 @@ struct ScenePressureCellDiagnostics {
     double meanWindBeforePumpMetersPerSecond = 0.0;
     double flowPumpForceNewtons = 0.0;
     StructureVector3 pressureForceNewtons;
+    StructureVector3 wallForceNewtons;
+    StructureVector3 totalFluidForceNewtons;
     double maximumAbsolutePressurePascals = 0.0;
     double maximumDisplacementMeters = 0.0;
     bool finite = false;
@@ -41,10 +43,12 @@ struct ScenePressureCellCheckpoint {
 // A visible analytic open cell driven by a prescribed periodic mean-flow
 // pump. The accepted collapsed MAC state receives one existing symmetric
 // viscosity/projected-nonlinear-advection/viscosity bulk step before scene-v2
-// pressure is strongly coupled back to the same XPBD Structure.
+// pressure and conservative tangential material-wall exchange are strongly
+// coupled back to the same XPBD Structure.
 // Immersed-boundary momentum remains an approximation: cut-region pressure is
 // exact for this subset, but the bulk stages do not yet resolve distinct
-// per-region subface velocities or wall-conditioned viscosity.
+// per-region subface advection. Wall viscosity is a local cut-region closure,
+// not a general immersed-boundary boundary-layer model.
 class ScenePressureCellCase final {
 public:
     ScenePressureCellCase();

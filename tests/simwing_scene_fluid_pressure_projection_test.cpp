@@ -4,6 +4,7 @@
 #include "scene_fluid_region_momentum.h"
 #include "scene_fluid_region_link_flow.h"
 #include "scene_fluid_region_transport.h"
+#include "scene_fluid_region_wall.h"
 
 #include <algorithm>
 #include <array>
@@ -668,8 +669,104 @@ void testAreaChangingLinkContinuation() {
                   < 1.0e-15,
           "area-changing link continuation recenters carried deviations without changing face-total flow");
 
+    SceneFluidRegionWallSettings wallSettings;
+    wallSettings.timeStepSeconds = transportSettings.timeStepSeconds;
+    const auto wallExchange = exchangeSceneFluidRegionWallMomentum(
+        transport, grid(), currentEpoch.pressureControlVolumes,
+        fixture.surface.definition, currentState,
+        currentEpoch.gridEpoch.quadrature, wallSettings);
+    const auto repeatedWallExchange = exchangeSceneFluidRegionWallMomentum(
+        transport, grid(), currentEpoch.pressureControlVolumes,
+        fixture.surface.definition, currentState,
+        currentEpoch.gridEpoch.quadrature, wallSettings);
+    check(wallExchange == repeatedWallExchange
+              && wallExchange.diagnostics.accepted
+              && wallExchange.diagnostics.finite
+              && wallExchange.diagnostics.quadraturePointCount
+                  == currentEpoch.gridEpoch.quadrature.points.size()
+              && wallExchange.diagnostics
+                     .maximumRelativeTangentialSpeedMetersPerSecond > 0.0
+              && wallExchange.diagnostics.viscousDissipationJoules >= 0.0
+              && wallExchange.diagnostics
+                     .momentumResidualNormKilogramMetersPerSecond < 1.0e-12,
+          "two-sided material-wall exchange is deterministic, dissipative, and momentum conservative");
+    validateSceneFluidRegionWallExchange(
+        wallExchange, transport, grid(),
+        currentEpoch.pressureControlVolumes, fixture.surface.definition,
+        currentState, currentEpoch.gridEpoch.quadrature);
+    bool tangentialTraction = true;
+    for (const auto& sample : wallExchange.samples) {
+        tangentialTraction = tangentialTraction
+            && std::abs(
+                sample.structureTraction.tractionPascals.x
+                    * sample.unitNormalNegativeToPositive.x
+                + sample.structureTraction.tractionPascals.y
+                    * sample.unitNormalNegativeToPositive.y
+                + sample.structureTraction.tractionPascals.z
+                    * sample.unitNormalNegativeToPositive.z) < 1.0e-12;
+    }
+    check(tangentialTraction,
+          "material-wall exchange leaves normal traction exclusively to pressure");
+    const auto acceptedWall = captureSceneFluidAcceptedWallTractions(
+        wallExchange);
+    validateSceneFluidAcceptedWallTractions(
+        acceptedWall, currentEpoch.gridEpoch.quadrature,
+        wallExchange.fingerprint);
+    auto corruptAcceptedWall = acceptedWall;
+    corruptAcceptedWall.tractions.front().tractionPascals.x += 1.0;
+    expectInvalid(
+        [&] {
+            validateSceneFluidAcceptedWallTractionSetIntegrity(
+                corruptAcceptedWall);
+        },
+        "accepted material-wall endpoint rejects traction corruption");
+
+    auto zeroWallSettings = wallSettings;
+    zeroWallSettings.kinematicViscositySquareMetersPerSecond = 0.0;
+    const auto zeroWallExchange = exchangeSceneFluidRegionWallMomentum(
+        transport, grid(), currentEpoch.pressureControlVolumes,
+        fixture.surface.definition, currentState,
+        currentEpoch.gridEpoch.quadrature, zeroWallSettings);
+    check(zeroWallExchange.diagnostics.accepted
+              && zeroWallExchange.diagnostics.fluidImpulseKilogramMetersPerSecond
+                  == fluid::Vector3{}
+              && zeroWallExchange.diagnostics.structureImpulseKilogramMetersPerSecond
+                  == fluid::Vector3{}
+              && zeroWallExchange.diagnostics.viscousDissipationJoules == 0.0,
+          "zero material-wall viscosity is an exact no-exchange fixed point");
+
+    auto limitedWallSettings = wallSettings;
+    limitedWallSettings.kinematicViscositySquareMetersPerSecond = 1.0;
+    limitedWallSettings.maximumSubsteps = 1;
+    const auto limitedWallExchange = exchangeSceneFluidRegionWallMomentum(
+        transport, grid(), currentEpoch.pressureControlVolumes,
+        fixture.surface.definition, currentState,
+        currentEpoch.gridEpoch.quadrature, limitedWallSettings);
+    check(!limitedWallExchange.diagnostics.accepted
+              && limitedWallExchange.diagnostics.failureStage
+                  == SceneFluidRegionWallFailureStage::SubstepLimit
+              && limitedWallExchange.controlVolumes.empty()
+              && limitedWallExchange.samples.empty(),
+          "material-wall exchange rejects an unsafe explicit step without publishing partial state");
+
+    auto corruptWallExchange = wallExchange;
+    corruptWallExchange.samples.front().structureTraction.tractionPascals.x +=
+        1.0;
+    expectInvalid(
+        [&] {
+            validateSceneFluidRegionWallExchangeIntegrity(
+                corruptWallExchange);
+        },
+        "material-wall exchange integrity rejects traction corruption");
+
     const auto regionPrediction = predictSceneFluidRegionLinkFlows(
         transport, grid(), currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentFlux);
+    const auto wallPrediction = predictSceneFluidRegionLinkFlows(
+        wallExchange, grid(), currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentFlux);
+    const auto zeroWallPrediction = predictSceneFluidRegionLinkFlows(
+        zeroWallExchange, grid(), currentEpoch.pressureControlVolumes,
         currentEpoch.pressureFaceLinks, currentFlux);
     const auto repeatedPrediction = predictSceneFluidRegionLinkFlows(
         transport, grid(), currentEpoch.pressureControlVolumes,
@@ -682,8 +779,37 @@ void testAreaChangingLinkContinuation() {
               && regionPrediction.links.size()
                   == currentEpoch.pressureFaceLinks.links.size(),
           "transported region momentum deterministically predicts the moving epoch link flow and GCL remap");
+    check(wallPrediction.sourceTransportFingerprint == 0
+              && wallPrediction.sourceWallExchangeFingerprint
+                  == wallExchange.fingerprint
+              && wallPrediction.currentPressureControlVolumeFingerprint
+                  == currentEpoch.pressureControlVolumes.fingerprint
+              && wallPrediction.links.size()
+                  == currentEpoch.pressureFaceLinks.links.size(),
+          "material-wall-adjusted region momentum predicts the same current pressure-link topology");
+    bool zeroWallPreservesPrediction =
+        zeroWallPrediction.links.size() == regionPrediction.links.size();
+    for (std::size_t index = 0;
+         zeroWallPreservesPrediction
+             && index < zeroWallPrediction.links.size(); ++index) {
+        zeroWallPreservesPrediction =
+            zeroWallPrediction.links[index]
+                .predictedAbsoluteVelocityMetersPerSecond
+                == regionPrediction.links[index]
+                    .predictedAbsoluteVelocityMetersPerSecond
+            && zeroWallPrediction.links[index]
+                .predictedRelativeVolumeFlowRateCubicMetersPerSecond
+                == regionPrediction.links[index]
+                    .predictedRelativeVolumeFlowRateCubicMetersPerSecond;
+    }
+    check(zeroWallPreservesPrediction,
+          "zero wall viscosity preserves the transported link-flow predictor exactly");
     validateSceneFluidRegionLinkFlowPrediction(
         regionPrediction, transport, grid(),
+        currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentFlux);
+    validateSceneFluidRegionLinkFlowPrediction(
+        wallPrediction, wallExchange, grid(),
         currentEpoch.pressureControlVolumes,
         currentEpoch.pressureFaceLinks, currentFlux);
 
@@ -697,6 +823,14 @@ void testAreaChangingLinkContinuation() {
         currentEpoch.gridEpoch, currentEpoch.openingCaps,
         currentEpoch.openingQuadrature, currentEpoch.openingPatches,
         currentFlux, velocity, regionPrediction, currentEpoch.cellVolumes,
+        fixture.connectivity, currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentEpoch.pressureOperator,
+        volumeRates, currentWarm, strictSettings());
+    const auto wallProjection = projectSceneFluidPressureLinkFlows(
+        fixture.surface.definition, currentState, grid(), fixture.transfer,
+        currentEpoch.gridEpoch, currentEpoch.openingCaps,
+        currentEpoch.openingQuadrature, currentEpoch.openingPatches,
+        currentFlux, velocity, wallPrediction, currentEpoch.cellVolumes,
         fixture.connectivity, currentEpoch.pressureControlVolumes,
         currentEpoch.pressureFaceLinks, currentEpoch.pressureOperator,
         volumeRates, currentWarm, strictSettings());
@@ -718,6 +852,12 @@ void testAreaChangingLinkContinuation() {
                   == volumeRates.fingerprint
               && exactPredictedFlow,
           "moving pressure projection consumes the transported region link predictor exactly");
+    check(wallProjection.diagnostics.accepted
+              && wallProjection.regionLinkFlowPredictionFingerprint
+                  == wallPrediction.fingerprint
+              && wallProjection.regionWallExchangeFingerprint
+                  == wallExchange.fingerprint,
+          "moving pressure projection retains exact material-wall predictor provenance");
 
     const auto currentMomentum = reconstructSceneFluidRegionMomentumState(
         grid(), currentEpoch.pressureControlVolumes,

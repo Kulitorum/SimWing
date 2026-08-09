@@ -98,6 +98,7 @@ std::uint64_t predictionFingerprint(
     Fingerprint fingerprint;
     fingerprint.integer(prediction.version);
     fingerprint.integer(prediction.sourceTransportFingerprint);
+    fingerprint.integer(prediction.sourceWallExchangeFingerprint);
     fingerprint.integer(prediction.currentPressureControlVolumeFingerprint);
     fingerprint.integer(prediction.currentPressureFaceLinkFingerprint);
     fingerprint.integer(prediction.currentOpeningFluxFingerprint);
@@ -413,6 +414,200 @@ SceneFluidRegionLinkFlowPrediction predictSceneFluidRegionLinkFlows(
     return result;
 }
 
+SceneFluidRegionLinkFlowPrediction predictSceneFluidRegionLinkFlows(
+    const SceneFluidRegionWallExchange& wallExchange,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
+    const SceneFluidPressureFaceLinkSet& currentFaceLinks,
+    const SceneFluidOpeningFluxSet& currentOpeningFlux,
+    const SceneFluidRegionLinkFlowLimits& limits) {
+    validateSceneFluidRegionWallExchangeIntegrity(wallExchange);
+    validateSceneFluidPressureControlVolumeIntegrity(currentPressureVolumes);
+    validateSceneFluidOpeningFluxIntegrity(currentOpeningFlux);
+    validateGridIdentity(
+        grid, currentPressureVolumes.cellCounts,
+        currentPressureVolumes.lowerMeters,
+        currentPressureVolumes.upperMeters,
+        "scene fluid wall link-flow pressure grid is foreign");
+    validateGridIdentity(
+        grid, currentFaceLinks.cellCounts,
+        currentFaceLinks.lowerMeters, currentFaceLinks.upperMeters,
+        "scene fluid wall link-flow face grid is foreign");
+    validateGridIdentity(
+        grid, currentOpeningFlux.cellCounts,
+        currentOpeningFlux.lowerMeters, currentOpeningFlux.upperMeters,
+        "scene fluid wall link-flow opening grid is foreign");
+    if (!wallExchange.diagnostics.accepted
+        || wallExchange.acceptedStepCount == 0
+        || wallExchange.currentPressureControlVolumeFingerprint
+            != currentPressureVolumes.fingerprint
+        || currentFaceLinks.version != sceneFluidPressureFaceLinkVersion
+        || currentFaceLinks.fingerprint == 0
+        || currentFaceLinks.pressureControlVolumeFingerprint
+            != currentPressureVolumes.fingerprint
+        || currentFaceLinks.openingPatchFingerprint
+            != currentOpeningFlux.openingPatchFingerprint
+        || wallExchange.acceptedStepCount
+            != currentPressureVolumes.acceptedStepCount
+        || currentFaceLinks.acceptedStepCount
+            != currentPressureVolumes.acceptedStepCount
+        || currentOpeningFlux.acceptedStepCount
+            != currentPressureVolumes.acceptedStepCount
+        || wallExchange.simulationTimeSeconds
+            != currentPressureVolumes.simulationTimeSeconds
+        || currentFaceLinks.simulationTimeSeconds
+            != currentPressureVolumes.simulationTimeSeconds
+        || currentOpeningFlux.simulationTimeSeconds
+            != currentPressureVolumes.simulationTimeSeconds
+        || wallExchange.controlVolumes.size()
+            != currentPressureVolumes.controlVolumes.size()) {
+        throw std::invalid_argument(
+            "scene fluid wall link-flow identity is invalid");
+    }
+    const std::size_t storageBytes = storageBytesForLinks(
+        currentFaceLinks.links.size());
+    if (currentPressureVolumes.controlVolumes.size()
+            > limits.maximumControlVolumes
+        || currentFaceLinks.links.size() > limits.maximumLinks
+        || storageBytes > limits.maximumLinkFlowBytes) {
+        throw std::length_error(
+            "scene fluid wall link-flow exceeds its limits");
+    }
+
+    for (std::size_t index = 0;
+         index < currentPressureVolumes.controlVolumes.size(); ++index) {
+        const auto& current = currentPressureVolumes.controlVolumes[index];
+        const auto& source = wallExchange.controlVolumes[index];
+        if (current.controlVolumeIndex != index
+            || source.controlVolumeIndex != index
+            || current.stableId != source.stableId
+            || current.volumeCubicMeters != source.volumeCubicMeters) {
+            throw std::invalid_argument(
+                "scene fluid wall link-flow control topology changed");
+        }
+    }
+
+    std::map<std::uint64_t, const SceneFluidOpeningFluxSample*> sampleById;
+    for (const auto& sample : currentOpeningFlux.samples) {
+        if (sample.patchStableId == 0
+            || !sampleById.emplace(sample.patchStableId, &sample).second) {
+            throw std::invalid_argument(
+                "scene fluid wall link-flow opening identity is invalid");
+        }
+    }
+
+    SceneFluidRegionLinkFlowPrediction result;
+    result.sourceWallExchangeFingerprint = wallExchange.fingerprint;
+    result.currentPressureControlVolumeFingerprint =
+        currentPressureVolumes.fingerprint;
+    result.currentPressureFaceLinkFingerprint = currentFaceLinks.fingerprint;
+    result.currentOpeningFluxFingerprint = currentOpeningFlux.fingerprint;
+    result.currentVelocityFingerprint = currentOpeningFlux.velocityFingerprint;
+    result.previousAcceptedStepCount = wallExchange.acceptedStepCount - 1;
+    result.currentAcceptedStepCount = wallExchange.acceptedStepCount;
+    result.previousSimulationTimeSeconds =
+        wallExchange.simulationTimeSeconds - wallExchange.settings.timeStepSeconds;
+    result.currentSimulationTimeSeconds = wallExchange.simulationTimeSeconds;
+    result.densityKgPerCubicMeter = wallExchange.densityKgPerCubicMeter;
+    result.cellCounts = grid.cellCounts();
+    result.lowerMeters = grid.lowerMeters();
+    result.upperMeters = grid.upperMeters();
+    result.ownedStorageBytes = storageBytes;
+    result.links.reserve(currentFaceLinks.links.size());
+    auto& diagnostics = result.diagnostics;
+    diagnostics.controlVolumeCount = wallExchange.controlVolumes.size();
+    diagnostics.faceCount = currentFaceLinks.faces.size();
+    diagnostics.linkCount = currentFaceLinks.links.size();
+    diagnostics.sourceMomentumKilogramMetersPerSecond =
+        wallExchange.diagnostics.fluidMomentumAfterKilogramMetersPerSecond;
+    diagnostics.remappedMomentumKilogramMetersPerSecond =
+        diagnostics.sourceMomentumKilogramMetersPerSecond;
+
+    for (const auto& face : currentFaceLinks.faces) {
+        if (face.linkCount > 1) {
+            ++diagnostics.multiLinkFaceCount;
+        }
+    }
+    std::size_t consumedOpeningSamples = 0;
+    for (std::size_t index = 0;
+         index < currentFaceLinks.links.size(); ++index) {
+        const auto& source = currentFaceLinks.links[index];
+        if (source.linkIndex != index
+            || source.faceIndex >= currentFaceLinks.faces.size()
+            || source.minusControlVolumeIndex
+                >= wallExchange.controlVolumes.size()
+            || source.plusControlVolumeIndex
+                >= wallExchange.controlVolumes.size()
+            || !(source.areaSquareMeters > 0.0)) {
+            throw std::invalid_argument(
+                "scene fluid wall link-flow binding is invalid");
+        }
+        const auto axis = currentFaceLinks.faces[source.faceIndex].axis;
+        const double velocity = 0.5
+            * (component(
+                   wallExchange.controlVolumes[
+                       source.minusControlVolumeIndex]
+                       .velocityMetersPerSecond,
+                   axis)
+               + component(
+                   wallExchange.controlVolumes[
+                       source.plusControlVolumeIndex]
+                       .velocityMetersPerSecond,
+                   axis));
+        double relativeFlow = source.areaSquareMeters * velocity;
+        if (source.kind
+            == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
+            const auto found = sampleById.find(source.openingPatchStableId);
+            if (found == sampleById.end()) {
+                throw std::invalid_argument(
+                    "scene fluid wall link-flow opening sample is missing");
+            }
+            relativeFlow -= orientedOpeningSweep(source, *found->second);
+            sampleById.erase(found);
+            ++consumedOpeningSamples;
+            ++diagnostics.openingLinkCount;
+        }
+        if (!std::isfinite(velocity) || !std::isfinite(relativeFlow)) {
+            throw std::overflow_error(
+                "scene fluid wall link-flow prediction is non-finite");
+        }
+        result.links.push_back({
+            index, source.stableId, source.faceIndex, source.kind,
+            source.openingPatchStableId, velocity, relativeFlow,
+        });
+        diagnostics.maximumAbsolutePredictedVelocityMetersPerSecond =
+            std::max(
+                diagnostics.maximumAbsolutePredictedVelocityMetersPerSecond,
+                std::abs(velocity));
+        diagnostics
+            .maximumAbsolutePredictedRelativeVolumeFlowRateCubicMetersPerSecond =
+            std::max(
+                diagnostics
+                    .maximumAbsolutePredictedRelativeVolumeFlowRateCubicMetersPerSecond,
+                std::abs(relativeFlow));
+    }
+    if (consumedOpeningSamples != currentOpeningFlux.samples.size()
+        || !sampleById.empty()) {
+        throw std::invalid_argument(
+            "scene fluid wall link-flow did not consume every opening sample");
+    }
+    diagnostics.finite = finite(
+            diagnostics.sourceMomentumKilogramMetersPerSecond)
+        && finite(diagnostics.remappedMomentumKilogramMetersPerSecond)
+        && finite(diagnostics.geometricMomentumChangeKilogramMetersPerSecond)
+        && std::isfinite(
+            diagnostics.maximumAbsoluteVolumeChangeCubicMeters)
+        && std::isfinite(
+            diagnostics.maximumAbsolutePredictedVelocityMetersPerSecond)
+        && std::isfinite(diagnostics
+            .maximumAbsolutePredictedRelativeVolumeFlowRateCubicMetersPerSecond);
+    result.fingerprint = predictionFingerprint(result);
+    validateSceneFluidRegionLinkFlowPrediction(
+        result, wallExchange, grid, currentPressureVolumes,
+        currentFaceLinks, currentOpeningFlux);
+    return result;
+}
+
 void validateSceneFluidRegionLinkFlowPredictionIntegrity(
     const SceneFluidRegionLinkFlowPrediction& prediction) {
     const auto& diagnostics = prediction.diagnostics;
@@ -434,7 +629,8 @@ void validateSceneFluidRegionLinkFlowPredictionIntegrity(
     }
     if (prediction.version != sceneFluidRegionLinkFlowVersion
         || prediction.fingerprint == 0
-        || prediction.sourceTransportFingerprint == 0
+        || (prediction.sourceTransportFingerprint == 0)
+            == (prediction.sourceWallExchangeFingerprint == 0)
         || prediction.currentPressureControlVolumeFingerprint == 0
         || prediction.currentPressureFaceLinkFingerprint == 0
         || prediction.currentOpeningFluxFingerprint == 0
@@ -503,6 +699,7 @@ void validateSceneFluidRegionLinkFlowPrediction(
         prediction.lowerMeters, prediction.upperMeters,
         "scene fluid region link-flow prediction grid is foreign");
     if (prediction.sourceTransportFingerprint != transport.fingerprint
+        || prediction.sourceWallExchangeFingerprint != 0
         || prediction.currentPressureControlVolumeFingerprint
             != currentPressureVolumes.fingerprint
         || prediction.currentPressureFaceLinkFingerprint
@@ -513,6 +710,8 @@ void validateSceneFluidRegionLinkFlowPrediction(
             != currentOpeningFlux.velocityFingerprint
         || prediction.previousAcceptedStepCount
             != transport.acceptedStepCount
+        || prediction.previousSimulationTimeSeconds
+            != transport.sourceSimulationTimeSeconds
         || prediction.currentAcceptedStepCount
             != currentFaceLinks.acceptedStepCount
         || prediction.currentSimulationTimeSeconds
@@ -534,6 +733,59 @@ void validateSceneFluidRegionLinkFlowPrediction(
                 != source.openingPatchStableId) {
             throw std::invalid_argument(
                 "scene fluid region link-flow prediction link is foreign");
+        }
+    }
+}
+
+void validateSceneFluidRegionLinkFlowPrediction(
+    const SceneFluidRegionLinkFlowPrediction& prediction,
+    const SceneFluidRegionWallExchange& wallExchange,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
+    const SceneFluidPressureFaceLinkSet& currentFaceLinks,
+    const SceneFluidOpeningFluxSet& currentOpeningFlux) {
+    validateSceneFluidRegionLinkFlowPredictionIntegrity(prediction);
+    validateSceneFluidRegionWallExchangeIntegrity(wallExchange);
+    validateSceneFluidOpeningFluxIntegrity(currentOpeningFlux);
+    validateGridIdentity(
+        grid, prediction.cellCounts,
+        prediction.lowerMeters, prediction.upperMeters,
+        "scene fluid wall link-flow prediction grid is foreign");
+    if (prediction.sourceTransportFingerprint != 0
+        || prediction.sourceWallExchangeFingerprint
+            != wallExchange.fingerprint
+        || prediction.currentPressureControlVolumeFingerprint
+            != currentPressureVolumes.fingerprint
+        || prediction.currentPressureFaceLinkFingerprint
+            != currentFaceLinks.fingerprint
+        || prediction.currentOpeningFluxFingerprint
+            != currentOpeningFlux.fingerprint
+        || prediction.currentVelocityFingerprint
+            != currentOpeningFlux.velocityFingerprint
+        || prediction.currentAcceptedStepCount
+            != wallExchange.acceptedStepCount
+        || prediction.previousSimulationTimeSeconds
+            != wallExchange.simulationTimeSeconds
+                - wallExchange.settings.timeStepSeconds
+        || prediction.currentSimulationTimeSeconds
+            != wallExchange.simulationTimeSeconds
+        || prediction.densityKgPerCubicMeter
+            != wallExchange.densityKgPerCubicMeter
+        || prediction.links.size() != currentFaceLinks.links.size()) {
+        throw std::invalid_argument(
+            "scene fluid wall link-flow prediction binding is invalid");
+    }
+    for (std::size_t index = 0; index < prediction.links.size(); ++index) {
+        const auto& predicted = prediction.links[index];
+        const auto& source = currentFaceLinks.links[index];
+        if (predicted.linkIndex != source.linkIndex
+            || predicted.stableId != source.stableId
+            || predicted.faceIndex != source.faceIndex
+            || predicted.kind != source.kind
+            || predicted.openingPatchStableId
+                != source.openingPatchStableId) {
+            throw std::invalid_argument(
+                "scene fluid wall link-flow prediction link is foreign");
         }
     }
 }

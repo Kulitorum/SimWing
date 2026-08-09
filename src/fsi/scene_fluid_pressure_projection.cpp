@@ -161,6 +161,7 @@ std::uint64_t projectionFingerprint(
     fingerprint.integer(projection.velocityFingerprint);
     fingerprint.integer(projection.linkFlowContinuationFingerprint);
     fingerprint.integer(projection.regionLinkFlowPredictionFingerprint);
+    fingerprint.integer(projection.regionWallExchangeFingerprint);
     fingerprint.integer(projection.acceptedStepCount);
     fingerprint.real(projection.simulationTimeSeconds);
     fingerprint.integer(static_cast<std::uint64_t>(projection.cellCounts.x));
@@ -578,6 +579,9 @@ static SceneFluidPressureProjection projectSceneFluidPressureLinkFlowsImpl(
     result.regionLinkFlowPredictionFingerprint =
         regionLinkFlowPrediction == nullptr
         ? 0 : regionLinkFlowPrediction->fingerprint;
+    result.regionWallExchangeFingerprint =
+        regionLinkFlowPrediction == nullptr
+        ? 0 : regionLinkFlowPrediction->sourceWallExchangeFingerprint;
     result.acceptedStepCount = pressureOperator.acceptedStepCount;
     result.simulationTimeSeconds = pressureOperator.simulationTimeSeconds;
     result.cellCounts = grid.cellCounts();
@@ -1065,6 +1069,8 @@ void validateSceneFluidPressureProjectionIntegrity(
             != (projection.pressureVolumeRateFingerprint != 0)
         || (projection.linkFlowContinuationFingerprint != 0
             && projection.regionLinkFlowPredictionFingerprint != 0)
+        || (projection.regionWallExchangeFingerprint != 0
+            && projection.regionLinkFlowPredictionFingerprint == 0)
         || projection.openingFluxFingerprint == 0
         || projection.velocityFingerprint == 0
         || !finite(projection.simulationTimeSeconds)

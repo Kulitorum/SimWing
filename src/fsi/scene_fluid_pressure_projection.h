@@ -11,7 +11,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureProjectionVersion = 4;
+inline constexpr std::uint32_t sceneFluidPressureProjectionVersion = 5;
 
 struct SceneFluidPressureLinkFlowContinuation;
 struct SceneFluidRegionLinkFlowPrediction;
@@ -120,6 +120,7 @@ struct SceneFluidPressureProjection {
     std::uint64_t velocityFingerprint = 0;
     std::uint64_t linkFlowContinuationFingerprint = 0;
     std::uint64_t regionLinkFlowPredictionFingerprint = 0;
+    std::uint64_t regionWallExchangeFingerprint = 0;
     std::uint64_t acceptedStepCount = 0;
     double simulationTimeSeconds = 0.0;
     fluid::GridCellCounts cellCounts;

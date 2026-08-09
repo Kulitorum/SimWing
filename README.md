@@ -615,8 +615,9 @@ projection failure. The MAC predictor is held fixed inside each nonlinear
 feedback loop. Accepted corrected link flows can now be conservatively
 area-collapsed back onto one absolute bulk MAC velocity per Cartesian face,
 including oriented intake-cap sweep. The visible pressure-cell canonical uses
-that field as its next predictor; general cut-cell momentum transport,
-region-resolved advection, wall-conditioned viscosity, and topology rebasing
+that field as its next predictor. Region-resolved transport and a local
+material-wall exchange now continue the accepted state after bootstrap;
+general immersed-boundary advection/boundary layers and topology rebasing
 remain later work.
 A separate topology-bound link-flow continuation primitive now proves exactly
 what the collapse loses. It restores accepted opening-cap sweep, carries each
@@ -648,8 +649,18 @@ region state without erasing cut-region differences. A topology-stable
 moving-epoch adapter then retains transported cell/region velocities while
 remapping momentum to current physical volumes, averages them onto current
 pressure links, subtracts exact opening-cap sweep, and supplies the
-fingerprinted predictor to pressure projection alongside dV/dt. Topology
-rebase and material-wall viscosity remain explicit next steps.
+fingerprinted predictor to pressure projection alongside dV/dt.
+A separate material-wall operator remaps that fixed transport to each current
+strong-coupling geometry, applies two-sided tangential viscous exchange at the
+authoritative material quadrature, and returns both adjusted region momentum
+and equal-and-opposite Structure traction. A local `0.5*volume/wall-area`
+distance closure and deterministic explicit subcycling bound the exchange;
+fluid/Structure impulse, wall work, and nonnegative dissipation are checked
+before publication. Pressure remains the sole owner of normal traction. The
+wall-adjusted current-link predictor feeds pressure projection, while the
+combined pressure-plus-shear load follows the existing conservative XPBD
+transfer. This is a local coarse cut-region closure, not a resolved boundary
+layer. Topology rebase remains an explicit next step.
 Its in-memory composite checkpoint retains Structure plus the accepted sparse
 pressure projection; restore rebuilds and validates the complete pressure
 epoch and conservative load before committing either owner. Initial and
@@ -669,9 +680,10 @@ accepted region momentum receives the bound bulk-MAC delta, advances through
 moving-volume GCL transport, and predicts every current pressure link during
 each strong geometry iterate. Its
 immutable frames publish deformation, area-averaged triangle pressure jump,
-nodal/total pressure force, mean-flow pump force, bulk-flow change and
-divergence, viscous energy loss, region transport loss/GCL change/momentum
-residual, strong-iteration count, bulk MAC speed, and
+separate pressure/wall/total-fluid nodal and global forces, mean-flow pump
+force, bulk-flow change and divergence, viscous energy loss, region transport
+loss/GCL change/momentum residual, wall loss/momentum residual,
+strong-iteration count, bulk MAC speed, and
 the maximum
 mixed-subface velocity spread discarded by the area collapse. The final scene
 projection remains cut-region-aware, but the two intermediate bulk-advection
@@ -680,17 +692,20 @@ diagnostic, not a general immersed-boundary CFD or wing-aerodynamics claim. A
 600-step headless run remains topology-stable for 10 simulated seconds and
 reports a relaxed `0.00309 Pa`, `0.0260 mm` deformation, and `0.908 m/s`
 maximum MAC speed; the two-second transient reaches about `2.12 Pa` and
-`17.8 mm`. Sustaining bluff-body pressure is now explicitly the missing
-material-wall-viscosity boundary rather than hidden predictor reset.
-Its bounded `SWPCELL7` checkpoint stores the trusted Structure state, complete
-accepted sparse pressure projection, and accepted region momentum. Initial and
+`17.8 mm`. The molecular-viscosity wall reaction is conservative but tiny at
+this coarse resolution (about `1.4e-6 N` at two seconds), so sustaining a
+bluff-body pressure wake still requires general immersed-boundary advection
+and a validated boundary-layer closure rather than hidden predictor reset.
+Its bounded `SWPCELL8` checkpoint stores the trusted Structure state, complete
+accepted sparse pressure projection, accepted wall-traction endpoint, and
+accepted region momentum. Initial and
 accepted files
 round-trip deterministically, reject foreign/corrupt input transactionally,
 resume through the normal worker checkpoint flags, and reconstruct the exact
 derived MAC continuation without duplicating either it or transient bulk
-pressure on the wire. Version 7 preserves transported-region projection
-provenance and bounds/revalidates every momentum control volume before
-publication.
+pressure on the wire. Version 8 preserves transported-region and wall-exchange
+projection provenance and bounds/revalidates every momentum control volume and
+material quadrature traction before publication.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own

@@ -72,6 +72,9 @@ void testVisibleStrongPressureCellAndReplay() {
     double peakDisplacement = 0.0;
     double peakPressure = 0.0;
     double peakPressureForce = 0.0;
+    double peakWallForce = 0.0;
+    double peakWallLoss = 0.0;
+    double peakWallMomentumResidual = 0.0;
     double peakMacSpeed = 0.0;
     double peakMacSubfaceDeviation = 0.0;
     double peakBulkFlowChange = 0.0;
@@ -93,6 +96,17 @@ void testVisibleStrongPressureCellAndReplay() {
             peakPressure, diagnostics.maximumAbsolutePressurePascals);
         peakPressureForce = std::max(
             peakPressureForce, norm(diagnostics.pressureForceNewtons));
+        peakWallForce = std::max(
+            peakWallForce, norm(diagnostics.wallForceNewtons));
+        if (diagnostics.coupling.usesRegionWall) {
+            peakWallLoss = std::max(
+                peakWallLoss,
+                diagnostics.coupling.regionWall.viscousDissipationJoules);
+            peakWallMomentumResidual = std::max(
+                peakWallMomentumResidual,
+                diagnostics.coupling.regionWall
+                    .momentumResidualNormKilogramMetersPerSecond);
+        }
         peakMacSpeed = std::max(
             peakMacSpeed, diagnostics.macVelocity
                 .maximumAbsoluteVelocityMetersPerSecond);
@@ -135,8 +149,12 @@ void testVisibleStrongPressureCellAndReplay() {
                   && diagnostics.coupling.pressureTransfer
                          .forceResidualNormNewtons < 1.0e-12
                   && diagnostics.coupling.pressureTransfer
+                         .momentResidualNormNewtonMeters < 1.0e-12
+                  && diagnostics.coupling.totalFluidTransfer
+                         .forceResidualNormNewtons < 1.0e-12
+                  && diagnostics.coupling.totalFluidTransfer
                          .momentResidualNormNewtonMeters < 1.0e-12,
-              "scene pressure cell closes every pumped bulk-flow and strong pressure-feedback step");
+              "scene pressure cell closes every pumped bulk-flow and strong pressure/wall-feedback step");
         check(diagnostics.usesRegionTransport == (step != 0)
                   && (!diagnostics.usesRegionTransport
                       || (diagnostics.regionTransport.accepted
@@ -145,6 +163,16 @@ void testVisibleStrongPressureCellAndReplay() {
                           && diagnostics.regionTransport
                                  .usesBulkVelocityIncrement)),
               "scene pressure cell advances accepted moving-volume region momentum after bootstrap");
+        check(diagnostics.coupling.usesRegionWall == (step != 0)
+                  && (!diagnostics.coupling.usesRegionWall
+                      || (diagnostics.coupling.regionWall.accepted
+                          && diagnostics.coupling.regionWall.finite
+                          && diagnostics.coupling.regionWall
+                                 .viscousDissipationJoules >= 0.0
+                          && diagnostics.coupling.regionWall
+                                 .momentumResidualNormKilogramMetersPerSecond
+                              < 1.0e-10)),
+              "scene pressure cell exchanges conservative tangential material-wall momentum after bootstrap");
         check(diagnostics.bulkFlow.accepted
                   && diagnostics.bulkFlow.finite
                   && diagnostics.bulkFlow.finalDivergenceL2PerSecond
@@ -155,6 +183,9 @@ void testVisibleStrongPressureCellAndReplay() {
     check(peakDisplacement > 1.0e-5
               && peakPressure > 1.0e-4
               && peakPressureForce > 1.0e-6
+              && peakWallForce > 1.0e-9
+              && peakWallLoss > 0.0
+              && peakWallMomentumResidual < 1.0e-10
               && peakMacSpeed > 1.0e-6
               && peakMacSubfaceDeviation > 1.0e-8
               && peakBulkFlowChange > 1.0e-8
@@ -196,10 +227,22 @@ void testVisibleStrongPressureCellAndReplay() {
         frame, "pressure_cell.region_transport_momentum_residual");
     const auto* regionGclVolumeChange = scalarField(
         frame, "pressure_cell.region_gcl_volume_change");
+    const auto* wallLoss = scalarField(
+        frame, "pressure_cell.wall_viscous_loss");
+    const auto* wallMomentumResidual = scalarField(
+        frame, "pressure_cell.wall_momentum_residual");
     const auto* nodalForce = vectorField(
         frame, "pressure_cell.nodal_pressure_force");
     const auto* totalForce = vectorField(
         frame, "pressure_cell.total_pressure_force");
+    const auto* nodalWallForce = vectorField(
+        frame, "pressure_cell.nodal_wall_force");
+    const auto* totalWallForce = vectorField(
+        frame, "pressure_cell.total_wall_force");
+    const auto* nodalTotalFluidForce = vectorField(
+        frame, "pressure_cell.nodal_total_fluid_force");
+    const auto* totalFluidForce = vectorField(
+        frame, "pressure_cell.total_fluid_force");
     const auto* flowPump = vectorField(
         frame, "pressure_cell.flow_pump_force");
     check(displacement != nullptr
@@ -227,11 +270,23 @@ void testVisibleStrongPressureCellAndReplay() {
               && regionMomentumResidual->values.size() == 1
               && regionGclVolumeChange != nullptr
               && regionGclVolumeChange->values.size() == 1
+              && wallLoss != nullptr && wallLoss->values.size() == 1
+              && wallMomentumResidual != nullptr
+              && wallMomentumResidual->values.size() == 1
               && nodalForce != nullptr
               && nodalForce->association
                   == viewer::FieldAssociation::Vertex
               && nodalForce->values.size() == frame.vertices.size()
               && totalForce != nullptr && totalForce->values.size() == 1
+              && nodalWallForce != nullptr
+              && nodalWallForce->values.size() == frame.vertices.size()
+              && totalWallForce != nullptr
+              && totalWallForce->values.size() == 1
+              && nodalTotalFluidForce != nullptr
+              && nodalTotalFluidForce->values.size()
+                  == frame.vertices.size()
+              && totalFluidForce != nullptr
+              && totalFluidForce->values.size() == 1
               && flowPump != nullptr && flowPump->values.size() == 1,
           "scene pressure cell frame exposes deformation, pressure, pump forcing, viscous bulk flow, MAC continuation, and iteration count");
 
@@ -241,8 +296,14 @@ void testVisibleStrongPressureCellAndReplay() {
               && checkpoint.regionMomentum
                   == *first.acceptedRegionMomentum()
               && checkpoint.coupling.pressureProjection
-                     ->regionLinkFlowPredictionFingerprint != 0,
-          "scene pressure cell checkpoint owns its accepted transported-region continuation state");
+                     ->regionLinkFlowPredictionFingerprint != 0
+              && checkpoint.coupling.pressureProjection
+                     ->regionWallExchangeFingerprint != 0
+              && checkpoint.coupling.wallTractions.has_value()
+              && checkpoint.coupling.wallTractions->wallExchangeFingerprint
+                  == checkpoint.coupling.pressureProjection
+                         ->regionWallExchangeFingerprint,
+          "scene pressure cell checkpoint owns its accepted transported-region and material-wall continuation state");
     const auto expected = first.advance();
     const auto expectedDiagnostics = first.diagnostics();
     first.restore(checkpoint);
@@ -278,7 +339,9 @@ void testPersistentCheckpointAndRejection() {
     check(fsi::deserializeScenePressureCellCheckpoint(
               bytes, decoded, &error)
               && serializedCheckpoint(decoded) == bytes
-              && decoded.regionMomentum == saved.regionMomentum,
+              && decoded.regionMomentum == saved.regionMomentum
+              && decoded.coupling.wallTractions
+                  == saved.coupling.wallTractions,
           "scene pressure cell checkpoint has a canonical bounded round trip");
     fsi::ScenePressureCellCase restored;
     restored.restore(decoded);
@@ -309,8 +372,20 @@ void testPersistentCheckpointAndRejection() {
         restoreRejected = true;
     }
     check(restoreRejected
-              && restored.checkpoint() == restoredBeforeRejection,
+              && serializedCheckpoint(restored.checkpoint())
+                  == serializedCheckpoint(restoredBeforeRejection),
           "scene pressure cell rejects corrupt region momentum without mutating its accepted owners");
+
+    auto corruptWall = saved;
+    corruptWall.coupling.wallTractions->tractions.front()
+        .tractionPascals.x += 0.01;
+    unchanged = {1, 2, 3};
+    check(!fsi::serializeScenePressureCellCheckpoint(
+              corruptWall, unchanged, &error)
+              && error.code
+                  == fsi::ScenePressureCellCheckpointPersistenceErrorCode::InvalidData
+              && unchanged == original,
+          "scene pressure cell rejects corrupt accepted wall traction before publishing bytes");
 
     const auto preserved = serializedCheckpoint(decoded);
     const auto rejects = [&](std::vector<std::uint8_t> damaged,
@@ -369,6 +444,15 @@ void testPersistentCheckpointAndRejection() {
             fsi::ScenePressureCellCheckpointPersistenceErrorCode::LimitExceeded,
             "scene pressure cell bounds persisted region momentum before publication",
             momentumLimits);
+
+    auto wallLimits =
+        fsi::ScenePressureCellCheckpointPersistenceLimits{};
+    wallLimits.maximumWallTractionStorageBytes =
+        saved.coupling.wallTractions->ownedStorageBytes - 1;
+    rejects(bytes,
+            fsi::ScenePressureCellCheckpointPersistenceErrorCode::LimitExceeded,
+            "scene pressure cell bounds persisted wall traction before publication",
+            wallLimits);
 
     auto foreign = saved;
     foreign.version += 1;

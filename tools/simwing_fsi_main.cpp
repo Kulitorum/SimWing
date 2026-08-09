@@ -1588,12 +1588,15 @@ int main(int argc, char* argv[]) {
                     std::printf(
                         "simwing-fsi completed %llu pressure-cell step(s), "
                         "t=%.9g s, wind=%.6g m/s, pump=%.6g N, pressure-force="
+                        "[%.6g %.6g %.6g] N, wall-force="
                         "[%.6g %.6g %.6g] N, max-pressure=%.6g Pa, "
                         "max-motion=%.6g m, coupling-iterations=%llu, "
                         "mac-speed=%.6g m/s, subface-spread=%.3g m/s, "
                         "bulk-viscous-loss=%.3g J, region-loss=%.3g J, "
                         "region-gcl=%.3g m^3, region-momentum-residual="
-                        "%.3g N s, load-closure=%.3g N, "
+                        "%.3g N s, wall-loss=%.3g J, "
+                        "wall-momentum-residual=%.3g N s, "
+                        "load-closure=%.3g N, "
                         "checkpoint-writes=%llu, "
                         "trace=%s\n",
                         static_cast<unsigned long long>(
@@ -1604,6 +1607,9 @@ int main(int argc, char* argv[]) {
                         coupled.pressureForceNewtons.x,
                         coupled.pressureForceNewtons.y,
                         coupled.pressureForceNewtons.z,
+                        coupled.wallForceNewtons.x,
+                        coupled.wallForceNewtons.y,
+                        coupled.wallForceNewtons.z,
                         coupled.maximumAbsolutePressurePascals,
                         coupled.maximumDisplacementMeters,
                         static_cast<unsigned long long>(
@@ -1620,6 +1626,10 @@ int main(int argc, char* argv[]) {
                         coupled.regionTransport
                             .maximumAbsoluteGeometryVolumeChangeCubicMeters,
                         coupled.regionTransport
+                            .momentumResidualNormKilogramMetersPerSecond,
+                        coupled.coupling.regionWall
+                            .viscousDissipationJoules,
+                        coupled.coupling.regionWall
                             .momentumResidualNormKilogramMetersPerSecond,
                         coupled.coupling.interfaceForceClosureNewtons,
                         static_cast<unsigned long long>(

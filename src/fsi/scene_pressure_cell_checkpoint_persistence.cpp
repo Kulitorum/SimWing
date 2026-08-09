@@ -14,13 +14,14 @@ namespace simwing::fsi {
 namespace {
 
 constexpr std::array<std::uint8_t, 8> checkpointMagic{
-    'S', 'W', 'P', 'C', 'E', 'L', 'L', '7'};
-constexpr std::uint32_t checkpointStateVersion = 7;
+    'S', 'W', 'P', 'C', 'E', 'L', 'L', '8'};
+constexpr std::uint32_t checkpointStateVersion = 8;
 constexpr std::size_t checkpointEnvelopeBytes = 28;
 constexpr std::size_t solveComponentRecordBytes = 56;
 constexpr std::size_t controlVolumeRecordBytes = 72;
 constexpr std::size_t linkRecordBytes = 73;
 constexpr std::size_t momentumControlVolumeRecordBytes = 152;
+constexpr std::size_t wallTractionRecordBytes = 32;
 constexpr std::uint64_t fnvOffsetBasis = 14695981039346656037ULL;
 constexpr std::uint64_t fnvPrime = 1099511628211ULL;
 
@@ -219,6 +220,8 @@ bool validLimits(const ScenePressureCellCheckpointPersistenceLimits& limits) {
         && limits.maximumSolveComponents > 0
         && limits.maximumProjectionStorageBytes > 0
         && limits.maximumMomentumStorageBytes > 0
+        && limits.maximumWallTractions > 0
+        && limits.maximumWallTractionStorageBytes > 0
         && limits.structure.maximumEncodedBytes > 0;
 }
 
@@ -443,6 +446,7 @@ bool writeProjection(
         || !writer.u64(projection.velocityFingerprint)
         || !writer.u64(projection.linkFlowContinuationFingerprint)
         || !writer.u64(projection.regionLinkFlowPredictionFingerprint)
+        || !writer.u64(projection.regionWallExchangeFingerprint)
         || !writer.u64(projection.acceptedStepCount)
         || !writer.finiteDouble(projection.simulationTimeSeconds)
         || !writer.count(projection.cellCounts.x)
@@ -520,6 +524,7 @@ bool readProjection(
         || !reader.u64(projection.velocityFingerprint)
         || !reader.u64(projection.linkFlowContinuationFingerprint)
         || !reader.u64(projection.regionLinkFlowPredictionFingerprint)
+        || !reader.u64(projection.regionWallExchangeFingerprint)
         || !reader.u64(projection.acceptedStepCount)
         || !reader.finiteDouble(projection.simulationTimeSeconds)
         || !reader.count(
@@ -615,6 +620,68 @@ bool readProjection(
         link.kind = static_cast<SceneFluidPressureFaceLinkKind>(kind);
     }
     validateSceneFluidPressureProjectionIntegrity(projection);
+    return true;
+}
+
+bool writeWallTractions(
+    Writer& writer,
+    const SceneFluidAcceptedWallTractionSet& wall) {
+    validateSceneFluidAcceptedWallTractionSetIntegrity(wall);
+    if (!writer.u32(wall.version)
+        || !writer.u64(wall.fingerprint)
+        || !writer.u64(wall.wallExchangeFingerprint)
+        || !writer.u64(wall.quadratureFingerprint)
+        || !writer.u64(wall.surfaceDefinitionFingerprint)
+        || !writer.u64(wall.surfaceStateFingerprint)
+        || !writer.u64(wall.structureDefinitionFingerprint)
+        || !writer.u64(wall.acceptedStepCount)
+        || !writer.finiteDouble(wall.simulationTimeSeconds)
+        || !writer.count(wall.ownedStorageBytes)
+        || !writer.count(wall.tractions.size())) {
+        return false;
+    }
+    for (const auto& traction : wall.tractions) {
+        if (!writer.u64(traction.stableId)
+            || !writer.finiteDouble(traction.tractionPascals.x)
+            || !writer.finiteDouble(traction.tractionPascals.y)
+            || !writer.finiteDouble(traction.tractionPascals.z)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool readWallTractions(
+    Reader& reader,
+    SceneFluidAcceptedWallTractionSet& wall,
+    const ScenePressureCellCheckpointPersistenceLimits& limits) {
+    std::size_t count = 0;
+    if (!reader.u32(wall.version)
+        || !reader.u64(wall.fingerprint)
+        || !reader.u64(wall.wallExchangeFingerprint)
+        || !reader.u64(wall.quadratureFingerprint)
+        || !reader.u64(wall.surfaceDefinitionFingerprint)
+        || !reader.u64(wall.surfaceStateFingerprint)
+        || !reader.u64(wall.structureDefinitionFingerprint)
+        || !reader.u64(wall.acceptedStepCount)
+        || !reader.finiteDouble(wall.simulationTimeSeconds)
+        || !reader.count(
+            wall.ownedStorageBytes,
+            limits.maximumWallTractionStorageBytes)
+        || !reader.count(count, limits.maximumWallTractions)
+        || !reader.fixedRecords(count, wallTractionRecordBytes)) {
+        return false;
+    }
+    wall.tractions.resize(count);
+    for (auto& traction : wall.tractions) {
+        if (!reader.u64(traction.stableId)
+            || !reader.finiteDouble(traction.tractionPascals.x)
+            || !reader.finiteDouble(traction.tractionPascals.y)
+            || !reader.finiteDouble(traction.tractionPascals.z)) {
+            return false;
+        }
+    }
+    validateSceneFluidAcceptedWallTractionSetIntegrity(wall);
     return true;
 }
 
@@ -803,6 +870,16 @@ bool serializeScenePressureCellCheckpoint(
                 ScenePressureCellCheckpointPersistenceErrorCode::LimitExceeded,
                 "scene pressure cell region momentum exceeds its limit");
         }
+        if (checkpoint.coupling.wallTractions
+            && (checkpoint.coupling.wallTractions->tractions.size()
+                    > limits.maximumWallTractions
+                || checkpoint.coupling.wallTractions->ownedStorageBytes
+                    > limits.maximumWallTractionStorageBytes)) {
+            return fail(
+                error,
+                ScenePressureCellCheckpointPersistenceErrorCode::LimitExceeded,
+                "scene pressure cell wall traction exceeds its limit");
+        }
 
         std::vector<std::uint8_t> payload;
         Writer payloadWriter(
@@ -817,6 +894,11 @@ bool serializeScenePressureCellCheckpoint(
                 && !writeProjection(
                     payloadWriter,
                     *checkpoint.coupling.pressureProjection))
+            || !payloadWriter.boolean(
+                checkpoint.coupling.wallTractions.has_value())
+            || (checkpoint.coupling.wallTractions
+                && !writeWallTractions(
+                    payloadWriter, *checkpoint.coupling.wallTractions))
             || !payloadWriter.boolean(
                 checkpoint.regionMomentum.has_value())
             || (checkpoint.regionMomentum
@@ -999,6 +1081,23 @@ bool deserializeScenePressureCellCheckpoint(
             candidate.coupling.pressureProjection = std::move(projection);
         } else {
             candidate.coupling.pressureProjection.reset();
+        }
+        bool hasWallTractions = false;
+        if (!payloadReader.boolean(hasWallTractions)) {
+            return fail(
+                error, readerErrorCode(payloadReader),
+                "scene pressure cell wall-traction marker is invalid");
+        }
+        if (hasWallTractions) {
+            SceneFluidAcceptedWallTractionSet wall;
+            if (!readWallTractions(payloadReader, wall, limits)) {
+                return fail(
+                    error, readerErrorCode(payloadReader),
+                    "scene pressure cell wall-traction payload is invalid");
+            }
+            candidate.coupling.wallTractions = std::move(wall);
+        } else {
+            candidate.coupling.wallTractions.reset();
         }
         bool hasRegionMomentum = false;
         if (!payloadReader.boolean(hasRegionMomentum)) {

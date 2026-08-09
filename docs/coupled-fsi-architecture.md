@@ -757,8 +757,17 @@ cell/region velocity while recomputing momentum from current physical volume,
 averages endpoint components onto the current Cartesian links, and subtracts
 the exact current opening-cap sweep. The moving pressure projection consumes
 that fingerprinted first-order predictor together with its dV/dt product and
-verifies every predicted link flow exactly. Topology rebase and material-wall
-flux remain separate. The
+verifies every predicted link flow exactly. A downstream material-wall product
+now remaps the immutable transport to each current nonlinear geometry and
+exchanges tangential momentum on both sides of every authoritative material
+quadrature point. It uses a local half-volume/incident-area distance, bounded
+explicit subcycling, and separate wall-work/dissipation ledgers. The fluid
+impulse and equal-and-opposite Structure traction close before publication;
+normal traction remains pressure-owned. Pressure projection then consumes the
+wall-adjusted link predictor, and the existing conservative transfer applies
+the combined pressure-plus-shear load to XPBD. This is a topology-stable local
+cut-region wall closure, not a resolved immersed-boundary boundary layer.
+Topology rebase remains separate. The
 first composite in-memory checkpoint stores Structure and the accepted sparse
 pressure projection. Restore uses a temporary Structure, rebuilds the entire
 pressure epoch, resamples the validated projection, and reconstructs the
@@ -777,16 +786,21 @@ viscosity/projected-nonlinear-advection/viscosity operator advances that bulk
 MAC field on a private candidate, and only an accepted scene pressure solve
 commits the next predictor and loads the free apex. After bootstrap, accepted
 region momentum receives the bulk-MAC delta, advances through moving-volume
-GCL transport, and predicts every current link in each strong iterate. At two
-seconds the reference transient reports about `2.12 Pa` and `17.8 mm`; without
-material-wall viscosity the coarse inviscid state relaxes by ten seconds to
-about `0.00309 Pa` and `0.0260 mm`. Frames expose the mean-flow pump force plus
-bulk-flow change, final divergence, viscous loss, region loss/GCL change, and
-region momentum residual. It is deliberately a visible bootstrap
+GCL transport, exchanges material-wall momentum, and predicts every current
+link in each strong iterate. At two seconds the reference transient reports
+about `2.12 Pa` and `17.8 mm`; the molecular-viscosity wall reaction is about
+`1.4e-6 N`. The coarse state still relaxes by ten seconds to about `0.00309 Pa`
+and `0.0260 mm`, demonstrating that this local exchange is not a resolved wake
+or boundary layer. Frames expose the mean-flow pump force plus separate
+pressure/wall/total-fluid loads, bulk-flow change, final divergence, viscous
+loss, region loss/GCL change, region momentum residual, and wall
+loss/momentum residual. It is deliberately a visible bootstrap
 diagnostic, not aerodynamic truth. The bulk operator's two intermediate
 pressure projections have one velocity per Cartesian face and cannot retain
 distinct velocities on multiple cut-region links sharing a face; its viscosity
-is likewise periodic bulk viscosity, not a wall-conditioned cut-cell operator.
+is periodic bulk viscosity. Material-wall viscosity is applied later on the
+region-resolved quadrature and does not turn those bulk stages into a general
+immersed-boundary operator.
 The final scene projection is sparse and region-aware; its transported fluid
 state remains fixed while each strong iterate remaps that state to the current
 geometry. The area-collapsed pressure-corrected field remains the bound input
@@ -796,10 +810,11 @@ projection beside the trusted nested Structure payload. Deterministic initial
 and accepted round trips, exact next-frame replay, CLI autosave/resume, and
 transactional corruption/foreign-file rejection are covered. Restore derives
 the exact bulk MAC continuation from that projection instead of duplicating it
-or the transient bulk pressure on the wire. `SWPCELL7` additionally persists
-the accepted region-momentum state and both projection predictor-provenance
-fields. Decode bounds every momentum record and validates its complete
-accepted-epoch binding before publication. A
+or the transient bulk pressure on the wire. `SWPCELL8` additionally persists
+the accepted region-momentum state, material-wall traction endpoint, and
+transport/wall projection provenance. Decode bounds every momentum and wall
+traction record and validates their complete accepted-epoch binding before
+publication. A
 canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded

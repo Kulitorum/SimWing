@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scene_fluid_region_transport.h"
+#include "scene_fluid_region_wall.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -8,7 +9,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidRegionLinkFlowVersion = 1;
+inline constexpr std::uint32_t sceneFluidRegionLinkFlowVersion = 2;
 
 struct SceneFluidRegionLinkFlowLimits {
     std::size_t maximumControlVolumes = 50'000'000;
@@ -55,12 +56,14 @@ struct SceneFluidRegionLinkFlowDiagnostics {
 // retained while momentum is recomputed from the current physical volumes.
 // Each pressure link receives the arithmetic mean endpoint normal velocity;
 // an authored opening additionally subtracts its exact current oriented cap
-// sweep. This is a first-order GCL remap/predictor, not a pressure correction,
-// topology rebase, or material-wall model.
+// sweep. The wall-source overload uses already-adjusted current control-volume
+// velocities and records that source explicitly. This is a first-order GCL
+// remap/predictor, not a pressure correction or topology rebase.
 struct SceneFluidRegionLinkFlowPrediction {
     std::uint32_t version = sceneFluidRegionLinkFlowVersion;
     std::uint64_t fingerprint = 0;
     std::uint64_t sourceTransportFingerprint = 0;
+    std::uint64_t sourceWallExchangeFingerprint = 0;
     std::uint64_t currentPressureControlVolumeFingerprint = 0;
     std::uint64_t currentPressureFaceLinkFingerprint = 0;
     std::uint64_t currentOpeningFluxFingerprint = 0;
@@ -90,12 +93,29 @@ predictSceneFluidRegionLinkFlows(
     const SceneFluidOpeningFluxSet& currentOpeningFlux,
     const SceneFluidRegionLinkFlowLimits& limits = {});
 
+[[nodiscard]] SceneFluidRegionLinkFlowPrediction
+predictSceneFluidRegionLinkFlows(
+    const SceneFluidRegionWallExchange& wallExchange,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
+    const SceneFluidPressureFaceLinkSet& currentFaceLinks,
+    const SceneFluidOpeningFluxSet& currentOpeningFlux,
+    const SceneFluidRegionLinkFlowLimits& limits = {});
+
 void validateSceneFluidRegionLinkFlowPredictionIntegrity(
     const SceneFluidRegionLinkFlowPrediction& prediction);
 
 void validateSceneFluidRegionLinkFlowPrediction(
     const SceneFluidRegionLinkFlowPrediction& prediction,
     const SceneFluidRegionTransport& transport,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
+    const SceneFluidPressureFaceLinkSet& currentFaceLinks,
+    const SceneFluidOpeningFluxSet& currentOpeningFlux);
+
+void validateSceneFluidRegionLinkFlowPrediction(
+    const SceneFluidRegionLinkFlowPrediction& prediction,
+    const SceneFluidRegionWallExchange& wallExchange,
     const fluid::PeriodicCartesianGrid& grid,
     const SceneFluidPressureControlVolumeSet& currentPressureVolumes,
     const SceneFluidPressureFaceLinkSet& currentFaceLinks,

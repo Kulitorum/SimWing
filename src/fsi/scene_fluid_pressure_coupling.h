@@ -14,7 +14,7 @@ namespace simwing::fsi {
 
 inline constexpr std::uint32_t sceneFluidPressureCouplingVersion = 1;
 inline constexpr std::uint32_t
-    sceneFluidPressureCouplingCheckpointVersion = 1;
+    sceneFluidPressureCouplingCheckpointVersion = 2;
 inline constexpr std::uint32_t
     sceneFluidPressureMacVelocityCollapseVersion = 1;
 
@@ -26,6 +26,7 @@ struct SceneFluidPressureCouplingSettings {
     CouplingConvergenceSettings convergence;
     SceneFluidPressureEpochSettings pressureEpoch;
     SceneFluidPressureProjectionSettings pressureProjection;
+    SceneFluidRegionWallSettings regionWall;
     ConservativeTransferSettings transfer;
 
 };
@@ -38,6 +39,7 @@ struct SceneFluidPressureCouplingLimits {
     SceneFluidPressureProjectionLimits pressureProjection;
     SceneFluidPressureSamplingLimits pressureSampling;
     SceneFluidRegionLinkFlowLimits regionLinkFlow;
+    SceneFluidRegionWallLimits regionWall;
     std::size_t maximumCouplingNodes = 10'000'000;
     std::size_t maximumInterfaceBytes =
         1024ULL * 1024ULL * 1024ULL;
@@ -53,7 +55,10 @@ struct SceneFluidPressureCouplingStepDiagnostics {
     StrongCouplingIterationResult iteration;
     StructureDiagnostics structure;
     SceneFluidPressureProjectionDiagnostics pressureProjection;
+    SceneFluidRegionWallDiagnostics regionWall;
+    bool usesRegionWall = false;
     ConservativeTransferDiagnostics pressureTransfer;
+    ConservativeTransferDiagnostics totalFluidTransfer;
     double interfaceForceClosureNewtons = 0.0;
     double interfaceForceReferenceNewtons = 0.0;
     bool finite = false;
@@ -73,6 +78,7 @@ struct SceneFluidPressureCouplingCheckpoint {
     SceneFluidPressureCouplingSettings settings;
     StructureCheckpoint structure;
     std::optional<SceneFluidPressureProjection> pressureProjection;
+    std::optional<SceneFluidAcceptedWallTractionSet> wallTractions;
 };
 
 struct SceneFluidPressureMacVelocityCollapseDiagnostics {
@@ -110,20 +116,21 @@ struct SceneFluidPressureMacVelocityCollapse {
 };
 
 // First topology-stable strong feedback owner for the scene-v2 pressure path.
-// The interface iterate is the canonical end-of-step pressure nodal load.
+// The interface iterate is the canonical end-of-step total fluid nodal load.
 // Every solve restores the same Structure baseline, applies the trapezoidal
 // average of the accepted start load and relaxed end-load guess, advances
 // XPBD, rebuilds one atomic pressure epoch, projects moving-volume flow, and
-// returns the resulting conservative pressure load to Aitken relaxation.
+// returns the resulting conservative pressure-plus-wall load to Aitken
+// relaxation.
 // Only a converged physical iterate becomes the next accepted baseline.
 // Exhaustion, topology change, projection failure, and exceptions restore the
 // caller's exact Structure checkpoint and leave this owner unchanged.
 //
 // The predicted MAC field is held fixed across the nonlinear iteration. The
-// region-transport overload likewise holds one accepted transport fixed, but
-// remaps it to every current geometry iterate before projection. This closes
-// structural/pressure feedback without claiming topology rebase or a
-// material-wall model.
+// region-transport overload likewise holds one accepted transport fixed,
+// remaps it to every current geometry iterate, exchanges tangential momentum
+// with the material wall, and projects the adjusted link flow. This closes
+// structural pressure/shear feedback without claiming topology rebase.
 class SceneFluidPressureCoupling final {
 public:
     SceneFluidPressureCoupling(
@@ -150,10 +157,14 @@ public:
         const noexcept;
     [[nodiscard]] const ConservativeTransferResult& acceptedPressureTransfer()
         const noexcept;
+    [[nodiscard]] const ConservativeTransferResult&
+    acceptedPressureOnlyTransfer() const noexcept;
     [[nodiscard]] const SceneFluidPressureProjection*
     acceptedPressureProjection() const noexcept;
     [[nodiscard]] const SceneFluidPressureSampleSet*
     acceptedPressureSamples() const noexcept;
+    [[nodiscard]] const SceneFluidAcceptedWallTractionSet*
+    acceptedWallTractions() const noexcept;
     // Collapses accepted link-resolved corrected flow back onto one bulk MAC
     // normal velocity per Cartesian face. Opening links first restore cap
     // sweep so the MAC value is absolute fluid velocity. Mixed-region
@@ -198,8 +209,10 @@ private:
     SceneFluidPressureEpoch acceptedPressureEpoch_;
     std::vector<double> acceptedPressurePascals_;
     std::optional<ConservativeTransferResult> acceptedPressureTransfer_;
+    std::optional<ConservativeTransferResult> acceptedPressureOnlyTransfer_;
     std::optional<SceneFluidPressureProjection> acceptedPressureProjection_;
     std::optional<SceneFluidPressureSampleSet> acceptedPressureSamples_;
+    std::optional<SceneFluidAcceptedWallTractionSet> acceptedWallTractions_;
 };
 
 } // namespace simwing::fsi

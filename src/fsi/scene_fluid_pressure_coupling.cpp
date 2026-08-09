@@ -111,12 +111,46 @@ std::vector<SceneFluidQuadraturePressure> zeroPressures(
     return result;
 }
 
+std::vector<SceneFluidQuadratureTraction> combinedTractions(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const std::span<const SceneFluidQuadraturePressure> pressures,
+    const std::span<const SceneFluidQuadratureTraction> wallTractions) {
+    auto result = buildSceneFluidPressureTractions(
+        surface, state, quadrature, pressures);
+    if (wallTractions.empty()) {
+        return result;
+    }
+    if (wallTractions.size() != result.size()) {
+        throw std::invalid_argument(
+            "scene pressure coupling wall traction size is invalid");
+    }
+    for (std::size_t index = 0; index < result.size(); ++index) {
+        if (wallTractions[index].stableId != result[index].stableId) {
+            throw std::invalid_argument(
+                "scene pressure coupling wall traction binding is invalid");
+        }
+        result[index].tractionPascals.x +=
+            wallTractions[index].tractionPascals.x;
+        result[index].tractionPascals.y +=
+            wallTractions[index].tractionPascals.y;
+        result[index].tractionPascals.z +=
+            wallTractions[index].tractionPascals.z;
+    }
+    return result;
+}
+
 bool finite(const SceneFluidPressureCouplingStepDiagnostics& diagnostics) {
     return diagnostics.iteration.convergence.finite
         && diagnostics.iteration.relaxation.finite
         && diagnostics.structure.finite
         && diagnostics.pressureProjection.finite
+        && (!diagnostics.usesRegionWall
+            || (diagnostics.regionWall.finite
+                && diagnostics.regionWall.accepted))
         && diagnostics.pressureTransfer.finite
+        && diagnostics.totalFluidTransfer.finite
         && std::isfinite(diagnostics.interfaceForceClosureNewtons)
         && std::isfinite(diagnostics.interfaceForceReferenceNewtons);
 }
@@ -150,6 +184,7 @@ bool sameSettings(const SceneFluidPressureCouplingSettings& first,
         && first.convergence == second.convergence
         && first.pressureEpoch == second.pressureEpoch
         && first.pressureProjection == second.pressureProjection
+        && first.regionWall == second.regionWall
         && sameVector(
             first.transfer.momentReferenceMeters,
             second.transfer.momentReferenceMeters)
@@ -165,6 +200,7 @@ bool sameSettings(const SceneFluidPressureCouplingSettings& first,
 
 SceneFluidPressureCouplingSettings::SceneFluidPressureCouplingSettings() {
     pressureProjection.timeStepSeconds = structure.timeStepSeconds;
+    regionWall.timeStepSeconds = structure.timeStepSeconds;
 }
 
 SceneFluidPressureCoupling::SceneFluidPressureCoupling(
@@ -208,6 +244,7 @@ SceneFluidPressureCoupling::SceneFluidPressureCoupling(
             surface_, acceptedSurfaceState_, transfer_,
             acceptedPressureEpoch_.gridEpoch.quadrature, pressures,
             settings_.transfer));
+    acceptedPressureOnlyTransfer_ = acceptedPressureTransfer_;
 }
 
 const fluid::PeriodicCartesianGrid&
@@ -230,6 +267,11 @@ SceneFluidPressureCoupling::acceptedPressureTransfer() const noexcept {
     return *acceptedPressureTransfer_;
 }
 
+const ConservativeTransferResult&
+SceneFluidPressureCoupling::acceptedPressureOnlyTransfer() const noexcept {
+    return *acceptedPressureOnlyTransfer_;
+}
+
 const SceneFluidPressureProjection*
 SceneFluidPressureCoupling::acceptedPressureProjection() const noexcept {
     return acceptedPressureProjection_
@@ -240,6 +282,11 @@ const SceneFluidPressureSampleSet*
 SceneFluidPressureCoupling::acceptedPressureSamples() const noexcept {
     return acceptedPressureSamples_
         ? &*acceptedPressureSamples_ : nullptr;
+}
+
+const SceneFluidAcceptedWallTractionSet*
+SceneFluidPressureCoupling::acceptedWallTractions() const noexcept {
+    return acceptedWallTractions_ ? &*acceptedWallTractions_ : nullptr;
 }
 
 SceneFluidPressureMacVelocityCollapse
@@ -448,6 +495,7 @@ SceneFluidPressureCoupling::checkpoint(const Structure& target) const {
     result.settings = settings_;
     result.structure = target.checkpoint();
     result.pressureProjection = acceptedPressureProjection_;
+    result.wallTractions = acceptedWallTractions_;
     return result;
 }
 
@@ -482,8 +530,10 @@ void SceneFluidPressureCoupling::restore(
     std::vector<double> restoredPressure(
         restoredEpoch.pressureOperator.rows.size(), 0.0);
     std::optional<ConservativeTransferResult> restoredTransfer;
+    std::optional<ConservativeTransferResult> restoredPressureOnlyTransfer;
     std::optional<SceneFluidPressureProjection> restoredProjection;
     std::optional<SceneFluidPressureSampleSet> restoredSamples;
+    std::optional<SceneFluidAcceptedWallTractionSet> restoredWallTractions;
     if (checkpointValue.pressureProjection) {
         validateSceneFluidPressureProjectionIntegrity(
             *checkpointValue.pressureProjection);
@@ -503,22 +553,46 @@ void SceneFluidPressureCoupling::restore(
             throw std::invalid_argument(
                 "scene pressure coupling checkpoint projection is foreign");
         }
+        const auto wallFingerprint = checkpointValue.pressureProjection
+            ->regionWallExchangeFingerprint;
+        if ((wallFingerprint != 0)
+                != checkpointValue.wallTractions.has_value()) {
+            throw std::invalid_argument(
+                "scene pressure coupling checkpoint wall state is incomplete");
+        }
+        if (checkpointValue.wallTractions) {
+            validateSceneFluidAcceptedWallTractions(
+                *checkpointValue.wallTractions,
+                restoredEpoch.gridEpoch.quadrature, wallFingerprint);
+            restoredWallTractions = checkpointValue.wallTractions;
+        }
         auto samples = sampleSceneFluidProjectedPressure(
             restoredEpoch.gridEpoch.quadrature,
             restoredEpoch.pressureControlVolumes,
             *checkpointValue.pressureProjection,
             limits_.pressureSampling);
-        restoredTransfer.emplace(
-            evaluateSceneFluidProjectedPressureQuadrature(
+        const auto tractions = combinedTractions(
+            surface_, restoredState, restoredEpoch.gridEpoch.quadrature,
+            samples.pressures,
+            restoredWallTractions
+                ? std::span<const SceneFluidQuadratureTraction>(
+                    restoredWallTractions->tractions)
+                : std::span<const SceneFluidQuadratureTraction>{});
+        restoredPressureOnlyTransfer.emplace(
+            evaluateSceneFluidPressureQuadrature(
                 surface_, restoredState, transfer_,
-                restoredEpoch.gridEpoch.quadrature, samples,
+                restoredEpoch.gridEpoch.quadrature, samples.pressures,
                 settings_.transfer));
+        restoredTransfer.emplace(evaluateSceneFluidQuadrature(
+            transfer_, restoredState, restoredEpoch.gridEpoch.quadrature,
+            tractions, settings_.transfer));
         restoredSamples = std::move(samples);
         restoredPressure =
             checkpointValue.pressureProjection->pressurePascals;
         restoredProjection = checkpointValue.pressureProjection;
     } else {
-        if (restoredState.acceptedStepCount != 0
+        if (checkpointValue.wallTractions
+            || restoredState.acceptedStepCount != 0
             || restoredState.simulationTimeSeconds != 0.0) {
             throw std::invalid_argument(
                 "scene pressure coupling noninitial checkpoint lacks pressure");
@@ -529,6 +603,7 @@ void SceneFluidPressureCoupling::restore(
             surface_, restoredState, transfer_,
             restoredEpoch.gridEpoch.quadrature, pressures,
             settings_.transfer));
+        restoredPressureOnlyTransfer = restoredTransfer;
     }
 
     target.restore(checkpointValue.structure);
@@ -536,8 +611,11 @@ void SceneFluidPressureCoupling::restore(
     acceptedPressureEpoch_ = std::move(restoredEpoch);
     acceptedPressurePascals_ = std::move(restoredPressure);
     acceptedPressureTransfer_ = std::move(restoredTransfer);
+    acceptedPressureOnlyTransfer_ =
+        std::move(restoredPressureOnlyTransfer);
     acceptedPressureProjection_ = std::move(restoredProjection);
     acceptedPressureSamples_ = std::move(restoredSamples);
+    acceptedWallTractions_ = std::move(restoredWallTractions);
 }
 
 SceneFluidPressureCouplingStepDiagnostics
@@ -641,10 +719,22 @@ SceneFluidPressureCoupling::advanceImpl(
             auto projectionSettings = settings_.pressureProjection;
             projectionSettings.timeStepSeconds = rates.durationSeconds;
             SceneFluidPressureProjection projection;
+            std::optional<SceneFluidRegionWallExchange> wallExchange;
             if (transportedRegionMomentum != nullptr) {
+                auto wallSettings = settings_.regionWall;
+                wallSettings.timeStepSeconds = rates.durationSeconds;
+                wallExchange.emplace(exchangeSceneFluidRegionWallMomentum(
+                    *transportedRegionMomentum, grid_,
+                    currentEpoch.pressureControlVolumes, surface_,
+                    currentState, currentEpoch.gridEpoch.quadrature,
+                    wallSettings, limits_.regionWall));
+                if (!wallExchange->diagnostics.accepted) {
+                    throw std::runtime_error(
+                        "scene pressure coupling wall exchange was not accepted");
+                }
                 const auto regionPrediction =
                     predictSceneFluidRegionLinkFlows(
-                        *transportedRegionMomentum, grid_,
+                        *wallExchange, grid_,
                         currentEpoch.pressureControlVolumes,
                         currentEpoch.pressureFaceLinks, openingFlux,
                         limits_.regionLinkFlow);
@@ -680,11 +770,28 @@ SceneFluidPressureCoupling::advanceImpl(
                 currentEpoch.gridEpoch.quadrature,
                 currentEpoch.pressureControlVolumes, projection,
                 limits_.pressureSampling);
-            auto currentTraction =
-                evaluateSceneFluidProjectedPressureQuadrature(
+            std::optional<SceneFluidAcceptedWallTractionSet>
+                acceptedWallCandidate;
+            if (wallExchange) {
+                acceptedWallCandidate.emplace(
+                    captureSceneFluidAcceptedWallTractions(*wallExchange));
+            }
+            auto pressureOnlyTraction =
+                evaluateSceneFluidPressureQuadrature(
                     surface_, currentState, transfer_,
-                    currentEpoch.gridEpoch.quadrature, samples,
+                    currentEpoch.gridEpoch.quadrature, samples.pressures,
                     settings_.transfer);
+            const auto tractions = combinedTractions(
+                surface_, currentState, currentEpoch.gridEpoch.quadrature,
+                samples.pressures,
+                acceptedWallCandidate
+                    ? std::span<const SceneFluidQuadratureTraction>(
+                        acceptedWallCandidate->tractions)
+                    : std::span<const SceneFluidQuadratureTraction>{});
+            auto currentTraction = evaluateSceneFluidQuadrature(
+                transfer_, currentState,
+                currentEpoch.gridEpoch.quadrature, tractions,
+                settings_.transfer);
             const auto currentKinematics = transfer_.kinematics(currentState);
             auto residuals = macroCoupling_.measureResiduals(
                 baselineKinematics, previousKinematics,
@@ -698,7 +805,13 @@ SceneFluidPressureCoupling::advanceImpl(
             diagnostics.iteration = iterationResult;
             diagnostics.structure = structureDiagnostics;
             diagnostics.pressureProjection = projection.diagnostics;
-            diagnostics.pressureTransfer = currentTraction.diagnostics();
+            diagnostics.usesRegionWall = wallExchange.has_value();
+            if (wallExchange) {
+                diagnostics.regionWall = wallExchange->diagnostics;
+            }
+            diagnostics.pressureTransfer =
+                pressureOnlyTraction.diagnostics();
+            diagnostics.totalFluidTransfer = currentTraction.diagnostics();
             diagnostics.interfaceForceClosureNewtons =
                 residuals.tractionNewtons;
             diagnostics.interfaceForceReferenceNewtons =
@@ -718,8 +831,11 @@ SceneFluidPressureCoupling::advanceImpl(
                 acceptedPressureEpoch_ = std::move(currentEpoch);
                 acceptedPressurePascals_ = projection.pressurePascals;
                 acceptedPressureTransfer_ = std::move(currentTraction);
+                acceptedPressureOnlyTransfer_ =
+                    std::move(pressureOnlyTraction);
                 acceptedPressureProjection_ = std::move(projection);
                 acceptedPressureSamples_ = std::move(samples);
+                acceptedWallTractions_ = std::move(acceptedWallCandidate);
                 return diagnostics;
             }
             if (iterationResult.status

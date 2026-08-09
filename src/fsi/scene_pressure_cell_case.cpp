@@ -212,6 +212,12 @@ bool finite(const ScenePressureCellDiagnostics& diagnostics) {
         && std::isfinite(diagnostics.pressureForceNewtons.x)
         && std::isfinite(diagnostics.pressureForceNewtons.y)
         && std::isfinite(diagnostics.pressureForceNewtons.z)
+        && std::isfinite(diagnostics.wallForceNewtons.x)
+        && std::isfinite(diagnostics.wallForceNewtons.y)
+        && std::isfinite(diagnostics.wallForceNewtons.z)
+        && std::isfinite(diagnostics.totalFluidForceNewtons.x)
+        && std::isfinite(diagnostics.totalFluidForceNewtons.y)
+        && std::isfinite(diagnostics.totalFluidForceNewtons.z)
         && std::isfinite(diagnostics.maximumAbsolutePressurePascals)
         && std::isfinite(diagnostics.maximumDisplacementMeters);
 }
@@ -300,8 +306,19 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
         * gridVolume(coupling_.grid()) * pumpVelocityIncrement
         / bulkSettings.timeStepSeconds;
     nextDiagnostics.pressureForceNewtons =
+        coupling_.acceptedPressureOnlyTransfer().diagnostics()
+            .transferredNodalForceNewtons;
+    nextDiagnostics.totalFluidForceNewtons =
         coupling_.acceptedPressureTransfer().diagnostics()
             .transferredNodalForceNewtons;
+    nextDiagnostics.wallForceNewtons = {
+        nextDiagnostics.totalFluidForceNewtons.x
+            - nextDiagnostics.pressureForceNewtons.x,
+        nextDiagnostics.totalFluidForceNewtons.y
+            - nextDiagnostics.pressureForceNewtons.y,
+        nextDiagnostics.totalFluidForceNewtons.z
+            - nextDiagnostics.pressureForceNewtons.z,
+    };
     const auto* projection = coupling_.acceptedPressureProjection();
     for (const double pressure : projection->pressurePascals) {
         nextDiagnostics.maximumAbsolutePressurePascals = std::max(
@@ -461,12 +478,56 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
                    .maximumAbsoluteGeometryVolumeChangeCubicMeters
              : 0.0},
     });
+    frame.scalarFields.push_back({
+        "pressure_cell.wall_viscous_loss", "J",
+        viewer::FieldAssociation::Global,
+        {diagnostics_.coupling.usesRegionWall
+             ? diagnostics_.coupling.regionWall.viscousDissipationJoules
+             : 0.0},
+    });
+    frame.scalarFields.push_back({
+        "pressure_cell.wall_momentum_residual", "N s",
+        viewer::FieldAssociation::Global,
+        {diagnostics_.coupling.usesRegionWall
+             ? diagnostics_.coupling.regionWall
+                   .momentumResidualNormKilogramMetersPerSecond
+             : 0.0},
+    });
 
     std::vector<viewer::Vec3d> nodalPressureForces(
         structure_.definition().nodes.size());
-    for (const auto& load : coupling_.acceptedPressureTransfer().nodeLoads()) {
-        nodalPressureForces[load.structureNode] = {
-            load.forceNewtons.x, load.forceNewtons.y, load.forceNewtons.z,
+    std::vector<viewer::Vec3d> nodalWallForces(
+        structure_.definition().nodes.size());
+    std::vector<viewer::Vec3d> nodalTotalFluidForces(
+        structure_.definition().nodes.size());
+    const auto pressureLoads =
+        coupling_.acceptedPressureOnlyTransfer().nodeLoads();
+    const auto totalLoads = coupling_.acceptedPressureTransfer().nodeLoads();
+    if (pressureLoads.size() != totalLoads.size()) {
+        throw std::logic_error(
+            "scene pressure cell pressure/wall load sizes differ");
+    }
+    for (std::size_t index = 0; index < totalLoads.size(); ++index) {
+        const auto& pressureLoad = pressureLoads[index];
+        const auto& totalLoad = totalLoads[index];
+        if (pressureLoad.stableId != totalLoad.stableId
+            || pressureLoad.structureNode != totalLoad.structureNode) {
+            throw std::logic_error(
+                "scene pressure cell pressure/wall load binding differs");
+        }
+        const auto node = totalLoad.structureNode;
+        nodalPressureForces[node] = {
+            pressureLoad.forceNewtons.x, pressureLoad.forceNewtons.y,
+            pressureLoad.forceNewtons.z,
+        };
+        nodalWallForces[node] = {
+            totalLoad.forceNewtons.x - pressureLoad.forceNewtons.x,
+            totalLoad.forceNewtons.y - pressureLoad.forceNewtons.y,
+            totalLoad.forceNewtons.z - pressureLoad.forceNewtons.z,
+        };
+        nodalTotalFluidForces[node] = {
+            totalLoad.forceNewtons.x, totalLoad.forceNewtons.y,
+            totalLoad.forceNewtons.z,
         };
     }
     frame.vectorFields.push_back({
@@ -479,6 +540,29 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
         {{diagnostics_.pressureForceNewtons.x,
           diagnostics_.pressureForceNewtons.y,
           diagnostics_.pressureForceNewtons.z}},
+    });
+    frame.vectorFields.push_back({
+        "pressure_cell.nodal_wall_force", "N",
+        viewer::FieldAssociation::Vertex, std::move(nodalWallForces),
+    });
+    frame.vectorFields.push_back({
+        "pressure_cell.total_wall_force", "N",
+        viewer::FieldAssociation::Global,
+        {{diagnostics_.wallForceNewtons.x,
+          diagnostics_.wallForceNewtons.y,
+          diagnostics_.wallForceNewtons.z}},
+    });
+    frame.vectorFields.push_back({
+        "pressure_cell.nodal_total_fluid_force", "N",
+        viewer::FieldAssociation::Vertex,
+        std::move(nodalTotalFluidForces),
+    });
+    frame.vectorFields.push_back({
+        "pressure_cell.total_fluid_force", "N",
+        viewer::FieldAssociation::Global,
+        {{diagnostics_.totalFluidForceNewtons.x,
+          diagnostics_.totalFluidForceNewtons.y,
+          diagnostics_.totalFluidForceNewtons.z}},
     });
     frame.vectorFields.push_back({
         "pressure_cell.flow_pump_force", "N",
