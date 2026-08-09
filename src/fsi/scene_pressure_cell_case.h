@@ -13,7 +13,7 @@ inline constexpr char scenePressureCellCaseChecksum[] =
     "sha256:simwing-scene-pressure-feedback-cell-v9";
 inline constexpr char scenePressureCellCaseSolverId[] =
     "simwing-fsi-scene-pressure-feedback-worker-v9";
-inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 9;
+inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 10;
 
 struct ScenePressureCellDiagnostics {
     SceneFluidPressureCouplingStepDiagnostics coupling;
@@ -77,6 +77,9 @@ public:
         const noexcept;
     [[nodiscard]] const SceneFluidMimeticPressureAuditEndpoint*
     acceptedMimeticPressureAudit() const noexcept;
+    [[nodiscard]] SceneFluidMimeticPressureAuditTopology
+    rebuildMimeticPressureAuditTopology(
+        const StructureCheckpoint& structureCheckpoint) const;
     [[nodiscard]] ScenePressureCellCheckpoint checkpoint() const;
     void restore(const ScenePressureCellCheckpoint& checkpoint);
 

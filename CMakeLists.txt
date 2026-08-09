@@ -2137,8 +2137,26 @@ add_test(NAME simwing_fsi_pressure_cell_mimetic_audit_headless
         --mimetic-pressure-audit
         --steps 4
         --no-viewer
-        --trace "${CMAKE_BINARY_DIR}/simwing-pressure-cell-mimetic-audit.swtrace")
+        --trace "${CMAKE_BINARY_DIR}/simwing-pressure-cell-mimetic-audit.swtrace"
+        --checkpoint-out
+            "${CMAKE_BINARY_DIR}/simwing-pressure-cell-mimetic-audit.swpcell"
+        --checkpoint-every 2)
 set_tests_properties(simwing_fsi_pressure_cell_mimetic_audit_headless PROPERTIES
+    PASS_REGULAR_EXPRESSION
+        "mimetic-pressure-audit accepted.*consecutive=1, wall-predictor=1")
+add_test(NAME simwing_fsi_pressure_cell_mimetic_audit_checkpoint_resume
+    COMMAND simwing-fsi
+        --case pressure-cell
+        --mimetic-pressure-audit
+        --steps 3
+        --no-viewer
+        --trace
+            "${CMAKE_BINARY_DIR}/simwing-pressure-cell-mimetic-audit-resume.swtrace"
+        --checkpoint-in
+            "${CMAKE_BINARY_DIR}/simwing-pressure-cell-mimetic-audit.swpcell")
+set_tests_properties(
+    simwing_fsi_pressure_cell_mimetic_audit_checkpoint_resume PROPERTIES
+    DEPENDS simwing_fsi_pressure_cell_mimetic_audit_headless
     PASS_REGULAR_EXPRESSION
         "mimetic-pressure-audit accepted.*consecutive=1, wall-predictor=1")
 add_test(NAME simwing_fsi_pressure_cell_checkpoint_write

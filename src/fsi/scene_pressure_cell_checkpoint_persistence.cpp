@@ -5,6 +5,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <new>
 #include <stdexcept>
 #include <type_traits>
@@ -13,10 +14,10 @@
 namespace simwing::fsi {
 namespace {
 
-constexpr std::array<std::uint8_t, 8> checkpointMagic{
-    'S', 'W', 'P', 'C', 'E', 'L', 'L', '9'};
-constexpr std::uint32_t checkpointStateVersion = 9;
-constexpr std::size_t checkpointEnvelopeBytes = 28;
+constexpr std::array<std::uint8_t, 9> checkpointMagic{
+    'S', 'W', 'P', 'C', 'E', 'L', 'L', '1', '0'};
+constexpr std::uint32_t checkpointStateVersion = 10;
+constexpr std::size_t checkpointEnvelopeBytes = 29;
 constexpr std::size_t solveComponentRecordBytes = 56;
 constexpr std::size_t controlVolumeRecordBytes = 72;
 constexpr std::size_t linkRecordBytes = 73;
@@ -211,6 +212,22 @@ ScenePressureCellCheckpointPersistenceErrorCode structureErrorCode(
     return ScenePressureCellCheckpointPersistenceErrorCode::InvalidData;
 }
 
+ScenePressureCellCheckpointPersistenceErrorCode mimeticStateErrorCode(
+    const SceneFluidMimeticPressureStatePersistenceErrorCode code) noexcept {
+    if (code
+        == SceneFluidMimeticPressureStatePersistenceErrorCode::
+            LimitExceeded) {
+        return ScenePressureCellCheckpointPersistenceErrorCode::LimitExceeded;
+    }
+    if (code
+        == SceneFluidMimeticPressureStatePersistenceErrorCode::
+            TopologyMismatch) {
+        return ScenePressureCellCheckpointPersistenceErrorCode::
+            TopologyMismatch;
+    }
+    return ScenePressureCellCheckpointPersistenceErrorCode::InvalidData;
+}
+
 bool validLimits(const ScenePressureCellCheckpointPersistenceLimits& limits) {
     return limits.maximumEncodedBytes >= checkpointEnvelopeBytes
         && limits.maximumControlVolumes > 0
@@ -222,6 +239,9 @@ bool validLimits(const ScenePressureCellCheckpointPersistenceLimits& limits) {
         && limits.maximumMomentumStorageBytes > 0
         && limits.maximumWallTractions > 0
         && limits.maximumWallTractionStorageBytes > 0
+        && limits.mimeticPressureState.maximumEncodedBytes > 0
+        && limits.mimeticPressureState.maximumControlCells > 0
+        && limits.mimeticPressureState.maximumReducedTraces > 0
         && limits.structure.maximumEncodedBytes > 0;
 }
 
@@ -854,7 +874,10 @@ bool serializeScenePressureCellCheckpoint(
             "scene pressure cell checkpoint limits are invalid");
     }
     try {
-        ScenePressureCellCase validator;
+        ScenePressureCellCase validator(
+            checkpoint.coupling
+                    .mimeticPressureAuditSettingsFingerprint
+                != 0);
         validator.restore(checkpoint);
 
         std::vector<std::uint8_t> structureBytes;
@@ -887,12 +910,32 @@ bool serializeScenePressureCellCheckpoint(
                 ScenePressureCellCheckpointPersistenceErrorCode::LimitExceeded,
                 "scene pressure cell wall traction exceeds its limit");
         }
+        std::vector<std::uint8_t> mimeticPressureStateBytes;
+        if (checkpoint.coupling.mimeticPressureState) {
+            const auto topology =
+                validator.rebuildMimeticPressureAuditTopology(
+                    checkpoint.coupling.structure);
+            SceneFluidMimeticPressureStatePersistenceError mimeticError;
+            if (!serializeSceneFluidMimeticPressureState(
+                    *checkpoint.coupling.mimeticPressureState,
+                    topology.controlCells, topology.fullTraceSystem,
+                    topology.condensedTraceSystem,
+                    mimeticPressureStateBytes, &mimeticError,
+                    limits.mimeticPressureState)) {
+                return fail(
+                    error, mimeticStateErrorCode(mimeticError.code),
+                    "scene pressure cell mimetic pressure state: "
+                        + mimeticError.message);
+            }
+        }
 
         std::vector<std::uint8_t> payload;
         Writer payloadWriter(
             payload, limits.maximumEncodedBytes - checkpointEnvelopeBytes);
         if (!payloadWriter.u32(checkpointStateVersion)
             || !payloadWriter.u32(checkpoint.version)
+            || !payloadWriter.u64(checkpoint.coupling
+                .mimeticPressureAuditSettingsFingerprint)
             || !payloadWriter.count(structureBytes.size())
             || !payloadWriter.bytes(structureBytes)
             || !payloadWriter.boolean(
@@ -910,7 +953,14 @@ bool serializeScenePressureCellCheckpoint(
                 checkpoint.regionMomentum.has_value())
             || (checkpoint.regionMomentum
                 && !writeRegionMomentum(
-                    payloadWriter, *checkpoint.regionMomentum))) {
+                    payloadWriter, *checkpoint.regionMomentum))
+            || !payloadWriter.boolean(
+                checkpoint.coupling.mimeticPressureState.has_value())
+            || (checkpoint.coupling.mimeticPressureState
+                && (!payloadWriter.count(
+                        mimeticPressureStateBytes.size())
+                    || !payloadWriter.bytes(
+                        mimeticPressureStateBytes)))) {
             return fail(
                 error,
                 ScenePressureCellCheckpointPersistenceErrorCode::LimitExceeded,
@@ -1027,13 +1077,14 @@ bool deserializeScenePressureCellCheckpoint(
                 "scene pressure cell checkpoint checksum does not match");
         }
 
-        ScenePressureCellCase validator;
-        ScenePressureCellCheckpoint candidate = validator.checkpoint();
         Reader payloadReader(payload);
         std::uint32_t stateVersion = 0;
+        std::uint32_t checkpointVersion = 0;
+        std::uint64_t mimeticSettingsFingerprint = 0;
         std::uint64_t structureSize = 0;
         if (!payloadReader.u32(stateVersion)
-            || !payloadReader.u32(candidate.version)
+            || !payloadReader.u32(checkpointVersion)
+            || !payloadReader.u64(mimeticSettingsFingerprint)
             || !payloadReader.u64(structureSize)) {
             return fail(
                 error,
@@ -1046,6 +1097,12 @@ bool deserializeScenePressureCellCheckpoint(
                 ScenePressureCellCheckpointPersistenceErrorCode::UnsupportedVersion,
                 "scene pressure cell checkpoint state is unsupported");
         }
+        auto validator = std::make_unique<ScenePressureCellCase>(
+            mimeticSettingsFingerprint != 0);
+        ScenePressureCellCheckpoint candidate = validator->checkpoint();
+        candidate.version = checkpointVersion;
+        candidate.coupling.mimeticPressureAuditSettingsFingerprint =
+            mimeticSettingsFingerprint;
         if (structureSize > limits.structure.maximumEncodedBytes
             || structureSize > std::numeric_limits<std::size_t>::max()) {
             return fail(
@@ -1063,7 +1120,7 @@ bool deserializeScenePressureCellCheckpoint(
         }
         StructureCheckpointPersistenceError structureError;
         if (!deserializeStructureCheckpoint(
-                structureBytes, validator.structure(),
+                structureBytes, validator->structure(),
                 candidate.coupling.structure, &structureError,
                 limits.structure)) {
             return fail(
@@ -1123,6 +1180,47 @@ bool deserializeScenePressureCellCheckpoint(
         } else {
             candidate.regionMomentum.reset();
         }
+        bool hasMimeticPressureState = false;
+        if (!payloadReader.boolean(hasMimeticPressureState)) {
+            return fail(
+                error, readerErrorCode(payloadReader),
+                "scene pressure cell mimetic pressure marker is invalid");
+        }
+        if (hasMimeticPressureState) {
+            std::size_t mimeticStateSize = 0;
+            if (!payloadReader.count(
+                    mimeticStateSize,
+                    limits.mimeticPressureState.maximumEncodedBytes)) {
+                return fail(
+                    error, readerErrorCode(payloadReader),
+                    "scene pressure cell mimetic pressure size is invalid");
+            }
+            std::span<const std::uint8_t> mimeticStateBytes;
+            if (!payloadReader.bytes(
+                    mimeticStateSize, mimeticStateBytes)) {
+                return fail(
+                    error, readerErrorCode(payloadReader),
+                    "scene pressure cell mimetic pressure payload is truncated");
+            }
+            const auto topology =
+                validator->rebuildMimeticPressureAuditTopology(
+                    candidate.coupling.structure);
+            SceneFluidMimeticPressureState state;
+            SceneFluidMimeticPressureStatePersistenceError mimeticError;
+            if (!deserializeSceneFluidMimeticPressureState(
+                    mimeticStateBytes, topology.controlCells,
+                    topology.fullTraceSystem,
+                    topology.condensedTraceSystem, state,
+                    &mimeticError, limits.mimeticPressureState)) {
+                return fail(
+                    error, mimeticStateErrorCode(mimeticError.code),
+                    "scene pressure cell mimetic pressure state: "
+                        + mimeticError.message);
+            }
+            candidate.coupling.mimeticPressureState = std::move(state);
+        } else {
+            candidate.coupling.mimeticPressureState.reset();
+        }
         if (!payloadReader.atEnd()) {
             return fail(
                 error,
@@ -1130,7 +1228,7 @@ bool deserializeScenePressureCellCheckpoint(
                 "scene pressure cell payload has trailing data");
         }
 
-        validator.restore(candidate);
+        validator->restore(candidate);
         checkpoint = std::move(candidate);
         return true;
     } catch (const std::bad_alloc&) {

@@ -912,7 +912,7 @@ projection beside the trusted nested Structure payload. Deterministic initial
 and accepted round trips, exact next-frame replay, CLI autosave/resume, and
 transactional corruption/foreign-file rejection are covered. Restore derives
 the exact bulk MAC continuation from that projection instead of duplicating it
-or the transient bulk pressure on the wire. `SWPCELL9` additionally persists
+or the transient bulk pressure on the wire. `SWPCELL10` additionally persists
 the accepted region-momentum state, material-wall traction endpoint, and
 transport/wall projection provenance, including embedded-opening normal-
 equation diagnostics. Decode bounds every momentum and wall
@@ -1212,17 +1212,24 @@ warm remap. The candidate remains private until its pressure state and every
 material sample accept. A limit or solve failure rewinds the exact Structure
 baseline and leaves the graph owner unchanged. Success stores the shadow but
 does not apply its pressure samples or alter graph pressure, loads, stepping,
-frames, or checkpoints. Four analytic worker steps prove default and audited
-frames plus graph checkpoints are byte-identical while the shadow changes from
-fixed bootstrap to transported-wall consecutive mode.
+or frames. Four analytic worker steps prove default and audited frames plus
+the graph-owned portion of their composite checkpoints are byte-identical
+while the shadow changes from fixed bootstrap to transported-wall consecutive
+mode.
 
 The experiment is exposed as `simwing-fsi --case pressure-cell
 --mimetic-pressure-audit` and reports control/trace counts plus iteration and
 predictor mode separately from the established worker summary. The flag is
-off by default. Checkpoint input/output is deliberately rejected in this mode
-until the persisted `SWMP` accepted state is composed with rebuilt audit
-topology inside the `SWPCELL` restart transaction; silently restarting the
-shadow from a graph-only checkpoint would invalidate consecutive provenance.
+off by default. `SWPCELL10` composes its settings fingerprint and compact
+accepted `SWMP` state with the graph checkpoint. Decode first restores trusted
+Structure geometry, rebuilds the mimetic control/full/condensed topology, and
+only then lets the independently bounded `SWMP` codec publish pressure rows.
+The rebuilt in-memory warm owner deliberately has no invented predictor/source
+diagnostics; the next step consumes it through the normal topology transition
+and reproduces the uninterrupted consecutive wall-predicted endpoint exactly.
+Initial audited checkpoints carry mode identity without inventing pressure,
+cross-mode restore is rejected, and nested corruption or limits leave both the
+destination checkpoint and live owners unchanged.
 
 `src/fsi/scene_fluid_mimetic_pressure_source.*` owns the physical-unit source
 conversion shared with the production projection convention. For each mimetic

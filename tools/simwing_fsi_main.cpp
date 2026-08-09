@@ -119,7 +119,7 @@ void printUsage(FILE* stream) {
         "symmetric viscous/projected nonlinear flow advance its bulk MAC predictor;\n"
         "--mimetic-pressure-audit additionally runs the mixed-hybrid pressure\n"
         "path as a read-only pressure-cell shadow after graph convergence; it\n"
-        "currently does not accept checkpoint input/output;\n"
+        "persists its compact accepted state in pressure-cell checkpoints;\n"
         "'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
         "'strong-piston' strongly iterates that chain for a light added-mass plate;\n"
@@ -358,13 +358,6 @@ bool parseOptions(int argc,
     if (options.mimeticPressureAudit
         && options.workerCase != WorkerCase::ScenePressureCell) {
         error = "--mimetic-pressure-audit requires --case pressure-cell";
-        return false;
-    }
-    if (options.mimeticPressureAudit
-        && (!options.checkpointInputPath.empty()
-            || !options.checkpointOutputPath.empty()
-            || options.checkpointEvery != 0)) {
-        error = "--mimetic-pressure-audit checkpoint persistence is not yet enabled";
         return false;
     }
     if (options.controlStdio) {

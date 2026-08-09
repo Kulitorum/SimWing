@@ -357,6 +357,38 @@ SceneFluidPressureCoupling::acceptedMimeticPressureAudit() const noexcept {
         ? &*acceptedMimeticPressureAudit_ : nullptr;
 }
 
+std::uint64_t
+SceneFluidPressureCoupling::mimeticPressureAuditSettingsFingerprint()
+    const {
+    return mimeticPressureAuditConfiguration_.enabled
+        ? sceneFluidMimeticPressureAuditSettingsFingerprint(
+            mimeticPressureAuditConfiguration_.settings)
+        : 0;
+}
+
+SceneFluidMimeticPressureAuditTopology
+SceneFluidPressureCoupling::rebuildMimeticPressureAuditTopology(
+    const Structure& target,
+    const StructureCheckpoint& structureCheckpoint) const {
+    if (!mimeticPressureAuditConfiguration_.enabled
+        || target.definitionFingerprint()
+            != transfer_.targetDefinitionFingerprint()) {
+        throw std::invalid_argument(
+            "scene pressure coupling mimetic restart topology is unavailable");
+    }
+    Structure restoredStructure(target.definition());
+    restoredStructure.restore(structureCheckpoint);
+    const auto restoredState = captureSceneFluidSurfaceState(
+        surface_, structureMappings_, restoredStructure);
+    const auto restoredEpoch = buildSceneFluidPressureEpoch(
+        surface_, restoredState, grid_, transfer_, connectivity_,
+        settings_.pressureEpoch, limits_.pressureEpoch);
+    return buildSceneFluidMimeticPressureAuditTopology(
+        surface_, restoredState, grid_, restoredEpoch,
+        mimeticPressureAuditConfiguration_.settings,
+        mimeticPressureAuditConfiguration_.limits);
+}
+
 SceneFluidPressureMacVelocityCollapse
 SceneFluidPressureCoupling::acceptedPressureCorrectedMacVelocity() const {
     if (!acceptedPressureProjection_) {
@@ -638,6 +670,24 @@ SceneFluidPressureCoupling::checkpoint(const Structure& target) const {
     result.structure = target.checkpoint();
     result.pressureProjection = acceptedPressureProjection_;
     result.wallTractions = acceptedWallTractions_;
+    result.mimeticPressureAuditSettingsFingerprint =
+        mimeticPressureAuditSettingsFingerprint();
+    if (acceptedMimeticPressureAudit_) {
+        result.mimeticPressureState = acceptedMimeticPressureAudit_
+            ->pressureEpoch.acceptedPressureState;
+    } else if (acceptedMimeticPressureAuditWarmState_) {
+        result.mimeticPressureState =
+            acceptedMimeticPressureAuditWarmState_
+                ->acceptedPressureState;
+    }
+    if ((result.mimeticPressureAuditSettingsFingerprint != 0)
+            != mimeticPressureAuditConfiguration_.enabled
+        || (result.mimeticPressureState.has_value()
+            != (mimeticPressureAuditConfiguration_.enabled
+                && acceptedPressureProjection_.has_value()))) {
+        throw std::logic_error(
+            "scene pressure coupling mimetic checkpoint state is incomplete");
+    }
     return result;
 }
 
@@ -656,6 +706,8 @@ void SceneFluidPressureCoupling::restore(
         || checkpointValue.lowerMeters != grid_.lowerMeters()
         || checkpointValue.upperMeters != grid_.upperMeters()
         || !sameSettings(checkpointValue.settings, settings_)
+        || checkpointValue.mimeticPressureAuditSettingsFingerprint
+            != mimeticPressureAuditSettingsFingerprint()
         || target.definitionFingerprint()
             != transfer_.targetDefinitionFingerprint()) {
         throw std::invalid_argument(
@@ -676,6 +728,8 @@ void SceneFluidPressureCoupling::restore(
     std::optional<SceneFluidPressureProjection> restoredProjection;
     std::optional<SceneFluidPressureSampleSet> restoredSamples;
     std::optional<SceneFluidAcceptedWallTractionSet> restoredWallTractions;
+    std::optional<SceneFluidMimeticPressureAuditWarmState>
+        restoredMimeticPressureWarmState;
     if (checkpointValue.pressureProjection) {
         validateSceneFluidPressureProjectionIntegrity(
             *checkpointValue.pressureProjection);
@@ -747,6 +801,25 @@ void SceneFluidPressureCoupling::restore(
             settings_.transfer));
         restoredPressureOnlyTransfer = restoredTransfer;
     }
+    const bool expectsMimeticPressureState =
+        mimeticPressureAuditConfiguration_.enabled
+        && checkpointValue.pressureProjection.has_value();
+    if (checkpointValue.mimeticPressureState.has_value()
+            != expectsMimeticPressureState) {
+        throw std::invalid_argument(
+            "scene pressure coupling mimetic checkpoint state is incomplete");
+    }
+    if (checkpointValue.mimeticPressureState) {
+        auto topology = buildSceneFluidMimeticPressureAuditTopology(
+            surface_, restoredState, grid_, restoredEpoch,
+            mimeticPressureAuditConfiguration_.settings,
+            mimeticPressureAuditConfiguration_.limits);
+        restoredMimeticPressureWarmState.emplace(
+            bindSceneFluidMimeticPressureAuditWarmState(
+                std::move(topology),
+                *checkpointValue.mimeticPressureState,
+                mimeticPressureAuditConfiguration_.limits));
+    }
 
     target.restore(checkpointValue.structure);
     acceptedSurfaceState_ = std::move(restoredState);
@@ -759,6 +832,8 @@ void SceneFluidPressureCoupling::restore(
     acceptedPressureSamples_ = std::move(restoredSamples);
     acceptedWallTractions_ = std::move(restoredWallTractions);
     acceptedMimeticPressureAudit_.reset();
+    acceptedMimeticPressureAuditWarmState_ =
+        std::move(restoredMimeticPressureWarmState);
 }
 
 SceneFluidPressureCouplingStepDiagnostics
@@ -1040,6 +1115,25 @@ SceneFluidPressureCoupling::advanceImpl(
                                 *acceptedMimeticPressureAudit_,
                                 auditSettings, auditLimits));
                     }
+                } else if (acceptedMimeticPressureAuditWarmState_) {
+                    if (wallExchange) {
+                        mimeticPressureAuditCandidate.emplace(
+                            buildSceneFluidMimeticPressureAuditEndpoint(
+                                surface_, currentState, grid_, currentEpoch,
+                                openingFlux, *wallExchange, rates,
+                                topologyTransition,
+                                *acceptedMimeticPressureAuditWarmState_,
+                                auditSettings, auditLimits));
+                    } else {
+                        mimeticPressureAuditCandidate.emplace(
+                            buildSceneFluidMimeticPressureAuditEndpoint(
+                                surface_, currentState, grid_, currentEpoch,
+                                openingFlux,
+                                predictedVelocityMetersPerSecond, rates,
+                                topologyTransition,
+                                *acceptedMimeticPressureAuditWarmState_,
+                                auditSettings, auditLimits));
+                    }
                 } else if (wallExchange) {
                     mimeticPressureAuditCandidate.emplace(
                         buildSceneFluidMimeticPressureAuditEndpoint(
@@ -1083,6 +1177,7 @@ SceneFluidPressureCoupling::advanceImpl(
                 if (mimeticPressureAuditCandidate) {
                     acceptedMimeticPressureAudit_ =
                         std::move(mimeticPressureAuditCandidate);
+                    acceptedMimeticPressureAuditWarmState_.reset();
                 }
                 return diagnostics;
             }

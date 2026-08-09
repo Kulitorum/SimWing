@@ -791,20 +791,22 @@ topology, physical source, solve diagnostics, pressure state, and material
 samples but never applies those samples to Structure; default frames and graph
 checkpoints remain byte-identical. The same endpoint crosses the coarse real
 wing's 138 controls and 42,927 shared traces without requiring the old graph
-operator to accept inadmissible embedded-opening coefficients. Audit-mode
-checkpoint flags are rejected until `SWMP` state is composed into the
-pressure-cell checkpoint rather than silently losing consecutive provenance.
-Its bounded `SWPCELL9` checkpoint stores the trusted Structure state, complete
+operator to accept inadmissible embedded-opening coefficients. The bounded
+`SWPCELL10` checkpoint now composes the compact accepted `SWMP` rows with the
+graph restart. Restore rebuilds trusted control/full/condensed topology from
+the Structure payload before decoding those rows, then resumes the exact
+consecutive wall-predicted endpoint without persisting transient topology.
+Its checkpoint also stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and
 accepted files
 round-trip deterministically, reject foreign/corrupt input transactionally,
 resume through the normal worker checkpoint flags, and reconstruct the exact
 derived MAC continuation without duplicating either it or transient bulk
-pressure on the wire. Version 9 preserves transported-region and wall-exchange
+pressure on the wire. Version 10 preserves transported-region and wall-exchange
 projection provenance, including explicit-normal embedded-opening momentum,
-and bounds/revalidates every momentum control volume and material quadrature
-traction before publication.
+and bounds/revalidates every momentum control volume, material quadrature
+traction, and optional nested `SWMP` pressure row before publication.
 Nonplanar openings without authored cap triangles, self-intersecting or folded
 caps, opening-only interior construction vertices, branching or inconsistently
 wound surface junctions, periodic-boundary ambiguity, and general
@@ -1015,7 +1017,8 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case open-piston --checkpoint-in open-piston.swop --steps 600 --checkpoint-out open-piston.swop --checkpoint-every 600
 .\build\bin\Release\simwing-fsi.exe --case pressure-jump --steps 4 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case pressure-cell --steps 600
-.\build\bin\Release\simwing-fsi.exe --case pressure-cell --mimetic-pressure-audit --steps 600 --no-viewer
+.\build\bin\Release\simwing-fsi.exe --case pressure-cell --mimetic-pressure-audit --steps 600 --no-viewer --checkpoint-out pressure-cell-audit.swpcell --checkpoint-every 600
+.\build\bin\Release\simwing-fsi.exe --case pressure-cell --mimetic-pressure-audit --steps 300 --no-viewer --checkpoint-in pressure-cell-audit.swpcell --checkpoint-out pressure-cell-audit.swpcell --checkpoint-every 300
 .\build\bin\Release\simwing-fsi.exe --case pressure-cell --steps 600 --no-viewer --checkpoint-out pressure-cell.swpcell --checkpoint-every 300
 .\build\bin\Release\simwing-fsi.exe --case pressure-cell --checkpoint-in pressure-cell.swpcell --steps 600
 .\build\bin\Release\simwing-fsi.exe --case porous-flow --steps 120 --no-viewer

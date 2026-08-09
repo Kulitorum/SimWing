@@ -42,6 +42,94 @@ private:
     std::uint64_t value_ = fnvOffsetBasis;
 };
 
+std::uint64_t settingsFingerprint(
+    const SceneFluidMimeticPressureAuditSettings& settings) {
+    Fingerprint fingerprint;
+    fingerprint.integer(sceneFluidMimeticPressureAuditVersion);
+    fingerprint.real(settings.densityKgPerCubicMeter);
+    fingerprint.real(settings.timeStepSeconds);
+    fingerprint.real(
+        settings.controlCells.absoluteAreaClosureToleranceSquareMeters);
+    fingerprint.real(settings.controlCells
+        .absoluteDivergenceTheoremToleranceCubicMeters);
+    fingerprint.real(settings.controlCells.relativeGeometryTolerance);
+    fingerprint.real(settings.controlCells.unitNormalTolerance);
+    const auto& local = settings.traceSystem.localCell;
+    fingerprint.real(local.absoluteAreaClosureToleranceSquareMeters);
+    fingerprint.real(
+        local.absoluteDivergenceTheoremToleranceCubicMeters);
+    fingerprint.real(local.relativeGeometryTolerance);
+    fingerprint.real(local.unitNormalTolerance);
+    fingerprint.real(local.algebraicConsistencyTolerance);
+    fingerprint.integer(static_cast<std::uint64_t>(local.maximumHalfFaces));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        local.maximumOperatorBytes));
+    fingerprint.real(settings.pressureSolve
+        .absoluteResidualTolerancePascalsMeters);
+    fingerprint.real(settings.pressureSolve.relativeResidualTolerance);
+    fingerprint.real(settings.pressureSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters);
+    fingerprint.integer(static_cast<std::uint64_t>(
+        settings.pressureSolve.maximumIterations));
+    return fingerprint.value();
+}
+
+std::size_t checkedAddStorage(
+    const std::size_t first,
+    const std::size_t second,
+    const char* message) {
+    if (second > std::numeric_limits<std::size_t>::max() - first) {
+        throw std::length_error(message);
+    }
+    return first + second;
+}
+
+std::size_t checkedTopologyStorageSum(
+    const SceneFluidMimeticPressureAuditTopology& topology) {
+    std::size_t result = topology.controlCells.ownedStorageBytes;
+    result = checkedAddStorage(
+        result, topology.fullTraceSystem.ownedStorageBytes,
+        "scene fluid mimetic pressure-audit topology storage overflows");
+    return checkedAddStorage(
+        result, topology.condensedTraceSystem.ownedStorageBytes,
+        "scene fluid mimetic pressure-audit topology storage overflows");
+}
+
+std::uint64_t topologyFingerprint(
+    const SceneFluidMimeticPressureAuditTopology& topology) {
+    Fingerprint fingerprint;
+    fingerprint.integer(topology.version);
+    fingerprint.integer(topology.scenePressureEpochFingerprint);
+    fingerprint.integer(topology.structureDefinitionFingerprint);
+    fingerprint.integer(topology.acceptedStepCount);
+    fingerprint.real(topology.simulationTimeSeconds);
+    fingerprint.integer(static_cast<std::uint64_t>(
+        topology.ownedStorageBytes));
+    fingerprint.integer(topology.controlCells.fingerprint);
+    fingerprint.integer(topology.fullTraceSystem.fingerprint);
+    fingerprint.integer(topology.condensedTraceSystem.fingerprint);
+    return fingerprint.value();
+}
+
+std::size_t checkedWarmStateStorageSum(
+    const SceneFluidMimeticPressureAuditWarmState& warmState) {
+    return checkedAddStorage(
+        warmState.topology.ownedStorageBytes,
+        warmState.acceptedPressureState.ownedStorageBytes,
+        "scene fluid mimetic pressure-audit warm-state storage overflows");
+}
+
+std::uint64_t warmStateFingerprint(
+    const SceneFluidMimeticPressureAuditWarmState& warmState) {
+    Fingerprint fingerprint;
+    fingerprint.integer(warmState.version);
+    fingerprint.integer(static_cast<std::uint64_t>(
+        warmState.ownedStorageBytes));
+    fingerprint.integer(warmState.topology.fingerprint);
+    fingerprint.integer(warmState.acceptedPressureState.fingerprint);
+    return fingerprint.value();
+}
+
 std::size_t checkedStorageSum(
     const SceneFluidMimeticPressureAuditEndpoint& endpoint) {
     const auto& solve = endpoint.pressureEpoch.diagnostics.pressureSolve
@@ -178,6 +266,27 @@ void validateSettings(
     }
 }
 
+void validateTopologyInputIdentity(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureEpoch& pressureEpoch) {
+    validateSceneFluidSurfaceState(surface, state);
+    if (pressureEpoch.fingerprint == 0
+        || pressureEpoch.surfaceDefinitionFingerprint != surface.fingerprint
+        || pressureEpoch.surfaceStateFingerprint != state.fingerprint
+        || pressureEpoch.structureDefinitionFingerprint
+            != state.structureDefinitionFingerprint
+        || pressureEpoch.acceptedStepCount != state.acceptedStepCount
+        || pressureEpoch.simulationTimeSeconds != state.simulationTimeSeconds
+        || pressureEpoch.cellCounts != grid.cellCounts()
+        || pressureEpoch.lowerMeters != grid.lowerMeters()
+        || pressureEpoch.upperMeters != grid.upperMeters()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic pressure-audit topology input identity is invalid");
+    }
+}
+
 void validateCommonInputIdentity(
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& state,
@@ -268,6 +377,7 @@ SceneFluidMimeticPressureAuditEndpoint buildEndpoint(
     const SceneFluidPressureVolumeRateSet& geometryVolumeRates,
     const SceneFluidPressureTopologyTransition& topologyTransition,
     const SceneFluidMimeticPressureAuditEndpoint* previousEndpoint,
+    const SceneFluidMimeticPressureAuditWarmState* previousWarmState,
     const SceneFluidMimeticPressureAuditSettings& settings,
     const SceneFluidMimeticPressureAuditLimits& limits) {
     validateSettings(settings);
@@ -279,6 +389,15 @@ SceneFluidMimeticPressureAuditEndpoint buildEndpoint(
         throw std::invalid_argument(
             "scene fluid mimetic pressure-audit predictor is invalid");
     }
+    if (previousEndpoint != nullptr && previousWarmState != nullptr) {
+        throw std::invalid_argument(
+            "scene fluid mimetic pressure-audit previous state is ambiguous");
+    }
+    const SceneFluidMimeticPressureState* previousPressureState = nullptr;
+    const SceneFluidMimeticControlCellSet* previousControlCells = nullptr;
+    const SceneFluidMimeticTraceSystem* previousFullTraceSystem = nullptr;
+    const SceneFluidMimeticCondensedTraceSystem*
+        previousCondensedTraceSystem = nullptr;
     if (previousEndpoint != nullptr) {
         validateSceneFluidMimeticPressureAuditEndpointIntegrity(
             *previousEndpoint);
@@ -295,6 +414,33 @@ SceneFluidMimeticPressureAuditEndpoint buildEndpoint(
             throw std::invalid_argument(
                 "scene fluid mimetic pressure-audit previous endpoint is foreign");
         }
+        previousPressureState =
+            &previousEndpoint->pressureEpoch.acceptedPressureState;
+        previousControlCells = &previousEndpoint->controlCells;
+        previousFullTraceSystem = &previousEndpoint->fullTraceSystem;
+        previousCondensedTraceSystem =
+            &previousEndpoint->condensedTraceSystem;
+    } else if (previousWarmState != nullptr) {
+        validateSceneFluidMimeticPressureAuditWarmStateIntegrity(
+            *previousWarmState);
+        const auto& topology = previousWarmState->topology;
+        if (topology.acceptedStepCount
+                != topologyTransition.previousAcceptedStepCount
+            || topology.simulationTimeSeconds
+                != topologyTransition.previousSimulationTimeSeconds
+            || topology.controlCells.pressureControlVolumeFingerprint
+                != topologyTransition
+                    .previousPressureControlVolumeFingerprint
+            || topology.controlCells.pressureFaceLinkFingerprint
+                != topologyTransition.previousPressureFaceLinkFingerprint) {
+            throw std::invalid_argument(
+                "scene fluid mimetic pressure-audit previous warm state is foreign");
+        }
+        previousPressureState =
+            &previousWarmState->acceptedPressureState;
+        previousControlCells = &topology.controlCells;
+        previousFullTraceSystem = &topology.fullTraceSystem;
+        previousCondensedTraceSystem = &topology.condensedTraceSystem;
     }
 
     SceneFluidMimeticPressureAuditEndpoint result;
@@ -306,7 +452,7 @@ SceneFluidMimeticPressureAuditEndpoint buildEndpoint(
     result.acceptedStepCount = graphPressureEpoch.acceptedStepCount;
     result.simulationTimeSeconds = graphPressureEpoch.simulationTimeSeconds;
     result.usesRegionWallPrediction = wallExchange != nullptr;
-    result.usesConsecutiveWarmStart = previousEndpoint != nullptr;
+    result.usesConsecutiveWarmStart = previousPressureState != nullptr;
     result.controlCells = buildSceneFluidMimeticControlCells(
         surface, state, grid, graphPressureEpoch.gridEpoch,
         graphPressureEpoch.openingCaps,
@@ -339,16 +485,15 @@ SceneFluidMimeticPressureAuditEndpoint buildEndpoint(
         result.controlCells, result.fullTraceSystem,
         result.predictedTraceFlows, geometryVolumeRates, sourceSettings,
         limits.pressureSource);
-    if (previousEndpoint != nullptr) {
+    if (previousPressureState != nullptr) {
         result.pressureEpoch = acceptSceneFluidMimeticPressureEpoch(
             graphPressureEpoch.gridEpoch.quadrature,
             graphPressureEpoch.pressureControlVolumes,
             result.controlCells, result.fullTraceSystem,
             result.condensedTraceSystem, result.pressureSources,
-            previousEndpoint->pressureEpoch.acceptedPressureState,
-            previousEndpoint->controlCells,
-            previousEndpoint->fullTraceSystem,
-            previousEndpoint->condensedTraceSystem, topologyTransition,
+            *previousPressureState, *previousControlCells,
+            *previousFullTraceSystem, *previousCondensedTraceSystem,
+            topologyTransition,
             settings.pressureSolve, limits.pressureEpoch);
     } else {
         result.pressureEpoch = acceptSceneFluidMimeticPressureEpoch(
@@ -362,6 +507,72 @@ SceneFluidMimeticPressureAuditEndpoint buildEndpoint(
 }
 
 } // namespace
+
+std::uint64_t sceneFluidMimeticPressureAuditSettingsFingerprint(
+    const SceneFluidMimeticPressureAuditSettings& settings) {
+    validateSettings(settings);
+    return settingsFingerprint(settings);
+}
+
+SceneFluidMimeticPressureAuditTopology
+buildSceneFluidMimeticPressureAuditTopology(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureEpoch& pressureEpoch,
+    const SceneFluidMimeticPressureAuditSettings& settings,
+    const SceneFluidMimeticPressureAuditLimits& limits) {
+    validateSettings(settings);
+    validateTopologyInputIdentity(surface, state, grid, pressureEpoch);
+    SceneFluidMimeticPressureAuditTopology result;
+    result.scenePressureEpochFingerprint = pressureEpoch.fingerprint;
+    result.structureDefinitionFingerprint =
+        pressureEpoch.structureDefinitionFingerprint;
+    result.acceptedStepCount = pressureEpoch.acceptedStepCount;
+    result.simulationTimeSeconds = pressureEpoch.simulationTimeSeconds;
+    result.controlCells = buildSceneFluidMimeticControlCells(
+        surface, state, grid, pressureEpoch.gridEpoch,
+        pressureEpoch.openingCaps, pressureEpoch.openingQuadrature,
+        pressureEpoch.openingPatches,
+        pressureEpoch.pressureControlVolumes,
+        pressureEpoch.pressureFaceLinks, settings.controlCells,
+        limits.controlCells);
+    result.fullTraceSystem = buildSceneFluidMimeticTraceSystem(
+        result.controlCells, settings.traceSystem, limits.traceSystem);
+    result.condensedTraceSystem =
+        buildSceneFluidMimeticCondensedTraceSystem(
+            result.fullTraceSystem, limits.condensedSystem);
+    result.ownedStorageBytes = checkedTopologyStorageSum(result);
+    if (result.ownedStorageBytes > limits.maximumOwnedBytes) {
+        throw std::length_error(
+            "scene fluid mimetic pressure-audit topology exceeds its byte limit");
+    }
+    result.fingerprint = topologyFingerprint(result);
+    validateSceneFluidMimeticPressureAuditTopologyIntegrity(result);
+    return result;
+}
+
+SceneFluidMimeticPressureAuditWarmState
+bindSceneFluidMimeticPressureAuditWarmState(
+    SceneFluidMimeticPressureAuditTopology topology,
+    SceneFluidMimeticPressureState acceptedPressureState,
+    const SceneFluidMimeticPressureAuditLimits& limits) {
+    validateSceneFluidMimeticPressureAuditTopologyIntegrity(topology);
+    validateSceneFluidMimeticPressureState(
+        acceptedPressureState, topology.controlCells,
+        topology.fullTraceSystem, topology.condensedTraceSystem);
+    SceneFluidMimeticPressureAuditWarmState result;
+    result.topology = std::move(topology);
+    result.acceptedPressureState = std::move(acceptedPressureState);
+    result.ownedStorageBytes = checkedWarmStateStorageSum(result);
+    if (result.ownedStorageBytes > limits.maximumOwnedBytes) {
+        throw std::length_error(
+            "scene fluid mimetic pressure-audit warm state exceeds its byte limit");
+    }
+    result.fingerprint = warmStateFingerprint(result);
+    validateSceneFluidMimeticPressureAuditWarmStateIntegrity(result);
+    return result;
+}
 
 SceneFluidMimeticPressureAuditEndpoint
 buildSceneFluidMimeticPressureAuditEndpoint(
@@ -490,7 +701,7 @@ buildSceneFluidMimeticPressureAuditEndpoint(
     return buildEndpoint(
         surface, state, grid, pressureEpoch, openingFlux,
         &predictedVelocityMetersPerSecond, nullptr, geometryVolumeRates,
-        topologyTransition, nullptr, settings, limits);
+        topologyTransition, nullptr, nullptr, settings, limits);
 }
 
 SceneFluidMimeticPressureAuditEndpoint
@@ -509,7 +720,27 @@ buildSceneFluidMimeticPressureAuditEndpoint(
     return buildEndpoint(
         surface, state, grid, pressureEpoch, openingFlux,
         &predictedVelocityMetersPerSecond, nullptr, geometryVolumeRates,
-        topologyTransition, &previousEndpoint, settings, limits);
+        topologyTransition, &previousEndpoint, nullptr, settings, limits);
+}
+
+SceneFluidMimeticPressureAuditEndpoint
+buildSceneFluidMimeticPressureAuditEndpoint(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureEpoch& pressureEpoch,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidPressureVolumeRateSet& geometryVolumeRates,
+    const SceneFluidPressureTopologyTransition& topologyTransition,
+    const SceneFluidMimeticPressureAuditWarmState& previousWarmState,
+    const SceneFluidMimeticPressureAuditSettings& settings,
+    const SceneFluidMimeticPressureAuditLimits& limits) {
+    return buildEndpoint(
+        surface, state, grid, pressureEpoch, openingFlux,
+        &predictedVelocityMetersPerSecond, nullptr, geometryVolumeRates,
+        topologyTransition, nullptr, &previousWarmState, settings,
+        limits);
 }
 
 SceneFluidMimeticPressureAuditEndpoint
@@ -527,7 +758,7 @@ buildSceneFluidMimeticPressureAuditEndpoint(
     return buildEndpoint(
         surface, state, grid, pressureEpoch, openingFlux, nullptr,
         &wallExchange, geometryVolumeRates, topologyTransition, nullptr,
-        settings, limits);
+        nullptr, settings, limits);
 }
 
 SceneFluidMimeticPressureAuditEndpoint
@@ -546,7 +777,72 @@ buildSceneFluidMimeticPressureAuditEndpoint(
     return buildEndpoint(
         surface, state, grid, pressureEpoch, openingFlux, nullptr,
         &wallExchange, geometryVolumeRates, topologyTransition,
-        &previousEndpoint, settings, limits);
+        &previousEndpoint, nullptr, settings, limits);
+}
+
+SceneFluidMimeticPressureAuditEndpoint
+buildSceneFluidMimeticPressureAuditEndpoint(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureEpoch& pressureEpoch,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidRegionWallExchange& wallExchange,
+    const SceneFluidPressureVolumeRateSet& geometryVolumeRates,
+    const SceneFluidPressureTopologyTransition& topologyTransition,
+    const SceneFluidMimeticPressureAuditWarmState& previousWarmState,
+    const SceneFluidMimeticPressureAuditSettings& settings,
+    const SceneFluidMimeticPressureAuditLimits& limits) {
+    return buildEndpoint(
+        surface, state, grid, pressureEpoch, openingFlux, nullptr,
+        &wallExchange, geometryVolumeRates, topologyTransition, nullptr,
+        &previousWarmState, settings, limits);
+}
+
+void validateSceneFluidMimeticPressureAuditTopologyIntegrity(
+    const SceneFluidMimeticPressureAuditTopology& topology) {
+    validateSceneFluidMimeticControlCellIntegrity(topology.controlCells);
+    validateSceneFluidMimeticTraceSystem(
+        topology.fullTraceSystem, topology.controlCells);
+    validateSceneFluidMimeticCondensedTraceSystem(
+        topology.condensedTraceSystem, topology.fullTraceSystem);
+    if (topology.version
+            != sceneFluidMimeticPressureAuditTopologyVersion
+        || topology.fingerprint == 0
+        || topology.scenePressureEpochFingerprint == 0
+        || topology.structureDefinitionFingerprint == 0
+        || topology.controlCells.structureDefinitionFingerprint
+            != topology.structureDefinitionFingerprint
+        || topology.controlCells.acceptedStepCount
+            != topology.acceptedStepCount
+        || topology.controlCells.simulationTimeSeconds
+            != topology.simulationTimeSeconds
+        || topology.ownedStorageBytes
+            != checkedTopologyStorageSum(topology)
+        || topology.fingerprint != topologyFingerprint(topology)) {
+        throw std::invalid_argument(
+            "scene fluid mimetic pressure-audit topology integrity is invalid");
+    }
+}
+
+void validateSceneFluidMimeticPressureAuditWarmStateIntegrity(
+    const SceneFluidMimeticPressureAuditWarmState& warmState) {
+    validateSceneFluidMimeticPressureAuditTopologyIntegrity(
+        warmState.topology);
+    validateSceneFluidMimeticPressureState(
+        warmState.acceptedPressureState,
+        warmState.topology.controlCells,
+        warmState.topology.fullTraceSystem,
+        warmState.topology.condensedTraceSystem);
+    if (warmState.version
+            != sceneFluidMimeticPressureAuditWarmStateVersion
+        || warmState.fingerprint == 0
+        || warmState.ownedStorageBytes
+            != checkedWarmStateStorageSum(warmState)
+        || warmState.fingerprint != warmStateFingerprint(warmState)) {
+        throw std::invalid_argument(
+            "scene fluid mimetic pressure-audit warm-state integrity is invalid");
+    }
 }
 
 void validateSceneFluidMimeticPressureAuditEndpointIntegrity(

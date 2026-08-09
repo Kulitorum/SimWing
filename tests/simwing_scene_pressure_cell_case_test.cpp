@@ -412,7 +412,7 @@ void testPersistentCheckpointAndRejection() {
             fsi::ScenePressureCellCheckpointPersistenceErrorCode::InvalidMagic,
             "scene pressure cell rejects foreign magic transactionally");
     damaged = bytes;
-    damaged[8] ^= 0xffU;
+    damaged[9] ^= 0xffU;
     rejects(std::move(damaged),
             fsi::ScenePressureCellCheckpointPersistenceErrorCode::UnsupportedVersion,
             "scene pressure cell rejects an unsupported wire version transactionally");
@@ -477,10 +477,20 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
         const auto productionFrame = production.advance();
         const auto auditedFrame = audited.advance();
         const auto* endpoint = audited.acceptedMimeticPressureAudit();
+        const auto productionCheckpoint = production.checkpoint();
+        const auto auditedCheckpoint = audited.checkpoint();
+        auto auditedGraphOnly = auditedCheckpoint;
+        auditedGraphOnly.coupling
+            .mimeticPressureAuditSettingsFingerprint = 0;
+        auditedGraphOnly.coupling.mimeticPressureState.reset();
         check(serialized(auditedFrame) == serialized(productionFrame)
-                  && serializedCheckpoint(audited.checkpoint())
-                      == serializedCheckpoint(production.checkpoint()),
-              "opt-in mimetic audit leaves graph-pressure frames and checkpoints byte-identical");
+                  && auditedCheckpoint.coupling
+                         .mimeticPressureAuditSettingsFingerprint != 0
+                  && auditedCheckpoint.coupling
+                         .mimeticPressureState.has_value()
+                  && serializedCheckpoint(auditedGraphOnly)
+                      == serializedCheckpoint(productionCheckpoint),
+              "opt-in mimetic audit leaves frames and the graph-pressure portion of its composite checkpoint byte-identical");
         check(endpoint != nullptr
                   && audited.diagnostics().coupling
                       .usesMimeticPressureAudit
@@ -543,6 +553,111 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
           "mimetic pressure-audit limit failure rolls Structure and graph pressure back transactionally");
 }
 
+void testPersistentMimeticPressureAuditRestart() {
+    fsi::ScenePressureCellCase initial(true);
+    const auto initialCheckpoint = initial.checkpoint();
+    const auto initialBytes = serializedCheckpoint(initialCheckpoint);
+    fsi::ScenePressureCellCheckpoint decodedInitial;
+    fsi::ScenePressureCellCheckpointPersistenceError error;
+    check(initialCheckpoint.coupling
+                  .mimeticPressureAuditSettingsFingerprint != 0
+              && !initialCheckpoint.coupling
+                      .mimeticPressureState.has_value()
+              && fsi::deserializeScenePressureCellCheckpoint(
+                  initialBytes, decodedInitial, &error),
+          "initial audited checkpoint round-trips its mode without inventing pressure state");
+    fsi::ScenePressureCellCase initialReplay(true);
+    initialReplay.restore(decodedInitial);
+    check(serialized(initialReplay.advance())
+              == serialized(initial.advance()),
+          "initial audited checkpoint reproduces the first shadowed frame");
+
+    fsi::ScenePressureCellCase source(true);
+    for (std::size_t step = 0; step < 8; ++step) {
+        static_cast<void>(source.advance());
+    }
+    const auto saved = source.checkpoint();
+    const auto bytes = serializedCheckpoint(saved);
+    fsi::ScenePressureCellCheckpoint decoded;
+    check(saved.coupling.mimeticPressureState.has_value()
+              && fsi::deserializeScenePressureCellCheckpoint(
+                  bytes, decoded, &error)
+              && decoded.coupling.mimeticPressureState
+                  == saved.coupling.mimeticPressureState
+              && serializedCheckpoint(decoded) == bytes,
+          "audited pressure-cell checkpoint composes canonical compact SWMP state with the graph restart");
+
+    fsi::ScenePressureCellCase restored(true);
+    restored.restore(decoded);
+    check(restored.acceptedMimeticPressureAudit() == nullptr
+              && serializedCheckpoint(restored.checkpoint()) == bytes,
+          "audited restore retains rebuilt warm topology without fabricating transient endpoint diagnostics");
+    const auto expectedFrame = source.advance();
+    const auto expectedDiagnostics = source.diagnostics();
+    const auto expectedEndpoint = *source.acceptedMimeticPressureAudit();
+    const auto replayFrame = restored.advance();
+    const auto* replayEndpoint = restored.acceptedMimeticPressureAudit();
+    check(serialized(replayFrame) == serialized(expectedFrame)
+              && restored.diagnostics() == expectedDiagnostics
+              && replayEndpoint != nullptr
+              && *replayEndpoint == expectedEndpoint
+              && replayEndpoint->usesConsecutiveWarmStart
+              && replayEndpoint->usesRegionWallPrediction,
+          "restored compact SWMP state reproduces the exact next consecutive wall-predicted endpoint");
+
+    fsi::ScenePressureCellCase production;
+    const auto productionBefore = serializedCheckpoint(
+        production.checkpoint());
+    bool rejected = false;
+    try {
+        production.restore(decoded);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected
+              && serializedCheckpoint(production.checkpoint())
+                  == productionBefore,
+          "default pressure-cell owner rejects an audited checkpoint transactionally");
+    fsi::ScenePressureCellCase auditedDestination(true);
+    const auto auditedBefore = serializedCheckpoint(
+        auditedDestination.checkpoint());
+    rejected = false;
+    try {
+        auditedDestination.restore(production.checkpoint());
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected
+              && serializedCheckpoint(auditedDestination.checkpoint())
+                  == auditedBefore,
+          "audited pressure-cell owner rejects a graph-only checkpoint transactionally");
+
+    auto corrupt = saved;
+    corrupt.coupling.mimeticPressureState->controls.front()
+        .pressurePascals += 0.01;
+    std::vector<std::uint8_t> unchanged{1, 2, 3};
+    const auto original = unchanged;
+    check(!fsi::serializeScenePressureCellCheckpoint(
+              corrupt, unchanged, &error)
+              && error.code
+                  == fsi::ScenePressureCellCheckpointPersistenceErrorCode::
+                      InvalidData
+              && unchanged == original,
+          "composite checkpoint rejects corrupt SWMP state without publishing bytes");
+
+    auto limits = fsi::ScenePressureCellCheckpointPersistenceLimits{};
+    limits.mimeticPressureState.maximumControlCells =
+        saved.coupling.mimeticPressureState->controls.size() - 1;
+    auto preserved = decoded;
+    check(!fsi::deserializeScenePressureCellCheckpoint(
+              bytes, preserved, &error, limits)
+              && error.code
+                  == fsi::ScenePressureCellCheckpointPersistenceErrorCode::
+                      LimitExceeded
+              && serializedCheckpoint(preserved) == bytes,
+          "composite checkpoint bounds nested SWMP rows before publication");
+}
+
 } // namespace
 
 int main() {
@@ -550,6 +665,7 @@ int main() {
         testVisibleStrongPressureCellAndReplay();
         testPersistentCheckpointAndRejection();
         testOptInMimeticPressureAuditIsShadowOnly();
+        testPersistentMimeticPressureAuditRestart();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
         return 1;

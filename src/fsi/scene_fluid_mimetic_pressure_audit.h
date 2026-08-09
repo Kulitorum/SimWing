@@ -10,6 +10,10 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t sceneFluidMimeticPressureAuditVersion = 1;
+inline constexpr std::uint32_t
+    sceneFluidMimeticPressureAuditTopologyVersion = 1;
+inline constexpr std::uint32_t
+    sceneFluidMimeticPressureAuditWarmStateVersion = 1;
 
 struct SceneFluidMimeticPressureAuditSettings {
     double densityKgPerCubicMeter = 1.225;
@@ -31,6 +35,42 @@ struct SceneFluidMimeticPressureAuditLimits {
     SceneFluidMimeticPressureEpochLimits pressureEpoch;
     std::size_t maximumOwnedBytes =
         16ULL * 1024ULL * 1024ULL * 1024ULL;
+};
+
+// Rebuilt, non-persistent topology used to validate and resume one compact
+// accepted SWMP state. Persistence stores only the pressure state; every
+// control shell and trace operator is reconstructed from the trusted scene
+// and restored Structure checkpoint before that state is published.
+struct SceneFluidMimeticPressureAuditTopology {
+    std::uint32_t version =
+        sceneFluidMimeticPressureAuditTopologyVersion;
+    std::uint64_t fingerprint = 0;
+    std::uint64_t scenePressureEpochFingerprint = 0;
+    std::uint64_t structureDefinitionFingerprint = 0;
+    std::uint64_t acceptedStepCount = 0;
+    double simulationTimeSeconds = 0.0;
+    std::size_t ownedStorageBytes = 0;
+    SceneFluidMimeticControlCellSet controlCells;
+    SceneFluidMimeticTraceSystem fullTraceSystem;
+    SceneFluidMimeticCondensedTraceSystem condensedTraceSystem;
+
+    bool operator==(
+        const SceneFluidMimeticPressureAuditTopology&) const = default;
+};
+
+// In-memory restart owner. The topology is deliberately rebuilt rather than
+// decoded, while the accepted pressure rows retain their original source and
+// epoch provenance for the next consecutive warm remap.
+struct SceneFluidMimeticPressureAuditWarmState {
+    std::uint32_t version =
+        sceneFluidMimeticPressureAuditWarmStateVersion;
+    std::uint64_t fingerprint = 0;
+    std::size_t ownedStorageBytes = 0;
+    SceneFluidMimeticPressureAuditTopology topology;
+    SceneFluidMimeticPressureState acceptedPressureState;
+
+    bool operator==(
+        const SceneFluidMimeticPressureAuditWarmState&) const = default;
 };
 
 // Complete immutable endpoint for one opt-in shadow pressure epoch. It keeps
@@ -59,6 +99,31 @@ struct SceneFluidMimeticPressureAuditEndpoint {
     bool operator==(
         const SceneFluidMimeticPressureAuditEndpoint&) const = default;
 };
+
+[[nodiscard]] std::uint64_t
+sceneFluidMimeticPressureAuditSettingsFingerprint(
+    const SceneFluidMimeticPressureAuditSettings& settings);
+
+[[nodiscard]] SceneFluidMimeticPressureAuditTopology
+buildSceneFluidMimeticPressureAuditTopology(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureEpoch& pressureEpoch,
+    const SceneFluidMimeticPressureAuditSettings& settings = {},
+    const SceneFluidMimeticPressureAuditLimits& limits = {});
+
+[[nodiscard]] SceneFluidMimeticPressureAuditWarmState
+bindSceneFluidMimeticPressureAuditWarmState(
+    SceneFluidMimeticPressureAuditTopology topology,
+    SceneFluidMimeticPressureState acceptedPressureState,
+    const SceneFluidMimeticPressureAuditLimits& limits = {});
+
+void validateSceneFluidMimeticPressureAuditTopologyIntegrity(
+    const SceneFluidMimeticPressureAuditTopology& topology);
+
+void validateSceneFluidMimeticPressureAuditWarmStateIntegrity(
+    const SceneFluidMimeticPressureAuditWarmState& warmState);
 
 [[nodiscard]] SceneFluidMimeticPressureAuditEndpoint
 buildSceneFluidMimeticPressureAuditEndpoint(
@@ -121,6 +186,20 @@ buildSceneFluidMimeticPressureAuditEndpoint(
     const fluid::PeriodicCartesianGrid& grid,
     const SceneFluidPressureEpoch& pressureEpoch,
     const SceneFluidOpeningFluxSet& openingFlux,
+    const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidPressureVolumeRateSet& geometryVolumeRates,
+    const SceneFluidPressureTopologyTransition& topologyTransition,
+    const SceneFluidMimeticPressureAuditWarmState& previousWarmState,
+    const SceneFluidMimeticPressureAuditSettings& settings = {},
+    const SceneFluidMimeticPressureAuditLimits& limits = {});
+
+[[nodiscard]] SceneFluidMimeticPressureAuditEndpoint
+buildSceneFluidMimeticPressureAuditEndpoint(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureEpoch& pressureEpoch,
+    const SceneFluidOpeningFluxSet& openingFlux,
     const SceneFluidRegionWallExchange& wallExchange,
     const SceneFluidPressureVolumeRateSet& geometryVolumeRates,
     const SceneFluidPressureTopologyTransition& topologyTransition,
@@ -138,6 +217,20 @@ buildSceneFluidMimeticPressureAuditEndpoint(
     const SceneFluidPressureVolumeRateSet& geometryVolumeRates,
     const SceneFluidPressureTopologyTransition& topologyTransition,
     const SceneFluidMimeticPressureAuditEndpoint& previousEndpoint,
+    const SceneFluidMimeticPressureAuditSettings& settings = {},
+    const SceneFluidMimeticPressureAuditLimits& limits = {});
+
+[[nodiscard]] SceneFluidMimeticPressureAuditEndpoint
+buildSceneFluidMimeticPressureAuditEndpoint(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureEpoch& pressureEpoch,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidRegionWallExchange& wallExchange,
+    const SceneFluidPressureVolumeRateSet& geometryVolumeRates,
+    const SceneFluidPressureTopologyTransition& topologyTransition,
+    const SceneFluidMimeticPressureAuditWarmState& previousWarmState,
     const SceneFluidMimeticPressureAuditSettings& settings = {},
     const SceneFluidMimeticPressureAuditLimits& limits = {});
 

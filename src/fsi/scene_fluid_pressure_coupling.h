@@ -16,7 +16,7 @@ namespace simwing::fsi {
 
 inline constexpr std::uint32_t sceneFluidPressureCouplingVersion = 1;
 inline constexpr std::uint32_t
-    sceneFluidPressureCouplingCheckpointVersion = 2;
+    sceneFluidPressureCouplingCheckpointVersion = 3;
 inline constexpr std::uint32_t
     sceneFluidPressureMacVelocityCollapseVersion = 2;
 
@@ -94,6 +94,8 @@ struct SceneFluidPressureCouplingCheckpoint {
     StructureCheckpoint structure;
     std::optional<SceneFluidPressureProjection> pressureProjection;
     std::optional<SceneFluidAcceptedWallTractionSet> wallTractions;
+    std::uint64_t mimeticPressureAuditSettingsFingerprint = 0;
+    std::optional<SceneFluidMimeticPressureState> mimeticPressureState;
 };
 
 struct SceneFluidPressureMacVelocityCollapseDiagnostics {
@@ -189,6 +191,12 @@ public:
     acceptedWallTractions() const noexcept;
     [[nodiscard]] const SceneFluidMimeticPressureAuditEndpoint*
     acceptedMimeticPressureAudit() const noexcept;
+    // Rebuilds trusted topology for decoding the compact persistent SWMP
+    // state. It does not mutate Structure or this accepted owner.
+    [[nodiscard]] SceneFluidMimeticPressureAuditTopology
+    rebuildMimeticPressureAuditTopology(
+        const Structure& target,
+        const StructureCheckpoint& structureCheckpoint) const;
     // Collapses accepted link-resolved corrected flow back onto one bulk MAC
     // normal velocity per Cartesian face. Opening links first restore cap
     // sweep so the MAC value is absolute fluid velocity. Mixed-region
@@ -219,6 +227,8 @@ public:
         const SceneFluidRegionTransport& transportedRegionMomentum);
 
 private:
+    [[nodiscard]] std::uint64_t
+    mimeticPressureAuditSettingsFingerprint() const;
     [[nodiscard]] SceneFluidPressureCouplingStepDiagnostics advanceImpl(
         Structure& target,
         const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
@@ -244,6 +254,8 @@ private:
     std::optional<SceneFluidAcceptedWallTractionSet> acceptedWallTractions_;
     std::optional<SceneFluidMimeticPressureAuditEndpoint>
         acceptedMimeticPressureAudit_;
+    std::optional<SceneFluidMimeticPressureAuditWarmState>
+        acceptedMimeticPressureAuditWarmState_;
 };
 
 } // namespace simwing::fsi
