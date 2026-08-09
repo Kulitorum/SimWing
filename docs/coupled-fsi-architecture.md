@@ -416,6 +416,7 @@ src/fsi/
     scene_fluid_opening_cap.* topology-only planar opening closure
     scene_fluid_opening_quadrature.* accepted cap motion/surface sweep
     scene_fluid_opening_patch.* exact grid-resolved opening polygons
+    scene_fluid_opening_flux.* read-only relative MAC volume-flow ledger
     scene_fluid_cell_volume.* signed-chain sparse region volumes
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
@@ -588,9 +589,15 @@ exact barycentric triangle/box primitive to a bounded opening-patch owner.
 Positive cap area is retained once per cell, or deduplicated from paired
 coincident cell clips into one canonical non-periodic grid face. A square mouth
 closes area and sweep both while grid-aligned and after accepted off-face
-motion; periodic-boundary image ambiguity rejects. Nonplanar/concave openings,
-surface junctions, inconsistent winding, and general opening flux or moving-
-boundary fluid equations remain open. A canonical Qt-free structural worker now
+motion; periodic-boundary image ambiguity rejects. A read-only flux epoch now
+binds the entire MAC field. Face owners use the exact normal degree of freedom;
+cell owners use bounded degree-three quadrature of periodic staggered
+interpolation. It retains signed fluid flow, cap sweep, and relative flow per
+patch/opening. Partial-face tiles integrate analytically, linear off-face flow
+is recovered, reversed velocity reverses sign, and co-moving air/mouth motion
+has zero relative flux. Nonplanar/concave openings, surface junctions,
+inconsistent winding, and projection-connected opening flow or moving-boundary
+fluid equations remain open. A canonical Qt-free structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.
 The same worker can now select a smooth periodic Taylor-Green CFD case. Its

@@ -340,6 +340,8 @@ target_link_libraries(simwing_scene_fluid_grid_epoch PUBLIC
 add_library(simwing_scene_fluid_opening_cap STATIC
     src/fsi/scene_fluid_opening_cap.cpp
     src/fsi/scene_fluid_opening_cap.h
+    src/fsi/scene_fluid_opening_flux.cpp
+    src/fsi/scene_fluid_opening_flux.h
     src/fsi/scene_fluid_opening_patch.cpp
     src/fsi/scene_fluid_opening_patch.h
     src/fsi/scene_fluid_opening_quadrature.cpp
@@ -1080,6 +1082,12 @@ add_executable(simwing-scene-fluid-opening-patch-test
 target_link_libraries(simwing-scene-fluid-opening-patch-test
     PRIVATE simwing_scene_fluid_opening_cap simwing_scene_structure)
 
+add_executable(simwing-scene-fluid-opening-flux-test
+    tests/simwing_scene_fluid_opening_flux_test.cpp
+)
+target_link_libraries(simwing-scene-fluid-opening-flux-test
+    PRIVATE simwing_scene_fluid_opening_cap simwing_scene_structure)
+
 add_executable(simwing-scene-fluid-pressure-traction-test
     tests/simwing_scene_fluid_pressure_traction_test.cpp
 )
@@ -1796,6 +1804,8 @@ add_test(NAME simwing_scene_fluid_opening_quadrature
     COMMAND simwing-scene-fluid-opening-quadrature-test)
 add_test(NAME simwing_scene_fluid_opening_patch
     COMMAND simwing-scene-fluid-opening-patch-test)
+add_test(NAME simwing_scene_fluid_opening_flux
+    COMMAND simwing-scene-fluid-opening-flux-test)
 add_test(NAME simwing_scene_fluid_pressure_traction
     COMMAND simwing-scene-fluid-pressure-traction-test)
 add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)

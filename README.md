@@ -530,11 +530,15 @@ material-plus-cap surface closes that geometric ledger. The exact barycentric
 triangle/box clipper is shared with material geometry and partitions each cap
 into bounded positive-area grid patches. Off-face pieces have unique cell
 owners; paired grid-plane copies become one canonical non-periodic face owner,
-and their polygon, area, accepted velocity, and sweep remain explicit.
-Grid-resolved fluid velocity and opening mass flux remain separate future
-operators. Nonplanar or concave openings, surface junctions, periodic-boundary
-ambiguity, and general moving-boundary fluid equations still reject or remain
-open; the grid epoch itself continues to own geometry and transfer only.
+and their polygon, area, accepted velocity, and sweep remain explicit. A
+read-only flux epoch binds the complete MAC field, reads exact resolved face
+flow or deterministic off-face staggered quadrature, and reports signed fluid
+flow, cap sweep, and relative volume flow. Uniform co-moving air and mouth give
+zero relative flow. Projection connectivity and pressure response to that flux
+remain future work. Nonplanar or concave openings, surface junctions,
+periodic-boundary ambiguity, and general moving-boundary fluid equations still
+reject or remain open; the grid epoch itself continues to own geometry and
+transfer only.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,
