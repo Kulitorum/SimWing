@@ -1104,6 +1104,12 @@ add_executable(simwing-scene-fluid-pressure-operator-test
 target_link_libraries(simwing-scene-fluid-pressure-operator-test
     PRIVATE simwing_scene_fluid_cell_volume simwing_scene_structure)
 
+add_executable(simwing-scene-fluid-pressure-solve-test
+    tests/simwing_scene_fluid_pressure_solve_test.cpp
+)
+target_link_libraries(simwing-scene-fluid-pressure-solve-test
+    PRIVATE simwing_scene_fluid_cell_volume simwing_scene_structure)
+
 add_executable(simwing-scene-fluid-opening-cap-test
     tests/simwing_scene_fluid_opening_cap_test.cpp
 )
@@ -1848,6 +1854,8 @@ add_test(NAME simwing_scene_fluid_pressure_face_link
     COMMAND simwing-scene-fluid-pressure-face-link-test)
 add_test(NAME simwing_scene_fluid_pressure_operator
     COMMAND simwing-scene-fluid-pressure-operator-test)
+add_test(NAME simwing_scene_fluid_pressure_solve
+    COMMAND simwing-scene-fluid-pressure-solve-test)
 add_test(NAME simwing_scene_fluid_opening_cap
     COMMAND simwing-scene-fluid-opening-cap-test)
 add_test(NAME simwing_scene_fluid_opening_quadrature

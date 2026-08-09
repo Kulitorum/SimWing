@@ -189,6 +189,8 @@ void validatePayload(
         || !std::isfinite(pressureOperator.simulationTimeSeconds)
         || !std::isfinite(pressureOperator.totalGeometryWeightMeters)
         || pressureOperator.totalGeometryWeightMeters < 0.0
+        || pressureOperator.rows.empty()
+        || pressureOperator.components.empty()
         || pressureOperator.ownedStorageBytes
             != storageBytes(pressureOperator)
         || pressureOperator.fingerprint
@@ -539,6 +541,99 @@ SceneFluidPressureOperator buildOperator(
     return result;
 }
 
+void validateSolveSettings(
+    const SceneFluidPressureSolveSettings& settings) {
+    if (!std::isfinite(
+            settings.absoluteResidualTolerancePascalsMeters)
+        || settings.absoluteResidualTolerancePascalsMeters < 0.0
+        || !std::isfinite(settings.relativeResidualTolerance)
+        || settings.relativeResidualTolerance < 0.0
+        || (settings.absoluteResidualTolerancePascalsMeters == 0.0
+            && settings.relativeResidualTolerance == 0.0)
+        || !std::isfinite(
+            settings.absoluteComponentCompatibilityTolerancePascalsMeters)
+        || settings.absoluteComponentCompatibilityTolerancePascalsMeters
+            < 0.0) {
+        throw std::invalid_argument(
+            "scene fluid pressure-solve settings are invalid");
+    }
+}
+
+bool applyOperatorUnchecked(
+    const SceneFluidPressureOperator& pressureOperator,
+    const std::span<const double> pressureValues,
+    std::vector<double>& result) {
+    result.assign(pressureOperator.rows.size(), 0.0);
+    for (const auto& row : pressureOperator.rows) {
+        for (std::size_t offset = 0; offset < row.entryCount; ++offset) {
+            const auto& entry = pressureOperator.entries[
+                row.firstEntry + offset];
+            result[row.rowIndex] += entry.geometryWeightMeters
+                * (pressureValues[row.rowIndex]
+                   - pressureValues[entry.columnControlVolumeIndex]);
+        }
+        if (!std::isfinite(result[row.rowIndex])) return false;
+    }
+    return true;
+}
+
+double vectorDot(const std::span<const double> first,
+                 const std::span<const double> second) {
+    double result = 0.0;
+    for (std::size_t index = 0; index < first.size(); ++index) {
+        result += first[index] * second[index];
+    }
+    return result;
+}
+
+double vectorL2(const std::span<const double> values) {
+    return std::sqrt(
+        vectorDot(values, values) / static_cast<double>(values.size()));
+}
+
+double vectorMaximumAbsolute(const std::span<const double> values) {
+    double result = 0.0;
+    for (const double value : values) {
+        result = std::max(result, std::abs(value));
+    }
+    return result;
+}
+
+void subtractComponentMeans(
+    const SceneFluidPressureOperator& pressureOperator,
+    std::vector<double>& values) {
+    for (const auto& component : pressureOperator.components) {
+        double sum = 0.0;
+        for (std::size_t offset = 0;
+             offset < component.controlVolumeCount; ++offset) {
+            sum += values[pressureOperator.componentControlVolumeIndices[
+                component.firstControlVolumeMember + offset]];
+        }
+        const double mean = sum
+            / static_cast<double>(component.controlVolumeCount);
+        for (std::size_t offset = 0;
+             offset < component.controlVolumeCount; ++offset) {
+            values[pressureOperator.componentControlVolumeIndices[
+                component.firstControlVolumeMember + offset]] -= mean;
+        }
+    }
+}
+
+void shiftComponentGauges(
+    const SceneFluidPressureOperator& pressureOperator,
+    std::vector<double>& pressureValues) {
+    for (const auto& component : pressureOperator.components) {
+        const double gauge = pressureValues[
+            component.gaugeControlVolumeIndex];
+        for (std::size_t offset = 0;
+             offset < component.controlVolumeCount; ++offset) {
+            pressureValues[pressureOperator.componentControlVolumeIndices[
+                component.firstControlVolumeMember + offset]] -= gauge;
+        }
+        pressureValues[component.gaugeControlVolumeIndex] = 0.0;
+    }
+}
+
 } // namespace
 
 SceneFluidPressureOperator buildSceneFluidPressureOperator(
@@ -618,21 +713,221 @@ std::vector<double> applySceneFluidPressureOperator(
         throw std::invalid_argument(
             "scene fluid pressure-operator input is invalid");
     }
-    std::vector<double> result(pressureOperator.rows.size(), 0.0);
-    for (const auto& row : pressureOperator.rows) {
-        for (std::size_t offset = 0; offset < row.entryCount; ++offset) {
-            const auto& entry = pressureOperator.entries[
-                row.firstEntry + offset];
-            result[row.rowIndex] += entry.geometryWeightMeters
-                * (pressureValues[row.rowIndex]
-                   - pressureValues[entry.columnControlVolumeIndex]);
-        }
-        if (!std::isfinite(result[row.rowIndex])) {
-            throw std::overflow_error(
-                "scene fluid pressure-operator application overflowed");
-        }
+    std::vector<double> result;
+    if (!applyOperatorUnchecked(
+            pressureOperator, pressureValues, result)) {
+        throw std::overflow_error(
+            "scene fluid pressure-operator application overflowed");
     }
     return result;
+}
+
+SceneFluidPressureSolveDiagnostics solveSceneFluidPressureSystem(
+    const SceneFluidPressureOperator& pressureOperator,
+    const std::span<const double> integratedRightHandSidePascalsMeters,
+    std::vector<double>& pressurePascals,
+    const SceneFluidPressureSolveSettings& settings) {
+    validatePayload(pressureOperator);
+    validateSolveSettings(settings);
+    if (integratedRightHandSidePascalsMeters.size()
+            != pressureOperator.rows.size()
+        || pressurePascals.size() != pressureOperator.rows.size()
+        || !std::ranges::all_of(
+            integratedRightHandSidePascalsMeters,
+            [](const double value) { return std::isfinite(value); })
+        || !std::ranges::all_of(
+            pressurePascals,
+            [](const double value) { return std::isfinite(value); })) {
+        throw std::invalid_argument(
+            "scene fluid pressure-solve fields are invalid");
+    }
+
+    SceneFluidPressureSolveDiagnostics diagnostics;
+    diagnostics.finite = true;
+    diagnostics.pressureOperatorFingerprint = pressureOperator.fingerprint;
+    diagnostics.rowCount = pressureOperator.rows.size();
+    diagnostics.componentCount = pressureOperator.components.size();
+    diagnostics.components.reserve(pressureOperator.components.size());
+    std::vector<double> rightHandSide(
+        integratedRightHandSidePascalsMeters.begin(),
+        integratedRightHandSidePascalsMeters.end());
+    diagnostics.compatible = true;
+    for (const auto& component : pressureOperator.components) {
+        SceneFluidPressureSolveComponentDiagnostics componentDiagnostics;
+        componentDiagnostics.componentIndex = component.componentIndex;
+        componentDiagnostics.controlVolumeCount =
+            component.controlVolumeCount;
+        componentDiagnostics.gaugeControlVolumeIndex =
+            component.gaugeControlVolumeIndex;
+        componentDiagnostics.pressureGaugeBeforePascals =
+            pressurePascals[component.gaugeControlVolumeIndex];
+        componentDiagnostics.pressureGaugeAfterPascals =
+            componentDiagnostics.pressureGaugeBeforePascals;
+        for (std::size_t offset = 0;
+             offset < component.controlVolumeCount; ++offset) {
+            componentDiagnostics.rightHandSideSumPascalsMeters +=
+                rightHandSide[
+                    pressureOperator.componentControlVolumeIndices[
+                        component.firstControlVolumeMember + offset]];
+        }
+        diagnostics.maximumAbsoluteComponentCompatibilityPascalsMeters =
+            std::max(
+                diagnostics.maximumAbsoluteComponentCompatibilityPascalsMeters,
+                std::abs(componentDiagnostics
+                    .rightHandSideSumPascalsMeters));
+        if (!std::isfinite(
+                componentDiagnostics.rightHandSideSumPascalsMeters)) {
+            diagnostics.finite = false;
+            diagnostics.compatible = false;
+        } else if (std::abs(
+                       componentDiagnostics.rightHandSideSumPascalsMeters)
+                   > settings
+                       .absoluteComponentCompatibilityTolerancePascalsMeters) {
+            diagnostics.compatible = false;
+        }
+        componentDiagnostics.compatibilityCorrectionPascalsMeters =
+            componentDiagnostics.rightHandSideSumPascalsMeters
+            / static_cast<double>(component.controlVolumeCount);
+        diagnostics.components.push_back(componentDiagnostics);
+    }
+    if (!diagnostics.compatible) return diagnostics;
+
+    for (const auto& component : diagnostics.components) {
+        const auto& owner = pressureOperator.components[
+            component.componentIndex];
+        for (std::size_t offset = 0;
+             offset < owner.controlVolumeCount; ++offset) {
+            rightHandSide[
+                pressureOperator.componentControlVolumeIndices[
+                    owner.firstControlVolumeMember + offset]]
+                -= component.compatibilityCorrectionPascalsMeters;
+        }
+    }
+
+    std::vector<double> candidatePressure = pressurePascals;
+    shiftComponentGauges(pressureOperator, candidatePressure);
+    std::vector<double> operatorPressure;
+    if (!applyOperatorUnchecked(
+            pressureOperator, candidatePressure, operatorPressure)) {
+        diagnostics.finite = false;
+        return diagnostics;
+    }
+    std::vector<double> residual(pressureOperator.rows.size(), 0.0);
+    for (std::size_t row = 0; row < residual.size(); ++row) {
+        residual[row] = rightHandSide[row] - operatorPressure[row];
+    }
+    subtractComponentMeans(pressureOperator, residual);
+    if (!std::ranges::all_of(
+            residual,
+            [](const double value) { return std::isfinite(value); })) {
+        diagnostics.finite = false;
+        return diagnostics;
+    }
+    diagnostics.initialResidualL2PascalsMeters = vectorL2(residual);
+    diagnostics.finalResidualL2PascalsMeters =
+        diagnostics.initialResidualL2PascalsMeters;
+    diagnostics.finalResidualMaximumPascalsMeters =
+        vectorMaximumAbsolute(residual);
+    if (!std::isfinite(diagnostics.initialResidualL2PascalsMeters)
+        || !std::isfinite(
+            diagnostics.finalResidualMaximumPascalsMeters)) {
+        diagnostics.finite = false;
+        return diagnostics;
+    }
+    const double convergenceThreshold = std::max(
+        settings.absoluteResidualTolerancePascalsMeters,
+        settings.relativeResidualTolerance
+            * diagnostics.initialResidualL2PascalsMeters);
+
+    std::vector<double> direction = residual;
+    std::vector<double> operatorDirection;
+    double residualSquared = vectorDot(residual, residual);
+    diagnostics.converged =
+        diagnostics.finalResidualL2PascalsMeters <= convergenceThreshold;
+    while (!diagnostics.converged
+           && diagnostics.iterationCount < settings.maximumIterations) {
+        if (!applyOperatorUnchecked(
+                pressureOperator, direction, operatorDirection)) {
+            diagnostics.finite = false;
+            break;
+        }
+        const double denominator = vectorDot(direction, operatorDirection);
+        if (!std::isfinite(denominator) || !(denominator > 0.0)
+            || !std::isfinite(residualSquared)
+            || !(residualSquared > 0.0)) {
+            diagnostics.finite = false;
+            break;
+        }
+        const double alpha = residualSquared / denominator;
+        if (!std::isfinite(alpha)) {
+            diagnostics.finite = false;
+            break;
+        }
+        for (std::size_t row = 0; row < residual.size(); ++row) {
+            candidatePressure[row] += alpha * direction[row];
+            residual[row] -= alpha * operatorDirection[row];
+        }
+        ++diagnostics.iterationCount;
+        shiftComponentGauges(pressureOperator, candidatePressure);
+        subtractComponentMeans(pressureOperator, residual);
+        const double nextResidualSquared = vectorDot(residual, residual);
+        diagnostics.finalResidualL2PascalsMeters = std::sqrt(
+            nextResidualSquared / static_cast<double>(residual.size()));
+        diagnostics.finalResidualMaximumPascalsMeters =
+            vectorMaximumAbsolute(residual);
+        diagnostics.converged = std::isfinite(nextResidualSquared)
+            && std::isfinite(diagnostics.finalResidualL2PascalsMeters)
+            && diagnostics.finalResidualL2PascalsMeters
+                <= convergenceThreshold;
+        if (diagnostics.converged) {
+            residualSquared = nextResidualSquared;
+            break;
+        }
+        if (!std::isfinite(nextResidualSquared)
+            || !(residualSquared > 0.0)) {
+            diagnostics.finite = false;
+            break;
+        }
+        const double beta = nextResidualSquared / residualSquared;
+        if (!std::isfinite(beta)) {
+            diagnostics.finite = false;
+            break;
+        }
+        for (std::size_t row = 0; row < residual.size(); ++row) {
+            direction[row] = residual[row] + beta * direction[row];
+        }
+        subtractComponentMeans(pressureOperator, direction);
+        residualSquared = nextResidualSquared;
+    }
+
+    if (diagnostics.converged) {
+        if (!applyOperatorUnchecked(
+                pressureOperator, candidatePressure, operatorPressure)) {
+            diagnostics.finite = false;
+            diagnostics.converged = false;
+        } else {
+            for (std::size_t row = 0; row < residual.size(); ++row) {
+                residual[row] = rightHandSide[row] - operatorPressure[row];
+            }
+            subtractComponentMeans(pressureOperator, residual);
+            diagnostics.finalResidualL2PascalsMeters = vectorL2(residual);
+            diagnostics.finalResidualMaximumPascalsMeters =
+                vectorMaximumAbsolute(residual);
+            diagnostics.converged = std::isfinite(
+                diagnostics.finalResidualL2PascalsMeters)
+                && diagnostics.finalResidualL2PascalsMeters
+                    <= convergenceThreshold;
+        }
+    }
+    if (!diagnostics.converged) return diagnostics;
+
+    shiftComponentGauges(pressureOperator, candidatePressure);
+    for (auto& component : diagnostics.components) {
+        component.pressureGaugeAfterPascals = candidatePressure[
+            component.gaugeControlVolumeIndex];
+    }
+    pressurePascals = std::move(candidatePressure);
+    return diagnostics;
 }
 
 } // namespace simwing::fsi

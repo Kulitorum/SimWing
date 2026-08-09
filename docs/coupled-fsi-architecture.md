@@ -648,9 +648,16 @@ is exactly one link-connected graph. The face-aligned intake now passes as one
 Cell-plus-Outside component and its unit region jump has exactly `0.18 m` of
 graph energy. An off-face intake with otherwise complete Cartesian faces still
 rejects because its authored component remains split. This prevents a missing
-embedded opening path from becoming an accidental no-flow boundary. RHS
-construction, off-face opening transmissibility, gauge application, and
-projection are still absent. A canonical Qt-free structural
+embedded opening path from becoming an accidental no-flow boundary. A
+transactional component-wise conjugate-gradient solve now accepts an integrated
+RHS only when every component sum is inside an explicit absolute tolerance,
+removes just that admitted roundoff, and commits only after recomputing the true
+residual. The committed result shifts each existing gauge control volume to
+exact zero. Three disconnected manufactured regions and the connected
+face-aligned intake recover their prescribed pressure fields; incompatible and
+truncated solves preserve the warm start exactly. Physical RHS construction,
+off-face opening transmissibility, and velocity projection are still absent. A
+canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.

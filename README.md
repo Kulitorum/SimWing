@@ -565,8 +565,13 @@ gauge owners are tested. Assembly requires one connected link graph per
 authored pressure component. The face-aligned intake now joins Cell and Outside
 with exact aperture graph energy, while a complete Cartesian grid with a
 missing off-face intake link still rejects instead of acting like sealed
-fabric. Off-face opening transmissibility, RHS construction, and the actual
-projection remain future work.
+fabric. A deterministic component-wise conjugate-gradient layer now solves
+manufactured integrated systems on both the nested closed regions and that open
+intake. It rejects incompatible component sources, removes only admitted
+roundoff, explicitly recomputes the final residual, sets every canonical gauge
+to exactly zero, and leaves warm pressure unchanged on failure. Off-face
+opening transmissibility, physical RHS construction, and velocity projection
+remain future work.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own

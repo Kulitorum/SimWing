@@ -18,6 +18,43 @@ struct SceneFluidPressureOperatorLimits {
     std::size_t maximumOperatorBytes = 4096ULL * 1024ULL * 1024ULL;
 };
 
+struct SceneFluidPressureSolveSettings {
+    double absoluteResidualTolerancePascalsMeters = 1.0e-12;
+    double relativeResidualTolerance = 1.0e-10;
+    double absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-12;
+    std::size_t maximumIterations = 4000;
+};
+
+struct SceneFluidPressureSolveComponentDiagnostics {
+    std::size_t componentIndex = 0;
+    std::size_t controlVolumeCount = 0;
+    std::size_t gaugeControlVolumeIndex = 0;
+    double rightHandSideSumPascalsMeters = 0.0;
+    double compatibilityCorrectionPascalsMeters = 0.0;
+    double pressureGaugeBeforePascals = 0.0;
+    double pressureGaugeAfterPascals = 0.0;
+
+    bool operator==(
+        const SceneFluidPressureSolveComponentDiagnostics&) const = default;
+};
+
+struct SceneFluidPressureSolveDiagnostics {
+    bool compatible = false;
+    bool converged = false;
+    bool finite = false;
+    std::uint64_t pressureOperatorFingerprint = 0;
+    std::size_t rowCount = 0;
+    std::size_t componentCount = 0;
+    std::size_t iterationCount = 0;
+    double maximumAbsoluteComponentCompatibilityPascalsMeters = 0.0;
+    double initialResidualL2PascalsMeters = 0.0;
+    double finalResidualL2PascalsMeters = 0.0;
+    double finalResidualMaximumPascalsMeters = 0.0;
+    std::vector<SceneFluidPressureSolveComponentDiagnostics> components;
+
+    bool operator==(const SceneFluidPressureSolveDiagnostics&) const = default;
+};
+
 struct SceneFluidPressureOperatorRow {
     std::size_t rowIndex = 0;
     std::uint64_t stableId = 0;
@@ -116,5 +153,18 @@ void validateSceneFluidPressureOperator(
 [[nodiscard]] std::vector<double> applySceneFluidPressureOperator(
     const SceneFluidPressureOperator& pressureOperator,
     std::span<const double> pressureValues);
+
+// Solves A*p=b in the operator's integrated units. Each component RHS must
+// sum to zero within the declared absolute tolerance; only admitted roundoff
+// is removed. Pressure is committed only after an explicitly recomputed
+// residual converges, then shifted so every retained gauge control volume is
+// exactly zero. Incompatibility or non-convergence leaves the caller's warm
+// start bit-for-bit unchanged.
+[[nodiscard]] SceneFluidPressureSolveDiagnostics
+solveSceneFluidPressureSystem(
+    const SceneFluidPressureOperator& pressureOperator,
+    std::span<const double> integratedRightHandSidePascalsMeters,
+    std::vector<double>& pressurePascals,
+    const SceneFluidPressureSolveSettings& settings = {});
 
 } // namespace simwing::fsi
