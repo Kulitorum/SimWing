@@ -84,6 +84,34 @@ double component(const fluid::Vector3& value,
         "scene fluid region link-flow axis is invalid");
 }
 
+double dot(const fluid::Vector3& first, const fluid::Vector3& second) {
+    return first.x * second.x
+        + first.y * second.y
+        + first.z * second.z;
+}
+
+double linkNormalVelocity(
+    const SceneFluidPressureFaceLink& link,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const fluid::Vector3& velocity) {
+    if (link.geometryKind
+        == SceneFluidPressureLinkGeometryKind::CartesianFace) {
+        if (link.faceIndex >= faceLinks.faces.size()) {
+            throw std::invalid_argument(
+                "scene fluid region link-flow Cartesian face is invalid");
+        }
+        return component(velocity, faceLinks.faces[link.faceIndex].axis);
+    }
+    if (link.geometryKind
+            != SceneFluidPressureLinkGeometryKind::EmbeddedOpening
+        || link.kind != SceneFluidPressureFaceLinkKind::AuthoredOpening
+        || link.faceIndex != invalidSceneFluidPressureFaceIndex) {
+        throw std::invalid_argument(
+            "scene fluid region link-flow geometry is invalid");
+    }
+    return dot(velocity, link.unitNormalMinusToPlus);
+}
+
 std::size_t storageBytesForLinks(const std::size_t count) {
     if (count > std::numeric_limits<std::size_t>::max()
                     / sizeof(SceneFluidRegionPredictedLinkFlow)) {
@@ -129,6 +157,8 @@ std::uint64_t predictionFingerprint(
     fingerprint.integer(static_cast<std::uint64_t>(diagnostics.linkCount));
     fingerprint.integer(static_cast<std::uint64_t>(
         diagnostics.openingLinkCount));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        diagnostics.embeddedOpeningLinkCount));
     fingerprint.integer(static_cast<std::uint64_t>(
         diagnostics.multiLinkFaceCount));
     for (const double value : {
@@ -208,6 +238,7 @@ SceneFluidRegionLinkFlowPrediction predictSceneFluidRegionLinkFlows(
     const SceneFluidRegionLinkFlowLimits& limits) {
     validateSceneFluidRegionTransportIntegrity(transport);
     validateSceneFluidPressureControlVolumeIntegrity(currentPressureVolumes);
+    validateSceneFluidPressureFaceLinkIntegrity(currentFaceLinks);
     validateSceneFluidOpeningFluxIntegrity(currentOpeningFlux);
     if (!transport.diagnostics.accepted) {
         throw std::invalid_argument(
@@ -333,23 +364,21 @@ SceneFluidRegionLinkFlowPrediction predictSceneFluidRegionLinkFlows(
          index < currentFaceLinks.links.size(); ++index) {
         const auto& source = currentFaceLinks.links[index];
         if (source.linkIndex != index
-            || source.faceIndex >= currentFaceLinks.faces.size()
             || source.minusControlVolumeIndex >= transport.controlVolumes.size()
             || source.plusControlVolumeIndex >= transport.controlVolumes.size()
             || !(source.areaSquareMeters > 0.0)) {
             throw std::invalid_argument(
                 "scene fluid region link-flow binding is invalid");
         }
-        const auto axis = currentFaceLinks.faces[source.faceIndex].axis;
         const double velocity = 0.5
-            * (component(
+            * (linkNormalVelocity(
+                   source, currentFaceLinks,
                    transport.controlVolumes[source.minusControlVolumeIndex]
-                       .velocityMetersPerSecond,
-                   axis)
-               + component(
+                       .velocityMetersPerSecond)
+               + linkNormalVelocity(
+                   source, currentFaceLinks,
                    transport.controlVolumes[source.plusControlVolumeIndex]
-                       .velocityMetersPerSecond,
-                   axis));
+                       .velocityMetersPerSecond));
         double relativeFlow = source.areaSquareMeters * velocity;
         if (source.kind
             == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
@@ -363,6 +392,10 @@ SceneFluidRegionLinkFlowPrediction predictSceneFluidRegionLinkFlows(
             sampleById.erase(found);
             ++consumedOpeningSamples;
             ++diagnostics.openingLinkCount;
+            if (source.geometryKind
+                == SceneFluidPressureLinkGeometryKind::EmbeddedOpening) {
+                ++diagnostics.embeddedOpeningLinkCount;
+            }
         }
         if (!std::isfinite(velocity) || !std::isfinite(relativeFlow)) {
             throw std::overflow_error(
@@ -423,6 +456,7 @@ SceneFluidRegionLinkFlowPrediction predictSceneFluidRegionLinkFlows(
     const SceneFluidRegionLinkFlowLimits& limits) {
     validateSceneFluidRegionWallExchangeIntegrity(wallExchange);
     validateSceneFluidPressureControlVolumeIntegrity(currentPressureVolumes);
+    validateSceneFluidPressureFaceLinkIntegrity(currentFaceLinks);
     validateSceneFluidOpeningFluxIntegrity(currentOpeningFlux);
     validateGridIdentity(
         grid, currentPressureVolumes.cellCounts,
@@ -533,7 +567,6 @@ SceneFluidRegionLinkFlowPrediction predictSceneFluidRegionLinkFlows(
          index < currentFaceLinks.links.size(); ++index) {
         const auto& source = currentFaceLinks.links[index];
         if (source.linkIndex != index
-            || source.faceIndex >= currentFaceLinks.faces.size()
             || source.minusControlVolumeIndex
                 >= wallExchange.controlVolumes.size()
             || source.plusControlVolumeIndex
@@ -542,18 +575,17 @@ SceneFluidRegionLinkFlowPrediction predictSceneFluidRegionLinkFlows(
             throw std::invalid_argument(
                 "scene fluid wall link-flow binding is invalid");
         }
-        const auto axis = currentFaceLinks.faces[source.faceIndex].axis;
         const double velocity = 0.5
-            * (component(
+            * (linkNormalVelocity(
+                   source, currentFaceLinks,
                    wallExchange.controlVolumes[
                        source.minusControlVolumeIndex]
-                       .velocityMetersPerSecond,
-                   axis)
-               + component(
+                       .velocityMetersPerSecond)
+               + linkNormalVelocity(
+                   source, currentFaceLinks,
                    wallExchange.controlVolumes[
                        source.plusControlVolumeIndex]
-                       .velocityMetersPerSecond,
-                   axis));
+                       .velocityMetersPerSecond));
         double relativeFlow = source.areaSquareMeters * velocity;
         if (source.kind
             == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
@@ -566,6 +598,10 @@ SceneFluidRegionLinkFlowPrediction predictSceneFluidRegionLinkFlows(
             sampleById.erase(found);
             ++consumedOpeningSamples;
             ++diagnostics.openingLinkCount;
+            if (source.geometryKind
+                == SceneFluidPressureLinkGeometryKind::EmbeddedOpening) {
+                ++diagnostics.embeddedOpeningLinkCount;
+            }
         }
         if (!std::isfinite(velocity) || !std::isfinite(relativeFlow)) {
             throw std::overflow_error(
@@ -612,12 +648,17 @@ void validateSceneFluidRegionLinkFlowPredictionIntegrity(
     const SceneFluidRegionLinkFlowPrediction& prediction) {
     const auto& diagnostics = prediction.diagnostics;
     bool linksValid = true;
+    std::size_t openingLinkCount = 0;
+    std::size_t embeddedOpeningLinkCount = 0;
     for (std::size_t index = 0; index < prediction.links.size(); ++index) {
         const auto& link = prediction.links[index];
         linksValid = linksValid
             && link.linkIndex == index
             && link.stableId != 0
-            && link.faceIndex < diagnostics.faceCount
+            && (link.faceIndex < diagnostics.faceCount
+                || (link.faceIndex == invalidSceneFluidPressureFaceIndex
+                    && link.kind
+                        == SceneFluidPressureFaceLinkKind::AuthoredOpening))
             && (link.kind == SceneFluidPressureFaceLinkKind::SameRegion
                 || (link.kind
                         == SceneFluidPressureFaceLinkKind::AuthoredOpening
@@ -626,6 +667,13 @@ void validateSceneFluidRegionLinkFlowPredictionIntegrity(
                 link.predictedAbsoluteVelocityMetersPerSecond)
             && std::isfinite(
                 link.predictedRelativeVolumeFlowRateCubicMetersPerSecond);
+        if (link.kind
+            == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
+            ++openingLinkCount;
+            if (link.faceIndex == invalidSceneFluidPressureFaceIndex) {
+                ++embeddedOpeningLinkCount;
+            }
+        }
     }
     if (prediction.version != sceneFluidRegionLinkFlowVersion
         || prediction.fingerprint == 0
@@ -657,6 +705,11 @@ void validateSceneFluidRegionLinkFlowPredictionIntegrity(
         || diagnostics.faceCount == 0
         || diagnostics.linkCount != prediction.links.size()
         || diagnostics.openingLinkCount > diagnostics.linkCount
+        || diagnostics.openingLinkCount != openingLinkCount
+        || diagnostics.embeddedOpeningLinkCount
+            > diagnostics.openingLinkCount
+        || diagnostics.embeddedOpeningLinkCount
+            != embeddedOpeningLinkCount
         || diagnostics.multiLinkFaceCount > diagnostics.faceCount
         || !finite(diagnostics.sourceMomentumKilogramMetersPerSecond)
         || !finite(diagnostics.remappedMomentumKilogramMetersPerSecond)

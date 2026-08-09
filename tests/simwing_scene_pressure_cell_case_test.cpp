@@ -215,6 +215,8 @@ void testVisibleStrongPressureCellAndReplay() {
         frame, "pressure_cell.maximum_mac_speed");
     const auto* macDeviation = scalarField(
         frame, "pressure_cell.mac_subface_deviation");
+    const auto* macEmbeddedOpenings = scalarField(
+        frame, "pressure_cell.mac_embedded_openings");
     const auto* bulkChange = scalarField(
         frame, "pressure_cell.bulk_flow_change");
     const auto* bulkDivergence = scalarField(
@@ -259,6 +261,8 @@ void testVisibleStrongPressureCellAndReplay() {
               && macSpeed != nullptr && macSpeed->values.size() == 1
               && macDeviation != nullptr
               && macDeviation->values.size() == 1
+              && macEmbeddedOpenings != nullptr
+              && macEmbeddedOpenings->values.size() == 1
               && bulkChange != nullptr && bulkChange->values.size() == 1
               && bulkDivergence != nullptr
               && bulkDivergence->values.size() == 1

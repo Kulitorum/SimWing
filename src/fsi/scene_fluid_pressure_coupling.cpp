@@ -340,6 +340,7 @@ SceneFluidPressureCoupling::acceptedPressureCorrectedMacVelocity() const {
     const auto& projection = *acceptedPressureProjection_;
     validateSceneFluidPressureProjectionIntegrity(projection);
     const auto& faceLinks = acceptedPressureEpoch_.pressureFaceLinks;
+    validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
     const auto& patches = acceptedPressureEpoch_.openingPatches;
     if (!projection.diagnostics.accepted
         || projection.pressureFaceLinkFingerprint != faceLinks.fingerprint
@@ -353,11 +354,6 @@ SceneFluidPressureCoupling::acceptedPressureCorrectedMacVelocity() const {
         throw std::invalid_argument(
             "scene pressure corrected MAC velocity identity is invalid");
     }
-    if (faceLinks.embeddedOpeningLinkCount != 0) {
-        throw std::invalid_argument(
-            "scene pressure corrected MAC velocity cannot collapse embedded opening flow");
-    }
-
     std::map<std::uint64_t, const SceneFluidOpeningGridPatch*>
         openingPatches;
     for (const auto& patch : patches.patches) {
@@ -418,6 +414,49 @@ SceneFluidPressureCoupling::acceptedPressureCorrectedMacVelocity() const {
                 * patch.surfaceSweepRateCubicMetersPerSecond;
         }
         return flow;
+    };
+    const auto embeddedAbsoluteFlow = [&](
+        const SceneFluidPressureFaceLink& source,
+        const SceneFluidPressureProjectedLink& projected) {
+        if (source.geometryKind
+                != SceneFluidPressureLinkGeometryKind::EmbeddedOpening
+            || source.kind
+                != SceneFluidPressureFaceLinkKind::AuthoredOpening
+            || source.faceIndex != invalidSceneFluidPressureFaceIndex) {
+            throw std::invalid_argument(
+                "scene pressure corrected MAC embedded link is invalid");
+        }
+        const auto found = openingPatches.find(
+            source.openingPatchStableId);
+        if (found == openingPatches.end()) {
+            throw std::invalid_argument(
+                "scene pressure corrected MAC embedded patch is missing");
+        }
+        const auto& patch = *found->second;
+        const bool forwardRegions =
+            patch.negativeSideRegionId == source.minusRegionId
+            && patch.positiveSideRegionId == source.plusRegionId;
+        const bool reverseRegions =
+            patch.negativeSideRegionId == source.plusRegionId
+            && patch.positiveSideRegionId == source.minusRegionId;
+        const double alignment =
+            patch.unitNormalNegativeToPositive.x
+                * source.unitNormalMinusToPlus.x
+            + patch.unitNormalNegativeToPositive.y
+                * source.unitNormalMinusToPlus.y
+            + patch.unitNormalNegativeToPositive.z
+                * source.unitNormalMinusToPlus.z;
+        const double orientation = forwardRegions ? 1.0 : -1.0;
+        if (patch.openingId != source.openingId
+            || patch.areaSquareMeters != source.areaSquareMeters
+            || (!forwardRegions && !reverseRegions)
+            || orientation * alignment < 1.0 - 1.0e-10) {
+            throw std::invalid_argument(
+                "scene pressure corrected MAC embedded patch is foreign");
+        }
+        return projected
+                .correctedRelativeVolumeFlowRateCubicMetersPerSecond
+            + orientation * patch.surfaceSweepRateCubicMetersPerSecond;
     };
 
     for (const auto& face : faceLinks.faces) {
@@ -501,6 +540,37 @@ SceneFluidPressureCoupling::acceptedPressureCorrectedMacVelocity() const {
                 collapsedVelocity;
             break;
         }
+    }
+    for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
+        const auto& source = faceLinks.links[index];
+        if (source.geometryKind
+            != SceneFluidPressureLinkGeometryKind::EmbeddedOpening) {
+            continue;
+        }
+        const auto& projected = projection.links[index];
+        if (source.linkIndex != index
+            || projected.linkIndex != index
+            || projected.stableId != source.stableId
+            || projected.faceIndex != invalidSceneFluidPressureFaceIndex
+            || projected.kind != source.kind
+            || projected.minusControlVolumeIndex
+                != source.minusControlVolumeIndex
+            || projected.plusControlVolumeIndex
+                != source.plusControlVolumeIndex
+            || projected.openingPatchStableId
+                != source.openingPatchStableId
+            || !(source.areaSquareMeters > 0.0)
+            || !std::isfinite(embeddedAbsoluteFlow(source, projected))) {
+            throw std::invalid_argument(
+                "scene pressure corrected MAC embedded binding is invalid");
+        }
+        ++diagnostics.openingLinkCount;
+        ++diagnostics.embeddedOpeningLinkCount;
+    }
+    if (diagnostics.embeddedOpeningLinkCount
+        != faceLinks.embeddedOpeningLinkCount) {
+        throw std::invalid_argument(
+            "scene pressure corrected MAC embedded count is invalid");
     }
     diagnostics.finite = fluid::isFinite(result.velocityMetersPerSecond)
         && std::isfinite(

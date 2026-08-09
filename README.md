@@ -595,10 +595,11 @@ ambiguous or donorless retirement rejects. One bounded, versioned
 pressure-topology transition now pairs every retained row and owns both
 appearance donors and retirement recipients. Geometry-volume rates,
 transported momentum, and pressure warm state consume that same fingerprinted
-decision. General
-swept-volume remap,
-corrected-MAC and region-momentum continuation across partitioned faces and
-embedded openings, and general moving-boundary projection remain future work.
+decision. General swept-volume remap, a direct Cartesian representation of
+embedded opening flow, and general moving-boundary projection remain future
+work. Embedded opening flow now continues through explicit-normal region
+momentum; the derived bulk MAC field deliberately contains Cartesian faces
+only.
 Accepted projection pressure now also returns through the authoritative
 surface path. Quadrature-v2 retains the exact cell owner of each authored
 surface side; a bounded sampler resolves those cell/region pressure unknowns,
@@ -710,8 +711,9 @@ force, bulk-flow change and divergence, viscous energy loss, region transport
 loss/GCL change/momentum residual, wall loss/momentum residual,
 strong-iteration count, bulk MAC speed, and
 the maximum
-mixed-subface velocity spread discarded by the area collapse. The final scene
-projection remains cut-region-aware, but the two intermediate bulk-advection
+mixed-subface velocity spread discarded by the area collapse, plus the count
+of embedded opening links retained outside the Cartesian bulk field. The final
+scene projection remains cut-region-aware, but the two intermediate bulk-advection
 projections see only one velocity per Cartesian face; this is a bootstrap
 diagnostic, not a general immersed-boundary CFD or wing-aerodynamics claim. A
 600-step headless run remains topology-stable for 10 simulated seconds and
@@ -721,16 +723,17 @@ maximum MAC speed; the two-second transient reaches about `2.12 Pa` and
 this coarse resolution (about `1.4e-6 N` at two seconds), so sustaining a
 bluff-body pressure wake still requires general immersed-boundary advection
 and a validated boundary-layer closure rather than hidden predictor reset.
-Its bounded `SWPCELL8` checkpoint stores the trusted Structure state, complete
+Its bounded `SWPCELL9` checkpoint stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and
 accepted files
 round-trip deterministically, reject foreign/corrupt input transactionally,
 resume through the normal worker checkpoint flags, and reconstruct the exact
 derived MAC continuation without duplicating either it or transient bulk
-pressure on the wire. Version 8 preserves transported-region and wall-exchange
-projection provenance and bounds/revalidates every momentum control volume and
-material quadrature traction before publication.
+pressure on the wire. Version 9 preserves transported-region and wall-exchange
+projection provenance, including explicit-normal embedded-opening momentum,
+and bounds/revalidates every momentum control volume and material quadrature
+traction before publication.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own

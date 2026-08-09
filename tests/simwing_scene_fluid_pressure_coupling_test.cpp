@@ -94,6 +94,16 @@ Scene tetraScene() {
     return scene;
 }
 
+Scene tiltedTetraScene() {
+    auto scene = tetraScene();
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-pressure-coupling-tilted";
+    scene.vertices[1].positionMeters.x = 2.6;
+    scene.vertices[2].positionMeters.x = 2.8;
+    scene.vertices[3].positionMeters.x = 2.7;
+    return scene;
+}
+
 SceneStructureAssembly fixedMouthAssembly(const Scene& scene) {
     auto assembly = assembleSceneStructure(scene);
     for (std::size_t node = 0;
@@ -283,6 +293,55 @@ void testStrongPressureFeedbackConvergesDeterministically() {
               && first.structure.checkpoint().nodes
                   == second.structure.checkpoint().nodes,
           "accepted pressure and warm state continue into the exact next coupled macro-step");
+}
+
+void testTiltedOpeningContinuesThroughBulkCollapse() {
+    const auto scene = tiltedTetraScene();
+    const auto surface = assembleSceneFluidSurface(scene);
+    auto assembly = assembleSceneStructure(scene);
+    for (auto& node : assembly.definition.nodes) {
+        node.fixed = true;
+    }
+    Structure structure(assembly.definition);
+    const auto settings = couplingSettings();
+    const fluid::PeriodicCartesianGrid grid(
+        {4, 4, 4}, {}, {4.0, 4.0, 4.0});
+    SceneFluidPressureCoupling coupling(
+        surface.definition, assembly.mappings, structure, grid, settings);
+    fluid::MacVelocityField velocity(grid);
+    std::ranges::fill(velocity.xFaces(), 1.0);
+
+    const auto first = coupling.advance(structure, velocity);
+    const auto firstMac = coupling.acceptedPressureCorrectedMacVelocity();
+    check(first.accepted
+              && coupling.acceptedPressureEpoch()
+                     .pressureFaceLinks.embeddedOpeningLinkCount == 1
+              && firstMac.diagnostics.finite
+              && firstMac.diagnostics.embeddedOpeningLinkCount == 1
+              && firstMac.diagnostics.openingLinkCount == 1,
+          "tilted intake accepts pressure feedback while bulk MAC collapse explicitly retains its off-face flow in region state");
+    if (!first.accepted || coupling.acceptedPressureProjection() == nullptr) {
+        return;
+    }
+
+    const auto& firstEpoch = coupling.acceptedPressureEpoch();
+    const auto momentum = reconstructSceneFluidRegionMomentumState(
+        grid, firstEpoch.pressureControlVolumes,
+        firstEpoch.pressureFaceLinks, firstEpoch.openingPatches,
+        *coupling.acceptedPressureProjection(), velocity);
+    SceneFluidRegionTransportSettings transportSettings;
+    transportSettings.timeStepSeconds = settings.structure.timeStepSeconds;
+    const auto transport = advanceSceneFluidRegionMomentum(
+        momentum, firstEpoch.pressureFaceLinks,
+        *coupling.acceptedPressureProjection(), transportSettings);
+    const auto second = coupling.advance(
+        structure, firstMac.velocityMetersPerSecond, transport);
+    check(transport.diagnostics.accepted
+              && second.accepted
+              && second.usesRegionWall
+              && coupling.acceptedPressureEpoch()
+                     .pressureFaceLinks.embeddedOpeningLinkCount == 1,
+          "tilted intake continues through region transport, wall exchange, and the next strong pressure step");
 }
 
 void testExhaustionAndProjectionFailureRollback() {
@@ -626,6 +685,7 @@ void testCheckpointReplayAndTransactionalRejection() {
 int main() {
     try {
         testStrongPressureFeedbackConvergesDeterministically();
+        testTiltedOpeningContinuesThroughBulkCollapse();
         testExhaustionAndProjectionFailureRollback();
         testCouplingInterfaceLimits();
         testTransportedTopologyAppearance();

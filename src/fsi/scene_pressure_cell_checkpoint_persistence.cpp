@@ -14,8 +14,8 @@ namespace simwing::fsi {
 namespace {
 
 constexpr std::array<std::uint8_t, 8> checkpointMagic{
-    'S', 'W', 'P', 'C', 'E', 'L', 'L', '8'};
-constexpr std::uint32_t checkpointStateVersion = 8;
+    'S', 'W', 'P', 'C', 'E', 'L', 'L', '9'};
+constexpr std::uint32_t checkpointStateVersion = 9;
 constexpr std::size_t checkpointEnvelopeBytes = 28;
 constexpr std::size_t solveComponentRecordBytes = 56;
 constexpr std::size_t controlVolumeRecordBytes = 72;
@@ -709,6 +709,8 @@ bool writeRegionMomentum(
         || !writer.count(diagnostics.controlVolumeCount)
         || !writer.count(diagnostics.linkCount)
         || !writer.count(diagnostics.openingLinkCount)
+        || !writer.count(diagnostics.embeddedOpeningLinkCount)
+        || !writer.count(diagnostics.normalEquationControlCount)
         || !writer.count(diagnostics.sampledComponentCount)
         || !writer.count(diagnostics.fallbackComponentCount)
         || !writer.vector3(
@@ -778,6 +780,11 @@ bool readRegionMomentum(
             diagnostics.controlVolumeCount, limits.maximumControlVolumes)
         || !reader.count(diagnostics.linkCount, limits.maximumLinks)
         || !reader.count(diagnostics.openingLinkCount, limits.maximumLinks)
+        || !reader.count(
+            diagnostics.embeddedOpeningLinkCount, limits.maximumLinks)
+        || !reader.count(
+            diagnostics.normalEquationControlCount,
+            limits.maximumControlVolumes)
         || !reader.count(
             diagnostics.sampledComponentCount,
             3 * limits.maximumControlVolumes)

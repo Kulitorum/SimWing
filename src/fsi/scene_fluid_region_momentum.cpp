@@ -78,14 +78,100 @@ std::size_t axisIndex(const fluid::GridFaceAxis axis) {
         "scene fluid region momentum face axis is invalid");
 }
 
-double axisComponent(const Vec3& value, const fluid::GridFaceAxis axis) {
-    switch (axis) {
-    case fluid::GridFaceAxis::X: return value.x;
-    case fluid::GridFaceAxis::Y: return value.y;
-    case fluid::GridFaceAxis::Z: return value.z;
+double dot(const fluid::Vector3& first, const fluid::Vector3& second) {
+    return first.x * second.x
+        + first.y * second.y
+        + first.z * second.z;
+}
+
+double dot(const Vec3& first, const fluid::Vector3& second) {
+    return first.x * second.x
+        + first.y * second.y
+        + first.z * second.z;
+}
+
+using Matrix3 = std::array<std::array<double, 3>, 3>;
+
+fluid::Vector3 closestNormalEquationVelocity(
+    Matrix3 matrix,
+    const fluid::Vector3 rightHandSide,
+    const fluid::Vector3 fallback) {
+    Matrix3 eigenvectors{{
+        {{1.0, 0.0, 0.0}},
+        {{0.0, 1.0, 0.0}},
+        {{0.0, 0.0, 1.0}},
+    }};
+    constexpr std::array<std::array<std::size_t, 2>, 3> pairs{{
+        {{0, 1}}, {{0, 2}}, {{1, 2}},
+    }};
+    for (std::size_t sweep = 0; sweep < 16; ++sweep) {
+        for (const auto pair : pairs) {
+            const std::size_t p = pair[0];
+            const std::size_t q = pair[1];
+            const double offDiagonal = matrix[p][q];
+            if (offDiagonal == 0.0) {
+                continue;
+            }
+            const double tau = (matrix[q][q] - matrix[p][p])
+                / (2.0 * offDiagonal);
+            const double tangent = std::copysign(1.0, tau)
+                / (std::abs(tau) + std::sqrt(1.0 + tau * tau));
+            const double cosine = 1.0 / std::sqrt(1.0 + tangent * tangent);
+            const double sine = tangent * cosine;
+            matrix[p][p] -= tangent * offDiagonal;
+            matrix[q][q] += tangent * offDiagonal;
+            matrix[p][q] = 0.0;
+            matrix[q][p] = 0.0;
+            for (std::size_t row = 0; row < 3; ++row) {
+                if (row == p || row == q) {
+                    continue;
+                }
+                const double rowP = matrix[row][p];
+                const double rowQ = matrix[row][q];
+                matrix[row][p] = cosine * rowP - sine * rowQ;
+                matrix[p][row] = matrix[row][p];
+                matrix[row][q] = sine * rowP + cosine * rowQ;
+                matrix[q][row] = matrix[row][q];
+            }
+            for (std::size_t row = 0; row < 3; ++row) {
+                const double rowP = eigenvectors[row][p];
+                const double rowQ = eigenvectors[row][q];
+                eigenvectors[row][p] = cosine * rowP - sine * rowQ;
+                eigenvectors[row][q] = sine * rowP + cosine * rowQ;
+            }
+        }
     }
-    throw std::invalid_argument(
-        "scene fluid region momentum opening axis is invalid");
+
+    const std::array<double, 3> fallbackArray{
+        fallback.x, fallback.y, fallback.z};
+    const std::array<double, 3> rightArray{
+        rightHandSide.x, rightHandSide.y, rightHandSide.z};
+    // The Jacobi rotation overwrote the original matrix. In the eigenbasis,
+    // M*fallback is simply lambda times the projected fallback, so solve the
+    // closest-to-fallback correction directly there.
+    std::array<double, 3> result = fallbackArray;
+    const double maximumEigenvalue = std::max({
+        0.0, matrix[0][0], matrix[1][1], matrix[2][2]});
+    const double threshold = maximumEigenvalue * 1.0e-12;
+    for (std::size_t eigen = 0; eigen < 3; ++eigen) {
+        const double eigenvalue = matrix[eigen][eigen];
+        if (!(eigenvalue > threshold)) {
+            continue;
+        }
+        double projectedRight = 0.0;
+        double projectedFallback = 0.0;
+        for (std::size_t row = 0; row < 3; ++row) {
+            projectedRight += eigenvectors[row][eigen] * rightArray[row];
+            projectedFallback +=
+                eigenvectors[row][eigen] * fallbackArray[row];
+        }
+        const double correction =
+            projectedRight / eigenvalue - projectedFallback;
+        for (std::size_t row = 0; row < 3; ++row) {
+            result[row] += eigenvectors[row][eigen] * correction;
+        }
+    }
+    return {result[0], result[1], result[2]};
 }
 
 std::size_t storageBytesForControlVolumes(const std::size_t count) {
@@ -129,6 +215,10 @@ std::uint64_t momentumFingerprint(
     fingerprint.integer(static_cast<std::uint64_t>(diagnostics.linkCount));
     fingerprint.integer(static_cast<std::uint64_t>(
         diagnostics.openingLinkCount));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        diagnostics.embeddedOpeningLinkCount));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        diagnostics.normalEquationControlCount));
     fingerprint.integer(static_cast<std::uint64_t>(
         diagnostics.sampledComponentCount));
     fingerprint.integer(static_cast<std::uint64_t>(
@@ -208,7 +298,6 @@ fluid::Vector3 cellCenteredVelocity(
 double absoluteLinkFlow(
     const SceneFluidPressureFaceLink& source,
     const SceneFluidPressureProjectedLink& projected,
-    const SceneFluidPressureFace& face,
     const std::map<std::uint64_t, const SceneFluidOpeningGridPatch*>&
         patchById) {
     double result = projected
@@ -228,17 +317,18 @@ double absoluteLinkFlow(
     const bool reverseRegions =
         patch.negativeSideRegionId == source.plusRegionId
         && patch.positiveSideRegionId == source.minusRegionId;
-    const double normal = axisComponent(
-        patch.unitNormalNegativeToPositive, face.axis);
+    const double normalAlignment = dot(
+        patch.unitNormalNegativeToPositive,
+        source.unitNormalMinusToPlus);
     if (patch.openingId != source.openingId
         || patch.areaSquareMeters != source.areaSquareMeters
         || (!forwardRegions && !reverseRegions)
-        || std::abs(std::abs(normal) - 1.0) > 1.0e-10) {
+        || std::abs(std::abs(normalAlignment) - 1.0) > 1.0e-10) {
         throw std::invalid_argument(
             "scene fluid region momentum opening patch is foreign");
     }
     const double orientation = forwardRegions ? 1.0 : -1.0;
-    if (orientation * normal < 1.0 - 1.0e-10) {
+    if (orientation * normalAlignment < 1.0 - 1.0e-10) {
         throw std::invalid_argument(
             "scene fluid region momentum opening orientation is inconsistent");
     }
@@ -257,6 +347,7 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
     const fluid::MacVelocityField& fallbackVelocityMetersPerSecond,
     const SceneFluidRegionMomentumLimits& limits) {
     validateSceneFluidPressureControlVolumeIntegrity(pressureVolumes);
+    validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
     validateSceneFluidPressureProjectionIntegrity(projection);
     if (!fallbackVelocityMetersPerSecond.matches(grid)
         || !fluid::isFinite(fallbackVelocityMetersPerSecond)) {
@@ -326,16 +417,29 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
         std::array<double, 3> area{};
         std::array<double, 3> areaVelocity{};
         std::array<std::size_t, 3> linkCount{};
+        Matrix3 normalMatrix{};
+        fluid::Vector3 normalRightHandSide;
+        std::size_t embeddedLinkCount = 0;
     };
     std::vector<Accumulator> accumulators(
         pressureVolumes.controlVolumes.size());
     std::vector<double> absoluteVelocities(faceLinks.links.size(), 0.0);
     std::size_t openingLinkCount = 0;
+    std::size_t embeddedOpeningLinkCount = 0;
     for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
         const auto& source = faceLinks.links[index];
         const auto& projected = projection.links[index];
+        const bool cartesian = source.geometryKind
+            == SceneFluidPressureLinkGeometryKind::CartesianFace;
+        const bool embedded = source.geometryKind
+            == SceneFluidPressureLinkGeometryKind::EmbeddedOpening;
         if (source.linkIndex != index
-            || source.faceIndex >= faceLinks.faces.size()
+            || (cartesian && source.faceIndex >= faceLinks.faces.size())
+            || (embedded
+                && (source.faceIndex != invalidSceneFluidPressureFaceIndex
+                    || source.kind
+                        != SceneFluidPressureFaceLinkKind::AuthoredOpening))
+            || (!cartesian && !embedded)
             || source.minusControlVolumeIndex >= accumulators.size()
             || source.plusControlVolumeIndex >= accumulators.size()
             || source.minusControlVolumeIndex
@@ -354,28 +458,48 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
             throw std::invalid_argument(
                 "scene fluid region momentum link binding is invalid");
         }
-        const auto& face = faceLinks.faces[source.faceIndex];
-        const std::size_t axis = axisIndex(face.axis);
         const double velocity = absoluteLinkFlow(
-            source, projected, face, patchById)
+            source, projected, patchById)
             / source.areaSquareMeters;
         if (!std::isfinite(velocity)) {
             throw std::overflow_error(
                 "scene fluid region momentum link velocity is non-finite");
         }
         absoluteVelocities[index] = velocity;
+        const std::array<double, 3> normal{
+            source.unitNormalMinusToPlus.x,
+            source.unitNormalMinusToPlus.y,
+            source.unitNormalMinusToPlus.z};
         for (const std::size_t controlVolume : {
                  source.minusControlVolumeIndex,
                  source.plusControlVolumeIndex}) {
             auto& accumulator = accumulators[controlVolume];
-            accumulator.area[axis] += source.areaSquareMeters;
-            accumulator.areaVelocity[axis] +=
-                source.areaSquareMeters * velocity;
-            ++accumulator.linkCount[axis];
+            if (cartesian) {
+                const std::size_t axis = axisIndex(
+                    faceLinks.faces[source.faceIndex].axis);
+                accumulator.area[axis] += source.areaSquareMeters;
+                accumulator.areaVelocity[axis] +=
+                    source.areaSquareMeters * velocity;
+                ++accumulator.linkCount[axis];
+            } else {
+                ++accumulator.embeddedLinkCount;
+            }
+            for (std::size_t row = 0; row < 3; ++row) {
+                component(accumulator.normalRightHandSide, row) +=
+                    source.areaSquareMeters * velocity * normal[row];
+                for (std::size_t column = 0; column < 3; ++column) {
+                    accumulator.normalMatrix[row][column] +=
+                        source.areaSquareMeters
+                        * normal[row] * normal[column];
+                }
+            }
         }
         if (source.kind
             == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
             ++openingLinkCount;
+            if (embedded) {
+                ++embeddedOpeningLinkCount;
+            }
         }
     }
 
@@ -397,6 +521,7 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
     diagnostics.controlVolumeCount = pressureVolumes.controlVolumes.size();
     diagnostics.linkCount = faceLinks.links.size();
     diagnostics.openingLinkCount = openingLinkCount;
+    diagnostics.embeddedOpeningLinkCount = embeddedOpeningLinkCount;
 
     for (const auto& source : pressureVolumes.controlVolumes) {
         if (source.controlVolumeIndex >= accumulators.size()
@@ -421,15 +546,18 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
         control.volumeCubicMeters = source.volumeCubicMeters;
         control.sampledFaceAreaSquareMeters = accumulator.area;
         control.sampledLinkCounts = accumulator.linkCount;
+        control.velocityMetersPerSecond = fallback;
         for (std::size_t axis = 0; axis < 3; ++axis) {
-            double velocity = component(fallback, axis);
             if (accumulator.linkCount[axis] != 0) {
                 if (!(accumulator.area[axis] > 0.0)) {
                     throw std::invalid_argument(
                         "scene fluid region momentum sampled area is invalid");
                 }
-                velocity = accumulator.areaVelocity[axis]
-                    / accumulator.area[axis];
+                if (accumulator.embeddedLinkCount == 0) {
+                    component(control.velocityMetersPerSecond, axis) =
+                        accumulator.areaVelocity[axis]
+                        / accumulator.area[axis];
+                }
                 ++diagnostics.sampledComponentCount;
             } else {
                 if (accumulator.area[axis] != 0.0) {
@@ -438,7 +566,17 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
                 }
                 ++diagnostics.fallbackComponentCount;
             }
-            component(control.velocityMetersPerSecond, axis) = velocity;
+        }
+        if (accumulator.embeddedLinkCount != 0) {
+            control.velocityMetersPerSecond = closestNormalEquationVelocity(
+                accumulator.normalMatrix,
+                accumulator.normalRightHandSide,
+                fallback);
+            ++diagnostics.normalEquationControlCount;
+        }
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            const double velocity = component(
+                control.velocityMetersPerSecond, axis);
             component(control.momentumKilogramMetersPerSecond, axis) =
                 result.densityKgPerCubicMeter
                 * source.volumeCubicMeters * velocity;
@@ -466,17 +604,31 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
 
     for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
         const auto& link = faceLinks.links[index];
-        const auto& face = faceLinks.faces[link.faceIndex];
-        const std::size_t axis = axisIndex(face.axis);
-        const double reconstructed = 0.5
-            * (component(
-                   result.controlVolumes[link.minusControlVolumeIndex]
-                       .velocityMetersPerSecond,
-                   axis)
-               + component(
-                   result.controlVolumes[link.plusControlVolumeIndex]
-                       .velocityMetersPerSecond,
-                   axis));
+        double reconstructed = 0.0;
+        if (link.geometryKind
+            == SceneFluidPressureLinkGeometryKind::CartesianFace) {
+            const std::size_t axis = axisIndex(
+                faceLinks.faces[link.faceIndex].axis);
+            reconstructed = 0.5
+                * (component(
+                       result.controlVolumes[link.minusControlVolumeIndex]
+                           .velocityMetersPerSecond,
+                       axis)
+                   + component(
+                       result.controlVolumes[link.plusControlVolumeIndex]
+                           .velocityMetersPerSecond,
+                       axis));
+        } else {
+            reconstructed = 0.5
+                * (dot(
+                       result.controlVolumes[link.minusControlVolumeIndex]
+                           .velocityMetersPerSecond,
+                       link.unitNormalMinusToPlus)
+                   + dot(
+                       result.controlVolumes[link.plusControlVolumeIndex]
+                           .velocityMetersPerSecond,
+                       link.unitNormalMinusToPlus));
+        }
         diagnostics.maximumLinkNormalVelocityResidualMetersPerSecond =
             std::max(
                 diagnostics
@@ -582,6 +734,10 @@ void validateSceneFluidRegionMomentumStateIntegrity(
             != momentum.controlVolumes.size()
         || diagnostics.linkCount == 0
         || diagnostics.openingLinkCount > diagnostics.linkCount
+        || diagnostics.embeddedOpeningLinkCount
+            > diagnostics.openingLinkCount
+        || diagnostics.normalEquationControlCount
+            > momentum.controlVolumes.size()
         || diagnostics.sampledComponentCount != sampledComponentCount
         || diagnostics.fallbackComponentCount != fallbackComponentCount
         || sampledComponentCount + fallbackComponentCount
@@ -630,11 +786,39 @@ void validateSceneFluidRegionMomentumStateBinding(
     const SceneFluidOpeningGridPatchSet& openingPatches,
     const SceneFluidPressureProjection& projection) {
     validateSceneFluidRegionMomentumStateIntegrity(momentum);
+    validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
     validateSceneFluidPressureProjectionIntegrity(projection);
     validateGridIdentity(
         grid, momentum.cellCounts, momentum.lowerMeters,
         momentum.upperMeters,
         "scene fluid region momentum grid is foreign");
+    std::size_t openingLinkCount = 0;
+    std::size_t embeddedOpeningLinkCount = 0;
+    std::vector<bool> normalEquationControls(
+        pressureVolumes.controlVolumes.size(), false);
+    for (const auto& link : faceLinks.links) {
+        if (link.kind
+            == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
+            ++openingLinkCount;
+        }
+        if (link.geometryKind
+            == SceneFluidPressureLinkGeometryKind::EmbeddedOpening) {
+            if (link.minusControlVolumeIndex
+                    >= normalEquationControls.size()
+                || link.plusControlVolumeIndex
+                    >= normalEquationControls.size()) {
+                throw std::invalid_argument(
+                    "scene fluid region momentum embedded binding is invalid");
+            }
+            ++embeddedOpeningLinkCount;
+            normalEquationControls[link.minusControlVolumeIndex] = true;
+            normalEquationControls[link.plusControlVolumeIndex] = true;
+        }
+    }
+    const std::size_t normalEquationControlCount =
+        static_cast<std::size_t>(std::count(
+            normalEquationControls.begin(),
+            normalEquationControls.end(), true));
     if (momentum.pressureProjectionFingerprint != projection.fingerprint
         || momentum.pressureControlVolumeFingerprint
             != pressureVolumes.fingerprint
@@ -646,7 +830,13 @@ void validateSceneFluidRegionMomentumStateBinding(
         || momentum.densityKgPerCubicMeter
             != projection.settings.densityKgPerCubicMeter
         || momentum.controlVolumes.size()
-            != pressureVolumes.controlVolumes.size()) {
+            != pressureVolumes.controlVolumes.size()
+        || momentum.diagnostics.linkCount != faceLinks.links.size()
+        || momentum.diagnostics.openingLinkCount != openingLinkCount
+        || momentum.diagnostics.embeddedOpeningLinkCount
+            != embeddedOpeningLinkCount
+        || momentum.diagnostics.normalEquationControlCount
+            != normalEquationControlCount) {
         throw std::invalid_argument(
             "scene fluid region momentum binding is invalid");
     }

@@ -438,6 +438,12 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
              .maximumSubfaceVelocityDeviationMetersPerSecond},
     });
     frame.scalarFields.push_back({
+        "pressure_cell.mac_embedded_openings", "1",
+        viewer::FieldAssociation::Global,
+        {static_cast<double>(diagnostics_.macVelocity
+             .embeddedOpeningLinkCount)},
+    });
+    frame.scalarFields.push_back({
         "pressure_cell.bulk_flow_change", "m/s",
         viewer::FieldAssociation::Global,
         {diagnostics_.bulkFlow

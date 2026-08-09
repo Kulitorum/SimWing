@@ -9,7 +9,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidRegionLinkFlowVersion = 2;
+inline constexpr std::uint32_t sceneFluidRegionLinkFlowVersion = 3;
 
 struct SceneFluidRegionLinkFlowLimits {
     std::size_t maximumControlVolumes = 50'000'000;
@@ -37,6 +37,7 @@ struct SceneFluidRegionLinkFlowDiagnostics {
     std::size_t faceCount = 0;
     std::size_t linkCount = 0;
     std::size_t openingLinkCount = 0;
+    std::size_t embeddedOpeningLinkCount = 0;
     std::size_t multiLinkFaceCount = 0;
     fluid::Vector3 sourceMomentumKilogramMetersPerSecond;
     fluid::Vector3 remappedMomentumKilogramMetersPerSecond;
@@ -54,11 +55,13 @@ struct SceneFluidRegionLinkFlowDiagnostics {
 // Maps one accepted fixed-epoch region transport candidate onto a consecutive
 // topology-stable moving pressure epoch. Stable cell/region velocities are
 // retained while momentum is recomputed from the current physical volumes.
-// Each pressure link receives the arithmetic mean endpoint normal velocity;
-// an authored opening additionally subtracts its exact current oriented cap
-// sweep. The wall-source overload uses already-adjusted current control-volume
-// velocities and records that source explicitly. This is a first-order GCL
-// remap/predictor, not a pressure correction or topology rebase.
+// Each pressure link receives the arithmetic mean endpoint velocity projected
+// onto its explicit minus-to-plus normal; the Cartesian-only path retains its
+// exact component arithmetic. An authored opening additionally subtracts its
+// exact current oriented cap sweep. The wall-source overload uses
+// already-adjusted current control-volume velocities and records that source
+// explicitly. This is a first-order GCL remap/predictor, not a pressure
+// correction or topology rebase.
 struct SceneFluidRegionLinkFlowPrediction {
     std::uint32_t version = sceneFluidRegionLinkFlowVersion;
     std::uint64_t fingerprint = 0;

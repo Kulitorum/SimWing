@@ -9,7 +9,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidRegionMomentumVersion = 1;
+inline constexpr std::uint32_t sceneFluidRegionMomentumVersion = 2;
 
 struct SceneFluidRegionMomentumLimits {
     std::size_t maximumControlVolumes = 50'000'000;
@@ -38,6 +38,8 @@ struct SceneFluidRegionMomentumDiagnostics {
     std::size_t controlVolumeCount = 0;
     std::size_t linkCount = 0;
     std::size_t openingLinkCount = 0;
+    std::size_t embeddedOpeningLinkCount = 0;
+    std::size_t normalEquationControlCount = 0;
     std::size_t sampledComponentCount = 0;
     std::size_t fallbackComponentCount = 0;
     fluid::Vector3 totalMomentumKilogramMetersPerSecond;
@@ -51,12 +53,14 @@ struct SceneFluidRegionMomentumDiagnostics {
 };
 
 // Accepted pressure-link flow reconstructed as one collocated momentum vector
-// per positive cell/region control volume. Each Cartesian component is the
-// area-weighted mean of its incident corrected absolute link velocities.
-// A component with no incident link retains the cell-centred value from the
-// exact MAC predictor used by the pressure projection. This is immutable
-// momentum ownership for later conservative transport; it does not itself
-// advance, project, or impose a wall model.
+// per positive cell/region control volume. Controls incident only to Cartesian
+// links retain the exact component-wise area average. A control incident to an
+// embedded link instead uses a bounded three-dimensional normal-equation solve
+// over all its link normals, retaining the cell-centred MAC predictor in the
+// unconstrained nullspace. The sampled component arrays continue to describe
+// Cartesian-face coverage only. This is immutable momentum ownership for later
+// conservative transport; it does not itself advance, project, or impose a
+// wall model.
 struct SceneFluidRegionMomentumState {
     std::uint32_t version = sceneFluidRegionMomentumVersion;
     std::uint64_t fingerprint = 0;

@@ -17,7 +17,7 @@ inline constexpr std::uint32_t sceneFluidPressureCouplingVersion = 1;
 inline constexpr std::uint32_t
     sceneFluidPressureCouplingCheckpointVersion = 2;
 inline constexpr std::uint32_t
-    sceneFluidPressureMacVelocityCollapseVersion = 1;
+    sceneFluidPressureMacVelocityCollapseVersion = 2;
 
 struct SceneFluidPressureCouplingSettings {
     SceneFluidPressureCouplingSettings();
@@ -97,6 +97,7 @@ struct SceneFluidPressureMacVelocityCollapseDiagnostics {
     std::size_t faceCount = 0;
     std::size_t linkCount = 0;
     std::size_t openingLinkCount = 0;
+    std::size_t embeddedOpeningLinkCount = 0;
     std::size_t multiLinkFaceCount = 0;
     double maximumAbsoluteVelocityMetersPerSecond = 0.0;
     double maximumSubfaceVelocityDeviationMetersPerSecond = 0.0;
@@ -177,8 +178,11 @@ public:
     // Collapses accepted link-resolved corrected flow back onto one bulk MAC
     // normal velocity per Cartesian face. Opening links first restore cap
     // sweep so the MAC value is absolute fluid velocity. Mixed-region
-    // subface differences are area-averaged and reported, not hidden. This is
-    // a deterministic continuation state, not cut-cell advection/diffusion.
+    // subface differences are area-averaged and reported, not hidden.
+    // Embedded links have no unique Cartesian face and therefore remain in
+    // the accepted region-momentum state rather than being smeared into this
+    // bulk field; their validated count is reported explicitly. This is a
+    // deterministic continuation state, not cut-cell advection/diffusion.
     [[nodiscard]] SceneFluidPressureMacVelocityCollapse
     acceptedPressureCorrectedMacVelocity() const;
     [[nodiscard]] const SceneFluidPressureCouplingSettings& settings()

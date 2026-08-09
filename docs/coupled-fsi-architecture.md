@@ -421,7 +421,7 @@ src/fsi/
     scene_fluid_region_continuity.* consecutive volume/flux compatibility
     scene_fluid_region_connectivity.* pressure components and gauges
     scene_fluid_pressure_control_volume.* sparse volume-weighted unknowns
-    scene_fluid_pressure_face_link.* exact same-region Cartesian links
+    scene_fluid_pressure_face_link.* Cartesian and embedded pressure links
     scene_fluid_pressure_operator.* symmetric integrated graph Laplacian
     scene_fluid_pressure_epoch.* atomic accepted pressure geometry/operator
     scene_fluid_pressure_topology_transition.* shared crossing ownership
@@ -739,9 +739,10 @@ first feedback owner holds the predicted MAC field fixed across nonlinear
 iterations. Accepted corrected link flows can now be collapsed onto one
 absolute bulk MAC velocity per Cartesian face, restoring oriented cap sweep at
 authored openings and reporting the maximum mixed-region subface velocity
-spread. Embedded openings reject this Cartesian collapse until their oriented
-flow participates in region-momentum reconstruction. The pressure-cell worker
-uses that derived field as the next accepted
+spread. Embedded openings have no unique Cartesian face: collapse validates
+and reports them without smearing their flow, while the accepted region state
+retains their oriented momentum. The pressure-cell worker uses that derived
+field as the next accepted
 predictor. This collapse is pressure-correction continuation, not general
 cut-cell advection, viscosity, or a topology-rebasing CFD step. Its
 topology-stable inverse bookkeeping is now explicit as a separate link-flow
@@ -757,9 +758,11 @@ negative oracle makes region-resolved momentum transport—not static state
 carry—the required next owner. The first input product for that owner is now
 explicit: accepted corrected absolute link velocities are reconstructed into
 one immutable momentum vector per positive cell/region control volume.
-Incident link normals are area-averaged by Cartesian component, while a
-component with no incident face retains the cell-centred value of the exact
-MAC predictor used by the projection. The product is bound to the pressure,
+Controls with Cartesian links only retain the exact component-wise area
+average. A control incident to an embedded opening instead solves a bounded
+three-dimensional normal equation over all incident explicit link normals;
+unconstrained directions retain the cell-centred value of the exact MAC
+predictor used by the projection. The product is bound to the pressure,
 volume, face-link, opening-patch, and predictor fingerprints and reports total
 momentum, kinetic energy, fallback coverage, and link-to-collocated
 reconstruction residual. The reconstruction itself performs no time advance.
@@ -776,9 +779,10 @@ delta between successive bulk MAC predictors can be applied first; its impulse
 and work are separate from the conservative internal ledger. The next
 topology-stable boundary retains transported
 cell/region velocity while recomputing momentum from current physical volume,
-averages endpoint components onto the current Cartesian links, and subtracts
-the exact current opening-cap sweep. The moving pressure projection consumes
-that fingerprinted first-order predictor together with its dV/dt product and
+projects the endpoint vectors onto each current link's explicit normal, while
+preserving the old exact component arithmetic for Cartesian links, and
+subtracts the exact current opening-cap sweep. The moving pressure projection
+consumes that fingerprinted first-order predictor together with its dV/dt product and
 verifies every predicted link flow exactly. A downstream material-wall product
 now remaps the immutable transport to each current nonlinear geometry and
 exchanges tangential momentum on both sides of every authoritative material
@@ -827,7 +831,8 @@ about `2.12 Pa` and `17.8 mm`; the molecular-viscosity wall reaction is about
 and `0.0260 mm`, demonstrating that this local exchange is not a resolved wake
 or boundary layer. Frames expose the mean-flow pump force plus separate
 pressure/wall/total-fluid loads, bulk-flow change, final divergence, viscous
-loss, region loss/GCL change, region momentum residual, and wall
+loss, region loss/GCL change, region momentum residual, embedded-opening
+collapse count, and wall
 loss/momentum residual. It is deliberately a visible bootstrap
 diagnostic, not aerodynamic truth. The bulk operator's two intermediate
 pressure projections have one velocity per Cartesian face and cannot retain
@@ -844,9 +849,10 @@ projection beside the trusted nested Structure payload. Deterministic initial
 and accepted round trips, exact next-frame replay, CLI autosave/resume, and
 transactional corruption/foreign-file rejection are covered. Restore derives
 the exact bulk MAC continuation from that projection instead of duplicating it
-or the transient bulk pressure on the wire. `SWPCELL8` additionally persists
+or the transient bulk pressure on the wire. `SWPCELL9` additionally persists
 the accepted region-momentum state, material-wall traction endpoint, and
-transport/wall projection provenance. Decode bounds every momentum and wall
+transport/wall projection provenance, including embedded-opening normal-
+equation diagnostics. Decode bounds every momentum and wall
 traction record and validates their complete accepted-epoch binding before
 publication. A
 canonical Qt-free structural

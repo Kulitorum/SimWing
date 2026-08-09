@@ -451,7 +451,7 @@ void testFaceAlignedOpeningProjection() {
 }
 
 void testEmbeddedOpeningProjection() {
-    Fixture fixture(tiltedOpenScene());
+    Fixture fixture(tiltedOpenScene(), true);
     fluid::MacVelocityField velocity(grid());
     std::ranges::fill(velocity.xFaces(), 2.0);
     std::ranges::fill(velocity.yFaces(), -0.5);
@@ -484,6 +484,135 @@ void testEmbeddedOpeningProjection() {
               .correctedNetOutwardVolumeRateMaximumCubicMetersPerSecond
               < 2.0e-11,
           "embedded aperture projection closes control-volume continuity");
+
+    const auto momentum = reconstructSceneFluidRegionMomentumState(
+        grid(), fixture.pressureVolumes, fixture.faceLinks,
+        fixture.openingPatches, projected, velocity);
+    const auto repeatedMomentum = reconstructSceneFluidRegionMomentumState(
+        grid(), fixture.pressureVolumes, fixture.faceLinks,
+        fixture.openingPatches, projected, velocity);
+    check(momentum == repeatedMomentum
+              && momentum.diagnostics.embeddedOpeningLinkCount == 1
+              && momentum.diagnostics.normalEquationControlCount == 2,
+          "tilted aperture deterministically reconstructs both incident controls through normal equations");
+    check(openingFlux.samples.front()
+              .surfaceSweepRateCubicMetersPerSecond == 0.0,
+          "fixed tilted aperture has exact zero cap sweep for reconstruction audit");
+    std::vector<bool> embeddedControls(momentum.controlVolumes.size(), false);
+    for (const auto& link : fixture.faceLinks.links) {
+        if (link.geometryKind
+            == SceneFluidPressureLinkGeometryKind::EmbeddedOpening) {
+            embeddedControls[link.minusControlVolumeIndex] = true;
+            embeddedControls[link.plusControlVolumeIndex] = true;
+        }
+    }
+    bool stationaryNormalEquations = true;
+    for (std::size_t controlIndex = 0;
+         controlIndex < momentum.controlVolumes.size(); ++controlIndex) {
+        if (!embeddedControls[controlIndex]) {
+            continue;
+        }
+        fluid::Vector3 gradient;
+        for (std::size_t linkIndex = 0;
+             linkIndex < fixture.faceLinks.links.size(); ++linkIndex) {
+            const auto& link = fixture.faceLinks.links[linkIndex];
+            if (link.minusControlVolumeIndex != controlIndex
+                && link.plusControlVolumeIndex != controlIndex) {
+                continue;
+            }
+            const auto& normal = link.unitNormalMinusToPlus;
+            const auto& reconstructed =
+                momentum.controlVolumes[controlIndex]
+                    .velocityMetersPerSecond;
+            const double observed = projected.links[linkIndex]
+                .correctedRelativeVolumeFlowRateCubicMetersPerSecond
+                / link.areaSquareMeters;
+            const double residual =
+                reconstructed.x * normal.x
+                + reconstructed.y * normal.y
+                + reconstructed.z * normal.z
+                - observed;
+            gradient.x += link.areaSquareMeters * normal.x * residual;
+            gradient.y += link.areaSquareMeters * normal.y * residual;
+            gradient.z += link.areaSquareMeters * normal.z * residual;
+        }
+        stationaryNormalEquations = stationaryNormalEquations
+            && std::sqrt(
+                   gradient.x * gradient.x
+                   + gradient.y * gradient.y
+                   + gradient.z * gradient.z) < 1.0e-11;
+    }
+    check(stationaryNormalEquations,
+          "tilted aperture reconstruction satisfies its vector normal equations");
+
+    SceneFluidRegionTransportSettings transportSettings;
+    transportSettings.timeStepSeconds = strictSettings().timeStepSeconds;
+    const auto transport = advanceSceneFluidRegionMomentum(
+        momentum, fixture.faceLinks, projected, transportSettings);
+    check(transport.diagnostics.accepted,
+          "tilted aperture momentum advances through conservative transport");
+    StructureStepSettings stepSettings;
+    stepSettings.timeStepSeconds = transportSettings.timeStepSeconds;
+    stepSettings.substeps = 1;
+    stepSettings.constraintIterations = 1;
+    stepSettings.gravityMetersPerSecondSquared = {};
+    stepSettings.velocityDampingPerSecond = 0.0;
+    check(fixture.structure.step(stepSettings).finite,
+          "fixed tilted aperture advances to a consecutive epoch");
+    const auto currentState = captureSceneFluidSurfaceState(
+        fixture.surface.definition, fixture.structureAssembly.mappings,
+        fixture.structure);
+    const auto currentEpoch = buildSceneFluidPressureEpoch(
+        fixture.surface.definition, currentState, grid(), fixture.transfer,
+        fixture.connectivity);
+    const auto currentFlux = evaluateSceneFluidOpeningFlux(
+        fixture.surface.definition, currentState,
+        currentEpoch.openingCaps, currentEpoch.openingQuadrature,
+        currentEpoch.openingPatches, grid(), velocity);
+    const auto prediction = predictSceneFluidRegionLinkFlows(
+        transport, grid(), currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentFlux);
+    const auto embeddedPrediction = std::ranges::find_if(
+        prediction.links,
+        [](const auto& link) {
+            return link.faceIndex == invalidSceneFluidPressureFaceIndex;
+        });
+    bool exactEmbeddedPrediction = embeddedPrediction
+        != prediction.links.end();
+    if (exactEmbeddedPrediction) {
+        const auto& source = currentEpoch.pressureFaceLinks.links[
+            embeddedPrediction->linkIndex];
+        const auto& minus = transport.controlVolumes[
+            source.minusControlVolumeIndex].velocityMetersPerSecond;
+        const auto& plus = transport.controlVolumes[
+            source.plusControlVolumeIndex].velocityMetersPerSecond;
+        const auto& normal = source.unitNormalMinusToPlus;
+        const double minusNormal = minus.x * normal.x
+            + minus.y * normal.y + minus.z * normal.z;
+        const double plusNormal = plus.x * normal.x
+            + plus.y * normal.y + plus.z * normal.z;
+        const double expected = 0.5 * (minusNormal + plusNormal);
+        exactEmbeddedPrediction =
+            embeddedPrediction->predictedAbsoluteVelocityMetersPerSecond
+            == expected;
+    }
+    check(prediction.diagnostics.embeddedOpeningLinkCount == 1
+              && exactEmbeddedPrediction,
+          "transport predictor projects endpoint momentum onto the tilted aperture normal");
+
+    SceneFluidRegionWallSettings wallSettings;
+    wallSettings.timeStepSeconds = transportSettings.timeStepSeconds;
+    wallSettings.kinematicViscositySquareMetersPerSecond = 0.0;
+    const auto wallExchange = exchangeSceneFluidRegionWallMomentum(
+        transport, grid(), currentEpoch.pressureControlVolumes,
+        fixture.surface.definition, currentState,
+        currentEpoch.gridEpoch.quadrature, wallSettings);
+    const auto wallPrediction = predictSceneFluidRegionLinkFlows(
+        wallExchange, grid(), currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentFlux);
+    check(wallPrediction.diagnostics.embeddedOpeningLinkCount == 1
+              && wallPrediction.links == prediction.links,
+          "zero wall exchange preserves tilted aperture prediction exactly");
 }
 
 void testZeroFlowAndRejectedAttempt() {
