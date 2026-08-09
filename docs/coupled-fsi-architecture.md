@@ -1031,15 +1031,39 @@ tests prove translation invariance, exact linear flux on a skew tetrahedron,
 roundoff-only source closure, and exact Cartesian reduction: condensing the two
 traces on a shared orthogonal face recovers `area / centre_distance`.
 
-The remaining integration boundary is geometric ownership, not another local
-coefficient guess. A new immutable scene adapter must assemble every sparse
-cell/region's complete unwrapped half-face shell from exact Cartesian region
-subfaces, cell- and face-owned material quadrature, and embedded or face-aligned
-opening-cap patches. Material facets become zero-normal-flow boundary
-half-faces; opening facets retain shared trace/flux continuity. Assembly must
-reject any shell that fails area-vector or divergence-theorem closure before a
-global trace system is built. The current graph operator and all worker
-arithmetic remain unchanged.
+The first immutable scene adapter now assembles each sparse cell/region's
+unwrapped half-face shell from exact Cartesian region subfaces, cell- and
+face-owned material quadrature, and embedded or face-aligned opening-cap
+patches. Material facets become paired zero-normal-flow boundary half-faces;
+opening facets retain shared trace/flux identity even when their old two-point
+coefficient is rejected. Source identity, the other control, periodic image,
+area, centroid, outward normal, per-cell closure matrices, counts, limits, and
+fingerprints remain explicit. Nested, face-aligned-opening, and deliberately
+rejected embedded-opening fixtures close every control and build the generic
+local SPD kernel.
+
+The coarse real wing classifies the remaining gap instead of hiding it. It has
+138 sparse controls; 130 close both their area vector and `N^T R = volume I`.
+The eight Outside controls, one in each `2 x 2 x 2` Cartesian cell, fail by the
+same missing face-scale measure because ten untouched faces remain
+`UnresolvedAmbiguous`. Both cells adjacent to those inactive faces contain many
+authored region IDs, so the old common-membership test cannot prove that the
+full face is Outside. The audit consequently marks all incident controls
+topology-incomplete. Separately, all 42,826 cell-owned opening patches become
+85,652 paired half-faces, proving that the 24 non-admissible embedded
+two-point links are geometrically present. The next geometry slice must resolve
+untouched-face region classification from authoritative surface ownership,
+without choosing a dominant cell region or using closure as a fabricated
+label. Only then can a bounded global trace system be assembled. The current
+graph operator and all worker arithmetic remain unchanged. A manual refined
+`4 x 4 x 4` audit reaches 358 controls: 346 close geometrically, six ambiguous
+untouched faces leave 12 Outside controls open, and conservative incident
+marking leaves 250 ready. The adapter omits 240 material quadrature sides whose
+corresponding positive cell/region volume does not exist; those are
+impermeable-wall sides, not missing shared traces. No authored-opening side is
+missing. The refined shell set retains 95,984 paired opening half-faces and at
+most 2,947 total half-faces in one control, exposing the future dense-local-
+matrix storage cost before it enters production.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy

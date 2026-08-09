@@ -823,11 +823,31 @@ cell centroid, and oriented half-face area/centroid/normal geometry it builds a
 fingerprinted SPD inverse flux inner product satisfying linear consistency,
 eliminates the cell scalar with exact integrated conservation, reproduces
 linear normal fluxes on a skew tetrahedron, and reduces exactly to the existing
-`area / centre-distance` stencil after Cartesian trace condensation. The next
-integration stage must assemble one complete periodic-image-unwrapped
-half-face shell per sparse cell/region volume from Cartesian partitions,
-material quadrature, and opening-cap patches; incomplete divergence-theorem
-closure will reject. The production operator and worker remain unchanged.
+`area / centre-distance` stencil after Cartesian trace condensation. An
+immutable scene-side audit now assembles those periodic-image-unwrapped
+half-face shells from Cartesian traces, two-sided material-wall quadrature, and
+cell-owned opening patches. Nested, face-aligned-opening, and deliberately
+two-point-rejected embedded-opening fixtures close every area vector and
+`N^T R = volume I`; every completed shell builds the generic SPD kernel.
+
+The coarse real-wing audit now makes the next ownership gap precise. Of 138
+sparse cell/region controls, 130 close geometrically. The eight Outside
+controls—one per `2 x 2 x 2` grid cell—remain open because ten untouched
+Cartesian faces are `UnresolvedAmbiguous`: both adjacent coarse cells contain
+many authored regions, so common region membership cannot prove which region
+owns the otherwise uncut face. The adapter conservatively marks every incident
+control topology-incomplete and publishes no coefficient. All 42,826
+cell-owned opening patches still appear as 85,652 exactly paired half-faces;
+the 24 non-admissible two-point rejections are therefore no longer missing
+geometry. Resolving untouched-face region classification, then assembling and
+solving the global trace system, remains open. A manual `4 x 4 x 4` audit
+confirms this is not only a coarse-grid artifact: 346 of 358 controls close
+geometrically, but six ambiguous untouched faces leave 12 Outside controls
+open and conservatively reduce ready controls to 250. It omits 240 material
+quadrature sides whose corresponding cell/region volume is exactly absent,
+while missing no opening side; 95,984 opening half-faces remain paired and the
+largest local shell has 2,947 faces. The production operator and worker are
+unchanged.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

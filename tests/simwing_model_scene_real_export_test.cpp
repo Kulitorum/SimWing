@@ -3,6 +3,7 @@
 #include "nurbs_model.h"
 #include "scene_fluid_cell_volume.h"
 #include "scene_fluid_capped_face_partition.h"
+#include "scene_fluid_mimetic_control_cell.h"
 #include "scene_fluid_opening_cap.h"
 #include "scene_fluid_opening_face_crossing.h"
 #include "scene_fluid_pressure_control_volume.h"
@@ -476,6 +477,76 @@ void testRealDesignCapture(const std::filesystem::path &input,
             fluidEpoch, openingCaps, openingQuadrature, openingPatches,
             openingFaceCrossings, cappedFacePartitions, fluidVolumes,
             fluidConnectivity, pressureVolumes);
+    const simwing::fsi::SceneFluidMimeticControlCellSet mimeticControlCells =
+        simwing::fsi::buildSceneFluidMimeticControlCells(
+            fluidSurface.definition, fluidState, fluidGrid, fluidEpoch,
+            openingCaps, openingQuadrature, openingPatches, pressureVolumes,
+            pressureFaceLinks);
+    const std::size_t cellOwnedOpeningPatchCount = std::ranges::count(
+        openingPatches.patches,
+        simwing::fsi::SceneFluidOpeningPatchOwnerKind::Cell,
+        &simwing::fsi::SceneFluidOpeningGridPatch::ownerKind);
+    const auto outsideRegion = std::ranges::find(
+        fluidSurface.definition.regions,
+        simwing::fsi::RegionKind::Outside,
+        &simwing::fsi::SceneFluidSurfaceRegion::kind);
+    const bool nonclosingControlsAreOutside =
+        outsideRegion != fluidSurface.definition.regions.end()
+        && std::ranges::all_of(
+            mimeticControlCells.controlCells,
+            [&](const simwing::fsi::SceneFluidMimeticControlCell& cell) {
+                return (cell.areaVectorClosed
+                            && cell.divergenceTheoremClosed)
+                    || cell.regionId == outsideRegion->id;
+            });
+    const bool mimeticAuditMatches =
+        mimeticControlCells.readyControlCellCount == 0
+        && mimeticControlCells.incompleteTopologyControlCellCount
+            == mimeticControlCells.controlCells.size()
+        && mimeticControlCells.nonclosingControlCellCount
+            == fluidGrid.cellCount()
+        && mimeticControlCells.unresolvedCartesianFaceCount == 10
+        && pressureFaceLinks.unresolvedAmbiguousFaceCount == 10
+        && mimeticControlCells.omittedZeroVolumeMaterialSideCount == 0
+        && mimeticControlCells.missingOpeningControlSideCount == 0
+        && mimeticControlCells.openingHalfFaceCount
+            == 2 * cellOwnedOpeningPatchCount
+        && nonclosingControlsAreOutside;
+    if (!mimeticAuditMatches) {
+        std::fprintf(
+            stderr,
+            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu max-area=%.17g max-moment=%.17g\n",
+            mimeticControlCells.readyControlCellCount,
+            mimeticControlCells.controlCells.size(),
+            mimeticControlCells.incompleteTopologyControlCellCount,
+            mimeticControlCells.nonclosingControlCellCount,
+            mimeticControlCells.unresolvedCartesianFaceCount,
+            pressureFaceLinks.unresolvedActiveFaceCount,
+            pressureFaceLinks.unresolvedAmbiguousFaceCount,
+            pressureFaceLinks.unresolvedOpeningFaceCount,
+            pressureFaceLinks.unresolvedCappedFaceCount,
+            mimeticControlCells.omittedZeroVolumeMaterialSideCount,
+            mimeticControlCells.missingOpeningControlSideCount,
+            mimeticControlCells.openingHalfFaceCount,
+            mimeticControlCells.maximumHalfFaceCountPerControl,
+            mimeticControlCells.maximumAreaClosureErrorSquareMeters,
+            mimeticControlCells.maximumDivergenceTheoremErrorCubicMeters);
+        for (const auto& cell : mimeticControlCells.controlCells) {
+            if (!cell.areaVectorClosed || !cell.divergenceTheoremClosed) {
+                std::fprintf(
+                    stderr,
+                    "  nonclosing control=%zu grid-cell=%zu region=%llu halves=%zu cart=%zu wall=%zu opening=%zu incidents=%zu area=%.17g moment=%.17g\n",
+                    cell.controlVolumeIndex, cell.cellIndex,
+                    static_cast<unsigned long long>(cell.regionId),
+                    cell.halfFaceCount, cell.cartesianHalfFaceCount,
+                    cell.materialWallHalfFaceCount,
+                    cell.openingHalfFaceCount,
+                    cell.unresolvedCartesianIncidentCount,
+                    cell.maximumAreaClosureErrorSquareMeters,
+                    cell.maximumDivergenceTheoremErrorCubicMeters);
+            }
+        }
+    }
     const bool hasBoundaryChainPartition = std::ranges::any_of(
         fluidEpoch.facePartitions.partitions,
         [](const simwing::fsi::fluid::SceneFluidFacePartition &partition) {
@@ -622,7 +693,8 @@ void testRealDesignCapture(const std::filesystem::path &input,
               && embeddedRejectionsAreNonAdmissible
               && embeddedOneRingSupportIsTwoSided
               && pressureFaceLinks.unresolvedEmbeddedOpeningAreaSquareMeters
-                  > 0.0,
+                  > 0.0
+              && mimeticAuditMatches,
           "real wing closes cap-crossed pressure faces and retains explicit embedded-opening limits");
     const simwing::viewer::StructureFrameMapping mapping =
         simwing::viewer::makeStructureFrameMapping(
