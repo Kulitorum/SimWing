@@ -91,6 +91,18 @@ reconstructSceneFluidRegionMomentumState(
 void validateSceneFluidRegionMomentumStateIntegrity(
     const SceneFluidRegionMomentumState& momentum);
 
+// Validates the persisted state against its accepted pressure epoch without
+// requiring the transient MAC fallback field that was used to construct it.
+// The fallback field remains cryptographically bound by its stored
+// fingerprint and the state's own integrity fingerprint.
+void validateSceneFluidRegionMomentumStateBinding(
+    const SceneFluidRegionMomentumState& momentum,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidPressureProjection& projection);
+
 void validateSceneFluidRegionMomentumState(
     const SceneFluidRegionMomentumState& momentum,
     const fluid::PeriodicCartesianGrid& grid,

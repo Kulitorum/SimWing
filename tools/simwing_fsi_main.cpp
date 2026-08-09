@@ -1591,7 +1591,9 @@ int main(int argc, char* argv[]) {
                         "[%.6g %.6g %.6g] N, max-pressure=%.6g Pa, "
                         "max-motion=%.6g m, coupling-iterations=%llu, "
                         "mac-speed=%.6g m/s, subface-spread=%.3g m/s, "
-                        "bulk-viscous-loss=%.3g J, load-closure=%.3g N, "
+                        "bulk-viscous-loss=%.3g J, region-loss=%.3g J, "
+                        "region-gcl=%.3g m^3, region-momentum-residual="
+                        "%.3g N s, load-closure=%.3g N, "
                         "checkpoint-writes=%llu, "
                         "trace=%s\n",
                         static_cast<unsigned long long>(
@@ -1613,6 +1615,12 @@ int main(int argc, char* argv[]) {
                         coupled.bulkFlow.firstHalfViscousEnergyLossJoules
                             + coupled.bulkFlow
                                 .secondHalfViscousEnergyLossJoules,
+                        coupled.regionTransport.advectiveEnergyLossJoules
+                            + coupled.regionTransport.viscousEnergyLossJoules,
+                        coupled.regionTransport
+                            .maximumAbsoluteGeometryVolumeChangeCubicMeters,
+                        coupled.regionTransport
+                            .momentumResidualNormKilogramMetersPerSecond,
                         coupled.coupling.interfaceForceClosureNewtons,
                         static_cast<unsigned long long>(
                             checkpointWriteCount),

@@ -719,6 +719,37 @@ void testAreaChangingLinkContinuation() {
               && exactPredictedFlow,
           "moving pressure projection consumes the transported region link predictor exactly");
 
+    const auto currentMomentum = reconstructSceneFluidRegionMomentumState(
+        grid(), currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentEpoch.openingPatches,
+        regionProjection, velocity);
+    const auto movingTransport = advanceSceneFluidRegionMomentum(
+        currentMomentum, currentEpoch.pressureFaceLinks, regionProjection,
+        transportSettings);
+    bool exactGclVolumes = movingTransport.controlVolumes.size()
+        == currentMomentum.controlVolumes.size();
+    for (std::size_t index = 0;
+         exactGclVolumes && index < movingTransport.controlVolumes.size();
+         ++index) {
+        exactGclVolumes = movingTransport.controlVolumes[index]
+            .volumeCubicMeters
+            == currentMomentum.controlVolumes[index].volumeCubicMeters
+                + transportSettings.timeStepSeconds
+                    * regionProjection.controlVolumes[index]
+                        .geometryVolumeChangeRateCubicMetersPerSecond;
+    }
+    check(movingTransport.diagnostics.accepted
+              && movingTransport.diagnostics.usesMovingVolumeRates
+              && movingTransport.pressureVolumeRateFingerprint
+                  == volumeRates.fingerprint
+              && movingTransport.diagnostics
+                     .maximumAbsoluteGeometryVolumeChangeCubicMeters > 0.0
+              && exactGclVolumes,
+          "region transport advances moving control volumes through the accepted discrete GCL rate");
+    validateSceneFluidRegionTransport(
+        movingTransport, currentMomentum,
+        currentEpoch.pressureFaceLinks, regionProjection);
+
     auto corruptPrediction = regionPrediction;
     corruptPrediction.links.front()
         .predictedRelativeVolumeFlowRateCubicMetersPerSecond += 0.01;
@@ -901,6 +932,38 @@ void testRegionMomentumTransport() {
         "region transport closes its split energy-loss ledger");
     validateSceneFluidRegionTransport(
         transport, momentum, fixture.faceLinks, projection);
+
+    auto acceleratedVelocity = velocity;
+    for (double& value : acceleratedVelocity.xFaces()) {
+        value += 0.125;
+    }
+    const auto accelerated = advanceSceneFluidRegionMomentum(
+        momentum, fixture.faceLinks, projection, grid(), velocity,
+        acceleratedVelocity, settings);
+    const double expectedImpulse = projection.settings.densityKgPerCubicMeter
+        * (grid().upperMeters().x - grid().lowerMeters().x)
+        * (grid().upperMeters().y - grid().lowerMeters().y)
+        * (grid().upperMeters().z - grid().lowerMeters().z) * 0.125;
+    check(accelerated.diagnostics.accepted,
+          "bulk-increment region transport remains accepted");
+    check(accelerated.diagnostics.usesBulkVelocityIncrement
+              && accelerated.previousBulkVelocityFingerprint
+                  == sceneFluidOpeningFluxVelocityFingerprint(
+                      grid(), velocity)
+              && accelerated.currentBulkVelocityFingerprint
+                  == sceneFluidOpeningFluxVelocityFingerprint(
+                      grid(), acceleratedVelocity),
+          "region transport explicitly binds the split bulk-MAC velocity increment");
+    checkNear(
+        accelerated.diagnostics
+            .maximumBulkVelocityIncrementMetersPerSecond,
+        0.125, 1.0e-15,
+          "region transport explicitly binds the split bulk-MAC velocity increment");
+    checkNear(
+        accelerated.diagnostics
+            .bulkVelocityIncrementImpulseKilogramMetersPerSecond.x,
+        expectedImpulse, 1.0e-12,
+        "uniform bulk-MAC increment delivers its exact domain impulse to all regions");
 
     auto corrupt = transport;
     corrupt.controlVolumes.front().velocityMetersPerSecond.x += 0.01;

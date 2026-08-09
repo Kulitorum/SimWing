@@ -3,6 +3,7 @@
 #include "coupling.h"
 #include "scene_fluid_pressure_epoch.h"
 #include "scene_fluid_pressure_sampling.h"
+#include "scene_fluid_region_link_flow.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -36,6 +37,7 @@ struct SceneFluidPressureCouplingLimits {
     SceneFluidOpeningFluxLimits openingFlux;
     SceneFluidPressureProjectionLimits pressureProjection;
     SceneFluidPressureSamplingLimits pressureSampling;
+    SceneFluidRegionLinkFlowLimits regionLinkFlow;
     std::size_t maximumCouplingNodes = 10'000'000;
     std::size_t maximumInterfaceBytes =
         1024ULL * 1024ULL * 1024ULL;
@@ -117,9 +119,11 @@ struct SceneFluidPressureMacVelocityCollapse {
 // Exhaustion, topology change, projection failure, and exceptions restore the
 // caller's exact Structure checkpoint and leave this owner unchanged.
 //
-// The predicted MAC field is held fixed across the nonlinear iteration. This
-// closes structural/pressure feedback but is not yet a momentum-evolving or
-// topology-rebasing CFD macro-step.
+// The predicted MAC field is held fixed across the nonlinear iteration. The
+// region-transport overload likewise holds one accepted transport fixed, but
+// remaps it to every current geometry iterate before projection. This closes
+// structural/pressure feedback without claiming topology rebase or a
+// material-wall model.
 class SceneFluidPressureCoupling final {
 public:
     SceneFluidPressureCoupling(
@@ -169,7 +173,19 @@ public:
         Structure& target,
         const fluid::MacVelocityField& predictedVelocityMetersPerSecond);
 
+    // Uses one already-accepted fixed-epoch region transport as the immutable
+    // fluid predictor across every structural iterate of this macro step.
+    [[nodiscard]] SceneFluidPressureCouplingStepDiagnostics advance(
+        Structure& target,
+        const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+        const SceneFluidRegionTransport& transportedRegionMomentum);
+
 private:
+    [[nodiscard]] SceneFluidPressureCouplingStepDiagnostics advanceImpl(
+        Structure& target,
+        const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+        const SceneFluidRegionTransport* transportedRegionMomentum);
+
     SceneFluidSurfaceDefinition surface_;
     SceneStructureMappings structureMappings_;
     fluid::PeriodicCartesianGrid grid_;

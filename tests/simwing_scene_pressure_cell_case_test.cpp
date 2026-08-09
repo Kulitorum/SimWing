@@ -76,6 +76,9 @@ void testVisibleStrongPressureCellAndReplay() {
     double peakMacSubfaceDeviation = 0.0;
     double peakBulkFlowChange = 0.0;
     double peakBulkViscousLoss = 0.0;
+    double peakRegionEnergyLoss = 0.0;
+    double peakRegionGclVolumeChange = 0.0;
+    double peakRegionMomentumResidual = 0.0;
     double peakFlowPumpForce = 0.0;
     std::uint64_t peakIterations = 0;
     for (std::size_t step = 0; step < 120; ++step) {
@@ -103,6 +106,20 @@ void testVisibleStrongPressureCellAndReplay() {
             peakBulkViscousLoss,
             diagnostics.bulkFlow.firstHalfViscousEnergyLossJoules
                 + diagnostics.bulkFlow.secondHalfViscousEnergyLossJoules);
+        if (diagnostics.usesRegionTransport) {
+            peakRegionEnergyLoss = std::max(
+                peakRegionEnergyLoss,
+                diagnostics.regionTransport.advectiveEnergyLossJoules
+                    + diagnostics.regionTransport.viscousEnergyLossJoules);
+            peakRegionGclVolumeChange = std::max(
+                peakRegionGclVolumeChange,
+                diagnostics.regionTransport
+                    .maximumAbsoluteGeometryVolumeChangeCubicMeters);
+            peakRegionMomentumResidual = std::max(
+                peakRegionMomentumResidual,
+                diagnostics.regionTransport
+                    .momentumResidualNormKilogramMetersPerSecond);
+        }
         peakFlowPumpForce = std::max(
             peakFlowPumpForce, std::abs(diagnostics.flowPumpForceNewtons));
         peakIterations = std::max(
@@ -120,6 +137,14 @@ void testVisibleStrongPressureCellAndReplay() {
                   && diagnostics.coupling.pressureTransfer
                          .momentResidualNormNewtonMeters < 1.0e-12,
               "scene pressure cell closes every pumped bulk-flow and strong pressure-feedback step");
+        check(diagnostics.usesRegionTransport == (step != 0)
+                  && (!diagnostics.usesRegionTransport
+                      || (diagnostics.regionTransport.accepted
+                          && diagnostics.regionTransport
+                                 .usesMovingVolumeRates
+                          && diagnostics.regionTransport
+                                 .usesBulkVelocityIncrement)),
+              "scene pressure cell advances accepted moving-volume region momentum after bootstrap");
         check(diagnostics.bulkFlow.accepted
                   && diagnostics.bulkFlow.finite
                   && diagnostics.bulkFlow.finalDivergenceL2PerSecond
@@ -134,6 +159,9 @@ void testVisibleStrongPressureCellAndReplay() {
               && peakMacSubfaceDeviation > 1.0e-8
               && peakBulkFlowChange > 1.0e-8
               && peakBulkViscousLoss > 0.0
+              && peakRegionEnergyLoss >= 0.0
+              && peakRegionGclVolumeChange > 0.0
+              && peakRegionMomentumResidual < 1.0e-10
               && peakFlowPumpForce > 1.0e-8
               && peakIterations >= 2,
           "visible cell develops sustained wind-driven motion, sparse pressure, conservative load, and an evolving bulk MAC predictor");
@@ -162,6 +190,12 @@ void testVisibleStrongPressureCellAndReplay() {
         frame, "pressure_cell.bulk_divergence");
     const auto* bulkViscousLoss = scalarField(
         frame, "pressure_cell.bulk_viscous_loss");
+    const auto* regionEnergyLoss = scalarField(
+        frame, "pressure_cell.region_transport_energy_loss");
+    const auto* regionMomentumResidual = scalarField(
+        frame, "pressure_cell.region_transport_momentum_residual");
+    const auto* regionGclVolumeChange = scalarField(
+        frame, "pressure_cell.region_gcl_volume_change");
     const auto* nodalForce = vectorField(
         frame, "pressure_cell.nodal_pressure_force");
     const auto* totalForce = vectorField(
@@ -187,6 +221,12 @@ void testVisibleStrongPressureCellAndReplay() {
               && bulkDivergence->values.size() == 1
               && bulkViscousLoss != nullptr
               && bulkViscousLoss->values.size() == 1
+              && regionEnergyLoss != nullptr
+              && regionEnergyLoss->values.size() == 1
+              && regionMomentumResidual != nullptr
+              && regionMomentumResidual->values.size() == 1
+              && regionGclVolumeChange != nullptr
+              && regionGclVolumeChange->values.size() == 1
               && nodalForce != nullptr
               && nodalForce->association
                   == viewer::FieldAssociation::Vertex
@@ -196,6 +236,13 @@ void testVisibleStrongPressureCellAndReplay() {
           "scene pressure cell frame exposes deformation, pressure, pump forcing, viscous bulk flow, MAC continuation, and iteration count");
 
     const auto checkpoint = first.checkpoint();
+    check(checkpoint.regionMomentum.has_value()
+              && first.acceptedRegionMomentum() != nullptr
+              && checkpoint.regionMomentum
+                  == *first.acceptedRegionMomentum()
+              && checkpoint.coupling.pressureProjection
+                     ->regionLinkFlowPredictionFingerprint != 0,
+          "scene pressure cell checkpoint owns its accepted transported-region continuation state");
     const auto expected = first.advance();
     const auto expectedDiagnostics = first.diagnostics();
     first.restore(checkpoint);
@@ -230,7 +277,8 @@ void testPersistentCheckpointAndRejection() {
     fsi::ScenePressureCellCheckpoint decoded;
     check(fsi::deserializeScenePressureCellCheckpoint(
               bytes, decoded, &error)
-              && serializedCheckpoint(decoded) == bytes,
+              && serializedCheckpoint(decoded) == bytes
+              && decoded.regionMomentum == saved.regionMomentum,
           "scene pressure cell checkpoint has a canonical bounded round trip");
     fsi::ScenePressureCellCase restored;
     restored.restore(decoded);
@@ -241,6 +289,28 @@ void testPersistentCheckpointAndRejection() {
     check(serialized(replay) == serialized(expected)
               && restored.diagnostics() == source.diagnostics(),
           "persisted scene pressure cell reproduces the exact next frame");
+
+    auto corruptMomentum = saved;
+    corruptMomentum.regionMomentum->controlVolumes.front()
+        .velocityMetersPerSecond.x += 0.01;
+    std::vector<std::uint8_t> unchanged{1, 2, 3};
+    const auto original = unchanged;
+    check(!fsi::serializeScenePressureCellCheckpoint(
+              corruptMomentum, unchanged, &error)
+              && error.code
+                  == fsi::ScenePressureCellCheckpointPersistenceErrorCode::InvalidData
+              && unchanged == original,
+          "scene pressure cell rejects corrupt region momentum before publishing bytes");
+    const auto restoredBeforeRejection = restored.checkpoint();
+    bool restoreRejected = false;
+    try {
+        restored.restore(corruptMomentum);
+    } catch (const std::exception&) {
+        restoreRejected = true;
+    }
+    check(restoreRejected
+              && restored.checkpoint() == restoredBeforeRejection,
+          "scene pressure cell rejects corrupt region momentum without mutating its accepted owners");
 
     const auto preserved = serializedCheckpoint(decoded);
     const auto rejects = [&](std::vector<std::uint8_t> damaged,
@@ -291,10 +361,18 @@ void testPersistentCheckpointAndRejection() {
             "scene pressure cell rejects an oversized checkpoint transactionally",
             smallLimits);
 
+    auto momentumLimits =
+        fsi::ScenePressureCellCheckpointPersistenceLimits{};
+    momentumLimits.maximumMomentumStorageBytes =
+        saved.regionMomentum->ownedStorageBytes - 1;
+    rejects(bytes,
+            fsi::ScenePressureCellCheckpointPersistenceErrorCode::LimitExceeded,
+            "scene pressure cell bounds persisted region momentum before publication",
+            momentumLimits);
+
     auto foreign = saved;
     foreign.version += 1;
-    std::vector<std::uint8_t> unchanged{1, 2, 3};
-    const auto original = unchanged;
+    unchanged = {1, 2, 3};
     check(!fsi::serializeScenePressureCellCheckpoint(
               foreign, unchanged, &error)
               && error.code

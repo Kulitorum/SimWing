@@ -12,7 +12,7 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint16_t
-    scenePressureCellCheckpointProtocolVersion = 6;
+    scenePressureCellCheckpointProtocolVersion = 7;
 
 struct ScenePressureCellCheckpointPersistenceLimits {
     std::size_t maximumEncodedBytes = 256u * 1024u * 1024u;
@@ -20,6 +20,8 @@ struct ScenePressureCellCheckpointPersistenceLimits {
     std::size_t maximumLinks = 10'000'000;
     std::size_t maximumSolveComponents = 1'000'000;
     std::size_t maximumProjectionStorageBytes =
+        192u * 1024u * 1024u;
+    std::size_t maximumMomentumStorageBytes =
         192u * 1024u * 1024u;
     StructureCheckpointPersistenceLimits structure;
 };
@@ -44,14 +46,14 @@ struct ScenePressureCellCheckpointPersistenceError {
 
 // Canonical pressure-cell persistence. Identity and solver settings are taken
 // from a freshly rebuilt case rather than trusted from the wire. The nested
-// Structure codec and the pressure-projection integrity validator both run
+// Structure codec plus pressure-projection and region-momentum integrity
+// validators all run
 // before serialization or decoded state is published. The accepted bulk MAC
 // predictor is deterministically derived from that projection after restore;
 // the private per-step bulk pressure is transient and neither field is
 // duplicated in the envelope. An initial checkpoint reconstructs the
-// canonical prescribed wind. Projection records include optional link-flow
-// continuation provenance, but this worker requires it to be zero until
-// region-resolved momentum transport owns that path.
+// canonical prescribed wind. Accepted checkpoints also persist the immutable
+// region-momentum state used by the next conservative transport step.
 [[nodiscard]] bool serializeScenePressureCellCheckpoint(
     const ScenePressureCellCheckpoint& checkpoint,
     std::vector<std::uint8_t>& bytes,

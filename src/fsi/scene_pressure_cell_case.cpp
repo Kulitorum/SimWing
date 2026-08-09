@@ -203,6 +203,9 @@ bool finite(const ScenePressureCellDiagnostics& diagnostics) {
         && diagnostics.macVelocity.finite
         && diagnostics.bulkFlow.finite
         && diagnostics.bulkFlow.accepted
+        && (!diagnostics.usesRegionTransport
+            || (diagnostics.regionTransport.finite
+                && diagnostics.regionTransport.accepted))
         && std::isfinite(diagnostics.targetMeanWindMetersPerSecond)
         && std::isfinite(diagnostics.meanWindBeforePumpMetersPerSecond)
         && std::isfinite(diagnostics.flowPumpForceNewtons)
@@ -249,19 +252,46 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
         throw std::runtime_error(
             "scene pressure cell bulk flow rejected its collapsed MAC predictor");
     }
-    const auto coupled = coupling_.advance(structure_, bulkVelocity);
+    std::optional<SceneFluidRegionTransport> regionTransport;
+    if (acceptedRegionMomentum_) {
+        SceneFluidRegionTransportSettings transportSettings;
+        transportSettings.timeStepSeconds = bulkSettings.timeStepSeconds;
+        regionTransport.emplace(advanceSceneFluidRegionMomentum(
+            *acceptedRegionMomentum_,
+            coupling_.acceptedPressureEpoch().pressureFaceLinks,
+            *coupling_.acceptedPressureProjection(), coupling_.grid(),
+            predictedVelocity_, bulkVelocity, transportSettings));
+        if (!regionTransport->diagnostics.accepted) {
+            throw std::runtime_error(
+                "scene pressure cell region momentum transport was not accepted");
+        }
+    }
+    const auto coupled = regionTransport
+        ? coupling_.advance(structure_, bulkVelocity, *regionTransport)
+        : coupling_.advance(structure_, bulkVelocity);
     if (!coupled.accepted) {
         throw std::runtime_error(
             "scene pressure cell exhausted its coupling iteration budget");
     }
     const auto correctedMac =
         coupling_.acceptedPressureCorrectedMacVelocity();
+    auto nextRegionMomentum = reconstructSceneFluidRegionMomentumState(
+        coupling_.grid(),
+        coupling_.acceptedPressureEpoch().pressureControlVolumes,
+        coupling_.acceptedPressureEpoch().pressureFaceLinks,
+        coupling_.acceptedPressureEpoch().openingPatches,
+        *coupling_.acceptedPressureProjection(), bulkVelocity);
     predictedVelocity_ = correctedMac.velocityMetersPerSecond;
+    acceptedRegionMomentum_ = std::move(nextRegionMomentum);
 
     ScenePressureCellDiagnostics nextDiagnostics;
     nextDiagnostics.coupling = coupled;
     nextDiagnostics.macVelocity = correctedMac.diagnostics;
     nextDiagnostics.bulkFlow = bulk;
+    nextDiagnostics.usesRegionTransport = regionTransport.has_value();
+    if (regionTransport) {
+        nextDiagnostics.regionTransport = regionTransport->diagnostics;
+    }
     nextDiagnostics.targetMeanWindMetersPerSecond =
         targetMeanWindMetersPerSecond;
     nextDiagnostics.meanWindBeforePumpMetersPerSecond = meanWind;
@@ -407,6 +437,30 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
         {diagnostics_.bulkFlow.firstHalfViscousEnergyLossJoules
          + diagnostics_.bulkFlow.secondHalfViscousEnergyLossJoules},
     });
+    frame.scalarFields.push_back({
+        "pressure_cell.region_transport_energy_loss", "J",
+        viewer::FieldAssociation::Global,
+        {diagnostics_.usesRegionTransport
+             ? diagnostics_.regionTransport.advectiveEnergyLossJoules
+                 + diagnostics_.regionTransport.viscousEnergyLossJoules
+             : 0.0},
+    });
+    frame.scalarFields.push_back({
+        "pressure_cell.region_transport_momentum_residual", "N s",
+        viewer::FieldAssociation::Global,
+        {diagnostics_.usesRegionTransport
+             ? diagnostics_.regionTransport
+                   .momentumResidualNormKilogramMetersPerSecond
+             : 0.0},
+    });
+    frame.scalarFields.push_back({
+        "pressure_cell.region_gcl_volume_change", "m^3",
+        viewer::FieldAssociation::Global,
+        {diagnostics_.usesRegionTransport
+             ? diagnostics_.regionTransport
+                   .maximumAbsoluteGeometryVolumeChangeCubicMeters
+             : 0.0},
+    });
 
     std::vector<viewer::Vec3d> nodalPressureForces(
         structure_.definition().nodes.size());
@@ -467,9 +521,16 @@ ScenePressureCellCase::diagnostics() const noexcept {
     return diagnostics_;
 }
 
+const SceneFluidRegionMomentumState*
+ScenePressureCellCase::acceptedRegionMomentum() const noexcept {
+    return acceptedRegionMomentum_
+        ? &*acceptedRegionMomentum_ : nullptr;
+}
+
 ScenePressureCellCheckpoint ScenePressureCellCase::checkpoint() const {
     ScenePressureCellCheckpoint result;
     result.coupling = coupling_.checkpoint(structure_);
+    result.regionMomentum = acceptedRegionMomentum_;
     return result;
 }
 
@@ -479,14 +540,44 @@ void ScenePressureCellCase::restore(
         throw std::invalid_argument(
             "scene pressure cell checkpoint version is invalid");
     }
-    coupling_.restore(structure_, checkpointValue.coupling);
-    predictedVelocity_ = makeInitialVelocity(coupling_.grid());
-    if (coupling_.acceptedPressureProjection() != nullptr) {
-        predictedVelocity_ = coupling_
-            .acceptedPressureCorrectedMacVelocity()
-            .velocityMetersPerSecond;
+    const auto previousCoupling = coupling_.checkpoint(structure_);
+    const auto previousVelocity = predictedVelocity_;
+    const auto previousMomentum = acceptedRegionMomentum_;
+    const auto previousDiagnostics = diagnostics_;
+    try {
+        coupling_.restore(structure_, checkpointValue.coupling);
+        if (checkpointValue.regionMomentum) {
+            const auto* projection = coupling_.acceptedPressureProjection();
+            if (projection == nullptr
+                || projection->linkFlowContinuationFingerprint != 0) {
+                throw std::invalid_argument(
+                    "scene pressure cell checkpoint region momentum is foreign");
+            }
+            validateSceneFluidRegionMomentumStateBinding(
+                *checkpointValue.regionMomentum, coupling_.grid(),
+                coupling_.acceptedPressureEpoch().pressureControlVolumes,
+                coupling_.acceptedPressureEpoch().pressureFaceLinks,
+                coupling_.acceptedPressureEpoch().openingPatches, *projection);
+        } else if (coupling_.acceptedPressureProjection() != nullptr) {
+            throw std::invalid_argument(
+                "scene pressure cell accepted checkpoint lacks region momentum");
+        }
+        auto restoredVelocity = makeInitialVelocity(coupling_.grid());
+        if (coupling_.acceptedPressureProjection() != nullptr) {
+            restoredVelocity = coupling_
+                .acceptedPressureCorrectedMacVelocity()
+                .velocityMetersPerSecond;
+        }
+        predictedVelocity_ = std::move(restoredVelocity);
+        acceptedRegionMomentum_ = checkpointValue.regionMomentum;
+        diagnostics_ = {};
+    } catch (...) {
+        coupling_.restore(structure_, previousCoupling);
+        predictedVelocity_ = previousVelocity;
+        acceptedRegionMomentum_ = previousMomentum;
+        diagnostics_ = previousDiagnostics;
+        throw;
     }
-    diagnostics_ = {};
 }
 
 } // namespace simwing::fsi

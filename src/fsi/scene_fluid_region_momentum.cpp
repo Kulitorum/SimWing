@@ -609,22 +609,37 @@ void validateSceneFluidRegionMomentumState(
     const SceneFluidOpeningGridPatchSet& openingPatches,
     const SceneFluidPressureProjection& projection,
     const fluid::MacVelocityField& fallbackVelocityMetersPerSecond) {
+    validateSceneFluidRegionMomentumStateBinding(
+        momentum, grid, pressureVolumes, faceLinks, openingPatches,
+        projection);
+    if (!fallbackVelocityMetersPerSecond.matches(grid)
+        || !fluid::isFinite(fallbackVelocityMetersPerSecond)
+        || momentum.fallbackVelocityFingerprint
+            != sceneFluidOpeningFluxVelocityFingerprint(
+                grid, fallbackVelocityMetersPerSecond)) {
+        throw std::invalid_argument(
+            "scene fluid region momentum fallback velocity is foreign");
+    }
+}
+
+void validateSceneFluidRegionMomentumStateBinding(
+    const SceneFluidRegionMomentumState& momentum,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidPressureProjection& projection) {
     validateSceneFluidRegionMomentumStateIntegrity(momentum);
     validateSceneFluidPressureProjectionIntegrity(projection);
     validateGridIdentity(
         grid, momentum.cellCounts, momentum.lowerMeters,
         momentum.upperMeters,
         "scene fluid region momentum grid is foreign");
-    if (!fallbackVelocityMetersPerSecond.matches(grid)
-        || !fluid::isFinite(fallbackVelocityMetersPerSecond)
-        || momentum.pressureProjectionFingerprint != projection.fingerprint
+    if (momentum.pressureProjectionFingerprint != projection.fingerprint
         || momentum.pressureControlVolumeFingerprint
             != pressureVolumes.fingerprint
         || momentum.pressureFaceLinkFingerprint != faceLinks.fingerprint
         || momentum.openingPatchFingerprint != openingPatches.fingerprint
-        || momentum.fallbackVelocityFingerprint
-            != sceneFluidOpeningFluxVelocityFingerprint(
-                grid, fallbackVelocityMetersPerSecond)
         || momentum.acceptedStepCount != projection.acceptedStepCount
         || momentum.simulationTimeSeconds
             != projection.simulationTimeSeconds

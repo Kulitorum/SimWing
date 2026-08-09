@@ -635,24 +635,29 @@ The state reports momentum, kinetic energy, fallback coverage, and the loss in
 mapping staggered link normals to collocated region vectors. It is the explicit
 input boundary for conservative region transport and does not itself advance
 or apply a wall model.
-A fixed-epoch transport kernel now advances that state with first-order
+A region transport kernel now advances that state with first-order
 donor-cell vector-momentum flux over the corrected pressure links, followed by
 equal-and-opposite graph-viscous impulses. It deterministically subcycles from
 the smallest local outgoing-volume and viscous stability limits, conserves
-global momentum, requires non-increasing stage energy, and publishes no
-candidate on a failed ledger. A topology-stable moving-epoch adapter retains
-those transported cell/region velocities while remapping momentum to current
-physical volumes, averages them onto current pressure links, subtracts exact
-opening-cap sweep, and supplies the fingerprinted predictor to pressure
-projection alongside dV/dt. Topology rebase, material-wall viscosity, and
-accepted worker ownership of that region state remain explicit next steps.
+internal momentum, requires non-increasing post-forcing stage energy, and
+publishes no candidate on a failed ledger. Moving pressure volumes advance
+linearly through their accepted geometry rate, which gives uniform flow an
+exact discrete GCL update. An optional cell-centred delta between bound bulk
+MAC predictors carries pump/advection/viscosity impulse and work into the
+region state without erasing cut-region differences. A topology-stable
+moving-epoch adapter then retains transported cell/region velocities while
+remapping momentum to current physical volumes, averages them onto current
+pressure links, subtracts exact opening-cap sweep, and supplies the
+fingerprinted predictor to pressure projection alongside dV/dt. Topology
+rebase and material-wall viscosity remain explicit next steps.
 Its in-memory composite checkpoint retains Structure plus the accepted sparse
 pressure projection; restore rebuilds and validates the complete pressure
 epoch and conservative load before committing either owner. Initial and
 post-step checkpoints reproduce the exact next coupled result in the same or
 an equivalent owner, while foreign settings and corrupt or missing accepted
 pressure reject transactionally.
-The selectable `pressure-cell` worker makes this path visible. A soft
+The selectable `pressure-cell` worker now owns this path after its first
+bootstrap solve. A soft
 three-panel tetrahedral cell has one triangular intake and three fixed mouth
 vertices. A prescribed `-0.85 m/s` periodic mean wind replaces the former
 mechanical apex actuator: a uniform mean-flow correction pumps the accepted
@@ -660,26 +665,32 @@ bulk MAC field, the existing symmetric SSPRK2 viscosity/projected-nonlinear-
 advection/viscosity operator advances it, and the scene pressure solve supplies
 the only load on the free apex. The bulk velocity is advanced on a private
 candidate and commits only after scene feedback accepts. Its
+accepted region momentum receives the bound bulk-MAC delta, advances through
+moving-volume GCL transport, and predicts every current pressure link during
+each strong geometry iterate. Its
 immutable frames publish deformation, area-averaged triangle pressure jump,
 nodal/total pressure force, mean-flow pump force, bulk-flow change and
-divergence, viscous energy loss, strong-iteration count, bulk MAC speed, and
+divergence, viscous energy loss, region transport loss/GCL change/momentum
+residual, strong-iteration count, bulk MAC speed, and
 the maximum
 mixed-subface velocity spread discarded by the area collapse. The final scene
 projection remains cut-region-aware, but the two intermediate bulk-advection
 projections see only one velocity per Cartesian face; this is a bootstrap
 diagnostic, not a general immersed-boundary CFD or wing-aerodynamics claim. A
 600-step headless run remains topology-stable for 10 simulated seconds and
-reports about `1.12 Pa` peak pressure, `9.01 mm` maximum deformation, and
-`0.926 m/s` maximum MAC speed.
-Its bounded `SWPCELL6` checkpoint stores the trusted Structure state and the
-complete accepted sparse pressure projection. Initial and accepted files
+reports a relaxed `0.00309 Pa`, `0.0260 mm` deformation, and `0.908 m/s`
+maximum MAC speed; the two-second transient reaches about `2.12 Pa` and
+`17.8 mm`. Sustaining bluff-body pressure is now explicitly the missing
+material-wall-viscosity boundary rather than hidden predictor reset.
+Its bounded `SWPCELL7` checkpoint stores the trusted Structure state, complete
+accepted sparse pressure projection, and accepted region momentum. Initial and
+accepted files
 round-trip deterministically, reject foreign/corrupt input transactionally,
 resume through the normal worker checkpoint flags, and reconstruct the exact
 derived MAC continuation without duplicating either it or transient bulk
-pressure on the wire. Version 6 also records whether a pressure projection was
-formed from either explicit static-link continuation or transported-region
-prediction; canonical worker checkpoints require both markers to remain zero
-until the worker owns the accepted cut-region momentum state.
+pressure on the wire. Version 7 preserves transported-region projection
+provenance and bounds/revalidates every momentum control volume before
+publication.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own

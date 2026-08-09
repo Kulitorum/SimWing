@@ -14,12 +14,13 @@ namespace simwing::fsi {
 namespace {
 
 constexpr std::array<std::uint8_t, 8> checkpointMagic{
-    'S', 'W', 'P', 'C', 'E', 'L', 'L', '6'};
-constexpr std::uint32_t checkpointStateVersion = 6;
+    'S', 'W', 'P', 'C', 'E', 'L', 'L', '7'};
+constexpr std::uint32_t checkpointStateVersion = 7;
 constexpr std::size_t checkpointEnvelopeBytes = 28;
 constexpr std::size_t solveComponentRecordBytes = 56;
 constexpr std::size_t controlVolumeRecordBytes = 72;
 constexpr std::size_t linkRecordBytes = 73;
+constexpr std::size_t momentumControlVolumeRecordBytes = 152;
 constexpr std::uint64_t fnvOffsetBasis = 14695981039346656037ULL;
 constexpr std::uint64_t fnvPrime = 1099511628211ULL;
 
@@ -212,9 +213,12 @@ ScenePressureCellCheckpointPersistenceErrorCode structureErrorCode(
 bool validLimits(const ScenePressureCellCheckpointPersistenceLimits& limits) {
     return limits.maximumEncodedBytes >= checkpointEnvelopeBytes
         && limits.maximumControlVolumes > 0
+        && limits.maximumControlVolumes
+            <= std::numeric_limits<std::size_t>::max() / 3
         && limits.maximumLinks > 0
         && limits.maximumSolveComponents > 0
         && limits.maximumProjectionStorageBytes > 0
+        && limits.maximumMomentumStorageBytes > 0
         && limits.structure.maximumEncodedBytes > 0;
 }
 
@@ -614,6 +618,153 @@ bool readProjection(
     return true;
 }
 
+bool writeRegionMomentum(
+    Writer& writer,
+    const SceneFluidRegionMomentumState& momentum) {
+    validateSceneFluidRegionMomentumStateIntegrity(momentum);
+    const auto& diagnostics = momentum.diagnostics;
+    if (!writer.u32(momentum.version)
+        || !writer.u64(momentum.fingerprint)
+        || !writer.u64(momentum.pressureProjectionFingerprint)
+        || !writer.u64(momentum.pressureControlVolumeFingerprint)
+        || !writer.u64(momentum.pressureFaceLinkFingerprint)
+        || !writer.u64(momentum.openingPatchFingerprint)
+        || !writer.u64(momentum.fallbackVelocityFingerprint)
+        || !writer.u64(momentum.acceptedStepCount)
+        || !writer.finiteDouble(momentum.simulationTimeSeconds)
+        || !writer.finiteDouble(momentum.densityKgPerCubicMeter)
+        || !writer.count(momentum.cellCounts.x)
+        || !writer.count(momentum.cellCounts.y)
+        || !writer.count(momentum.cellCounts.z)
+        || !writer.vector3(momentum.lowerMeters)
+        || !writer.vector3(momentum.upperMeters)
+        || !writer.count(momentum.ownedStorageBytes)
+        || !writer.count(diagnostics.controlVolumeCount)
+        || !writer.count(diagnostics.linkCount)
+        || !writer.count(diagnostics.openingLinkCount)
+        || !writer.count(diagnostics.sampledComponentCount)
+        || !writer.count(diagnostics.fallbackComponentCount)
+        || !writer.vector3(
+            diagnostics.totalMomentumKilogramMetersPerSecond)
+        || !writer.finiteDouble(diagnostics.kineticEnergyJoules)
+        || !writer.finiteDouble(
+            diagnostics.maximumAbsoluteVelocityMetersPerSecond)
+        || !writer.finiteDouble(
+            diagnostics.maximumLinkNormalVelocityResidualMetersPerSecond)
+        || !writer.boolean(diagnostics.finite)
+        || !writer.count(momentum.controlVolumes.size())) {
+        return false;
+    }
+    for (const auto& control : momentum.controlVolumes) {
+        if (!writer.count(control.controlVolumeIndex)
+            || !writer.u64(control.stableId)
+            || !writer.count(control.cellIndex)
+            || !writer.count(control.regionIndex)
+            || !writer.u64(control.regionId)
+            || !writer.count(control.componentIndex)
+            || !writer.finiteDouble(control.volumeCubicMeters)
+            || !writer.vector3(control.velocityMetersPerSecond)
+            || !writer.vector3(control.momentumKilogramMetersPerSecond)) {
+            return false;
+        }
+        for (const double area : control.sampledFaceAreaSquareMeters) {
+            if (!writer.finiteDouble(area)) {
+                return false;
+            }
+        }
+        for (const std::size_t count : control.sampledLinkCounts) {
+            if (!writer.count(count)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool readRegionMomentum(
+    Reader& reader,
+    SceneFluidRegionMomentumState& momentum,
+    const ScenePressureCellCheckpointPersistenceLimits& limits) {
+    auto& diagnostics = momentum.diagnostics;
+    if (!reader.u32(momentum.version)
+        || !reader.u64(momentum.fingerprint)
+        || !reader.u64(momentum.pressureProjectionFingerprint)
+        || !reader.u64(momentum.pressureControlVolumeFingerprint)
+        || !reader.u64(momentum.pressureFaceLinkFingerprint)
+        || !reader.u64(momentum.openingPatchFingerprint)
+        || !reader.u64(momentum.fallbackVelocityFingerprint)
+        || !reader.u64(momentum.acceptedStepCount)
+        || !reader.finiteDouble(momentum.simulationTimeSeconds)
+        || !reader.finiteDouble(momentum.densityKgPerCubicMeter)
+        || !reader.count(
+            momentum.cellCounts.x, std::numeric_limits<std::size_t>::max())
+        || !reader.count(
+            momentum.cellCounts.y, std::numeric_limits<std::size_t>::max())
+        || !reader.count(
+            momentum.cellCounts.z, std::numeric_limits<std::size_t>::max())
+        || !reader.vector3(momentum.lowerMeters)
+        || !reader.vector3(momentum.upperMeters)
+        || !reader.count(
+            momentum.ownedStorageBytes,
+            limits.maximumMomentumStorageBytes)
+        || !reader.count(
+            diagnostics.controlVolumeCount, limits.maximumControlVolumes)
+        || !reader.count(diagnostics.linkCount, limits.maximumLinks)
+        || !reader.count(diagnostics.openingLinkCount, limits.maximumLinks)
+        || !reader.count(
+            diagnostics.sampledComponentCount,
+            3 * limits.maximumControlVolumes)
+        || !reader.count(
+            diagnostics.fallbackComponentCount,
+            3 * limits.maximumControlVolumes)
+        || !reader.vector3(
+            diagnostics.totalMomentumKilogramMetersPerSecond)
+        || !reader.finiteDouble(diagnostics.kineticEnergyJoules)
+        || !reader.finiteDouble(
+            diagnostics.maximumAbsoluteVelocityMetersPerSecond)
+        || !reader.finiteDouble(
+            diagnostics.maximumLinkNormalVelocityResidualMetersPerSecond)
+        || !reader.boolean(diagnostics.finite)) {
+        return false;
+    }
+    std::size_t count = 0;
+    if (!reader.count(count, limits.maximumControlVolumes)
+        || !reader.fixedRecords(
+            count, momentumControlVolumeRecordBytes)) {
+        return false;
+    }
+    momentum.controlVolumes.resize(count);
+    for (auto& control : momentum.controlVolumes) {
+        if (!reader.count(
+                control.controlVolumeIndex, limits.maximumControlVolumes)
+            || !reader.u64(control.stableId)
+            || !reader.count(
+                control.cellIndex, std::numeric_limits<std::size_t>::max())
+            || !reader.count(
+                control.regionIndex, limits.maximumControlVolumes)
+            || !reader.u64(control.regionId)
+            || !reader.count(
+                control.componentIndex, limits.maximumControlVolumes)
+            || !reader.finiteDouble(control.volumeCubicMeters)
+            || !reader.vector3(control.velocityMetersPerSecond)
+            || !reader.vector3(control.momentumKilogramMetersPerSecond)) {
+            return false;
+        }
+        for (double& area : control.sampledFaceAreaSquareMeters) {
+            if (!reader.finiteDouble(area)) {
+                return false;
+            }
+        }
+        for (std::size_t& linkCount : control.sampledLinkCounts) {
+            if (!reader.count(linkCount, limits.maximumLinks)) {
+                return false;
+            }
+        }
+    }
+    validateSceneFluidRegionMomentumStateIntegrity(momentum);
+    return true;
+}
+
 } // namespace
 
 bool serializeScenePressureCellCheckpoint(
@@ -642,6 +793,16 @@ bool serializeScenePressureCellCheckpoint(
                 "scene pressure cell Structure payload: "
                     + structureError.message);
         }
+        if (checkpoint.regionMomentum
+            && (checkpoint.regionMomentum->controlVolumes.size()
+                    > limits.maximumControlVolumes
+                || checkpoint.regionMomentum->ownedStorageBytes
+                    > limits.maximumMomentumStorageBytes)) {
+            return fail(
+                error,
+                ScenePressureCellCheckpointPersistenceErrorCode::LimitExceeded,
+                "scene pressure cell region momentum exceeds its limit");
+        }
 
         std::vector<std::uint8_t> payload;
         Writer payloadWriter(
@@ -655,7 +816,12 @@ bool serializeScenePressureCellCheckpoint(
             || (checkpoint.coupling.pressureProjection
                 && !writeProjection(
                     payloadWriter,
-                    *checkpoint.coupling.pressureProjection))) {
+                    *checkpoint.coupling.pressureProjection))
+            || !payloadWriter.boolean(
+                checkpoint.regionMomentum.has_value())
+            || (checkpoint.regionMomentum
+                && !writeRegionMomentum(
+                    payloadWriter, *checkpoint.regionMomentum))) {
             return fail(
                 error,
                 ScenePressureCellCheckpointPersistenceErrorCode::LimitExceeded,
@@ -833,6 +999,23 @@ bool deserializeScenePressureCellCheckpoint(
             candidate.coupling.pressureProjection = std::move(projection);
         } else {
             candidate.coupling.pressureProjection.reset();
+        }
+        bool hasRegionMomentum = false;
+        if (!payloadReader.boolean(hasRegionMomentum)) {
+            return fail(
+                error, readerErrorCode(payloadReader),
+                "scene pressure cell region-momentum marker is invalid");
+        }
+        if (hasRegionMomentum) {
+            SceneFluidRegionMomentumState momentum;
+            if (!readRegionMomentum(payloadReader, momentum, limits)) {
+                return fail(
+                    error, readerErrorCode(payloadReader),
+                    "scene pressure cell region-momentum payload is invalid");
+            }
+            candidate.regionMomentum = std::move(momentum);
+        } else {
+            candidate.regionMomentum.reset();
         }
         if (!payloadReader.atEnd()) {
             return fail(

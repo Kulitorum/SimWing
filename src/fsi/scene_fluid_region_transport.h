@@ -8,7 +8,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidRegionTransportVersion = 1;
+inline constexpr std::uint32_t sceneFluidRegionTransportVersion = 3;
 
 struct SceneFluidRegionTransportSettings {
     double timeStepSeconds = 1.0 / 60.0;
@@ -38,7 +38,8 @@ enum class SceneFluidRegionTransportFailureStage : std::uint8_t {
     AdvectionEnergy = 3,
     ViscosityEnergy = 4,
     Conservation = 5,
-    NonFinite = 6,
+    GeometryVolume = 6,
+    NonFinite = 7,
 };
 
 struct SceneFluidRegionTransportControlVolume {
@@ -57,6 +58,13 @@ struct SceneFluidRegionTransportDiagnostics {
     std::size_t linkCount = 0;
     std::size_t openingLinkCount = 0;
     std::size_t substepCount = 0;
+    bool usesMovingVolumeRates = false;
+    bool usesBulkVelocityIncrement = false;
+    double maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond = 0.0;
+    double maximumAbsoluteGeometryVolumeChangeCubicMeters = 0.0;
+    double maximumBulkVelocityIncrementMetersPerSecond = 0.0;
+    fluid::Vector3 bulkVelocityIncrementImpulseKilogramMetersPerSecond;
+    double bulkVelocityIncrementWorkJoules = 0.0;
     double maximumCorrectedContinuityResidualCubicMetersPerSecond = 0.0;
     double maximumFullStepOutgoingCourantNumber = 0.0;
     double maximumAcceptedSubstepOutgoingCourantNumber = 0.0;
@@ -81,19 +89,24 @@ struct SceneFluidRegionTransportDiagnostics {
         const SceneFluidRegionTransportDiagnostics&) const = default;
 };
 
-// Fixed-epoch conservative cell/region momentum advance. Corrected relative
+// Conservative cell/region momentum advance. Corrected relative
 // pressure-link flow carries donor-cell vector momentum between its two
 // control-volume owners; graph viscosity then exchanges equal-and-opposite
 // impulse over the same open fluid connection. Deterministic subcycling bounds
 // both outgoing volume Courant number and the explicit pair diffusion number.
-// Moving volumes, topology rebase, material-wall shear, and a pressure update
-// remain outside this first transport boundary.
+// A moving-volume projection advances each control volume linearly through its
+// accepted geometry rate, so uniform flow obeys the discrete GCL exactly.
+// Topology rebase, material-wall shear, and a pressure update remain outside
+// this transport boundary.
 struct SceneFluidRegionTransport {
     std::uint32_t version = sceneFluidRegionTransportVersion;
     std::uint64_t fingerprint = 0;
     std::uint64_t sourceMomentumFingerprint = 0;
     std::uint64_t pressureProjectionFingerprint = 0;
     std::uint64_t pressureFaceLinkFingerprint = 0;
+    std::uint64_t pressureVolumeRateFingerprint = 0;
+    std::uint64_t previousBulkVelocityFingerprint = 0;
+    std::uint64_t currentBulkVelocityFingerprint = 0;
     std::uint64_t acceptedStepCount = 0;
     double sourceSimulationTimeSeconds = 0.0;
     double targetSimulationTimeSeconds = 0.0;
@@ -110,6 +123,21 @@ struct SceneFluidRegionTransport {
     const SceneFluidRegionMomentumState& sourceMomentum,
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidPressureProjection& correctedProjection,
+    const SceneFluidRegionTransportSettings& settings = {},
+    const SceneFluidRegionTransportLimits& limits = {});
+
+// Applies the collocated difference between two consecutive bulk MAC
+// predictors as an explicit body-flow split before conservative region
+// transport. This retains cut-region velocity differences while transmitting
+// the worker's pump, advection, and bulk-viscosity increment into every region
+// occupying the affected cell.
+[[nodiscard]] SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidPressureProjection& correctedProjection,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::MacVelocityField& previousBulkVelocityMetersPerSecond,
+    const fluid::MacVelocityField& currentBulkVelocityMetersPerSecond,
     const SceneFluidRegionTransportSettings& settings = {},
     const SceneFluidRegionTransportLimits& limits = {});
 

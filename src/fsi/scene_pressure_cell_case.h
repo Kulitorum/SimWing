@@ -10,15 +10,17 @@
 namespace simwing::fsi {
 
 inline constexpr char scenePressureCellCaseChecksum[] =
-    "sha256:simwing-scene-pressure-feedback-cell-v6";
+    "sha256:simwing-scene-pressure-feedback-cell-v7";
 inline constexpr char scenePressureCellCaseSolverId[] =
-    "simwing-fsi-scene-pressure-feedback-worker-v6";
-inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 6;
+    "simwing-fsi-scene-pressure-feedback-worker-v7";
+inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 7;
 
 struct ScenePressureCellDiagnostics {
     SceneFluidPressureCouplingStepDiagnostics coupling;
     SceneFluidPressureMacVelocityCollapseDiagnostics macVelocity;
     fluid::PeriodicFlowStrangSspRk2Diagnostics bulkFlow;
+    SceneFluidRegionTransportDiagnostics regionTransport;
+    bool usesRegionTransport = false;
     double targetMeanWindMetersPerSecond = 0.0;
     double meanWindBeforePumpMetersPerSecond = 0.0;
     double flowPumpForceNewtons = 0.0;
@@ -33,6 +35,7 @@ struct ScenePressureCellDiagnostics {
 struct ScenePressureCellCheckpoint {
     std::uint32_t version = scenePressureCellCheckpointVersion;
     SceneFluidPressureCouplingCheckpoint coupling;
+    std::optional<SceneFluidRegionMomentumState> regionMomentum;
 };
 
 // A visible analytic open cell driven by a prescribed periodic mean-flow
@@ -62,6 +65,8 @@ public:
         const noexcept;
     [[nodiscard]] const ScenePressureCellDiagnostics& diagnostics()
         const noexcept;
+    [[nodiscard]] const SceneFluidRegionMomentumState* acceptedRegionMomentum()
+        const noexcept;
     [[nodiscard]] ScenePressureCellCheckpoint checkpoint() const;
     void restore(const ScenePressureCellCheckpoint& checkpoint);
 
@@ -72,6 +77,7 @@ private:
     Structure structure_;
     SceneFluidPressureCoupling coupling_;
     fluid::MacVelocityField predictedVelocity_;
+    std::optional<SceneFluidRegionMomentumState> acceptedRegionMomentum_;
     viewer::StructureFrameMapping frameMapping_;
     ScenePressureCellDiagnostics diagnostics_;
 };

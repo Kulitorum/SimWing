@@ -499,11 +499,7 @@ void SceneFluidPressureCoupling::restore(
                 != restoredEpoch.pressureFaceLinks.fingerprint
             || checkpointValue.pressureProjection
                    ->pressureOperatorFingerprint
-                != restoredEpoch.pressureOperator.fingerprint
-            || checkpointValue.pressureProjection
-                   ->linkFlowContinuationFingerprint != 0
-            || checkpointValue.pressureProjection
-                   ->regionLinkFlowPredictionFingerprint != 0) {
+                != restoredEpoch.pressureOperator.fingerprint) {
             throw std::invalid_argument(
                 "scene pressure coupling checkpoint projection is foreign");
         }
@@ -548,12 +544,52 @@ SceneFluidPressureCouplingStepDiagnostics
 SceneFluidPressureCoupling::advance(
     Structure& target,
     const fluid::MacVelocityField& predictedVelocityMetersPerSecond) {
+    return advanceImpl(target, predictedVelocityMetersPerSecond, nullptr);
+}
+
+SceneFluidPressureCouplingStepDiagnostics
+SceneFluidPressureCoupling::advance(
+    Structure& target,
+    const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidRegionTransport& transportedRegionMomentum) {
+    return advanceImpl(
+        target, predictedVelocityMetersPerSecond,
+        &transportedRegionMomentum);
+}
+
+SceneFluidPressureCouplingStepDiagnostics
+SceneFluidPressureCoupling::advanceImpl(
+    Structure& target,
+    const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidRegionTransport* const transportedRegionMomentum) {
     const auto currentAcceptedState = captureSceneFluidSurfaceState(
         surface_, structureMappings_, target);
     if (currentAcceptedState != acceptedSurfaceState_
         || !predictedVelocityMetersPerSecond.matches(grid_)) {
         throw std::invalid_argument(
             "scene pressure coupling advance baseline is invalid");
+    }
+    if (transportedRegionMomentum != nullptr) {
+        validateSceneFluidRegionTransportIntegrity(
+            *transportedRegionMomentum);
+        if (!acceptedPressureProjection_
+            || !transportedRegionMomentum->diagnostics.accepted
+            || transportedRegionMomentum->pressureProjectionFingerprint
+                != acceptedPressureProjection_->fingerprint
+            || transportedRegionMomentum->pressureFaceLinkFingerprint
+                != acceptedPressureEpoch_.pressureFaceLinks.fingerprint
+            || transportedRegionMomentum->acceptedStepCount
+                != acceptedSurfaceState_.acceptedStepCount
+            || transportedRegionMomentum->sourceSimulationTimeSeconds
+                != acceptedSurfaceState_.simulationTimeSeconds
+            || transportedRegionMomentum->targetSimulationTimeSeconds
+                != acceptedSurfaceState_.simulationTimeSeconds
+                    + settings_.structure.timeStepSeconds
+            || transportedRegionMomentum->densityKgPerCubicMeter
+                != settings_.pressureProjection.densityKgPerCubicMeter) {
+            throw std::invalid_argument(
+                "scene pressure coupling region transport baseline is foreign");
+        }
     }
     const StructureCheckpoint structureBaseline = target.checkpoint();
     const auto baselineKinematics = transfer_.kinematics(
@@ -604,16 +640,38 @@ SceneFluidPressureCoupling::advance(
                 predictedVelocityMetersPerSecond, limits_.openingFlux);
             auto projectionSettings = settings_.pressureProjection;
             projectionSettings.timeStepSeconds = rates.durationSeconds;
-            auto projection = projectSceneFluidPressureLinkFlows(
-                surface_, currentState, grid_, transfer_,
-                currentEpoch.gridEpoch, currentEpoch.openingCaps,
-                currentEpoch.openingQuadrature,
-                currentEpoch.openingPatches, openingFlux,
-                predictedVelocityMetersPerSecond, currentEpoch.cellVolumes,
-                connectivity_, currentEpoch.pressureControlVolumes,
-                currentEpoch.pressureFaceLinks,
-                currentEpoch.pressureOperator, rates, warmPressure,
-                projectionSettings, limits_.pressureProjection);
+            SceneFluidPressureProjection projection;
+            if (transportedRegionMomentum != nullptr) {
+                const auto regionPrediction =
+                    predictSceneFluidRegionLinkFlows(
+                        *transportedRegionMomentum, grid_,
+                        currentEpoch.pressureControlVolumes,
+                        currentEpoch.pressureFaceLinks, openingFlux,
+                        limits_.regionLinkFlow);
+                projection = projectSceneFluidPressureLinkFlows(
+                    surface_, currentState, grid_, transfer_,
+                    currentEpoch.gridEpoch, currentEpoch.openingCaps,
+                    currentEpoch.openingQuadrature,
+                    currentEpoch.openingPatches, openingFlux,
+                    predictedVelocityMetersPerSecond, regionPrediction,
+                    currentEpoch.cellVolumes, connectivity_,
+                    currentEpoch.pressureControlVolumes,
+                    currentEpoch.pressureFaceLinks,
+                    currentEpoch.pressureOperator, rates, warmPressure,
+                    projectionSettings, limits_.pressureProjection);
+            } else {
+                projection = projectSceneFluidPressureLinkFlows(
+                    surface_, currentState, grid_, transfer_,
+                    currentEpoch.gridEpoch, currentEpoch.openingCaps,
+                    currentEpoch.openingQuadrature,
+                    currentEpoch.openingPatches, openingFlux,
+                    predictedVelocityMetersPerSecond,
+                    currentEpoch.cellVolumes, connectivity_,
+                    currentEpoch.pressureControlVolumes,
+                    currentEpoch.pressureFaceLinks,
+                    currentEpoch.pressureOperator, rates, warmPressure,
+                    projectionSettings, limits_.pressureProjection);
+            }
             if (!projection.diagnostics.accepted) {
                 throw std::runtime_error(
                     "scene pressure coupling projection was not accepted");

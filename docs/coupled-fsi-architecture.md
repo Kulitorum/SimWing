@@ -741,22 +741,24 @@ MAC predictor used by the projection. The product is bound to the pressure,
 volume, face-link, opening-patch, and predictor fingerprints and reports total
 momentum, kinetic energy, fallback coverage, and link-to-collocated
 reconstruction residual. The reconstruction itself performs no time advance.
-The first fixed-epoch time advance is also isolated. Corrected relative link flow
+The first region-momentum time advance is also isolated. Corrected relative link flow
 uses donor-cell selection to carry the complete collocated momentum vector
 between its two cell/region owners, then graph viscosity exchanges
 equal-and-opposite impulse across the same fluid connection. A deterministic
 substep count bounds each control volume's outgoing-volume Courant number and
-explicit viscous row number. Every stage checks energy, and the complete step
-checks global momentum before publishing. This kernel currently rejects a
-moving-volume projection: conservative GCL momentum remapping and material-wall
-viscosity remain separate ownership problems. The next topology-stable
-boundary performs that GCL remap explicitly: it retains transported
+explicit viscous row number. Every post-forcing stage checks energy, and the
+complete step checks global internal momentum before publishing. Moving
+control volumes advance linearly through the projection's accepted geometry
+rate, so uniform flow satisfies the discrete GCL exactly. A bound cell-centred
+delta between successive bulk MAC predictors can be applied first; its impulse
+and work are separate from the conservative internal ledger. The next
+topology-stable boundary retains transported
 cell/region velocity while recomputing momentum from current physical volume,
 averages endpoint components onto the current Cartesian links, and subtracts
 the exact current opening-cap sweep. The moving pressure projection consumes
 that fingerprinted first-order predictor together with its dV/dt product and
-verifies every predicted link flow exactly. Topology rebase, material-wall
-flux, and accepted worker ownership of the region state remain separate. The
+verifies every predicted link flow exactly. Topology rebase and material-wall
+flux remain separate. The
 first composite in-memory checkpoint stores Structure and the accepted sparse
 pressure projection. Restore uses a temporary Structure, rebuilds the entire
 pressure epoch, resamples the validated projection, and reconstructs the
@@ -773,27 +775,31 @@ mechanical apex drive is gone. A uniform correction maintains
 a prescribed `-0.85 m/s` periodic mean wind. The existing symmetric SSPRK2
 viscosity/projected-nonlinear-advection/viscosity operator advances that bulk
 MAC field on a private candidate, and only an accepted scene pressure solve
-commits the next predictor and loads the free apex. The reference run reports
-about `1.12 Pa` peak pressure and `9.01 mm` maximum deformation. Frames expose
-the mean-flow pump force plus bulk-flow change, final divergence, and viscous
-energy loss in place of actuator force. It is deliberately a visible bootstrap
+commits the next predictor and loads the free apex. After bootstrap, accepted
+region momentum receives the bulk-MAC delta, advances through moving-volume
+GCL transport, and predicts every current link in each strong iterate. At two
+seconds the reference transient reports about `2.12 Pa` and `17.8 mm`; without
+material-wall viscosity the coarse inviscid state relaxes by ten seconds to
+about `0.00309 Pa` and `0.0260 mm`. Frames expose the mean-flow pump force plus
+bulk-flow change, final divergence, viscous loss, region loss/GCL change, and
+region momentum residual. It is deliberately a visible bootstrap
 diagnostic, not aerodynamic truth. The bulk operator's two intermediate
 pressure projections have one velocity per Cartesian face and cannot retain
 distinct velocities on multiple cut-region links sharing a face; its viscosity
 is likewise periodic bulk viscosity, not a wall-conditioned cut-cell operator.
-The final scene projection is sparse and region-aware, and its predictor
-remains fixed inside each strong solve.
-Between accepted steps that predictor advances from the area-collapsed
-pressure-corrected link flow. Its
+The final scene projection is sparse and region-aware; its transported fluid
+state remains fixed while each strong iterate remaps that state to the current
+geometry. The area-collapsed pressure-corrected field remains the bound input
+to the next bulk-MAC delta, not the cut-region transport state. Its
 bounded canonical checkpoint persists the complete accepted sparse pressure
 projection beside the trusted nested Structure payload. Deterministic initial
 and accepted round trips, exact next-frame replay, CLI autosave/resume, and
 transactional corruption/foreign-file rejection are covered. Restore derives
 the exact bulk MAC continuation from that projection instead of duplicating it
-or the transient bulk pressure on the wire. `SWPCELL6` additionally persists
-the optional static-link and transported-region predictor provenance fields in
-a projection, while this worker rejects either nonzero marker until it owns
-the accepted region-momentum state. A
+or the transient bulk pressure on the wire. `SWPCELL7` additionally persists
+the accepted region-momentum state and both projection predictor-provenance
+fields. Decode bounds every momentum record and validates its complete
+accepted-epoch binding before publication. A
 canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded
