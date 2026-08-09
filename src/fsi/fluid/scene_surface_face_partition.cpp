@@ -344,6 +344,53 @@ struct ArrangementHalfEdge {
     double angleRadians = 0.0;
 };
 
+bool supportsRegionSeparatingArrangement(
+    const std::size_t activeFaceIndex,
+    const std::vector<std::size_t>& chainIndices,
+    const SceneFluidFaceChainSet& chains,
+    const SceneFluidFaceGraph& graph,
+    const SceneFluidFaceGraphRange& graphRange) {
+    std::vector<std::size_t> degree(graphRange.nodeCount, 0);
+    for (const std::size_t chainIndex : chainIndices) {
+        if (chainIndex >= chains.chains.size()) return false;
+        const auto& chain = chains.chains[chainIndex];
+        if (chain.activeFaceIndex != activeFaceIndex
+            || chain.kind != SceneFluidFaceChainKind::Open
+            || chain.nodeReferenceCount < 2
+            || chain.segmentReferenceCount + 1
+                != chain.nodeReferenceCount
+            || chain.negativeSideRegionId == invalidStableId
+            || chain.positiveSideRegionId == invalidStableId
+            || chain.negativeSideRegionId == chain.positiveSideRegionId
+            || chain.endpointOnAuthoredOpening[0]
+            || chain.endpointOnAuthoredOpening[1]) {
+            return false;
+        }
+        for (std::size_t offset = 0;
+             offset < chain.nodeReferenceCount; ++offset) {
+            const std::size_t nodeIndex = chains.nodeReferences[
+                chain.firstNodeReference + offset];
+            if (nodeIndex < graphRange.firstNode
+                || nodeIndex >= graphRange.firstNode + graphRange.nodeCount
+                || graph.nodes[nodeIndex].authoredOpeningBoundary) {
+                return false;
+            }
+            if (offset != 0) ++degree[nodeIndex - graphRange.firstNode];
+            if (offset + 1 != chain.nodeReferenceCount) {
+                ++degree[nodeIndex - graphRange.firstNode];
+            }
+        }
+    }
+    for (std::size_t offset = 0; offset < degree.size(); ++offset) {
+        if (degree[offset] == 1
+            && graph.nodes[graphRange.firstNode + offset].faceBoundaryMask
+                == FaceBoundaryNone) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::map<StableId, double> boundaryChainArrangementAreas(
     const std::size_t activeFaceIndex,
     const SceneFluidActiveFace& face,
@@ -443,11 +490,6 @@ std::map<StableId, double> boundaryChainArrangementAreas(
             edges.push_back(edge);
         }
     }
-    if (edges.size() != graphRange.segmentCount) {
-        throw std::invalid_argument(
-            "scene fluid face arrangement does not cover its graph");
-    }
-
     const std::array<Point2, 4> cornerPoints{{
         {bounds.minimumU, bounds.minimumV},
         {bounds.maximumU, bounds.minimumV},
@@ -536,10 +578,7 @@ std::map<StableId, double> boundaryChainArrangementAreas(
             == std::numeric_limits<std::size_t>::max()) {
             continue;
         }
-        const auto& source = graph.nodes[node.sourceGraphNode];
-        if (materialDegree[nodeIndex]
-                != source.incidentSegmentReferenceCount
-            || (materialDegree[nodeIndex] == 1 && !node.onBoundary)
+        if ((materialDegree[nodeIndex] == 1 && !node.onBoundary)
             || (node.onBoundary && materialDegree[nodeIndex] == 0)) {
             throw std::invalid_argument(
                 "scene fluid face arrangement has incomplete node ownership");
@@ -723,6 +762,8 @@ std::uint64_t partitionFingerprint(
     f.real(value.settings.geometryToleranceMeters);
     f.real(value.settings.areaClosureToleranceSquareMeters);
     f.integer(static_cast<std::uint64_t>(value.unresolvedActiveFaceCount));
+    f.integer(static_cast<std::uint64_t>(
+        value.ignoredSameRegionChainCount));
     f.integer(static_cast<std::uint64_t>(value.segmentPairTestCount));
     f.integer(static_cast<std::uint64_t>(value.loopContainment.size()));
     for (const auto& item : value.loopContainment) {
@@ -796,14 +837,24 @@ SceneFluidFacePartitionSet buildPartitions(
     result.simulationTimeSeconds = state.simulationTimeSeconds;
     result.settings = settings;
     result.loopContainment.resize(loops.loops.size());
+    result.ignoredSameRegionChainCount = std::ranges::count_if(
+        chains.chains, [](const SceneFluidFaceChain& chain) {
+            return chain.negativeSideRegionId == chain.positiveSideRegionId;
+        });
 
     std::vector<std::vector<std::size_t>> loopsByFace(topology.activeFaces.size());
+    std::vector<std::vector<std::size_t>> sameRegionLoopsByFace(
+        topology.activeFaces.size());
     std::vector<std::vector<Point2>> polygons(loops.loops.size());
     for (std::size_t index = 0; index < loops.loops.size(); ++index) {
         result.loopContainment[index].loopIndex = index;
         const auto& loop = loops.loops[index];
-        loopsByFace[loop.activeFaceIndex].push_back(index);
         const auto& chain = chains.chains[loop.chainIndex];
+        if (chain.negativeSideRegionId != chain.positiveSideRegionId) {
+            loopsByFace[loop.activeFaceIndex].push_back(index);
+        } else {
+            sameRegionLoopsByFace[loop.activeFaceIndex].push_back(index);
+        }
         auto& polygon = polygons[index];
         polygon.reserve(chain.nodeReferenceCount);
         for (std::size_t offset = 0; offset < chain.nodeReferenceCount; ++offset) {
@@ -817,11 +868,20 @@ SceneFluidFacePartitionSet buildPartitions(
 
     std::vector<std::vector<std::size_t>> openChainsByFace(
         topology.activeFaces.size());
+    std::vector<std::vector<std::size_t>> sameRegionOpenChainsByFace(
+        topology.activeFaces.size());
     for (std::size_t chainIndex = 0;
          chainIndex < chains.chains.size(); ++chainIndex) {
         if (chains.chains[chainIndex].kind
-            == SceneFluidFaceChainKind::Open) {
+                == SceneFluidFaceChainKind::Open
+            && chains.chains[chainIndex].negativeSideRegionId
+                != chains.chains[chainIndex].positiveSideRegionId) {
             openChainsByFace[chains.chains[chainIndex].activeFaceIndex]
+                .push_back(chainIndex);
+        } else if (chains.chains[chainIndex].kind
+                       == SceneFluidFaceChainKind::Open) {
+            sameRegionOpenChainsByFace[
+                chains.chains[chainIndex].activeFaceIndex]
                 .push_back(chainIndex);
         }
     }
@@ -956,22 +1016,12 @@ SceneFluidFacePartitionSet buildPartitions(
             result.partitions.push_back(partition);
             continue;
         }
-        bool boundaryArrangement =
-            faceLoops.empty() && faceOpenChains.size() > 1
-            && face.coplanarPatchReferenceCount == 0;
-        bool hasBoundaryNode = false;
         const auto& graphRange = graph.faceRanges[faceIndex];
-        for (std::size_t offset = 0;
-             boundaryArrangement && offset < graphRange.nodeCount;
-             ++offset) {
-            const auto& node = graph.nodes[graphRange.firstNode + offset];
-            hasBoundaryNode = hasBoundaryNode
-                || node.faceBoundaryMask != FaceBoundaryNone;
-            boundaryArrangement = !node.authoredOpeningBoundary
-                && (node.incidentSegmentReferenceCount != 1
-                    || node.faceBoundaryMask != FaceBoundaryNone);
-        }
-        boundaryArrangement = boundaryArrangement && hasBoundaryNode;
+        const bool boundaryArrangement =
+            faceLoops.empty() && faceOpenChains.size() > 1
+            && face.coplanarPatchReferenceCount == 0
+            && supportsRegionSeparatingArrangement(
+                faceIndex, faceOpenChains, chains, graph, graphRange);
         if (boundaryArrangement) {
             if (result.partitions.size() == limits.maximumPartitions) {
                 throw std::length_error(
@@ -1011,6 +1061,70 @@ SceneFluidFacePartitionSet buildPartitions(
             }
             result.partitions.push_back(partition);
             continue;
+        }
+        const auto& faceSameRegionLoops = sameRegionLoopsByFace[faceIndex];
+        const auto& faceSameRegionOpenChains =
+            sameRegionOpenChainsByFace[faceIndex];
+        if (faceLoops.empty() && faceOpenChains.empty()
+            && face.coplanarPatchReferenceCount == 0
+            && (!faceSameRegionLoops.empty()
+                || !faceSameRegionOpenChains.empty())) {
+            StableId regionId = invalidStableId;
+            auto acceptSameRegionChain = [&](const SceneFluidFaceChain& chain) {
+                if (chain.negativeSideRegionId == invalidStableId
+                    || chain.negativeSideRegionId
+                        != chain.positiveSideRegionId) {
+                    return false;
+                }
+                if (regionId == invalidStableId) {
+                    regionId = chain.negativeSideRegionId;
+                }
+                return regionId == chain.negativeSideRegionId;
+            };
+            bool oneRegion = std::ranges::all_of(
+                faceSameRegionLoops, [&](const std::size_t loopIndex) {
+                    return acceptSameRegionChain(chains.chains[
+                        loops.loops[loopIndex].chainIndex]);
+                });
+            oneRegion = oneRegion && std::ranges::all_of(
+                faceSameRegionOpenChains,
+                [&](const std::size_t chainIndex) {
+                    return acceptSameRegionChain(chains.chains[chainIndex]);
+                });
+            if (oneRegion) {
+                if (result.partitions.size() == limits.maximumPartitions) {
+                    throw std::length_error(
+                        "scene fluid face partitions exceed their limit");
+                }
+                SceneFluidFacePartition partition;
+                partition.stableId = face.stableId;
+                partition.activeFaceIndex = faceIndex;
+                partition.kind =
+                    SceneFluidFacePartitionKind::SameRegionSheets;
+                partition.rootExteriorRegionId = regionId;
+                partition.firstLoopReference = result.loopReferences.size();
+                partition.loopReferenceCount = faceSameRegionLoops.size();
+                result.loopReferences.insert(
+                    result.loopReferences.end(), faceSameRegionLoops.begin(),
+                    faceSameRegionLoops.end());
+                partition.firstOpenChainReference =
+                    result.openChainReferences.size();
+                partition.openChainReferenceCount =
+                    faceSameRegionOpenChains.size();
+                result.openChainReferences.insert(
+                    result.openChainReferences.end(),
+                    faceSameRegionOpenChains.begin(),
+                    faceSameRegionOpenChains.end());
+                partition.firstRegionArea = result.regionAreas.size();
+                partition.regionAreaCount = 1;
+                partition.faceAreaSquareMeters = faceArea(grid, face.axis);
+                partition.assignedAreaSquareMeters =
+                    partition.faceAreaSquareMeters;
+                result.regionAreas.push_back(
+                    {regionId, partition.faceAreaSquareMeters});
+                result.partitions.push_back(partition);
+                continue;
+            }
         }
         if (faceLoops.empty() || !faceOpenChains.empty()
             || face.coplanarPatchReferenceCount != 0 || boundaryTouch) {

@@ -149,6 +149,46 @@ Scene boundaryJunctionScene(
     }
     return scene;
 }
+
+Scene boundaryJunctionWithSameRegionSheetScene() {
+    Scene scene = boundaryJunctionScene();
+    scene.metadata.designChecksum += "-same-region-sheet";
+    scene.vertices.insert(scene.vertices.end(), {
+        {20, {1.5, 1.2, 1.7}},
+        {21, {2.5, 1.2, 1.9}},
+        {22, {2.5, 1.4, 1.9}},
+    });
+    scene.triangles.push_back({
+        503, {20, 21, 22},
+        {{{0.0, 0.0}, {1.0, 0.0}, {1.0, 0.2}}},
+        3, 3, 100, 903, SurfaceRole::Diagonal});
+    return scene;
+}
+
+Scene sameRegionSheetScene() {
+    Scene scene;
+    scene.metadata.designChecksum = "sha256:scene-face-same-region-sheet";
+    scene.metadata.exporterVersion = "scene-face-partition-test/4";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "cell"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900, 650, 220, 0.015, 0.041, 0.02,
+         0.0125, 2.5e-12},
+    };
+    scene.vertices = {
+        {10, {1.5, 1.2, 1.7}},
+        {11, {2.5, 1.2, 1.9}},
+        {12, {2.5, 1.4, 1.9}},
+    };
+    scene.triangles = {
+        {500, {10, 11, 12},
+         {{{0.0, 0.0}, {1.0, 0.0}, {1.0, 0.2}}},
+         2, 2, 100, 900, SurfaceRole::Diagonal},
+    };
+    return scene;
+}
 PeriodicCartesianGrid grid(){ return {{4,4,4},{},{4,4,4}}; }
 
 struct Pipeline {
@@ -429,6 +469,75 @@ void testBoundaryJunctionArrangement() {
         "face partition: junction arrangement rejects conflicting region winding");
 }
 
+void testSameRegionSheetDoesNotBlockJunctionArrangement() {
+    Pipeline p(boundaryJunctionWithSameRegionSheetScene());
+    const auto first = partitions(p);
+    const auto repeated = partitions(p);
+    const auto found = std::ranges::find_if(
+        first.partitions,
+        [&](const SceneFluidFacePartition& partition) {
+            const auto& face = p.topology.activeFaces[
+                partition.activeFaceIndex];
+            return face.axis == GridFaceAxis::X
+                && face.i == 2 && face.j == 1 && face.k == 1;
+        });
+    check(first == repeated && found != first.partitions.end()
+              && first.ignoredSameRegionChainCount == 1,
+          "face partition: same-region sheet is audited without blocking a junction");
+    if (found == first.partitions.end()) return;
+    check(found->kind
+                  == SceneFluidFacePartitionKind::BoundaryChainArrangement
+              && found->openChainReferenceCount == 3
+              && found->regionAreaCount == 3,
+          "face partition: only region-separating junction chains own pressure areas");
+    std::map<StableId, double> areas;
+    for (std::size_t offset = 0;
+         offset < found->regionAreaCount; ++offset) {
+        const auto& area = first.regionAreas[
+            found->firstRegionArea + offset];
+        areas.emplace(area.regionId, area.areaSquareMeters);
+    }
+    checkNear(areas.at(1), 0.5, 3.0e-15,
+              "face partition: ignored same-region sheet preserves exterior area");
+    checkNear(areas.at(2), 0.25, 3.0e-15,
+              "face partition: ignored same-region sheet preserves first cell area");
+    checkNear(areas.at(3), 0.25, 3.0e-15,
+              "face partition: ignored same-region sheet preserves second cell area");
+    validateSceneFluidFacePartitions(
+        first, p.surface.definition, p.state, grid(), p.candidates,
+        p.intersections, p.patches, p.ownership, p.crossings, p.topology,
+        p.graph, p.chains, p.loops);
+}
+
+void testSameRegionSheetOwnsFullRegionArea() {
+    Pipeline p(sameRegionSheetScene());
+    const auto first = partitions(p);
+    const auto repeated = partitions(p);
+    check(first == repeated && first.partitions.size() == 1
+              && first.unresolvedActiveFaceCount == 0
+              && first.ignoredSameRegionChainCount == 1,
+          "face partition: isolated same-region sheet resolves deterministically");
+    if (first.partitions.empty()) return;
+    const auto& partition = first.partitions.front();
+    check(partition.kind == SceneFluidFacePartitionKind::SameRegionSheets
+              && partition.rootExteriorRegionId == 2
+              && partition.loopReferenceCount == 0
+              && partition.openChainReferenceCount == 1
+              && partition.regionAreaCount == 1,
+          "face partition: same-region sheet retains explicit source identity");
+    const auto& area = first.regionAreas[partition.firstRegionArea];
+    check(area.regionId == 2,
+          "face partition: same-region sheet keeps its authored region");
+    checkNear(area.areaSquareMeters, 1.0, 3.0e-15,
+              "face partition: same-region sheet owns the complete face area");
+    checkNear(partition.areaResidualSquareMeters, 0.0, 0.0,
+              "face partition: same-region sheet closes with zero residual");
+    validateSceneFluidFacePartitions(
+        first, p.surface.definition, p.state, grid(), p.candidates,
+        p.intersections, p.patches, p.ownership, p.crossings, p.topology,
+        p.graph, p.chains, p.loops);
+}
+
 void testLimitsAndValidation() {
     Pipeline p;
     SceneFluidFacePartitionLimits limits; limits.maximumSegmentPairTests=8;
@@ -453,4 +562,4 @@ void testLimitsAndValidation() {
         "face partition: corrupt area is rejected transactionally");
 }
 }
-int main(){testNestedPartition();testBoundaryOpenChainPartition();testBoundaryJunctionArrangement();testLimitsAndValidation();if(failures){std::fprintf(stderr,"%d face-partition failures\n",failures);return 1;}std::printf("scene face-partition tests passed\n");}
+int main(){testNestedPartition();testBoundaryOpenChainPartition();testBoundaryJunctionArrangement();testSameRegionSheetDoesNotBlockJunctionArrangement();testSameRegionSheetOwnsFullRegionArea();testLimitsAndValidation();if(failures){std::fprintf(stderr,"%d face-partition failures\n",failures);return 1;}std::printf("scene face-partition tests passed\n");}

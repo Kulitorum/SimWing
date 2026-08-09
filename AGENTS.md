@@ -334,6 +334,13 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   chains, including disconnected signed cycles, and publishes exact
   same-region area plus a resolved-or-unresolved record for every touched
   Cartesian face. Face-owned aperture area remains with its existing owner.
+  Material-only face accounting omits same-region internal-sheet chains from
+  pressure-region boundaries while retaining their audited count upstream. A
+  bounded region-separating chain arrangement accepts stitched interior
+  multi-region junctions. On the 4-by-4-by-4 real-wing audit this removes all
+  ten pressure-active material failures: 15 material-only plus 43 cap-touched
+  faces publish resolved pressure partitions, leaving only the separately
+  typed embedded-opening stencil rejections.
   Exact coordinates shared by a clipped edge's endpoints remain canonical
   through later-axis clipping, preventing one-ulp drift from erasing an
   earlier face owner. On the coarse real wing this closes all nine cap-crossed
@@ -352,8 +359,10 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   per-cell region volumes for the first capped-manifold subset. It requires one
   Outside region and closed oriented material-plus-cap region cycles. Pairwise
   signed measures support valid multi-region junctions. Grid-face crossings
-  split into pair-specific open chains at those junctions and remain explicit
-  unresolved face partitions.
+  split into pair-specific open chains at those junctions. Stitched
+  region-separating arrangements now close; opening-ended, dangling, or
+  otherwise incomplete arrangements remain explicit unresolved face
+  partitions.
   Each oriented triangle becomes a signed tetrahedron against the grid origin;
   bounded convex clipping distributes it across exact cells, including full
   interior cells and open face-local tile chains. The same clipped tetrahedra
@@ -361,8 +370,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   volume, and cell first moment closes independently before the result agrees
   with whole-surface region volumes. General swept-volume remap, unauthored
   nonplanar or folded/self-intersecting mouths, opening-only cap vertices,
-  resolved junction face partitions, and periodic-boundary ambiguity remain
-  unsupported.
+  general junction-aware swept-volume remap, and periodic-boundary ambiguity
+  remain unsupported.
 - `simwing_scene_fluid_region_continuity`: binds two consecutive accepted
   volume and opening-flux epochs. It trapezoidally integrates each region's
   outward relative opening flow and reports `delta volume + integrated flow`

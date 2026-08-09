@@ -603,9 +603,12 @@ whole-surface divergence calculation verifies the global region totals. Nested
 analytic tetrahedra, a rigid accepted remap, a valid three-region junction,
 and a large cavity with 24 full interior cells are regressions. The complete
 real-wing region ledger also closes on a centered coarse grid that crosses the
-canopy. One simple boundary-to-boundary interface there now resolves to exact
-oriented face areas; junction nodes terminate pair-specific open chains and
-remain explicit unresolved face partitions. Scene-v2.2 can attach one oriented
+canopy. Material-only pressure-face accounting ignores same-region
+internal-sheet chains without discarding their upstream material identity.
+Pair-specific open chains at a stitched interior multi-region junction are
+assembled together with the rectangular face boundary and resolve to exact
+oriented region areas; opening-ended or dangling arrangements remain explicit
+unresolved face partitions. Scene-v2.2 can attach one oriented
 boundary-vertex cap disk to an opening. A topology-only owner requires one
 closed oriented region cycle around every finite-area material-plus-cap edge,
 including valid three-region sheet/cap junctions, and derives final winding
@@ -692,8 +695,14 @@ the exact capped partition, superseding the material-only result; unsupported
 capped arrangements retain a distinct unresolved status. The analytic open
 tetrahedron reaches pressure links with `0.105 m²` of Cell and `0.895 m²` of
 Outside area, and the coarse real wing reaches ten resolved partition faces
-rather than one. Material/open-chain/coplanar ambiguity remains explicitly
-unresolved. A face-owned authored opening instead contributes an
+rather than one. On the centered 4-by-4-by-4 audit, ten formerly unresolved
+material faces now close as stitched multi-region arrangements: 15
+material-only plus 43 cap-touched faces produce 58 resolved pressure
+partitions, with no unresolved pressure-active Cartesian face. The remaining
+294 rejected embedded-opening patches are the distinct projected-centroid
+stencil limitation described below. Opening-ended, dangling, coplanar, or
+otherwise incomplete material arrangements remain explicitly unresolved. A
+face-owned authored opening instead contributes an
 oriented cross-region link for each exact cap patch and, when unambiguous, one
 same-region link over the complementary face area. The analytic triangular
 intake closes its unit Cartesian face as `0.18 m²` of Cell-to-Outside aperture

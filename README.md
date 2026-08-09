@@ -592,8 +592,14 @@ material-plus-opening partition supersedes the material-only result; an
 unsupported arrangement has its own unresolved status and no fabricated link.
 The analytic open tetrahedron carries its `0.105 m²` Cell section and
 `0.895 m²` Outside complement into pressure links, while the coarse real wing
-now has ten resolved partition faces rather than one. A face-aligned authored
-opening now contributes its
+now has ten resolved partition faces rather than one. A refined 4-by-4-by-4
+real-wing audit closes every pressure-active Cartesian face: same-region
+internal-sheet chains remain audited material topology but do not split a
+pressure region, and stitched interior multi-region chains raise the result to
+58 resolved partitions (15 material-only and 43 cap-touched). Its remaining
+294 embedded-opening rejections are explicitly non-admissible centroid
+stencils, not unresolved material faces. A face-aligned authored opening now
+contributes its
 exact oriented cross-region aperture area plus an unambiguous same-region link
 over the rest of that Cartesian face. The analytic intake therefore retains
 `0.18 m²` of opening and `0.82 m²` of Outside flow area instead of smearing the
