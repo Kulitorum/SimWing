@@ -68,7 +68,8 @@ Scene validScene() {
          1, 2, 100, 900, SurfaceRole::Skin},
     };
     scene.openings = {
-        {600, {10, 11, 12, 13}, 1, 2, OpeningRole::Intake},
+        {600, {10, 11, 12, 13}, 1, 2, OpeningRole::Intake,
+         {{{10, 11, 12}}, {{10, 12, 13}}}},
     };
     scene.seams = {
         {611, 121, {24, 25}, {26, 27}},
@@ -165,6 +166,10 @@ void testValidRoundTripAndDeterminism() {
               && decoded.triangles.front().positiveSideRegionId == 2
               && decoded.triangles.front().sheetId == 900,
           "round trip preserves oriented face sides and fabric sheet identity");
+    check(decoded.openings.front().capTriangleVertexIds
+              == std::vector<std::array<StableId, 3>>({
+                  {{10, 11, 12}}, {{10, 12, 13}}}),
+          "round trip preserves authored opening-cap topology");
     check(decoded.seamMaterials.size() == 2
               && decoded.seamMaterials[0].id == 120
               && decoded.seamMaterials[1].id == 121
@@ -263,6 +268,46 @@ void testOpeningsAttachmentsAndLines() {
     check(contains(validateScene(invalidOpening),
                    ValidationCode::InvalidOpening),
           "opening loops require unique boundary vertices");
+
+    Scene incompleteCap = validScene();
+    incompleteCap.openings.front().capTriangleVertexIds.pop_back();
+    check(contains(validateScene(incompleteCap),
+                   ValidationCode::InvalidOpening),
+          "authored opening caps require a complete triangulated disk");
+
+    Scene reversedCapFacet = validScene();
+    std::swap(
+        reversedCapFacet.openings.front().capTriangleVertexIds[0][1],
+        reversedCapFacet.openings.front().capTriangleVertexIds[0][2]);
+    check(contains(validateScene(reversedCapFacet),
+                   ValidationCode::InvalidOpening),
+          "authored opening-cap facets require consistent disk winding");
+
+    Scene degenerateCapFacet = validScene();
+    degenerateCapFacet.openings.front().capTriangleVertexIds = {
+        {{11, 12, 13}}, {{11, 13, 10}},
+    };
+    const auto vertex13 = std::ranges::find(
+        degenerateCapFacet.vertices, StableId{13}, &Vertex::id);
+    vertex13->positionMeters = {1.0, 2.0, 0.0};
+    check(contains(validateScene(degenerateCapFacet),
+                   ValidationCode::DegenerateTriangle),
+          "authored opening-cap facets require nondegenerate geometry");
+
+    Scene foreignCapVertex = validScene();
+    foreignCapVertex.openings.front().capTriangleVertexIds[0][2] = 9999;
+    const auto foreignCapReport = validateScene(foreignCapVertex);
+    check(contains(foreignCapReport,
+                   ValidationCode::MissingVertexReference)
+              && contains(foreignCapReport,
+                          ValidationCode::InvalidOpening),
+          "authored opening caps reject missing non-boundary vertices");
+
+    Scene oldSchemaCap = validScene();
+    oldSchemaCap.metadata.schemaMinor = 1;
+    check(contains(validateScene(oldSchemaCap),
+                   ValidationCode::UnsupportedSchema),
+          "authored opening caps require the scene-v2.2 schema");
 
     Scene missingPilot = validScene();
     const auto pilotAttachment = std::find_if(
@@ -405,6 +450,22 @@ void testInvalidWriteAndMalformedRead() {
           "reader intentionally rejects scene binary version 1");
     check(oldDestination.metadata.designChecksum == "old-version-sentinel",
           "old-version rejection is transactional");
+
+    Scene legacyScene = validScene();
+    legacyScene.metadata.schemaMinor = 1;
+    legacyScene.openings.clear();
+    std::string legacyVersion = encode(legacyScene);
+    legacyVersion[8] = 2;
+    legacyVersion[9] = 0;
+    legacyVersion[10] = 0;
+    legacyVersion[11] = 0;
+    std::istringstream legacyInput(
+        legacyVersion, std::ios::in | std::ios::binary);
+    Scene legacyDecoded;
+    check(readScene(legacyInput, legacyDecoded, &error)
+              && legacyDecoded.metadata.schemaMinor == 1
+              && legacyDecoded.openings.empty(),
+          "reader retains backward compatibility with scene binary v2");
 }
 
 } // namespace

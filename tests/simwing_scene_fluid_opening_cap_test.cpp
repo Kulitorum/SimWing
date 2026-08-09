@@ -349,7 +349,104 @@ void testRejectionCorruptionAndLimits() {
     expectInvalid(
         [&] { static_cast<void>(buildSceneFluidOpeningCaps(
             nonPlanar.surface.definition, nonPlanarState)); },
-        "nonplanar opening is outside the first virtual-cap subset");
+        "nonplanar boundary without authored cap geometry is rejected");
+
+    auto authoredNonPlanarScene = nonPlanarOpeningScene();
+    authoredNonPlanarScene.openings.front().capTriangleVertexIds = {
+        {{11, 12, 13}}, {{11, 13, 14}},
+    };
+    Fixture authoredNonPlanar(std::move(authoredNonPlanarScene));
+    check(authoredNonPlanar.surface.ok()
+              && authoredNonPlanar.structureAssembly.ok(),
+          "authored nonplanar opening fixture assembles");
+    if (authoredNonPlanar.surface.ok()
+        && authoredNonPlanar.structureAssembly.ok()) {
+        const auto authoredState = authoredNonPlanar.state();
+        const auto authoredCaps = buildSceneFluidOpeningCaps(
+            authoredNonPlanar.surface.definition, authoredState);
+        check(authoredCaps.caps.size() == 1
+                  && authoredCaps.triangles.size() == 2
+                  && authoredCaps.triangles[0].vertexIndices
+                      == std::array<std::size_t, 3>({1, 2, 3})
+                  && authoredCaps.triangles[1].vertexIndices
+                      == std::array<std::size_t, 3>({1, 3, 4}),
+              "authored nonplanar disk retains its exact triangle identity");
+        checkNear(
+            authoredCaps.caps.front().areaSquareMeters,
+            std::sqrt(1.01), 1.0e-14,
+            "authored nonplanar cap retains the analytic faceted area");
+        check(std::abs(
+                  authoredCaps.triangles[0]
+                      .unitNormalNegativeToPositive.z)
+                      > 0.09
+                  && std::abs(
+                      authoredCaps.triangles[1]
+                          .unitNormalNegativeToPositive.y)
+                      > 0.09
+                  && authoredCaps.triangles[0]
+                         .unitNormalNegativeToPositive
+                         .z
+                      != authoredCaps.triangles[1]
+                             .unitNormalNegativeToPositive
+                             .z,
+              "authored nonplanar cap publishes distinct triangle normals");
+        validateSceneFluidOpeningCaps(
+            authoredCaps, authoredNonPlanar.surface.definition,
+            authoredState);
+
+        for (std::size_t node = 0;
+             node < authoredNonPlanar.structure.definition().nodes.size();
+             ++node) {
+            authoredNonPlanar.structure.addExternalForce(
+                node,
+                {authoredNonPlanar.structure.definition().nodes[node].massKg,
+                 0.0, 0.0});
+        }
+        StructureStepSettings authoredMotion;
+        authoredMotion.timeStepSeconds = 0.1;
+        authoredMotion.substeps = 1;
+        authoredMotion.constraintIterations = 4;
+        authoredMotion.gravityMetersPerSecondSquared = {};
+        authoredMotion.velocityDampingPerSecond = 0.0;
+        const auto authoredMotionDiagnostics =
+            authoredNonPlanar.structure.step(authoredMotion);
+        const auto movedAuthoredCaps = buildSceneFluidOpeningCaps(
+            authoredNonPlanar.surface.definition,
+            authoredNonPlanar.state());
+        check(authoredMotionDiagnostics.finite
+                  && movedAuthoredCaps.triangles[0].vertexIndices
+                      == authoredCaps.triangles[0].vertexIndices
+                  && movedAuthoredCaps.triangles[1].vertexIndices
+                      == authoredCaps.triangles[1].vertexIndices,
+              "accepted motion retains authored nonplanar cap identity");
+        checkNear(
+            movedAuthoredCaps.caps.front().areaSquareMeters,
+            authoredCaps.caps.front().areaSquareMeters, 1.0e-14,
+            "rigid authored nonplanar motion preserves faceted area");
+        checkNear(
+            movedAuthoredCaps.caps.front().centroidMeters.x,
+            authoredCaps.caps.front().centroidMeters.x + 0.01,
+            1.0e-13,
+            "authored nonplanar cap follows accepted boundary motion");
+
+        auto reversedAuthoredScene = nonPlanarOpeningScene();
+        reversedAuthoredScene.openings.front().capTriangleVertexIds = {
+            {{11, 13, 12}}, {{11, 14, 13}},
+        };
+        std::ranges::reverse(
+            reversedAuthoredScene.openings.front().orderedVertexIds);
+        Fixture reversedAuthored(std::move(reversedAuthoredScene));
+        const auto reversedAuthoredCaps = buildSceneFluidOpeningCaps(
+            reversedAuthored.surface.definition,
+            reversedAuthored.state());
+        check(reversedAuthoredCaps.triangles[0].vertexIndices
+                      == authoredCaps.triangles[0].vertexIndices
+                  && reversedAuthoredCaps.triangles[1].vertexIndices
+                      == authoredCaps.triangles[1].vertexIndices
+                  && reversedAuthoredCaps.caps.front().areaSquareMeters
+                      == authoredCaps.caps.front().areaSquareMeters,
+              "fabric winding canonicalizes a reversed authored nonplanar disk");
+    }
 
     Fixture concave(concaveOpeningScene());
     check(concave.surface.ok() && concave.structureAssembly.ok(),

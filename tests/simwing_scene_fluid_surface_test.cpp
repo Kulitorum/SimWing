@@ -53,7 +53,8 @@ Scene surfaceScene() {
          1, 2, 100, 900, SurfaceRole::Skin},
     };
     scene.openings = {
-        {600, {10, 11, 12, 13}, 1, 2, OpeningRole::Intake},
+        {600, {10, 11, 12, 13}, 1, 2, OpeningRole::Intake,
+         {{{10, 11, 12}}, {{10, 12, 13}}}},
     };
     return scene;
 }
@@ -103,7 +104,10 @@ void testDeterministicSurfaceAssembly() {
               && definition.triangles.front().negativeSideRegionIndex == 0
               && definition.triangles.front().positiveSideRegionIndex == 1
               && definition.openings.front().orderedVertexIndices
-                  == std::vector<std::size_t>({0, 1, 2, 3}),
+                  == std::vector<std::size_t>({0, 1, 2, 3})
+              && definition.openings.front().capTriangleVertexIndices
+                  == std::vector<std::array<std::size_t, 3>>({
+                      {{0, 1, 2}}, {{0, 2, 3}}}),
           "scene fluid surface: winding, side ownership, permeability, and opening order survive");
     check(definition.mappings.vertexIndex(12) == 2
               && definition.mappings.triangleIndex(501) == 1
@@ -258,6 +262,15 @@ void testTransactionalRejectionAndLimits() {
                   == SceneFluidSurfaceDiagnosticCode::LimitExceeded,
           "scene fluid surface: entity limits reject transactionally");
     limits = {};
+    limits.maximumOpeningCapTriangles = 1;
+    const auto capLimited =
+        assembleSceneFluidSurface(surfaceScene(), limits);
+    check(!capLimited.ok()
+              && capLimited.definition.vertices.empty()
+              && capLimited.diagnostics.front().code
+                  == SceneFluidSurfaceDiagnosticCode::LimitExceeded,
+          "scene fluid surface: authored cap triangles are bounded");
+    limits = {};
     limits.maximumMappingBytes = 1;
     const auto mappingLimited =
         assembleSceneFluidSurface(surfaceScene(), limits);
@@ -270,6 +283,7 @@ void testTransactionalRejectionAndLimits() {
     Scene unsupportedOpening = surfaceScene();
     unsupportedOpening.vertices.push_back({14, {0.5, 0.5, 0.0}});
     unsupportedOpening.openings.front().orderedVertexIds = {10, 11, 14};
+    unsupportedOpening.openings.front().capTriangleVertexIds.clear();
     check(validateScene(unsupportedOpening).ok(),
           "scene fluid surface: opening-only source geometry remains scene-valid");
     const auto unsupported =

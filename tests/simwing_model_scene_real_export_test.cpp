@@ -160,7 +160,7 @@ void testRealDesignCapture(const std::filesystem::path &input,
         }
     }
     check(result.success,
-          "the real calculation capture exports a valid scene-v2.1 scene");
+          "the real calculation capture exports a valid scene-v2.2 scene");
     if (!result.success) {
         return;
     }

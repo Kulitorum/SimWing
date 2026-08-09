@@ -413,7 +413,7 @@ src/fsi/
     scene_fluid_quadrature.* unique owned area to stable transfer quadrature
     scene_fluid_pressure_traction.* one-sided pressure to normal traction
     scene_fluid_grid_epoch.* accepted full geometry/quadrature remap
-    scene_fluid_opening_cap.* topology-only planar opening closure
+    scene_fluid_opening_cap.* topology-only automatic/authored opening closure
     scene_fluid_opening_quadrature.* accepted cap motion/surface sweep
     scene_fluid_opening_patch.* exact grid-resolved opening polygons
     scene_fluid_opening_flux.* read-only relative MAC volume-flow ledger
@@ -593,13 +593,14 @@ clipping distributes its chain into exact cells, including wholly interior
 cells and surfaces whose face-local contours cross tile boundaries. A separate
 whole-surface divergence calculation verifies the global region totals. Nested
 analytic tetrahedra, a rigid accepted remap, and a large cavity with 24 full
-interior cells are regressions. A topology-only opening owner now closes an
-authored planar simple loop by matching every edge to one separating surface
-boundary and deriving winding from the adjacent fabric. Convex loops preserve
-their exact fan; planar concave loops use bounded deterministic ear clipping
-from reference geometry so accepted motion cannot change triangle identity.
-Folded, intersecting, degenerate, and nonplanar caps reject without creating
-Structure or traction entities.
+interior cells are regressions. Scene-v2.2 can attach one oriented
+boundary-vertex cap disk to an opening. A topology-only owner matches every
+loop edge to one separating-surface boundary and derives final winding from the
+adjacent fabric. Without an explicit disk, planar convex loops preserve their
+exact fan and planar concave loops use bounded deterministic ear clipping from
+reference geometry. An authored disk may be nonplanar and retains each facet's
+normal and identity under accepted motion. Folded, intersecting, degenerate,
+or unauthored nonplanar caps reject without creating Structure or traction.
 The capped open-tetrahedron regression closes analytic volume and exposes its
 mouth area. A second immutable opening epoch gives every cap triangle a stable
 centroid sample, interpolates the accepted piecewise-linear vertex velocity,
@@ -619,16 +620,15 @@ balances for the negative- and positive-side regions, including cell-to-cell
 crossports, and verifies exact global cancellation. Partial-face tiles integrate
 analytically, linear off-face flow is recovered, reversed velocity reverses
 sign, and co-moving air/mouth motion has zero relative flux.
-Nonplanar or self-intersecting openings, surface junctions, inconsistent
-winding, and general moving-boundary fluid equations remain open. A bounded
-two-epoch continuity owner now binds
+Unauthored nonplanar, folded, or self-intersecting openings, opening-only cap
+vertices, surface junctions, inconsistent winding, and general moving-boundary
+fluid equations remain open. A bounded two-epoch continuity owner now binds
 consecutive accepted volume and flux products by their exact surface-state and
 producer fingerprints. It trapezoidally integrates endpoint outward relative
 flow and reports `delta volume + integrated flow` per region. An analytically
 driven expanding cell closes with matching intake transport; removing that
 transport produces equal-and-opposite local failures despite a zero global
-residual. This remains diagnostic and does not yet connect openings to the
-projection. Authored openings now separately form deterministic undirected
+residual. Authored openings now separately form deterministic undirected
 pressure-connectivity components, while retaining their directed transport
 sign. Components are ordered by their smallest stable region ID, which also
 owns the future pressure gauge. Intake and crossport regressions prove the
@@ -918,7 +918,7 @@ last accepted absolute state, publishes no rejected frame, and still stops
 cleanly. A second process persists that terminal state; its restored Ready
 response exposes the same absolute step/time, the repeated advance returns the
 same numerical failure, and the completed continuation trace remains empty.
-The exact-model capture now exports validated scene-v2.1 skins, authored open
+The exact-model capture now exports validated scene-v2.2 skins, authored open
 intakes, triangulated holed ribs, internal sheets, explicit suspension
 junctions, and the uncollapsed line graph when supplied explicit physical
 material and pilot settings. Scene assembly adds per-sheet bending and preserves
@@ -937,8 +937,9 @@ semantically revalidates every committed diagnostic ledger. The
 real 3.28 regression now reaches an accepted coupled
 structural step and replayable diagnostic trace with synthetic physical export
 settings. Manufacturing flat-pattern UVs, exact authored line-attachment
-vertices, authored paired seams and stitch mechanics, live bidirectional
-control, an authoritative settings source/engine CLI, and general cut-cell
+vertices, authored paired seams and stitch mechanics, authored nonplanar
+opening-cap tessellation, live bidirectional control, an authoritative settings
+source/engine CLI, and general cut-cell
 moving interfaces, nonplanar topology events, curved or changing grid-side
 correspondence, AMR, and full CFD evolution kernels remain open work.
 Phase 2 has started with a dependency-free uniform periodic MAC-grid

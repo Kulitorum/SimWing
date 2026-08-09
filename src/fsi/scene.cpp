@@ -1,4 +1,5 @@
 #include "scene.h"
+#include "opening_cap_topology.h"
 
 #include <algorithm>
 #include <array>
@@ -152,11 +153,11 @@ const Vertex* findVertex(const std::unordered_map<StableId, const Vertex*>& byId
     return found == byId.end() ? nullptr : found->second;
 }
 
-bool degenerate(const Triangle& triangle,
+bool degenerate(const std::array<StableId, 3>& vertexIds,
                 const std::unordered_map<StableId, const Vertex*>& vertices) {
-    const Vertex* a = findVertex(vertices, triangle.vertexIds[0]);
-    const Vertex* b = findVertex(vertices, triangle.vertexIds[1]);
-    const Vertex* c = findVertex(vertices, triangle.vertexIds[2]);
+    const Vertex* a = findVertex(vertices, vertexIds[0]);
+    const Vertex* b = findVertex(vertices, vertexIds[1]);
+    const Vertex* c = findVertex(vertices, vertexIds[2]);
     if (!a || !b || !c || !finite(a->positionMeters)
         || !finite(b->positionMeters) || !finite(c->positionMeters)) {
         return false;
@@ -279,7 +280,10 @@ bool withinBinarySafetyLimits(const Scene& scene, std::string& error) {
     }
     for (const Opening& opening : scene.openings) {
         if (!claim(opening.orderedVertexIds.size(), sizeof(StableId),
-                   "opening boundary count")) {
+                   "opening boundary count")
+            || !claim(opening.capTriangleVertexIds.size(),
+                      sizeof(std::array<StableId, 3>),
+                      "opening cap-triangle count")) {
             return false;
         }
     }
@@ -713,7 +717,8 @@ ValidationReport validateScene(const Scene& scene) {
             }
             localVertices.insert(vertexId);
         }
-        if (localVertices.size() != 3 || degenerate(*triangle, verticesById)) {
+        if (localVertices.size() != 3
+            || degenerate(triangle->vertexIds, verticesById)) {
             add(report, ValidationCode::DegenerateTriangle,
                 EntityKind::Triangle, triangle->id,
                 "triangle has repeated or effectively collinear vertices");
@@ -775,10 +780,33 @@ ValidationReport validateScene(const Scene& scene) {
                 invalidLoop = true;
             }
         }
-        if (invalidLoop) {
+        for (const auto& triangle : opening->capTriangleVertexIds) {
+            for (const StableId vertexId : triangle) {
+                if (!vertexIds.contains(vertexId)) {
+                    add(report, ValidationCode::MissingVertexReference,
+                        EntityKind::Opening, opening->id,
+                        "opening cap references a missing vertex");
+                }
+            }
+            if (degenerate(triangle, verticesById)) {
+                add(report, ValidationCode::DegenerateTriangle,
+                    EntityKind::Opening, opening->id,
+                    "opening cap has an effectively degenerate triangle");
+            }
+        }
+        if (!opening->capTriangleVertexIds.empty()
+            && scene.metadata.schemaMinor < 2) {
+            add(report, ValidationCode::UnsupportedSchema,
+                EntityKind::Opening, opening->id,
+                "authored opening caps require scene-v2.2");
+        }
+        if (invalidLoop
+            || !detail::validOrientedBoundaryDisk<StableId>(
+                opening->orderedVertexIds,
+                opening->capTriangleVertexIds)) {
             add(report, ValidationCode::InvalidOpening, EntityKind::Opening,
                 opening->id,
-                "opening boundary must contain at least three unique vertices");
+                "opening boundary and optional cap must form one oriented triangulated disk");
         }
         if (!regionIds.contains(opening->negativeSideRegionId)
             || !regionIds.contains(opening->positiveSideRegionId)) {
@@ -1092,6 +1120,12 @@ bool writeScene(const Scene& scene,
             writer.u64(opening.negativeSideRegionId);
             writer.u64(opening.positiveSideRegionId);
             writer.u8(static_cast<std::uint8_t>(opening.role));
+            writer.count(opening.capTriangleVertexIds.size());
+            for (const auto& triangle : opening.capTriangleVertexIds) {
+                for (const StableId vertexId : triangle) {
+                    writer.u64(vertexId);
+                }
+            }
         }
         writer.count(canonical.seams.size());
         for (const Seam& seam : canonical.seams) {
@@ -1182,7 +1216,8 @@ bool readScene(std::istream& input,
             reader.fail("scene stream has an invalid magic header");
         }
         const std::uint32_t binaryVersion = reader.u32();
-        if (reader.ok() && binaryVersion != sceneBinaryVersion) {
+        if (reader.ok() && binaryVersion != 2
+            && binaryVersion != sceneBinaryVersion) {
             reader.fail("scene stream uses an unsupported binary version");
         }
 
@@ -1254,6 +1289,15 @@ bool readScene(std::istream& input,
             opening.negativeSideRegionId = reader.u64();
             opening.positiveSideRegionId = reader.u64();
             opening.role = static_cast<OpeningRole>(reader.u8());
+            if (binaryVersion >= 3) {
+                resizeFromCount(opening.capTriangleVertexIds, reader,
+                                "opening cap triangle");
+                for (auto& triangle : opening.capTriangleVertexIds) {
+                    for (StableId& vertexId : triangle) {
+                        vertexId = reader.u64();
+                    }
+                }
+            }
         }
         resizeFromCount(decoded.seams, reader, "seam");
         for (Seam& seam : decoded.seams) {

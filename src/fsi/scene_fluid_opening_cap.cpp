@@ -119,14 +119,12 @@ Edge edgeKey(const std::size_t first, const std::size_t second) {
     return {std::min(first, second), std::max(first, second)};
 }
 
-struct PlanarLoopGeometry {
+struct LoopGeometry {
     Vec3 unitNormal;
     double scaleMeters = 0.0;
 };
 
-PlanarLoopGeometry planarLoopGeometry(
-    const std::span<const Vec3> positions,
-    const SceneFluidOpeningCapSettings& settings) {
+LoopGeometry loopGeometry(const std::span<const Vec3> positions) {
     Vec3 newell;
     Vec3 minimum = positions.front();
     Vec3 maximum = minimum;
@@ -151,17 +149,23 @@ PlanarLoopGeometry planarLoopGeometry(
             "scene fluid opening cap has a degenerate boundary");
     }
     const Vec3 normal = scaled(newell, 1.0 / normalLength);
+    return {normal, scale};
+}
+
+void validatePlanarity(
+    const std::span<const Vec3> positions,
+    const LoopGeometry geometry,
+    const SceneFluidOpeningCapSettings& settings) {
     const Vec3& planePoint = positions.front();
     for (const auto& position : positions) {
         const double distance = dot(
-            subtract(position, planePoint), normal);
+            subtract(position, planePoint), geometry.unitNormal);
         if (!std::isfinite(distance)
             || std::abs(distance) > settings.planarityToleranceMeters) {
             throw std::invalid_argument(
                 "scene fluid opening cap is not planar within tolerance");
         }
     }
-    return {normal, scale};
 }
 
 double signedTurn(const Vec3& first,
@@ -184,10 +188,13 @@ bool segmentIntersection(
     const double firstFourth = signedTurn(first, second, fourth, normal);
     const double thirdFirst = signedTurn(third, fourth, first, normal);
     const double thirdSecond = signedTurn(third, fourth, second, normal);
-    const auto withinSegment = [tolerance](
+    const auto withinSegment = [normal, tolerance](
         const Vec3& begin, const Vec3& end, const Vec3& point) {
-        return dot(subtract(point, begin), subtract(point, end))
-            <= tolerance;
+        const auto projected = [normal](const Vec3& value) {
+            return subtract(value, scaled(normal, dot(value, normal)));
+        };
+        return dot(projected(subtract(point, begin)),
+                   projected(subtract(point, end))) <= tolerance;
     };
     if ((std::abs(firstThird) <= tolerance
             && withinSegment(first, second, third))
@@ -210,10 +217,11 @@ bool segmentIntersection(
 
 void validateSimpleLoop(
     const std::span<const Vec3> positions,
-    const PlanarLoopGeometry geometry,
+    const LoopGeometry geometry,
     const SceneFluidOpeningCapSettings& settings,
     std::size_t& intersectionTestCount,
-    const std::size_t maximumIntersectionTests) {
+    const std::size_t maximumIntersectionTests,
+    const bool requireNondegenerateTurns) {
     const double tolerance = settings.convexityTolerance
         * geometry.scaleMeters * geometry.scaleMeters;
     for (std::size_t index = 0; index < positions.size(); ++index) {
@@ -221,9 +229,24 @@ void validateSimpleLoop(
             (index + positions.size() - 1) % positions.size()];
         const Vec3& current = positions[index];
         const Vec3& next = positions[(index + 1) % positions.size()];
+        const Vec3 incoming = subtract(current, previous);
+        const Vec3 outgoing = subtract(next, current);
+        const Vec3 projectedIncoming = subtract(
+            incoming,
+            scaled(geometry.unitNormal,
+                   dot(incoming, geometry.unitNormal)));
+        const Vec3 projectedOutgoing = subtract(
+            outgoing,
+            scaled(geometry.unitNormal,
+                   dot(outgoing, geometry.unitNormal)));
         const double turn = signedTurn(
             previous, current, next, geometry.unitNormal);
-        if (!std::isfinite(turn) || std::abs(turn) <= tolerance) {
+        if (!std::isfinite(turn)
+            || dot(projectedIncoming, projectedIncoming) <= tolerance
+            || dot(projectedOutgoing, projectedOutgoing) <= tolerance
+            || (std::abs(turn) <= tolerance
+                && (requireNondegenerateTurns
+                    || dot(projectedIncoming, projectedOutgoing) <= 0.0))) {
             throw std::invalid_argument(
                 "scene fluid opening cap has a degenerate boundary turn");
         }
@@ -269,7 +292,7 @@ bool pointInsideTriangle(
 std::vector<std::array<std::size_t, 3>> triangulateReferenceLoop(
     const std::span<const std::size_t> vertexIndices,
     const std::span<const Vec3> positions,
-    const PlanarLoopGeometry geometry,
+    const LoopGeometry geometry,
     const SceneFluidOpeningCapSettings& settings,
     std::size_t& pointTestCount,
     const std::size_t maximumPointTests) {
@@ -547,18 +570,26 @@ SceneFluidOpeningCapSet buildCaps(
             referencePositions.push_back(
                 surface.vertices[vertex].referencePositionMeters);
         }
-        const auto currentGeometry = planarLoopGeometry(
-            currentPositions, settings);
-        const auto referenceGeometry = planarLoopGeometry(
-            referencePositions, settings);
+        const bool authoredTriangulation =
+            !opening.capTriangleVertexIndices.empty();
+        const auto currentGeometry = loopGeometry(currentPositions);
+        const auto referenceGeometry = loopGeometry(referencePositions);
+        if (!authoredTriangulation) {
+            validatePlanarity(
+                currentPositions, currentGeometry, settings);
+            validatePlanarity(
+                referencePositions, referenceGeometry, settings);
+        }
         validateSimpleLoop(
             currentPositions, currentGeometry, settings,
             boundaryIntersectionTestCount,
-            limits.maximumBoundaryIntersectionTests);
+            limits.maximumBoundaryIntersectionTests,
+            !authoredTriangulation);
         validateSimpleLoop(
             referencePositions, referenceGeometry, settings,
             boundaryIntersectionTestCount,
-            limits.maximumBoundaryIntersectionTests);
+            limits.maximumBoundaryIntersectionTests,
+            !authoredTriangulation);
         const std::size_t requiredTriangles = capOrder.size() - 2;
         if (result.triangles.size() > limits.maximumCapTriangles
             || requiredTriangles
@@ -566,10 +597,20 @@ SceneFluidOpeningCapSet buildCaps(
             throw std::length_error(
                 "scene fluid opening-cap triangles exceed their limit");
         }
-        const auto triangleVertices = triangulateReferenceLoop(
-            capOrder, referencePositions, referenceGeometry, settings,
-            triangulationPointTestCount,
-            limits.maximumTriangulationPointTests);
+        std::vector<std::array<std::size_t, 3>> triangleVertices;
+        if (authoredTriangulation) {
+            triangleVertices = opening.capTriangleVertexIndices;
+            if (!capOrderMatchesOpening) {
+                for (auto& triangle : triangleVertices) {
+                    std::swap(triangle[1], triangle[2]);
+                }
+            }
+        } else {
+            triangleVertices = triangulateReferenceLoop(
+                capOrder, referencePositions, referenceGeometry, settings,
+                triangulationPointTestCount,
+                limits.maximumTriangulationPointTests);
+        }
         const Vec3 normal = currentGeometry.unitNormal;
 
         SceneFluidOpeningCap cap;
@@ -594,19 +635,55 @@ SceneFluidOpeningCapSet buildCaps(
             const Vec3 areaVector = cross(
                 subtract(second, first), subtract(third, first));
             const double area = 0.5 * length(areaVector);
+            bool referenceValid = true;
+            if (authoredTriangulation) {
+                const Vec3& referenceFirst =
+                    surface.vertices[vertices[0]].referencePositionMeters;
+                const Vec3& referenceSecond =
+                    surface.vertices[vertices[1]].referencePositionMeters;
+                const Vec3& referenceThird =
+                    surface.vertices[vertices[2]].referencePositionMeters;
+                const Vec3 referenceAreaVector = cross(
+                    subtract(referenceSecond, referenceFirst),
+                    subtract(referenceThird, referenceFirst));
+                const double referenceArea =
+                    0.5 * length(referenceAreaVector);
+                const double referenceTolerance =
+                    settings.convexityTolerance
+                    * referenceGeometry.scaleMeters
+                    * referenceGeometry.scaleMeters;
+                referenceValid = std::isfinite(referenceArea)
+                    && referenceArea
+                        > settings.minimumTriangleAreaSquareMeters
+                    && dot(referenceAreaVector,
+                           referenceGeometry.unitNormal)
+                        > referenceTolerance;
+            }
+            const double currentOrientationTolerance =
+                authoredTriangulation
+                ? settings.convexityTolerance
+                    * currentGeometry.scaleMeters
+                    * currentGeometry.scaleMeters
+                : 0.0;
             if (!std::isfinite(area)
                 || !(area > settings.minimumTriangleAreaSquareMeters)
-                || !(dot(areaVector, normal) > 0.0)) {
+                || !(dot(areaVector, normal)
+                     > currentOrientationTolerance)
+                || !referenceValid) {
                 throw std::invalid_argument(
                     "scene fluid opening-cap triangle is invalid");
             }
+            const Vec3 triangleNormal = authoredTriangulation
+                ? scaled(areaVector, 0.5 / area)
+                : normal;
             const Vec3 centroid{
                 (first.x + second.x + third.x) / 3.0,
                 (first.y + second.y + third.y) / 3.0,
                 (first.z + second.z + third.z) / 3.0,
             };
             result.triangles.push_back({
-                openingIndex, ordinal, vertices, normal, centroid, area});
+                openingIndex, ordinal, vertices, triangleNormal,
+                centroid, area});
             cap.areaSquareMeters += area;
             weightedCentroid = add(
                 weightedCentroid, scaled(centroid, area));

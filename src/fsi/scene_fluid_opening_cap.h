@@ -89,14 +89,14 @@ struct SceneFluidOpeningCap {
     }
 };
 
-// A virtual cap is fluid topology, not fabric. Planar simple opening loops
-// exactly own every boundary edge of an otherwise closed, consistently wound
-// separating surface. Convex loops retain the exact fan triangulation;
-// concave loops receive deterministic ear clipping from reference geometry so
-// triangle identity cannot change with accepted motion. Cap winding is derived
-// from the adjacent authored triangle edge and retains the opening's
-// negative/positive region order. Nonplanar loops require authored interior
-// geometry and remain rejected. No cap enters Structure or traction transfer.
+// A virtual cap is fluid topology, not fabric. Simple opening loops exactly own
+// every boundary edge of an otherwise closed, consistently wound separating
+// surface. Planar loops may omit cap triangles: convex loops then retain the
+// exact fan and concave loops receive deterministic reference-geometry ear
+// clipping. A nonplanar loop must author one oriented boundary-vertex disk;
+// its individual triangle normals survive accepted motion. Cap winding is
+// derived from the adjacent fabric edge and retains the opening's
+// negative/positive region order. No cap enters Structure or traction transfer.
 struct SceneFluidOpeningCapSet {
     std::uint32_t version = sceneFluidOpeningCapVersion;
     std::uint64_t fingerprint = 0;

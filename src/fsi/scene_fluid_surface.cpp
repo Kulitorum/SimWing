@@ -1,4 +1,5 @@
 #include "scene_fluid_surface.h"
+#include "opening_cap_topology.h"
 
 #include <algorithm>
 #include <bit>
@@ -168,6 +169,17 @@ std::uint64_t definitionFingerprint(
         fingerprint.integer(static_cast<std::uint64_t>(
             opening.positiveSideRegionIndex));
         fingerprint.enumeration(opening.role);
+        if (!opening.capTriangleVertexIndices.empty()) {
+            fingerprint.integer(UINT64_C(0x4341505452495631));
+            fingerprint.integer(static_cast<std::uint64_t>(
+                opening.capTriangleVertexIndices.size()));
+            for (const auto& triangle :
+                 opening.capTriangleVertexIndices) {
+                for (const std::size_t index : triangle) {
+                    fingerprint.integer(static_cast<std::uint64_t>(index));
+                }
+            }
+        }
     }
     return fingerprint.value();
 }
@@ -263,7 +275,20 @@ void validateDefinitionImpl(const SceneFluidSurfaceDefinition& definition) {
                 opening.orderedVertexIndices.end(),
                 [&](const std::size_t index) {
                     return index >= definition.vertices.size();
-                })) {
+                })
+            || std::any_of(
+                opening.capTriangleVertexIndices.begin(),
+                opening.capTriangleVertexIndices.end(),
+                [&](const auto& triangle) {
+                    return std::ranges::any_of(
+                        triangle,
+                        [&](const std::size_t index) {
+                            return index >= definition.vertices.size();
+                        });
+                })
+            || !detail::validOrientedBoundaryDisk<std::size_t>(
+                opening.orderedVertexIndices,
+                opening.capTriangleVertexIndices)) {
             throw std::invalid_argument(
                 "scene fluid-surface opening mapping is invalid");
         }
@@ -398,6 +423,7 @@ SceneFluidSurfaceAssembly assembleSceneFluidSurfaceImpl(
     }
 
     std::size_t openingVertexCount = 0;
+    std::size_t openingCapTriangleCount = 0;
     const auto orderedOpenings = sortedPointers(scene.openings);
     for (const Opening* opening : orderedOpenings) {
         if (!checkedAdd(
@@ -410,6 +436,19 @@ SceneFluidSurfaceAssembly assembleSceneFluidSurfaceImpl(
                 opening->id,
                 std::nullopt,
                 "scene fluid-surface opening vertex count exceeds its configured limit",
+            });
+        }
+        if (!checkedAdd(
+                openingCapTriangleCount,
+                opening->capTriangleVertexIds.size())
+            || openingCapTriangleCount
+                > limits.maximumOpeningCapTriangles) {
+            return failedAssembly({
+                SceneFluidSurfaceDiagnosticCode::LimitExceeded,
+                EntityKind::Opening,
+                opening->id,
+                std::nullopt,
+                "scene fluid-surface opening cap-triangle count exceeds its configured limit",
             });
         }
     }
@@ -485,6 +524,9 @@ SceneFluidSurfaceAssembly assembleSceneFluidSurfaceImpl(
             6 * sizeof(std::size_t))
         || !checkedBytes(
             mappingBytes, openingVertexCount, sizeof(std::size_t))
+        || !checkedBytes(
+            mappingBytes, openingCapTriangleCount,
+            sizeof(std::array<std::size_t, 3>))
         || !checkedBytes(
             mappingBytes, scene.openings.size(),
             2 * sizeof(std::size_t))
@@ -562,6 +604,17 @@ SceneFluidSurfaceAssembly assembleSceneFluidSurfaceImpl(
         opening.positiveSideRegionIndex =
             *definition.mappings.regionIndex(source->positiveSideRegionId);
         opening.role = source->role;
+        opening.capTriangleVertexIndices.reserve(
+            source->capTriangleVertexIds.size());
+        for (const auto& sourceTriangle :
+             source->capTriangleVertexIds) {
+            std::array<std::size_t, 3> triangle{};
+            for (std::size_t corner = 0; corner < 3; ++corner) {
+                triangle[corner] = *definition.mappings.vertexIndex(
+                    sourceTriangle[corner]);
+            }
+            opening.capTriangleVertexIndices.push_back(triangle);
+        }
         definition.openings.push_back(std::move(opening));
         definition.mappings.openingIds.push_back(source->id);
     }

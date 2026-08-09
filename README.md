@@ -519,12 +519,14 @@ origin; deterministic convex clipping distributes that chain across exact
 cells, including cells wholly inside a region and cases whose face-local chains
 remain open at tile boundaries. Every tetrahedron closes across its clipped
 cells, every cell closes across its regions, and the global sum is compared with
-an independent whole-surface divergence volume. A separate immutable opening-cap
-owner now closes an explicitly authored planar simple intake or crossport loop
-for volume accounting only. Convex loops retain their exact fan; concave loops
-use deterministic reference-geometry ear clipping, so triangle identity stays
-fixed under accepted motion. Its winding comes from the adjacent fabric
-boundary and it never becomes fabric or traction. The analytic open-tetrahedron
+an independent whole-surface divergence volume. Scene-v2.2 may now attach an
+oriented boundary-vertex disk to an intake or crossport. A separate immutable
+opening-cap owner closes those explicit planar or nonplanar facets for volume
+accounting only. When that disk is absent, planar convex loops retain their
+exact fan and planar concave loops use deterministic reference-geometry ear
+clipping, so triangle identity stays fixed under accepted motion. Winding comes
+from the adjacent fabric boundary; the individual authored facet normals
+survive, and no cap becomes fabric or traction. The analytic open-tetrahedron
 regression therefore has a finite cell volume. Stable one-point triangle
 samples now exactly integrate the accepted piecewise-linear cap velocity into
 per-opening surface-sweep rates; a rigid material-plus-cap surface closes that
@@ -736,10 +738,12 @@ pressure on the wire. Version 9 preserves transported-region and wall-exchange
 projection provenance, including explicit-normal embedded-opening momentum,
 and bounds/revalidates every momentum control volume and material quadrature
 traction before publication.
-Nonplanar or self-intersecting openings, surface
-junctions, periodic-boundary ambiguity, and general moving-boundary fluid
-equations still reject or remain open; the grid epoch itself continues to own
-geometry and transfer only.
+Nonplanar openings without authored cap triangles, self-intersecting or folded
+caps, opening-only interior construction vertices, surface junctions,
+periodic-boundary ambiguity, and general moving-boundary fluid equations still
+reject or remain open; the grid epoch itself continues to own geometry and
+transfer only. The analytical model exporter does not yet populate the new
+nonplanar cap tessellation.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

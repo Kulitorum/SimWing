@@ -16,8 +16,8 @@ using StableId = std::uint64_t;
 
 inline constexpr StableId invalidStableId = 0;
 inline constexpr std::uint32_t sceneSchemaMajor = 2;
-inline constexpr std::uint32_t sceneSchemaMinor = 1;
-inline constexpr std::uint32_t sceneBinaryVersion = 2;
+inline constexpr std::uint32_t sceneSchemaMinor = 2;
+inline constexpr std::uint32_t sceneBinaryVersion = 3;
 
 struct Vec2 {
     double x = 0.0;
@@ -138,6 +138,10 @@ struct Opening {
     StableId negativeSideRegionId = invalidStableId;
     StableId positiveSideRegionId = invalidStableId;
     OpeningRole role = OpeningRole::Intake;
+    // Optional oriented disk tessellation for a nonplanar mouth. Every corner
+    // references a boundary vertex above; interior construction vertices have
+    // no trusted motion rule yet. Empty retains the planar automatic-cap path.
+    std::vector<std::array<StableId, 3>> capTriangleVertexIds;
 };
 
 // The chains have equal cardinality and pair element-by-element. Distinct

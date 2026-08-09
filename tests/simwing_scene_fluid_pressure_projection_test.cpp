@@ -196,6 +196,17 @@ Scene concaveOpenScene() {
     return scene;
 }
 
+Scene authoredNonPlanarOpenScene() {
+    auto scene = concaveOpenScene();
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-pressure-projection-authored-nonplanar";
+    scene.vertices[3].positionMeters.x = 2.5;
+    scene.openings.front().capTriangleVertexIds = {
+        {{11, 12, 13}}, {{11, 13, 14}},
+    };
+    return scene;
+}
+
 Scene reversedOpenScene() {
     auto scene = openScene();
     scene.metadata.designChecksum =
@@ -681,6 +692,57 @@ void testConcaveEmbeddedOpeningProjection() {
               && momentum.diagnostics.embeddedOpeningLinkCount == 2
               && momentum.diagnostics.normalEquationControlCount == 2,
           "concave off-face intake closes pressure and explicit-normal region momentum");
+    validateSceneFluidRegionMomentumState(
+        momentum, grid(), fixture.pressureVolumes, fixture.faceLinks,
+        fixture.openingPatches, projection, velocity);
+}
+
+void testAuthoredNonPlanarEmbeddedOpeningProjection() {
+    Fixture fixture(authoredNonPlanarOpenScene(), true);
+    fluid::MacVelocityField velocity(grid());
+    std::ranges::fill(velocity.xFaces(), 1.25);
+    std::ranges::fill(velocity.yFaces(), -0.1);
+    std::ranges::fill(velocity.zFaces(), 0.2);
+    const auto openingFlux = fixture.flux(velocity);
+    std::vector<double> warm(fixture.pressureOperator.rows.size(), 0.0);
+    const auto projection = fixture.project(
+        velocity, openingFlux, warm, strictSettings());
+    const auto momentum = reconstructSceneFluidRegionMomentumState(
+        grid(), fixture.pressureVolumes, fixture.faceLinks,
+        fixture.openingPatches, projection, velocity);
+    check(fixture.caps.triangles.size() == 2
+              && fixture.volumes.openingCapCount == 1
+              && fixture.volumes.openingCapAreaSquareMeters
+                  == fixture.caps.totalAreaSquareMeters
+              && fixture.openingPatches.patches.size() == 2
+              && fixture.faceLinks.embeddedOpeningLinkCount == 2,
+          "authored nonplanar intake reaches exact cut-cell volume and embedded links");
+    check(fixture.caps.triangles[0].unitNormalNegativeToPositive
+                  .x
+              != fixture.caps.triangles[1]
+                     .unitNormalNegativeToPositive
+                     .x
+              || fixture.caps.triangles[0]
+                     .unitNormalNegativeToPositive
+                     .y
+                  != fixture.caps.triangles[1]
+                         .unitNormalNegativeToPositive
+                         .y
+              || fixture.caps.triangles[0]
+                     .unitNormalNegativeToPositive
+                     .z
+                  != fixture.caps.triangles[1]
+                         .unitNormalNegativeToPositive
+                         .z,
+          "authored nonplanar intake keeps distinct per-triangle normals");
+    check(projection.diagnostics.accepted
+              && projection.diagnostics.authoredOpeningLinkCount == 2
+              && projection.diagnostics
+                     .correctedNetOutwardVolumeRateMaximumCubicMetersPerSecond
+                  < 2.0e-11
+              && momentum.diagnostics.embeddedOpeningLinkCount == 2
+              && momentum.diagnostics.normalEquationControlCount == 2,
+          "authored nonplanar intake closes pressure and explicit-normal momentum");
     validateSceneFluidRegionMomentumState(
         momentum, grid(), fixture.pressureVolumes, fixture.faceLinks,
         fixture.openingPatches, projection, velocity);
@@ -1462,6 +1524,7 @@ int main() {
         testFaceAlignedOpeningProjection();
         testEmbeddedOpeningProjection();
         testConcaveEmbeddedOpeningProjection();
+        testAuthoredNonPlanarEmbeddedOpeningProjection();
         testZeroFlowAndRejectedAttempt();
         testLinkResolvedContinuation();
         testAreaChangingLinkContinuation();

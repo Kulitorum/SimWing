@@ -91,8 +91,9 @@ struct SceneFluidRegionVolume {
     bool operator==(const SceneFluidRegionVolume&) const = default;
 };
 
-// First bounded cut-cell volume subset. Separating fabric plus optional planar,
-// simple authored opening caps must form consistently wound two-sided
+// First bounded cut-cell volume subset. Separating fabric plus optional simple
+// planar automatic or explicitly tessellated nonplanar opening caps must form
+// consistently wound two-sided
 // triangle manifolds around one Outside root. Sparse positive region volumes
 // are published for every cell. Each oriented material/cap triangle defines
 // one signed tetrahedron against the grid origin; exact convex clipping

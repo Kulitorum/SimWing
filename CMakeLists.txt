@@ -199,6 +199,7 @@ endif()
 # inherited Playground simulation library: only the structural adapter uses
 # the isolated XPBD core.
 add_library(simwing_scene STATIC
+    src/fsi/opening_cap_topology.h
     src/fsi/scene.cpp
     src/fsi/scene.h
 )

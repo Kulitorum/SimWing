@@ -23,6 +23,7 @@ struct SceneFluidSurfaceLimits {
     std::size_t maximumOpenings = 1'000'000;
     std::size_t maximumOpeningVertices = 10'000'000;
     std::size_t maximumMappingBytes = 256ULL * 1024ULL * 1024ULL;
+    std::size_t maximumOpeningCapTriangles = 10'000'000;
 };
 
 enum class SceneFluidSurfaceDiagnosticCode : std::uint16_t {
@@ -88,6 +89,7 @@ struct SceneFluidSurfaceOpening {
     std::size_t negativeSideRegionIndex = 0;
     std::size_t positiveSideRegionIndex = 0;
     OpeningRole role = OpeningRole::Intake;
+    std::vector<std::array<std::size_t, 3>> capTriangleVertexIndices;
 
     bool operator==(const SceneFluidSurfaceOpening&) const = default;
 };
