@@ -1,5 +1,6 @@
 #include "scene_fluid_pressure_epoch.h"
 #include "scene_fluid_pressure_sampling.h"
+#include "scene_fluid_mimetic_pressure_warm_start.h"
 #include "scene_fluid_region_rebase.h"
 #include "scene_fluid_region_wall.h"
 
@@ -549,6 +550,61 @@ void testAppearedControlRegionRebase() {
     const auto previousEpoch = buildSceneFluidPressureEpoch(
         fixture.surface.definition, previousState, grid(), fixture.transfer,
         fixture.connectivity);
+    const auto previousMimeticControls =
+        buildSceneFluidMimeticControlCells(
+            fixture.surface.definition, previousState, grid(),
+            previousEpoch.gridEpoch, previousEpoch.openingCaps,
+            previousEpoch.openingQuadrature,
+            previousEpoch.openingPatches,
+            previousEpoch.pressureControlVolumes,
+            previousEpoch.pressureFaceLinks);
+    const auto previousMimeticFull =
+        buildSceneFluidMimeticTraceSystem(previousMimeticControls);
+    const auto previousMimeticCondensed =
+        buildSceneFluidMimeticCondensedTraceSystem(previousMimeticFull);
+    std::vector<double> previousPredictedVolumeRates(
+        previousMimeticControls.controlCells.size(), 0.0);
+    std::size_t mimeticReceiver = 1;
+    while (mimeticReceiver < previousMimeticControls.controlCells.size()
+           && previousMimeticControls.controlCells[mimeticReceiver]
+                  .componentIndex
+               != previousMimeticControls.controlCells.front()
+                  .componentIndex) {
+        ++mimeticReceiver;
+    }
+    check(mimeticReceiver < previousPredictedVolumeRates.size(),
+          "mimetic warm-start fixture finds a balanced source pair");
+    if (mimeticReceiver < previousPredictedVolumeRates.size()) {
+        previousPredictedVolumeRates.front() = 0.001;
+        previousPredictedVolumeRates[mimeticReceiver] = -0.001;
+    }
+    SceneFluidMimeticPressureSourceSettings mimeticSourceSettings;
+    mimeticSourceSettings.densityKgPerCubicMeter = 1.0;
+    mimeticSourceSettings.timeStepSeconds = 0.25;
+    const auto previousMimeticSources =
+        buildSceneFluidMimeticPressureSources(
+            previousMimeticControls, previousPredictedVolumeRates,
+            mimeticSourceSettings);
+    SceneFluidMimeticTraceSolveSettings mimeticSolveSettings;
+    mimeticSolveSettings.absoluteResidualTolerancePascalsMeters = 1.0e-12;
+    mimeticSolveSettings.relativeResidualTolerance = 1.0e-13;
+    mimeticSolveSettings
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-11;
+    mimeticSolveSettings.maximumIterations = 4000;
+    const std::vector<double> zeroPreviousMimeticWarm(
+        previousMimeticCondensed.traces.size(), 0.0);
+    const auto previousMimeticPressure =
+        solveSceneFluidMimeticPressureSystem(
+            previousMimeticCondensed, previousMimeticFull,
+            previousMimeticSources, zeroPreviousMimeticWarm,
+            mimeticSolveSettings);
+    check(previousMimeticPressure.diagnostics.accepted,
+          "mimetic warm-start source pressure solve is accepted");
+    const auto previousMimeticState =
+        captureSceneFluidMimeticPressureState(
+            previousMimeticControls, previousMimeticFull,
+            previousMimeticCondensed, previousMimeticSources,
+            previousMimeticPressure);
     fluid::MacVelocityField velocity(grid());
     std::ranges::fill(velocity.yFaces(), 0.4);
     std::ranges::fill(velocity.zFaces(), -0.2);
@@ -610,6 +666,158 @@ void testAppearedControlRegionRebase() {
               && topologyTransition.retirementRecipients.empty()
               && topologyTransition.maximumAppearanceDonorCount > 0,
           "pressure topology transition deterministically owns the appeared row and its donors");
+    const auto currentMimeticControls =
+        buildSceneFluidMimeticControlCells(
+            fixture.surface.definition, currentState, grid(),
+            currentEpoch.gridEpoch, currentEpoch.openingCaps,
+            currentEpoch.openingQuadrature, currentEpoch.openingPatches,
+            currentEpoch.pressureControlVolumes,
+            currentEpoch.pressureFaceLinks);
+    const auto currentMimeticFull =
+        buildSceneFluidMimeticTraceSystem(currentMimeticControls);
+    const auto currentMimeticCondensed =
+        buildSceneFluidMimeticCondensedTraceSystem(currentMimeticFull);
+    const auto mimeticWarm = buildSceneFluidMimeticPressureWarmStart(
+        previousMimeticState, previousMimeticControls,
+        previousMimeticFull, previousMimeticCondensed,
+        currentMimeticControls, currentMimeticFull,
+        currentMimeticCondensed, topologyTransition);
+    const auto repeatedMimeticWarm =
+        buildSceneFluidMimeticPressureWarmStart(
+            previousMimeticState, previousMimeticControls,
+            previousMimeticFull, previousMimeticCondensed,
+            currentMimeticControls, currentMimeticFull,
+            currentMimeticCondensed, topologyTransition);
+    std::vector<double> previousMimeticControlPressures;
+    previousMimeticControlPressures.reserve(
+        previousMimeticState.controls.size());
+    for (const auto& control : previousMimeticState.controls) {
+        previousMimeticControlPressures.push_back(
+            control.pressurePascals);
+    }
+    const auto rebasedMimeticControlPressures =
+        rebaseSceneFluidPressureWarmStart(
+            previousEpoch.pressureControlVolumes,
+            currentEpoch.pressureControlVolumes, topologyTransition,
+            previousMimeticControlPressures);
+    bool exactMimeticTracePolicy = true;
+    std::size_t observedRetainedMimeticTraces = 0;
+    std::size_t observedAppearedMimeticTraces = 0;
+    for (const auto& trace : currentMimeticCondensed.traces) {
+        const auto previousTrace = std::ranges::find(
+            previousMimeticState.traces, trace.stableId,
+            &SceneFluidMimeticAcceptedTracePressure::stableId);
+        double expectedPressure = 0.0;
+        if (previousTrace != previousMimeticState.traces.end()) {
+            expectedPressure = previousTrace->pressurePascals;
+            ++observedRetainedMimeticTraces;
+        } else {
+            const auto& fullTrace =
+                currentMimeticFull.traces[trace.fullTraceIndex];
+            for (std::size_t offset = 0;
+                 offset < fullTrace.incidenceCount; ++offset) {
+                const auto& incidence = currentMimeticFull.incidences[
+                    fullTrace.firstIncidence + offset];
+                expectedPressure += rebasedMimeticControlPressures[
+                    incidence.controlCellIndex];
+            }
+            expectedPressure /= static_cast<double>(
+                fullTrace.incidenceCount);
+            ++observedAppearedMimeticTraces;
+        }
+        expectedPressure -= mimeticWarm.componentGaugeShiftsPascals[
+            trace.componentIndex];
+        if (trace.isGauge) {
+            expectedPressure = 0.0;
+        }
+        exactMimeticTracePolicy = exactMimeticTracePolicy
+            && mimeticWarm.reducedTracePascals[trace.traceIndex]
+                == expectedPressure;
+    }
+    check(mimeticWarm == repeatedMimeticWarm
+              && mimeticWarm.fingerprint != 0
+              && mimeticWarm.sourcePressureStateFingerprint
+                  == previousMimeticState.fingerprint
+              && mimeticWarm.sourceTopologyTransitionFingerprint
+                  == topologyTransition.fingerprint
+              && mimeticWarm.retainedTraceCount
+                  == observedRetainedMimeticTraces
+              && mimeticWarm.appearedTraceCount
+                  == observedAppearedMimeticTraces
+              && mimeticWarm.appearedTraceCount > 0
+              && mimeticWarm.disappearedTraceCount
+                  == previousMimeticState.traces.size()
+                      - observedRetainedMimeticTraces
+              && exactMimeticTracePolicy,
+          "mimetic pressure warm start preserves retained traces, initializes appearances from rebased endpoints, and normalizes current gauges");
+    bool exactMimeticGauges = true;
+    for (const std::size_t gauge :
+         currentMimeticCondensed.componentGaugeTraceIndices) {
+        exactMimeticGauges = exactMimeticGauges
+            && mimeticWarm.reducedTracePascals[gauge] == 0.0;
+    }
+    check(exactMimeticGauges,
+          "mimetic pressure warm start fixes every current gauge exactly");
+    validateSceneFluidMimeticPressureWarmStart(
+        mimeticWarm, previousMimeticState, previousMimeticControls,
+        previousMimeticFull, previousMimeticCondensed,
+        currentMimeticControls, currentMimeticFull,
+        currentMimeticCondensed, topologyTransition);
+    std::vector<double> zeroCurrentPredictedVolumeRates(
+        currentMimeticControls.controlCells.size(), 0.0);
+    const auto zeroCurrentMimeticSources =
+        buildSceneFluidMimeticPressureSources(
+            currentMimeticControls, zeroCurrentPredictedVolumeRates,
+            mimeticSourceSettings);
+    const auto warmStartedCurrentPressure =
+        solveSceneFluidMimeticPressureSystem(
+            currentMimeticCondensed, currentMimeticFull,
+            zeroCurrentMimeticSources, mimeticWarm.reducedTracePascals,
+            mimeticSolveSettings);
+    check(warmStartedCurrentPressure.diagnostics.accepted,
+          "atomic mimetic pressure solve consumes the consecutive-epoch warm start");
+    auto corruptMimeticWarm = mimeticWarm;
+    corruptMimeticWarm.reducedTracePascals.back() += 0.01;
+    expectInvalid(
+        [&] { validateSceneFluidMimeticPressureWarmStartIntegrity(
+            corruptMimeticWarm); },
+        "mimetic pressure warm-start integrity rejects trace corruption");
+    SceneFluidMimeticPressureWarmStartLimits mimeticWarmLimits;
+    mimeticWarmLimits.maximumControlCells =
+        currentMimeticControls.controlCells.size() - 1;
+    expectLimited(
+        [&] { static_cast<void>(
+            buildSceneFluidMimeticPressureWarmStart(
+                previousMimeticState, previousMimeticControls,
+                previousMimeticFull, previousMimeticCondensed,
+                currentMimeticControls, currentMimeticFull,
+                currentMimeticCondensed, topologyTransition,
+                mimeticWarmLimits)); },
+        "mimetic pressure warm start bounds control count");
+    mimeticWarmLimits = {};
+    mimeticWarmLimits.maximumOwnedBytes =
+        mimeticWarm.ownedStorageBytes - 1;
+    expectLimited(
+        [&] { static_cast<void>(
+            buildSceneFluidMimeticPressureWarmStart(
+                previousMimeticState, previousMimeticControls,
+                previousMimeticFull, previousMimeticCondensed,
+                currentMimeticControls, currentMimeticFull,
+                currentMimeticCondensed, topologyTransition,
+                mimeticWarmLimits)); },
+        "mimetic pressure warm start bounds owned storage");
+    mimeticWarmLimits = {};
+    mimeticWarmLimits.maximumWorkingBytes =
+        mimeticWarm.workingStorageBytes - 1;
+    expectLimited(
+        [&] { static_cast<void>(
+            buildSceneFluidMimeticPressureWarmStart(
+                previousMimeticState, previousMimeticControls,
+                previousMimeticFull, previousMimeticCondensed,
+                currentMimeticControls, currentMimeticFull,
+                currentMimeticCondensed, topologyTransition,
+                mimeticWarmLimits)); },
+        "mimetic pressure warm start bounds complete working storage");
     validateSceneFluidPressureTopologyTransition(
         topologyTransition,
         previousEpoch.pressureControlVolumes,

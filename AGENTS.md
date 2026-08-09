@@ -443,8 +443,7 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   trusted PCG loop validates the immutable product once, then uses the internal
   assuming-validated action; public one-shot actions still validate every
   call. Jacobi is not practical on the uncondensed full system. Stronger
-  local/multilevel preconditioning, consecutive-epoch warm-state remapping,
-  and production integration remain open.
+  local/multilevel preconditioning and production integration remain open.
 - `scene_fluid_mimetic_condensed_trace_system.{h,cpp}` composes the local wall
   Schur products into an immutable shared Cartesian/opening trace topology. It
   owns exact full/reduced mapping, deterministic shared component gauges,
@@ -479,6 +478,18 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   stable control pressures and shared trace pressures with complete
   control/full/condensed/source provenance, count/byte bounds, and fingerprinted
   corruption rejection. The coarse real source solve now crosses this boundary.
+- `scene_fluid_mimetic_pressure_warm_start.{h,cpp}` maps that accepted state
+  across exactly one fingerprinted pressure-topology transition without
+  mutating either epoch. Retained controls follow stable identity, appeared
+  controls use the transition's same-region area-weighted donors, and retired
+  controls disappear. Retained shared traces preserve their old pressure
+  difference; new traces start from the mean of their rebased endpoint-control
+  pressures. One current-component offset then fixes every deterministic gauge
+  to exact zero. The product owns bounded working/publication storage, complete
+  previous/current topology provenance, trace appearance/retirement counts,
+  gauge shifts, and corruption-detecting fingerprints. A moving analytic case
+  exercises a real control/trace appearance and feeds the result directly to
+  the atomic solve. It is not yet wired into the production worker.
 - `scene_fluid_mimetic_pressure_source.{h,cpp}` is the immutable physical-unit
   bridge from per-control predicted net-outward flow plus optional `dV/dt` to
   the integrated source `-(rho/dt)*(dV/dt + net_outward)` in `Pa*m`. It is
@@ -1158,10 +1169,10 @@ makes this a certified aerodynamic solver.
    closure. The physical-unit source product now applies the production
    `-(rho/dt)` sign to sampled fixed or material-wall-adjusted trace flow plus
    accepted GCL volume rates. Its accepted source-bound result now captures an
-   independently reconstructed immutable pressure state. Stronger
-   preconditioning, consecutive-epoch warm-state remapping, and production
-   integration remain open. The production operator and subsequent worker path
-   are unchanged.
+   independently reconstructed immutable pressure state, and that state maps
+   across one accepted topology transition into an exact-gauge reduced-trace
+   warm start. Stronger preconditioning and production integration remain open.
+   The production operator and subsequent worker path are unchanged.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
   loads/state, trusted constraint/membrane/bending assembly, explicit optional
   fabric self-contact, rigid-pilot suspension, diagnostics, and composite
@@ -1812,6 +1823,12 @@ ledgers, bit-exact empty delegation, overlap rejection, and nonlinear rollback.
 `simwing_fluid_control_volume` must additionally keep porous opening-tile flux,
 moving-volume change, projected opening transport, and physical cut reaction
 consistent, while rejecting incomplete or internally inconsistent wrappers.
+Mimetic pressure-state or consecutive-epoch warm-remap changes require both
+`simwing_scene_fluid_mimetic_trace_system` and
+`simwing_scene_fluid_pressure_volume_rate`; preserve source-bound accepted
+capture, stable control/trace retention, same-region appearance donors,
+new-trace endpoint initialization, trace retirement, exact current gauges,
+bounded fingerprinted storage, and direct atomic-solve consumption.
 
 | Change area | Minimum relevant checks |
 |---|---|

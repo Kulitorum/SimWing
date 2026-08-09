@@ -1124,8 +1124,24 @@ copied into a bounded fingerprinted state carrying control, full-system,
 condensed-system, source, structure, and accepted-epoch provenance. Corruption,
 a raw-source solve, a foreign topology, or an unnormalized gauge cannot become
 persistent state. The 191,579-row real balanced-source solve crosses this
-capture boundary as well. Consecutive-epoch remapping of this immutable state
-remains the next lifecycle stage.
+capture boundary as well.
+
+`src/fsi/scene_fluid_mimetic_pressure_warm_start.*` now owns the next
+consecutive-epoch lifecycle stage. It accepts one immutable pressure state,
+the previous/current full and condensed mimetic topologies, and the same
+fingerprinted pressure-topology transition already used for moving volume and
+transported momentum. Retained control pressures follow stable identity;
+appeared controls use the transition's area-weighted retained same-region
+donors, and retired controls vanish. A retained shared trace first keeps its
+old value, while a genuinely new trace starts at the arithmetic mean of its
+rebased endpoint-control pressures. The complete current component is then
+shifted by its deterministic gauge value, preserving pressure differences and
+making every published gauge exactly zero. Count/working/publication limits,
+complete previous/current provenance, explicit trace appearance/retirement
+counts and gauge shifts, and fingerprinted validation keep this initialization
+separate from accepted state. A moving analytic epoch with one appeared
+control exercises the new-trace path and feeds the warm result directly to the
+atomic solver. Production worker selection remains unchanged.
 
 `src/fsi/scene_fluid_mimetic_pressure_source.*` owns the physical-unit source
 conversion shared with the production projection convention. For each mimetic
@@ -1165,8 +1181,8 @@ same accepted oriented cap sweep. It matches every existing graph-link
 predictor exactly, retains wall-exchange and density provenance, and continues
 to sample an opening when its two-point graph coefficient is deliberately made
 inadmissible. The pressure-source adapter requires that density to match its
-`rho/dt` conversion. Accepted pressure warm-state lifecycle and worker
-integration remain future stages.
+`rho/dt` conversion. The accepted pressure state and its consecutive-epoch
+warm remap now own that lifecycle; worker integration remains a future stage.
 
 The first immutable scene adapter now assembles each sparse cell/region's
 unwrapped half-face shell from exact Cartesian region subfaces, cell- and
@@ -1207,11 +1223,13 @@ runs on that reduced real system as well. It rolls back exactly after a
 deliberately truncated iteration, and a separate manufactured solve reaches
 `1e-5` relative RMS within 300 iterations before reconstructing the complete
 191,579-row operator below `2e-4` maximum residual. Further local or multilevel
-preconditioning, consecutive-epoch warm-state remapping, and production integration
-remain open. The fixed MAC or transported wall-adjusted predictor plus accepted
+preconditioning and production integration remain open. The fixed MAC or
+transported wall-adjusted predictor plus accepted
 GCL volume-rate product now assemble a fully fingerprinted physical source.
 The atomic source-bound transaction additionally converges a balanced real
-source pair and publishes only after reconstructed full-space closure.
+source pair and publishes only after reconstructed full-space closure. Its
+accepted state now remaps through one moving pressure-topology transaction to
+a bounded exact-gauge shared-trace warm start.
 The current graph operator and all worker arithmetic are unchanged.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
