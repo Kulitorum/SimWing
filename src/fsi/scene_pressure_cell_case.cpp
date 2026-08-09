@@ -128,6 +128,18 @@ SceneFluidPressureCouplingSettings makeSettings() {
     return settings;
 }
 
+SceneFluidMimeticPressureAuditConfiguration
+makeMimeticPressureAuditConfiguration(const bool enabled) {
+    SceneFluidMimeticPressureAuditConfiguration result;
+    result.enabled = enabled;
+    result.settings.pressureSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-10;
+    result.settings.pressureSolve.relativeResidualTolerance = 1.0e-10;
+    result.settings.pressureSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    return result;
+}
+
 viewer::StructureFrameMappingDefinition makeFrameMapping(
     const Scene& scene,
     const SceneStructureAssembly& assembly) {
@@ -224,13 +236,20 @@ bool finite(const ScenePressureCellDiagnostics& diagnostics) {
 
 } // namespace
 
-ScenePressureCellCase::ScenePressureCellCase()
+ScenePressureCellCase::ScenePressureCellCase(
+    const bool enableMimeticPressureAudit)
+    : ScenePressureCellCase(makeMimeticPressureAuditConfiguration(
+          enableMimeticPressureAudit)) {}
+
+ScenePressureCellCase::ScenePressureCellCase(
+    const SceneFluidMimeticPressureAuditConfiguration&
+        mimeticPressureAudit)
     : scene_(makeScene()),
       surface_(assembleSceneFluidSurface(scene_)),
       assembly_(makeAssembly(scene_)),
       structure_(assembly_.definition),
       coupling_(surface_.definition, assembly_.mappings, structure_,
-                makeGrid(), makeSettings()),
+                makeGrid(), makeSettings(), {}, mimeticPressureAudit),
       predictedVelocity_(makeInitialVelocity(coupling_.grid())),
       frameMapping_(structure_, makeFrameMapping(scene_, assembly_)) {}
 
@@ -615,6 +634,11 @@ const SceneFluidRegionMomentumState*
 ScenePressureCellCase::acceptedRegionMomentum() const noexcept {
     return acceptedRegionMomentum_
         ? &*acceptedRegionMomentum_ : nullptr;
+}
+
+const SceneFluidMimeticPressureAuditEndpoint*
+ScenePressureCellCase::acceptedMimeticPressureAudit() const noexcept {
+    return coupling_.acceptedMimeticPressureAudit();
 }
 
 ScenePressureCellCheckpoint ScenePressureCellCase::checkpoint() const {

@@ -5,6 +5,7 @@
 #include "scene_fluid_capped_face_partition.h"
 #include "scene_fluid_mimetic_condensed_trace_system.h"
 #include "scene_fluid_mimetic_control_cell.h"
+#include "scene_fluid_mimetic_pressure_audit.h"
 #include "scene_fluid_mimetic_pressure_sampling.h"
 #include "scene_fluid_mimetic_pressure_solve.h"
 #include "scene_fluid_mimetic_pressure_state.h"
@@ -511,6 +512,20 @@ void testRealDesignCapture(const std::filesystem::path &input,
             fluidSurface.definition, fluidState, openingCaps,
             openingQuadrature, openingPatches, fluidGrid,
             mimeticPredictedVelocity);
+    simwing::fsi::SceneFluidMimeticPressureAuditSettings
+        realAuditSettings;
+    realAuditSettings.pressureSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-10;
+    realAuditSettings.pressureSolve.relativeResidualTolerance = 1.0e-5;
+    realAuditSettings.pressureSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-8;
+    realAuditSettings.pressureSolve.maximumIterations = 1000;
+    const auto realPressureAudit =
+        simwing::fsi::buildSceneFluidMimeticPressureAuditEndpoint(
+            fluidSurface.definition, fluidState, fluidGrid, fluidEpoch,
+            openingCaps, openingQuadrature, openingPatches,
+            pressureVolumes, pressureFaceLinks, mimeticOpeningFlux,
+            mimeticPredictedVelocity, realAuditSettings);
     const auto mimeticTraceFlow =
         simwing::fsi::sampleSceneFluidMimeticTraceFlows(
             mimeticControlCells, mimeticTraceSystem, pressureFaceLinks,
@@ -533,6 +548,14 @@ void testRealDesignCapture(const std::filesystem::path &input,
               && mimeticSampledSources.mimeticTraceFlowFingerprint
                   == mimeticTraceFlow.fingerprint
               && mimeticSampledSources.pressureVolumeRateFingerprint == 0
+              && realPressureAudit.controlCells == mimeticControlCells
+              && realPressureAudit.fullTraceSystem == mimeticTraceSystem
+              && realPressureAudit.predictedTraceFlows == mimeticTraceFlow
+              && realPressureAudit.pressureSources
+                  == mimeticSampledSources
+              && realPressureAudit.pressureEpoch.diagnostics.accepted
+              && !realPressureAudit.usesConsecutiveWarmStart
+              && !realPressureAudit.usesRegionWallPrediction
               && mimeticSampledSources
                     .maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond
                   < 1.0e-12,
@@ -772,7 +795,11 @@ void testRealDesignCapture(const std::filesystem::path &input,
             && decodedRealPressureState == realPressureState;
     }
     const bool mimeticAuditMatches =
-        mimeticControlCells.readyControlCellCount
+        realPressureAudit.condensedTraceSystem == condensedTraceSystem
+        && realPressureAudit.pressureEpoch.acceptedPressureSamples
+               .bindings.size()
+            == fluidEpoch.quadrature.points.size()
+        && mimeticControlCells.readyControlCellCount
             == mimeticControlCells.controlCells.size()
         && mimeticControlCells.incompleteTopologyControlCellCount == 0
         && mimeticControlCells.nonclosingControlCellCount == 0

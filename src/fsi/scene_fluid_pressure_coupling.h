@@ -1,6 +1,7 @@
 #pragma once
 
 #include "coupling.h"
+#include "scene_fluid_mimetic_pressure_audit.h"
 #include "scene_fluid_pressure_epoch.h"
 #include "scene_fluid_pressure_sampling.h"
 #include "scene_fluid_pressure_topology_transition.h"
@@ -49,6 +50,12 @@ struct SceneFluidPressureCouplingLimits {
 
 };
 
+struct SceneFluidMimeticPressureAuditConfiguration {
+    bool enabled = false;
+    SceneFluidMimeticPressureAuditSettings settings;
+    SceneFluidMimeticPressureAuditLimits limits;
+};
+
 struct SceneFluidPressureCouplingStepDiagnostics {
     std::uint32_t version = sceneFluidPressureCouplingVersion;
     bool accepted = false;
@@ -62,6 +69,9 @@ struct SceneFluidPressureCouplingStepDiagnostics {
     bool usesRegionWall = false;
     SceneFluidRegionRebaseDiagnostics regionRebase;
     bool usesRegionRebase = false;
+    bool usesMimeticPressureAudit = false;
+    std::uint64_t mimeticPressureAuditFingerprint = 0;
+    SceneFluidMimeticPressureEpochDiagnostics mimeticPressureAudit;
     ConservativeTransferDiagnostics pressureTransfer;
     ConservativeTransferDiagnostics totalFluidTransfer;
     double interfaceForceClosureNewtons = 0.0;
@@ -149,7 +159,9 @@ public:
         const Structure& target,
         fluid::PeriodicCartesianGrid grid,
         const SceneFluidPressureCouplingSettings& settings = {},
-        const SceneFluidPressureCouplingLimits& limits = {});
+        const SceneFluidPressureCouplingLimits& limits = {},
+        const SceneFluidMimeticPressureAuditConfiguration&
+            mimeticPressureAudit = {});
 
     SceneFluidPressureCoupling(
         const SceneFluidPressureCoupling&) = delete;
@@ -175,6 +187,8 @@ public:
     acceptedPressureSamples() const noexcept;
     [[nodiscard]] const SceneFluidAcceptedWallTractionSet*
     acceptedWallTractions() const noexcept;
+    [[nodiscard]] const SceneFluidMimeticPressureAuditEndpoint*
+    acceptedMimeticPressureAudit() const noexcept;
     // Collapses accepted link-resolved corrected flow back onto one bulk MAC
     // normal velocity per Cartesian face. Opening links first restore cap
     // sweep so the MAC value is absolute fluid velocity. Mixed-region
@@ -218,6 +232,8 @@ private:
     ConservativeMacroStepCoupling macroCoupling_;
     SceneFluidPressureCouplingSettings settings_;
     SceneFluidPressureCouplingLimits limits_;
+    SceneFluidMimeticPressureAuditConfiguration
+        mimeticPressureAuditConfiguration_;
     SceneFluidSurfaceState acceptedSurfaceState_;
     SceneFluidPressureEpoch acceptedPressureEpoch_;
     std::vector<double> acceptedPressurePascals_;
@@ -226,6 +242,8 @@ private:
     std::optional<SceneFluidPressureProjection> acceptedPressureProjection_;
     std::optional<SceneFluidPressureSampleSet> acceptedPressureSamples_;
     std::optional<SceneFluidAcceptedWallTractionSet> acceptedWallTractions_;
+    std::optional<SceneFluidMimeticPressureAuditEndpoint>
+        acceptedMimeticPressureAudit_;
 };
 
 } // namespace simwing::fsi

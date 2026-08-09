@@ -51,7 +51,11 @@ struct ScenePressureCellCheckpoint {
 // not a general immersed-boundary boundary-layer model.
 class ScenePressureCellCase final {
 public:
-    ScenePressureCellCase();
+    explicit ScenePressureCellCase(
+        bool enableMimeticPressureAudit = false);
+    explicit ScenePressureCellCase(
+        const SceneFluidMimeticPressureAuditConfiguration&
+            mimeticPressureAudit);
 
     ScenePressureCellCase(const ScenePressureCellCase&) = delete;
     ScenePressureCellCase& operator=(const ScenePressureCellCase&) = delete;
@@ -71,6 +75,8 @@ public:
         const noexcept;
     [[nodiscard]] const SceneFluidRegionMomentumState* acceptedRegionMomentum()
         const noexcept;
+    [[nodiscard]] const SceneFluidMimeticPressureAuditEndpoint*
+    acceptedMimeticPressureAudit() const noexcept;
     [[nodiscard]] ScenePressureCellCheckpoint checkpoint() const;
     void restore(const ScenePressureCellCheckpoint& checkpoint);
 

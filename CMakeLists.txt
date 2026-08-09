@@ -371,6 +371,8 @@ add_library(simwing_scene_fluid_cell_volume STATIC
     src/fsi/scene_fluid_mimetic_condensed_trace_system_detail.h
     src/fsi/scene_fluid_mimetic_pressure_solve.cpp
     src/fsi/scene_fluid_mimetic_pressure_solve.h
+    src/fsi/scene_fluid_mimetic_pressure_audit.cpp
+    src/fsi/scene_fluid_mimetic_pressure_audit.h
     src/fsi/scene_fluid_mimetic_pressure_sampling.cpp
     src/fsi/scene_fluid_mimetic_pressure_sampling.h
     src/fsi/scene_fluid_mimetic_pressure_epoch.cpp
@@ -2129,6 +2131,16 @@ add_test(NAME simwing_fsi_pressure_cell_headless
         --trace "${CMAKE_BINARY_DIR}/simwing-pressure-cell-headless.swtrace")
 set_tests_properties(simwing_fsi_pressure_cell_headless PROPERTIES
     PASS_REGULAR_EXPRESSION "completed 8 pressure-cell step\\(s\\)")
+add_test(NAME simwing_fsi_pressure_cell_mimetic_audit_headless
+    COMMAND simwing-fsi
+        --case pressure-cell
+        --mimetic-pressure-audit
+        --steps 4
+        --no-viewer
+        --trace "${CMAKE_BINARY_DIR}/simwing-pressure-cell-mimetic-audit.swtrace")
+set_tests_properties(simwing_fsi_pressure_cell_mimetic_audit_headless PROPERTIES
+    PASS_REGULAR_EXPRESSION
+        "mimetic-pressure-audit accepted.*consecutive=1, wall-predictor=1")
 add_test(NAME simwing_fsi_pressure_cell_checkpoint_write
     COMMAND simwing-fsi
         --case pressure-cell

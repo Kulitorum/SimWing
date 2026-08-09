@@ -1154,7 +1154,8 @@ complete previous/current provenance, explicit trace appearance/retirement
 counts and gauge shifts, and fingerprinted validation keep this initialization
 separate from accepted state. A moving analytic epoch with one appeared
 control exercises the new-trace path and feeds the warm result directly to the
-atomic solver. Production worker selection remains unchanged.
+atomic solver. The opt-in pressure-cell shadow now consumes it after bootstrap;
+default production selection remains unchanged.
 
 `src/fsi/scene_fluid_mimetic_pressure_sampling.*` crosses the accepted-state
 boundary into the existing conservative load path. Each material quadrature
@@ -1167,8 +1168,9 @@ their exact difference, all source topology/state provenance, and the complete
 quadrature binding. It then calls the unchanged pressure-traction quadrature,
 so there is no new force path. The moving analytic fixture closes conservative
 force and moment transfer, and the coarse real-wing accepted state now samples
-every material quadrature point through the same boundary. The production
-worker still selects the graph pressure operator.
+every material quadrature point through the same boundary. The opt-in shadow
+retains these samples without applying them; the production worker still
+selects the graph pressure operator.
 
 `src/fsi/scene_fluid_mimetic_pressure_epoch.*` composes the isolated acceptance
 path into one transaction. It starts from an already bounded, fingerprinted
@@ -1183,8 +1185,44 @@ both accepted payloads empty. Analytic regressions require the bootstrap result
 to equal the independently assembled state/samples exactly, require the moving
 result to reproduce the explicit warm-remap path across a control appearance,
 and require nested corruption and bootstrap allocation limits to reject. This
-is the rollback-safe boundary needed for a future opt-in worker experiment;
-the current worker remains on the graph operator.
+is the rollback-safe boundary consumed by the opt-in shadow experiment below;
+the default worker remains on the graph operator.
+
+`src/fsi/scene_fluid_mimetic_pressure_audit.*` owns the complete shadow
+endpoint needed to cross that boundary without leaking transient candidates.
+One fingerprinted immutable product retains the rebuilt control shells, full
+and wall-condensed trace systems, fixed-MAC or transported-wall trace-flow
+prediction, physical `rho/dt` source, complete nested solve diagnostics,
+accepted pressure state, and material pressure samples. Its aggregate dynamic
+storage is independently bounded, and corruption of a nested solve diagnostic
+is detected in addition to the constituent products' own fingerprints. The
+fixed pre-operator entry point crosses the coarse real wing without first
+building the rejected graph operator: it reproduces the independently built
+138 controls, 42,927 shared traces, predictor/source rows, and every material
+sample exactly. This is significant because some real embedded openings are
+geometrically valid mimetic traces even though their old two-point graph
+coefficient is inadmissible.
+
+`SceneFluidPressureCoupling` can now construct this endpoint after—and only
+after—the normal graph strong iteration converges. The first audited step uses
+the same immutable MAC/opening predictor with a bounded zero trace warm field;
+later steps use the accepted transported material-wall predictor, the shared
+moving-volume topology transition, and the prior audit endpoint's consecutive
+warm remap. The candidate remains private until its pressure state and every
+material sample accept. A limit or solve failure rewinds the exact Structure
+baseline and leaves the graph owner unchanged. Success stores the shadow but
+does not apply its pressure samples or alter graph pressure, loads, stepping,
+frames, or checkpoints. Four analytic worker steps prove default and audited
+frames plus graph checkpoints are byte-identical while the shadow changes from
+fixed bootstrap to transported-wall consecutive mode.
+
+The experiment is exposed as `simwing-fsi --case pressure-cell
+--mimetic-pressure-audit` and reports control/trace counts plus iteration and
+predictor mode separately from the established worker summary. The flag is
+off by default. Checkpoint input/output is deliberately rejected in this mode
+until the persisted `SWMP` accepted state is composed with rebuilt audit
+topology inside the `SWPCELL` restart transaction; silently restarting the
+shadow from a graph-only checkpoint would invalidate consecutive provenance.
 
 `src/fsi/scene_fluid_mimetic_pressure_source.*` owns the physical-unit source
 conversion shared with the production projection convention. For each mimetic
@@ -1225,7 +1263,9 @@ predictor exactly, retains wall-exchange and density provenance, and continues
 to sample an opening when its two-point graph coefficient is deliberately made
 inadmissible. The pressure-source adapter requires that density to match its
 `rho/dt` conversion. The accepted pressure state and its consecutive-epoch
-warm remap now own that lifecycle; worker integration remains a future stage.
+warm remap now own that lifecycle. The pressure-cell can exercise it as a
+read-only opt-in shadow; production load selection remains a future,
+separately gated stage.
 
 The first immutable scene adapter now assembles each sparse cell/region's
 unwrapped half-face shell from exact Cartesian region subfaces, cell- and

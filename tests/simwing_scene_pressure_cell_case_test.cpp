@@ -469,12 +469,87 @@ void testPersistentCheckpointAndRejection() {
           "scene pressure cell rejects foreign state before publishing bytes");
 }
 
+void testOptInMimeticPressureAuditIsShadowOnly() {
+    fsi::ScenePressureCellCase production;
+    fsi::ScenePressureCellCase audited(true);
+    std::uint64_t previousAuditFingerprint = 0;
+    for (std::size_t step = 0; step < 4; ++step) {
+        const auto productionFrame = production.advance();
+        const auto auditedFrame = audited.advance();
+        const auto* endpoint = audited.acceptedMimeticPressureAudit();
+        check(serialized(auditedFrame) == serialized(productionFrame)
+                  && serializedCheckpoint(audited.checkpoint())
+                      == serializedCheckpoint(production.checkpoint()),
+              "opt-in mimetic audit leaves graph-pressure frames and checkpoints byte-identical");
+        check(endpoint != nullptr
+                  && audited.diagnostics().coupling
+                      .usesMimeticPressureAudit
+                  && audited.diagnostics().coupling
+                         .mimeticPressureAuditFingerprint
+                      == endpoint->fingerprint
+                  && endpoint->pressureEpoch.diagnostics.accepted
+                  && 2 * endpoint->pressureEpoch
+                             .acceptedPressureSamples.bindings.size()
+                      == endpoint->controlCells.materialWallHalfFaceCount,
+              "opt-in mimetic audit publishes one complete accepted endpoint after the graph step converges");
+        if (endpoint != nullptr) {
+            fsi::validateSceneFluidMimeticPressureAuditEndpointIntegrity(
+                *endpoint);
+            check(endpoint->usesConsecutiveWarmStart == (step != 0)
+                      && endpoint->usesRegionWallPrediction == (step != 0)
+                      && endpoint->pressureEpoch
+                             .topologyTransitionFingerprint
+                          == (step == 0
+                                  ? 0
+                                  : endpoint
+                                        ->pressureTopologyTransitionFingerprint)
+                      && endpoint->fingerprint != previousAuditFingerprint,
+                  "mimetic audit bootstraps once then advances through the transported wall predictor and consecutive warm state");
+            previousAuditFingerprint = endpoint->fingerprint;
+        }
+    }
+    auto corrupted = *audited.acceptedMimeticPressureAudit();
+    ++corrupted.pressureEpoch.diagnostics.pressureSolve
+          .reducedTraceSolve.iterationCount;
+    bool rejected = false;
+    try {
+        fsi::validateSceneFluidMimeticPressureAuditEndpointIntegrity(
+            corrupted);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected,
+          "mimetic pressure-audit endpoint fingerprints complete nested solve diagnostics");
+
+    fsi::SceneFluidMimeticPressureAuditConfiguration limitedConfiguration;
+    limitedConfiguration.enabled = true;
+    limitedConfiguration.settings.pressureSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-10;
+    limitedConfiguration.settings.pressureSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    limitedConfiguration.limits.maximumOwnedBytes = 0;
+    fsi::ScenePressureCellCase limited(limitedConfiguration);
+    const auto beforeRejection = serializedCheckpoint(limited.checkpoint());
+    rejected = false;
+    try {
+        static_cast<void>(limited.advance());
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected
+              && limited.acceptedMimeticPressureAudit() == nullptr
+              && serializedCheckpoint(limited.checkpoint())
+                  == beforeRejection,
+          "mimetic pressure-audit limit failure rolls Structure and graph pressure back transactionally");
+}
+
 } // namespace
 
 int main() {
     try {
         testVisibleStrongPressureCellAndReplay();
         testPersistentCheckpointAndRejection();
+        testOptInMimeticPressureAuditIsShadowOnly();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
         return 1;

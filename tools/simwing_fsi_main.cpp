@@ -89,6 +89,7 @@ struct Options {
     std::uint64_t checkpointEvery = 0;
     bool viewer = true;
     bool controlStdio = false;
+    bool mimeticPressureAudit = false;
     bool help = false;
     WorkerCase workerCase = WorkerCase::Structural;
 };
@@ -102,6 +103,7 @@ void printUsage(FILE* stream) {
         "                   [--checkpoint-in PATH]\n"
         "                   [--checkpoint-out PATH]\n"
         "                   [--checkpoint-every N]\n"
+        "                   [--mimetic-pressure-audit]\n"
         "                   [--control-stdio]\n"
         "                   [--viewer|--no-viewer]\n"
         "\n"
@@ -115,6 +117,9 @@ void printUsage(FILE* stream) {
         "'pressure-cell' strongly couples scene-v2 moving cut-volume pressure\n"
         "back to an open XPBD cell while a prescribed mean-flow pump and\n"
         "symmetric viscous/projected nonlinear flow advance its bulk MAC predictor;\n"
+        "--mimetic-pressure-audit additionally runs the mixed-hybrid pressure\n"
+        "path as a read-only pressure-cell shadow after graph convergence; it\n"
+        "currently does not accept checkpoint input/output;\n"
         "'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
         "'strong-piston' strongly iterates that chain for a light added-mass plate;\n"
@@ -232,6 +237,8 @@ bool parseOptions(int argc,
             options.viewer = false;
         } else if (argument == "--control-stdio") {
             options.controlStdio = true;
+        } else if (argument == "--mimetic-pressure-audit") {
+            options.mimeticPressureAudit = true;
         } else if (argument == "--case") {
             if (++index >= argc
                 || !parseWorkerCase(argv[index], options.workerCase)) {
@@ -346,6 +353,18 @@ bool parseOptions(int argc,
     if (options.checkpointEvery != 0
         && options.checkpointOutputPath.empty()) {
         error = "--checkpoint-every requires --checkpoint-out";
+        return false;
+    }
+    if (options.mimeticPressureAudit
+        && options.workerCase != WorkerCase::ScenePressureCell) {
+        error = "--mimetic-pressure-audit requires --case pressure-cell";
+        return false;
+    }
+    if (options.mimeticPressureAudit
+        && (!options.checkpointInputPath.empty()
+            || !options.checkpointOutputPath.empty()
+            || options.checkpointEvery != 0)) {
+        error = "--mimetic-pressure-audit checkpoint persistence is not yet enabled";
         return false;
     }
     if (options.controlStdio) {
@@ -1635,6 +1654,28 @@ int main(int argc, char* argv[]) {
                         static_cast<unsigned long long>(
                             checkpointWriteCount),
                         options.tracePath.string().c_str());
+                    if (options.mimeticPressureAudit) {
+                        const auto* audit =
+                            simulation.acceptedMimeticPressureAudit();
+                        if (audit == nullptr) {
+                            std::printf(
+                                "simwing-fsi mimetic-pressure-audit not run\n");
+                        } else {
+                            std::printf(
+                                "simwing-fsi mimetic-pressure-audit accepted, "
+                                "controls=%zu, shared-traces=%zu, "
+                                "wall-traces=%zu, iterations=%zu, "
+                                "consecutive=%u, wall-predictor=%u\n",
+                                audit->controlCells.controlCells.size(),
+                                audit->condensedTraceSystem.traces.size(),
+                                audit->condensedTraceSystem
+                                    .eliminatedMaterialWallTraceCount,
+                                audit->pressureEpoch.diagnostics.pressureSolve
+                                    .reducedTraceSolve.iterationCount,
+                                audit->usesConsecutiveWarmStart ? 1U : 0U,
+                                audit->usesRegionWallPrediction ? 1U : 0U);
+                        }
+                    }
                 } else if constexpr (std::is_same_v<
                                          Simulation,
                                          simwing::fsi::AnchoredHemisphereCase>) {
@@ -1802,7 +1843,8 @@ int main(int argc, char* argv[]) {
             return run(simulation);
         }
         if (options.workerCase == WorkerCase::ScenePressureCell) {
-            simwing::fsi::ScenePressureCellCase simulation;
+            simwing::fsi::ScenePressureCellCase simulation(
+                options.mimeticPressureAudit);
             if (restoredScenePressureCellCheckpoint) {
                 simulation.restore(*restoredScenePressureCellCheckpoint);
             }

@@ -783,6 +783,17 @@ maximum MAC speed; the two-second transient reaches about `2.12 Pa` and
 this coarse resolution (about `1.4e-6 N` at two seconds), so sustaining a
 bluff-body pressure wake still requires general immersed-boundary advection
 and a validated boundary-layer closure rather than hidden predictor reset.
+An explicit `--mimetic-pressure-audit` mode now runs the mixed-hybrid pressure
+path only after the normal graph iteration converges. It bootstraps from the
+same MAC/opening predictor, then uses transported wall-adjusted flow and the
+consecutive pressure warm remap. The accepted shadow retains its complete
+topology, physical source, solve diagnostics, pressure state, and material
+samples but never applies those samples to Structure; default frames and graph
+checkpoints remain byte-identical. The same endpoint crosses the coarse real
+wing's 138 controls and 42,927 shared traces without requiring the old graph
+operator to accept inadmissible embedded-opening coefficients. Audit-mode
+checkpoint flags are rejected until `SWMP` state is composed into the
+pressure-cell checkpoint rather than silently losing consecutive provenance.
 Its bounded `SWPCELL9` checkpoint stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and
@@ -1004,6 +1015,7 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case open-piston --checkpoint-in open-piston.swop --steps 600 --checkpoint-out open-piston.swop --checkpoint-every 600
 .\build\bin\Release\simwing-fsi.exe --case pressure-jump --steps 4 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case pressure-cell --steps 600
+.\build\bin\Release\simwing-fsi.exe --case pressure-cell --mimetic-pressure-audit --steps 600 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case pressure-cell --steps 600 --no-viewer --checkpoint-out pressure-cell.swpcell --checkpoint-every 300
 .\build\bin\Release\simwing-fsi.exe --case pressure-cell --checkpoint-in pressure-cell.swpcell --steps 600
 .\build\bin\Release\simwing-fsi.exe --case porous-flow --steps 120 --no-viewer
