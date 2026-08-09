@@ -427,6 +427,7 @@ src/fsi/
     scene_fluid_pressure_volume_rate.* consecutive sparse geometry rates
     scene_fluid_pressure_projection.* link-resolved pressure/flow correction
     scene_fluid_pressure_sampling.* gauge-safe surface pressure return path
+    scene_fluid_pressure_coupling.* topology-stable strong pressure feedback
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -700,6 +701,20 @@ corruption, a foreign accepted state, and an excessive aggregate payload all
 reject. This is the atomic geometry/operator input for the next transactional
 coupling owner and still samples no velocity, solves no pressure, and applies
 no load. A
+topology-stable strong feedback owner now uses that atomic input in a real
+load-based fixed point. Each iteration rewinds Structure to the accepted
+macro-step baseline, advances XPBD under the trapezoidal average of the
+accepted start pressure and relaxed end-pressure load, rebuilds the moving
+pressure epoch, projects `dV/dt + net flow = 0`, and returns the existing
+conservative pressure transfer as the next Aitken candidate. Convergence
+requires displacement, velocity, and the difference between the actually
+applied load guess and newly solved nodal pressure load. Only that converged
+physical iterate commits; exhaustion, a topology rebase, projection failure,
+or an exception restores the exact Structure baseline and leaves accepted
+pressure ownership unchanged. The analytic open cell deforms less than its
+no-pressure control and repeats its next accepted macro-step bit-for-bit. This
+first feedback owner holds the predicted MAC field fixed across nonlinear
+iterations; it is not yet a momentum-evolving, topology-rebasing CFD step. A
 canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded

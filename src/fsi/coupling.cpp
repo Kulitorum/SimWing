@@ -853,4 +853,62 @@ StructureDiagnostics ConservativeMacroStepCoupling::advanceStructure(
     }
 }
 
+StructureDiagnostics
+ConservativeMacroStepCoupling::advanceStructureWithEndpointLoads(
+    Structure& target,
+    const ConservativeTransferResult& startTraction,
+    const std::span<const CouplingNodeLoad> endLoads,
+    const StructureStepSettings& settings) const {
+    const auto startLoads = startTraction.nodeLoads();
+    if (target.definitionFingerprint() != targetDefinitionFingerprint_
+        || startTraction.surfaceFingerprint() != surfaceFingerprint_
+        || startTraction.targetDefinitionFingerprint()
+            != targetDefinitionFingerprint_
+        || !startTraction.diagnostics().finite
+        || startLoads.size() != nodes_.size()
+        || endLoads.size() != nodes_.size()) {
+        throw std::invalid_argument(
+            "endpoint traction does not match this structure macro-step");
+    }
+
+    std::vector<StructureVector3> averageForces;
+    averageForces.reserve(nodes_.size());
+    for (std::size_t index = 0; index < nodes_.size(); ++index) {
+        const auto& node = nodes_[index];
+        const auto& start = startLoads[index];
+        const auto& end = endLoads[index];
+        if (start.stableId != node.stableId
+            || end.stableId != node.stableId
+            || start.structureNode != node.structureNode
+            || end.structureNode != node.structureNode
+            || !finite(start.forceNewtons)
+            || !finite(end.forceNewtons)) {
+            throw std::invalid_argument(
+                "endpoint traction has invalid nodal bindings");
+        }
+        const StructureVector3 average{
+            0.5 * (start.forceNewtons.x + end.forceNewtons.x),
+            0.5 * (start.forceNewtons.y + end.forceNewtons.y),
+            0.5 * (start.forceNewtons.z + end.forceNewtons.z),
+        };
+        if (!finite(average)) {
+            throw std::overflow_error(
+                "endpoint traction average is non-finite");
+        }
+        averageForces.push_back(average);
+    }
+
+    const StructureCheckpoint before = target.checkpoint();
+    try {
+        for (std::size_t index = 0; index < nodes_.size(); ++index) {
+            target.addExternalForce(
+                nodes_[index].structureNode, averageForces[index]);
+        }
+        return target.step(settings);
+    } catch (...) {
+        target.restore(before);
+        throw;
+    }
+}
+
 } // namespace simwing::fsi

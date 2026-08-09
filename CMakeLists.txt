@@ -385,6 +385,18 @@ target_link_libraries(simwing_scene_fluid_cell_volume PUBLIC
     simwing_scene_fluid_opening_cap
 )
 
+add_library(simwing_scene_fluid_pressure_coupling STATIC
+    src/fsi/scene_fluid_pressure_coupling.cpp
+    src/fsi/scene_fluid_pressure_coupling.h
+)
+target_include_directories(simwing_scene_fluid_pressure_coupling PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_scene_fluid_pressure_coupling PUBLIC
+    simwing_coupling
+    simwing_scene_fluid_cell_volume
+)
+
 add_library(simwing_viewer_protocol STATIC
     src/viewer/viewer_protocol.cpp
     src/viewer/viewer_protocol.h
@@ -1129,6 +1141,12 @@ add_executable(simwing-scene-fluid-pressure-volume-rate-test
 )
 target_link_libraries(simwing-scene-fluid-pressure-volume-rate-test
     PRIVATE simwing_scene_fluid_cell_volume simwing_scene_structure)
+
+add_executable(simwing-scene-fluid-pressure-coupling-test
+    tests/simwing_scene_fluid_pressure_coupling_test.cpp
+)
+target_link_libraries(simwing-scene-fluid-pressure-coupling-test
+    PRIVATE simwing_scene_fluid_pressure_coupling simwing_scene_structure)
 
 add_executable(simwing-scene-fluid-opening-cap-test
     tests/simwing_scene_fluid_opening_cap_test.cpp
@@ -1884,6 +1902,8 @@ add_test(NAME simwing_scene_fluid_pressure_sampling
     COMMAND simwing-scene-fluid-pressure-volume-rate-test --sampling)
 add_test(NAME simwing_scene_fluid_pressure_epoch
     COMMAND simwing-scene-fluid-pressure-volume-rate-test --epoch)
+add_test(NAME simwing_scene_fluid_pressure_coupling
+    COMMAND simwing-scene-fluid-pressure-coupling-test)
 add_test(NAME simwing_scene_fluid_opening_cap
     COMMAND simwing-scene-fluid-opening-cap-test)
 add_test(NAME simwing_scene_fluid_opening_quadrature

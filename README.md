@@ -603,6 +603,16 @@ volumes, pressure controls, conservative links, and the ungauged operator all
 share one Structure-state identity and an aggregate storage bound. Downstream
 macro-step code can no longer accidentally mix those products across accepted
 surface states.
+The first topology-stable strong feedback owner now closes that pressure path
+against XPBD. Each Aitken iteration restores the same structural baseline,
+applies the trapezoidal average of the accepted start pressure load and a
+relaxed end-load guess, rebuilds the pressure epoch, projects moving-volume
+flow, and returns the conservative scene pressure load. Only a converged
+iterate commits. The expanding open-tetra regression proves pressure opposes
+the imposed expansion, continues deterministically into the next macro-step,
+and restores both Structure and pressure ownership on iteration exhaustion or
+projection failure. The MAC predictor is still held fixed during this first
+feedback loop; momentum evolution and topology rebasing remain later work.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own

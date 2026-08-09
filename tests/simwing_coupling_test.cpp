@@ -279,6 +279,62 @@ void testAcceptedImpulseReachesStructure() {
     }
 }
 
+void testRelaxedEndpointLoadsReachStructureTransactionally() {
+    PistonFixture fixture;
+    constexpr std::array<double, 2> offsets{0.0, 0.4};
+    const auto samples = pistonSamples(fixture, offsets);
+    const std::vector<simwing::fsi::CouplingNodeLoad> endLoads(
+        samples.back().nodeLoads().begin(),
+        samples.back().nodeLoads().end());
+    StructureStepSettings settings;
+    settings.timeStepSeconds = offsets.back();
+    settings.substeps = 1;
+    settings.constraintIterations = 0;
+    settings.gravityMetersPerSecondSquared = {};
+    settings.velocityDampingPerSecond = 0.0;
+    const auto diagnostics =
+        fixture.coupling.advanceStructureWithEndpointLoads(
+            fixture.structure, samples.front(), endLoads, settings);
+    checkVectorNear(diagnostics.lastAppliedExternalForceNewtons,
+                    {0.0, 0.0, 660.0}, 2.0e-13,
+                    "endpoint load: accepted start/end forces apply their trapezoidal average");
+    checkVectorNear(diagnostics.linearMomentumKgMetersPerSecond,
+                    {0.0, 0.0, 264.0}, 3.0e-13,
+                    "endpoint load: XPBD momentum receives the endpoint-integrated impulse");
+
+    PistonFixture rejectedFixture;
+    auto invalidLoads = endLoads;
+    ++invalidLoads.front().stableId;
+    rejectedFixture.structure.addExternalForce(0, {1.0, 2.0, 3.0});
+    const auto before = rejectedFixture.structure.checkpoint();
+    expectRejected(
+        [&] { static_cast<void>(
+            rejectedFixture.coupling.advanceStructureWithEndpointLoads(
+                rejectedFixture.structure, samples.front(), invalidLoads,
+                settings)); },
+        "endpoint load: edited stable-ID bindings reject before mutation");
+    check(rejectedFixture.structure.checkpoint().nodes == before.nodes
+              && rejectedFixture.structure.checkpoint()
+                     .pendingExternalForcesNewtons
+                  == before.pendingExternalForcesNewtons,
+          "endpoint load: invalid binding preserves state and pending loads");
+
+    settings.substeps = 0;
+    expectRejected(
+        [&] { static_cast<void>(
+            rejectedFixture.coupling.advanceStructureWithEndpointLoads(
+                rejectedFixture.structure, samples.front(), endLoads,
+                settings)); },
+        "endpoint load: rejected XPBD settings propagate to the caller");
+    const auto after = rejectedFixture.structure.checkpoint();
+    check(after.nodes == before.nodes
+              && after.pendingExternalForcesNewtons
+                  == before.pendingExternalForcesNewtons
+              && after.lastAppliedExternalForceNewtons
+                  == before.lastAppliedExternalForceNewtons,
+          "endpoint load: failed XPBD advance rolls back guessed interface loads");
+}
+
 void testValidationAndTransactionalFailure() {
     PistonFixture fixture;
     constexpr std::array<double, 3> offsets{0.0, 0.1, 0.4};
@@ -883,6 +939,7 @@ void testStrongCouplingIterationExhaustionAndTransactionality() {
 int main() {
     testMovingPistonImpulseVolumeAndWork();
     testAcceptedImpulseReachesStructure();
+    testRelaxedEndpointLoadsReachStructureTransactionally();
     testValidationAndTransactionalFailure();
     testAitkenLinearFixedPointAndBounds();
     testAitkenVectorCheckpointAndTransactionalFailure();

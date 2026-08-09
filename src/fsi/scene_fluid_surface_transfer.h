@@ -27,6 +27,8 @@ public:
     nodes() const noexcept;
     [[nodiscard]] std::span<const CouplingSurfaceTriangleDefinition>
     triangles() const noexcept;
+    [[nodiscard]] const ConservativeSurfaceTransfer&
+    conservativeTransfer() const noexcept;
 
     [[nodiscard]] std::vector<CouplingNodeKinematics> kinematics(
         const SceneFluidSurfaceState& state) const;

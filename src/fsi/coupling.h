@@ -310,6 +310,17 @@ public:
         const TimeIntegratedTransferResult& transfer,
         const StructureStepSettings& settings) const;
 
+    // Strong load-based iterations may know the accepted start traction and
+    // only a relaxed candidate for the end traction. This applies their
+    // trapezoidal average through the same stable nodal surface mapping.
+    // Existing pending non-interface loads are preserved. Validation and the
+    // structural advance are transactional from the caller's pre-load state.
+    [[nodiscard]] StructureDiagnostics advanceStructureWithEndpointLoads(
+        Structure& target,
+        const ConservativeTransferResult& startTraction,
+        std::span<const CouplingNodeLoad> endLoads,
+        const StructureStepSettings& settings) const;
+
 private:
     std::uint64_t surfaceFingerprint_ = 0;
     std::uint64_t targetDefinitionFingerprint_ = 0;

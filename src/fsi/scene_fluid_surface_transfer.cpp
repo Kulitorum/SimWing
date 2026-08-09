@@ -84,6 +84,11 @@ SceneFluidSurfaceTransfer::triangles() const noexcept {
     return transfer_.triangles();
 }
 
+const ConservativeSurfaceTransfer&
+SceneFluidSurfaceTransfer::conservativeTransfer() const noexcept {
+    return transfer_;
+}
+
 std::vector<CouplingNodeKinematics> SceneFluidSurfaceTransfer::kinematics(
     const SceneFluidSurfaceState& state) const {
     validateSceneFluidSurfaceState(state);
