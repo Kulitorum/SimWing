@@ -173,6 +173,19 @@ Scene largeClosedScene() {
     return scene;
 }
 
+Scene openTetraScene() {
+    Scene scene = nestedScene();
+    scene.metadata.designChecksum = "sha256:scene-fluid-open-tetra-volume";
+    scene.metadata.exporterVersion = "scene-fluid-cell-volume-test/3";
+    scene.regions.resize(2);
+    scene.vertices.resize(4);
+    scene.triangles.resize(3);
+    scene.openings = {
+        {700, {11, 12, 13}, 2, 1, OpeningRole::Intake},
+    };
+    return scene;
+}
+
 Scene translatedLargeClosedScene() {
     Scene scene = largeClosedScene();
     scene.metadata.designChecksum =
@@ -414,6 +427,35 @@ void testFullInteriorCellClassification() {
               "translated grid preserves the outside region volume");
 }
 
+void testPlanarOpeningCapVolume() {
+    Fixture fixture(openTetraScene());
+    check(fixture.surface.ok() && fixture.structureAssembly.ok(),
+          "open tetrahedron volume fixture assembles");
+    const auto state = captureSceneFluidSurfaceState(
+        fixture.surface.definition,
+        fixture.structureAssembly.mappings,
+        fixture.structure);
+    const auto epoch = buildSceneFluidGridEpoch(
+        fixture.surface.definition, state, grid(), fixture.transfer);
+    const auto volumes = buildSceneFluidCellVolumes(
+        fixture.surface.definition, state, grid(), fixture.transfer, epoch);
+    const auto regions = regionVolumes(volumes);
+    check(volumes.openingCapFingerprint != 0
+              && volumes.openingCapCount == 1,
+          "open-cell volume binds one explicit virtual cap");
+    checkNear(volumes.openingCapAreaSquareMeters, 0.18, 1.0e-14,
+              "open-cell volume retains the analytic mouth area");
+    checkNear(regions.at(2).summedCellVolumeCubicMeters,
+              0.096, 2.0e-12,
+              "virtual mouth cap recovers the open tetrahedron volume");
+    checkNear(regions.at(1).summedCellVolumeCubicMeters,
+              64.0 - 0.096, 2.0e-12,
+              "virtual mouth cap preserves the outside volume");
+    validateSceneFluidCellVolumes(
+        volumes, fixture.surface.definition, state, grid(),
+        fixture.transfer, epoch);
+}
+
 void testUnsupportedTopologyCorruptionAndLimits() {
     Fixture open(openScene());
     check(open.surface.ok() && open.structureAssembly.ok(),
@@ -428,7 +470,7 @@ void testUnsupportedTopologyCorruptionAndLimits() {
         [&] { static_cast<void>(buildSceneFluidCellVolumes(
             open.surface.definition, openState, grid(), open.transfer,
             openEpoch)); },
-        "authored intake remains explicitly unsupported by closed cell volumes");
+        "zero-thickness capped region is rejected as nonphysical");
 
     auto nonManifoldScene = openScene();
     nonManifoldScene.openings.clear();
@@ -475,6 +517,13 @@ void testUnsupportedTopologyCorruptionAndLimits() {
         "cell-volume construction rejects zero closure authority");
 
     SceneFluidCellVolumeLimits limits;
+    limits.openingCaps.maximumCaps = 0;
+    expectLimited(
+        [&] { static_cast<void>(buildSceneFluidCellVolumes(
+            open.surface.definition, openState, grid(), open.transfer,
+            openEpoch, {}, limits)); },
+        "cell-volume opening-cap work is bounded");
+    limits = {};
     limits.maximumTetrahedronCellClips = 0;
     expectLimited(
         [&] { static_cast<void>(buildSceneFluidCellVolumes(
@@ -513,6 +562,7 @@ int main() {
     try {
         testNestedAnalyticVolumesAndAcceptedMotion();
         testFullInteriorCellClassification();
+        testPlanarOpeningCapVolume();
         testUnsupportedTopologyCorruptionAndLimits();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

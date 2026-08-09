@@ -413,6 +413,7 @@ src/fsi/
     scene_fluid_quadrature.* unique owned area to stable transfer quadrature
     scene_fluid_pressure_traction.* one-sided pressure to normal traction
     scene_fluid_grid_epoch.* accepted full geometry/quadrature remap
+    scene_fluid_opening_cap.* topology-only planar opening closure
     scene_fluid_cell_volume.* signed-chain sparse region volumes
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
@@ -491,6 +492,7 @@ Likely CMake targets are `simwing_scene`, `simwing_structure`,
 `simwing_scene_fluid_geometry`,
 `simwing_scene_fluid_quadrature`,
 `simwing_scene_fluid_grid_epoch`,
+`simwing_scene_fluid_opening_cap`,
 `simwing_scene_fluid_cell_volume`,
 `simwing_transfer`, `simwing_fluid`, `simwing_coupling`,
 `simwing_coupled_state`,
@@ -570,9 +572,14 @@ clipping distributes its chain into exact cells, including wholly interior
 cells and surfaces whose face-local contours cross tile boundaries. A separate
 whole-surface divergence calculation verifies the global region totals. Nested
 analytic tetrahedra, a rigid accepted remap, and a large cavity with 24 full
-interior cells are regressions. Authored openings, non-manifold or inconsistent
-winding, and periodic-boundary ambiguity reject explicitly; general open-intake
-reconstruction and moving-boundary fluid equations remain open. A canonical
+interior cells are regressions. A topology-only opening owner now closes an
+authored planar strictly convex loop by matching every edge to one separating
+surface boundary, deriving winding from the adjacent fabric, and triangulating
+the accepted moving geometry without creating Structure or traction entities.
+The capped open-tetrahedron regression closes analytic volume and exposes its
+mouth area for a later mass-flux operator. Nonplanar/concave openings, surface
+junctions, inconsistent winding, and periodic-boundary ambiguity reject;
+general opening flux and moving-boundary fluid equations remain open. A canonical
 Qt-free
 structural worker now
 launches the viewer by default and publishes accepted steps through a bounded

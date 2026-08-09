@@ -519,10 +519,15 @@ origin; deterministic convex clipping distributes that chain across exact
 cells, including cells wholly inside a region and cases whose face-local chains
 remain open at tile boundaries. Every tetrahedron closes across its clipped
 cells, every cell closes across its regions, and the global sum is compared with
-an independent whole-surface divergence volume. Authored open intakes,
-non-manifold or inconsistent topology, periodic-boundary ambiguity, and general
-moving-boundary fluid equations still reject or remain open; the grid epoch
-itself continues to own geometry and transfer only.
+an independent whole-surface divergence volume. A separate immutable opening-cap
+owner now closes an explicitly authored planar, strictly convex intake or
+crossport loop for volume accounting only. Its winding comes from the adjacent
+fabric boundary, follows accepted Structure motion, and never becomes fabric or
+traction. The analytic open-tetrahedron regression therefore has a finite cell
+volume and retains its mouth area for a later flux operator. Nonplanar/concave
+openings, surface junctions, periodic-boundary ambiguity, and general moving-
+boundary fluid equations still reject or remain open; the grid epoch itself
+continues to own geometry and transfer only.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

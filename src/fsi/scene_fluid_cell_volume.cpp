@@ -5,7 +5,6 @@
 #include <bit>
 #include <cmath>
 #include <limits>
-#include <map>
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
@@ -43,13 +42,6 @@ private:
     }
 
     std::uint64_t value_ = fnvOffsetBasis;
-};
-
-struct EdgeIncidence {
-    std::size_t from = 0;
-    std::size_t to = 0;
-    std::size_t negativeRegion = 0;
-    std::size_t positiveRegion = 0;
 };
 
 struct Contribution {
@@ -139,38 +131,6 @@ std::size_t outsideRegionIndex(
             "scene fluid cell volumes require one Outside region");
     }
     return result;
-}
-
-void validateClosedManifold(
-    const SceneFluidSurfaceDefinition& surface) {
-    if (!surface.openings.empty()) {
-        throw std::invalid_argument(
-            "scene fluid cell volumes do not yet support authored openings");
-    }
-    using Edge = std::pair<std::size_t, std::size_t>;
-    std::map<Edge, std::vector<EdgeIncidence>> edges;
-    for (const auto& triangle : surface.triangles) {
-        for (std::size_t edge = 0; edge < 3; ++edge) {
-            const std::size_t from = triangle.vertexIndices[edge];
-            const std::size_t to = triangle.vertexIndices[(edge + 1) % 3];
-            edges[{std::min(from, to), std::max(from, to)}].push_back({
-                from, to,
-                triangle.negativeSideRegionIndex,
-                triangle.positiveSideRegionIndex,
-            });
-        }
-    }
-    for (const auto& [edge, adjacent] : edges) {
-        static_cast<void>(edge);
-        if (adjacent.size() != 2
-            || adjacent[0].from != adjacent[1].to
-            || adjacent[0].to != adjacent[1].from
-            || adjacent[0].negativeRegion != adjacent[1].negativeRegion
-            || adjacent[0].positiveRegion != adjacent[1].positiveRegion) {
-            throw std::invalid_argument(
-                "scene fluid cell volumes require closed consistently wound two-sided manifolds");
-        }
-    }
 }
 
 void appendContribution(std::vector<Contribution>& contributions,
@@ -407,6 +367,7 @@ std::pair<std::size_t, std::size_t> cellRange(
 std::vector<double> wholeSurfaceVolumes(
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& state,
+    const SceneFluidOpeningCapSet& caps,
     const std::size_t outsideIndex,
     const fluid::PeriodicCartesianGrid& grid) {
     const auto lower = grid.lowerMeters();
@@ -415,13 +376,17 @@ std::vector<double> wholeSurfaceVolumes(
         * (upper.y - lower.y) * (upper.z - lower.z);
     std::vector<double> result(surface.regions.size(), 0.0);
     result[outsideIndex] = domainVolume;
-    for (const auto& triangle : surface.triangles) {
+    const auto addTriangle = [&](
+        const std::array<std::size_t, 3>& vertices,
+        const std::size_t negativeRegion,
+        const std::size_t positiveRegion) {
+        if (negativeRegion == positiveRegion) return;
         const auto& first =
-            state.vertices[triangle.vertexIndices[0]].positionMeters;
+            state.vertices[vertices[0]].positionMeters;
         const auto& second =
-            state.vertices[triangle.vertexIndices[1]].positionMeters;
+            state.vertices[vertices[1]].positionMeters;
         const auto& third =
-            state.vertices[triangle.vertexIndices[2]].positionMeters;
+            state.vertices[vertices[2]].positionMeters;
         const Vec3 areaVector = cross(
             subtract(second, first), subtract(third, first));
         const Vec3 centroid{
@@ -430,8 +395,21 @@ std::vector<double> wholeSurfaceVolumes(
             (first.z + second.z + third.z) / 3.0,
         };
         const double contribution = dot(centroid, areaVector) / 6.0;
-        result[triangle.negativeSideRegionIndex] += contribution;
-        result[triangle.positiveSideRegionIndex] -= contribution;
+        result[negativeRegion] += contribution;
+        result[positiveRegion] -= contribution;
+    };
+    for (const auto& triangle : surface.triangles) {
+        addTriangle(
+            triangle.vertexIndices,
+            triangle.negativeSideRegionIndex,
+            triangle.positiveSideRegionIndex);
+    }
+    for (const auto& triangle : caps.triangles) {
+        const auto& cap = caps.caps[triangle.openingIndex];
+        addTriangle(
+            triangle.vertexIndices,
+            cap.negativeSideRegionIndex,
+            cap.positiveSideRegionIndex);
     }
     return result;
 }
@@ -442,6 +420,7 @@ std::uint64_t volumeFingerprint(const SceneFluidCellVolumeSet& volumes) {
     fingerprint.integer(volumes.surfaceDefinitionFingerprint);
     fingerprint.integer(volumes.surfaceStateFingerprint);
     fingerprint.integer(volumes.gridEpochFingerprint);
+    fingerprint.integer(volumes.openingCapFingerprint);
     fingerprint.integer(volumes.structureDefinitionFingerprint);
     fingerprint.integer(volumes.acceptedStepCount);
     fingerprint.real(volumes.simulationTimeSeconds);
@@ -454,13 +433,19 @@ std::uint64_t volumeFingerprint(const SceneFluidCellVolumeSet& volumes) {
              volumes.upperMeters.y, volumes.upperMeters.z,
              volumes.settings.absoluteVolumeToleranceCubicMeters,
              volumes.settings.relativeVolumeTolerance,
+             volumes.settings.openingCaps.planarityToleranceMeters,
+             volumes.settings.openingCaps.minimumTriangleAreaSquareMeters,
+             volumes.settings.openingCaps.convexityTolerance,
              volumes.cellVolumeCubicMeters,
+             volumes.openingCapAreaSquareMeters,
              volumes.maximumTetrahedronVolumeResidualCubicMeters,
              volumes.maximumCellVolumeResidualCubicMeters,
              volumes.maximumRegionVolumeResidualCubicMeters}) {
         fingerprint.real(value);
     }
     fingerprint.integer(volumes.outsideRegionId);
+    fingerprint.integer(static_cast<std::uint64_t>(
+        volumes.openingCapCount));
     fingerprint.integer(static_cast<std::uint64_t>(
         volumes.tetrahedronCellClipCount));
     fingerprint.integer(static_cast<std::uint64_t>(
@@ -501,10 +486,11 @@ SceneFluidCellVolumeSet buildVolumes(
     const SceneFluidSurfaceState& state,
     const fluid::PeriodicCartesianGrid& grid,
     const SceneFluidGridEpoch& epoch,
+    const SceneFluidOpeningCapSet& caps,
     const SceneFluidCellVolumeSettings& settings,
     const SceneFluidCellVolumeLimits& limits) {
     validateSettings(settings);
-    validateClosedManifold(surface);
+    validateSceneFluidOpeningCaps(caps, surface, state);
     const std::size_t outsideIndex = outsideRegionIndex(surface);
     if (grid.cellCount() > limits.maximumCells
         || grid.cellCount() > limits.maximumCellRegionVolumes) {
@@ -516,6 +502,7 @@ SceneFluidCellVolumeSet buildVolumes(
     result.surfaceDefinitionFingerprint = surface.fingerprint;
     result.surfaceStateFingerprint = state.fingerprint;
     result.gridEpochFingerprint = epoch.fingerprint;
+    result.openingCapFingerprint = caps.fingerprint;
     result.structureDefinitionFingerprint =
         state.structureDefinitionFingerprint;
     result.acceptedStepCount = state.acceptedStepCount;
@@ -526,6 +513,8 @@ SceneFluidCellVolumeSet buildVolumes(
     result.settings = settings;
     result.outsideRegionId = surface.regions[outsideIndex].id;
     result.cellVolumeCubicMeters = grid.cellVolumeCubicMeters();
+    result.openingCapCount = caps.caps.size();
+    result.openingCapAreaSquareMeters = caps.totalAreaSquareMeters;
 
     std::vector<Contribution> contributions;
     contributions.reserve(std::min(
@@ -545,13 +534,17 @@ SceneFluidCellVolumeSet buildVolumes(
     // A closed oriented surface is the signed sum of tetrahedra from any fixed
     // reference point. Clipping each tetrahedron distributes that same chain
     // cell-by-cell without requiring face-local contours to close in one tile.
-    for (const auto& triangle : surface.triangles) {
+    const auto distributeTriangle = [&](
+        const std::array<std::size_t, 3>& vertices,
+        const std::size_t negativeRegion,
+        const std::size_t positiveRegion) {
+        if (negativeRegion == positiveRegion) return;
         const auto& first =
-            state.vertices[triangle.vertexIndices[0]].positionMeters;
+            state.vertices[vertices[0]].positionMeters;
         const auto& second =
-            state.vertices[triangle.vertexIndices[1]].positionMeters;
+            state.vertices[vertices[1]].positionMeters;
         const auto& third =
-            state.vertices[triangle.vertexIndices[2]].positionMeters;
+            state.vertices[vertices[2]].positionMeters;
         const double signedSixVolume = dot(
             subtract(first, origin),
             cross(subtract(second, origin), subtract(third, origin)));
@@ -559,7 +552,7 @@ SceneFluidCellVolumeSet buildVolumes(
             throw std::invalid_argument(
                 "scene fluid signed tetrahedron volume is non-finite");
         }
-        if (signedSixVolume == 0.0) continue;
+        if (signedSixVolume == 0.0) return;
         const double minimumX = std::min({origin.x, first.x, second.x, third.x});
         const double maximumX = std::max({origin.x, first.x, second.x, third.x});
         const double minimumY = std::min({origin.y, first.y, second.y, third.y});
@@ -615,10 +608,10 @@ SceneFluidCellVolumeSet buildVolumes(
                     const std::size_t cell = grid.cellIndex(i, j, k);
                     appendContribution(
                         contributions, limits, cell,
-                        triangle.negativeSideRegionIndex, signedVolume);
+                        negativeRegion, signedVolume);
                     appendContribution(
                         contributions, limits, cell,
-                        triangle.positiveSideRegionIndex, -signedVolume);
+                        positiveRegion, -signedVolume);
                 }
             }
         }
@@ -634,6 +627,19 @@ SceneFluidCellVolumeSet buildVolumes(
             throw std::invalid_argument(
                 "scene fluid clipped cells do not close their signed tetrahedron");
         }
+    };
+    for (const auto& triangle : surface.triangles) {
+        distributeTriangle(
+            triangle.vertexIndices,
+            triangle.negativeSideRegionIndex,
+            triangle.positiveSideRegionIndex);
+    }
+    for (const auto& triangle : caps.triangles) {
+        const auto& cap = caps.caps[triangle.openingIndex];
+        distributeTriangle(
+            triangle.vertexIndices,
+            cap.negativeSideRegionIndex,
+            cap.positiveSideRegionIndex);
     }
 
     std::ranges::sort(
@@ -719,7 +725,7 @@ SceneFluidCellVolumeSet buildVolumes(
     }
 
     const auto whole = wholeSurfaceVolumes(
-        surface, state, outsideIndex, grid);
+        surface, state, caps, outsideIndex, grid);
     const auto upper = grid.upperMeters();
     const double domainVolume = (upper.x - lower.x)
         * (upper.y - lower.y) * (upper.z - lower.z);
@@ -733,6 +739,10 @@ SceneFluidCellVolumeSet buildVolumes(
         }
         if (std::abs(expected) <= regionTolerance) {
             expected = 0.0;
+        }
+        if (region != outsideIndex && !(expected > 0.0)) {
+            throw std::invalid_argument(
+                "scene fluid non-Outside region has no positive closed volume");
         }
         const double residual = summedRegions[region] - expected;
         result.maximumRegionVolumeResidualCubicMeters = std::max(
@@ -784,8 +794,10 @@ SceneFluidCellVolumeSet buildSceneFluidCellVolumes(
     const SceneFluidCellVolumeSettings& settings,
     const SceneFluidCellVolumeLimits& limits) {
     validateSceneFluidGridEpoch(epoch, surface, state, grid, transfer);
+    const auto caps = buildSceneFluidOpeningCaps(
+        surface, state, settings.openingCaps, limits.openingCaps);
     auto result = buildVolumes(
-        surface, state, grid, epoch, settings, limits);
+        surface, state, grid, epoch, caps, settings, limits);
     validateSceneFluidCellVolumes(
         result, surface, state, grid, transfer, epoch);
     return result;
@@ -804,6 +816,7 @@ void validateSceneFluidCellVolumes(
         || volumes.surfaceDefinitionFingerprint != surface.fingerprint
         || volumes.surfaceStateFingerprint != state.fingerprint
         || volumes.gridEpochFingerprint != epoch.fingerprint
+        || volumes.openingCapFingerprint == 0
         || volumes.structureDefinitionFingerprint
             != state.structureDefinitionFingerprint
         || volumes.acceptedStepCount != state.acceptedStepCount
@@ -814,15 +827,26 @@ void validateSceneFluidCellVolumes(
         throw std::invalid_argument(
             "scene fluid cell-volume identity is invalid");
     }
-    const SceneFluidCellVolumeLimits unlimited{
-        std::numeric_limits<std::size_t>::max(),
+    const SceneFluidOpeningCapLimits unlimitedCapLimits{
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
     };
+    const auto caps = buildSceneFluidOpeningCaps(
+        surface, state, volumes.settings.openingCaps, unlimitedCapLimits);
+    SceneFluidCellVolumeLimits unlimited;
+    unlimited.openingCaps = unlimitedCapLimits;
+    unlimited.maximumCells = std::numeric_limits<std::size_t>::max();
+    unlimited.maximumContributionEvents =
+        std::numeric_limits<std::size_t>::max();
+    unlimited.maximumTetrahedronCellClips =
+        std::numeric_limits<std::size_t>::max();
+    unlimited.maximumCellRegionVolumes =
+        std::numeric_limits<std::size_t>::max();
+    unlimited.maximumVolumeBytes = std::numeric_limits<std::size_t>::max();
     const auto expected = buildVolumes(
-        surface, state, grid, epoch, volumes.settings, unlimited);
+        surface, state, grid, epoch, caps, volumes.settings, unlimited);
     if (volumes != expected
         || volumes.fingerprint != volumeFingerprint(volumes)) {
         throw std::invalid_argument(
