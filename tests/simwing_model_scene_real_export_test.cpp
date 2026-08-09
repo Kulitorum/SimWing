@@ -1,4 +1,5 @@
 #include "engine_paths.h"
+#include "fluid/mimetic_local_cell.h"
 #include "input_migration.h"
 #include "nurbs_model.h"
 #include "scene_fluid_cell_volume.h"
@@ -486,6 +487,31 @@ void testRealDesignCapture(const std::filesystem::path &input,
         openingPatches.patches,
         simwing::fsi::SceneFluidOpeningPatchOwnerKind::Cell,
         &simwing::fsi::SceneFluidOpeningGridPatch::ownerKind);
+    bool compactLocalOperatorsBuilt = true;
+    std::size_t compactLocalOperatorBytes = 0;
+    for (const auto& cell : mimeticControlCells.controlCells) {
+        simwing::fsi::fluid::MimeticLocalCellGeometry geometry;
+        geometry.volumeCubicMeters = cell.volumeCubicMeters;
+        geometry.centroidMeters = cell.centroidMeters;
+        geometry.halfFaces.reserve(cell.halfFaceCount);
+        for (std::size_t offset = 0; offset < cell.halfFaceCount; ++offset) {
+            const auto& halfFace = mimeticControlCells.halfFaces[
+                cell.firstHalfFace + offset];
+            geometry.halfFaces.push_back({
+                halfFace.areaSquareMeters,
+                halfFace.centroidMeters,
+                halfFace.outwardUnitNormal,
+            });
+        }
+        try {
+            const auto localOperator =
+                simwing::fsi::fluid::buildMimeticLocalCellOperator(
+                    geometry);
+            compactLocalOperatorBytes += localOperator.ownedStorageBytes;
+        } catch (const std::exception&) {
+            compactLocalOperatorsBuilt = false;
+        }
+    }
     const bool mimeticAuditMatches =
         mimeticControlCells.readyControlCellCount
             == mimeticControlCells.controlCells.size()
@@ -497,11 +523,14 @@ void testRealDesignCapture(const std::filesystem::path &input,
         && mimeticControlCells.omittedZeroVolumeMaterialSideCount == 0
         && mimeticControlCells.missingOpeningControlSideCount == 0
         && mimeticControlCells.openingHalfFaceCount
-            == 2 * cellOwnedOpeningPatchCount;
+            == 2 * cellOwnedOpeningPatchCount
+        && compactLocalOperatorsBuilt
+        && compactLocalOperatorBytes
+            == 7 * mimeticControlCells.halfFaces.size() * sizeof(double);
     if (!mimeticAuditMatches) {
         std::fprintf(
             stderr,
-            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu classified=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu max-area=%.17g max-moment=%.17g\n",
+            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu classified=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu compact-bytes=%zu max-area=%.17g max-moment=%.17g\n",
             mimeticControlCells.readyControlCellCount,
             mimeticControlCells.controlCells.size(),
             mimeticControlCells.incompleteTopologyControlCellCount,
@@ -516,6 +545,7 @@ void testRealDesignCapture(const std::filesystem::path &input,
             mimeticControlCells.missingOpeningControlSideCount,
             mimeticControlCells.openingHalfFaceCount,
             mimeticControlCells.maximumHalfFaceCountPerControl,
+            compactLocalOperatorBytes,
             mimeticControlCells.maximumAreaClosureErrorSquareMeters,
             mimeticControlCells.maximumDivergenceTheoremErrorCubicMeters);
         for (const auto& cell : mimeticControlCells.controlCells) {

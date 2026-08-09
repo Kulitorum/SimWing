@@ -36,6 +36,24 @@ private:
     std::uint64_t value_ = fnvOffsetBasis;
 };
 
+class CompensatedSum final {
+public:
+    void add(const double value) noexcept {
+        const double corrected = value - correction_;
+        const double sum = value_ + corrected;
+        correction_ = (sum - value_) - corrected;
+        value_ = sum;
+    }
+
+    [[nodiscard]] double value() const noexcept {
+        return value_;
+    }
+
+private:
+    double value_ = 0.0;
+    double correction_ = 0.0;
+};
+
 bool finite(const Vector3& value) {
     return std::isfinite(value.x)
         && std::isfinite(value.y)
@@ -160,20 +178,13 @@ void validateSettings(const MimeticLocalCellSettings& settings) {
 }
 
 std::size_t checkedOperatorBytes(const std::size_t halfFaceCount) {
-    if (halfFaceCount > std::numeric_limits<std::size_t>::max()
-            / halfFaceCount) {
-        throw std::length_error(
-            "mimetic local-cell matrix size overflows");
-    }
-    const std::size_t matrixEntries = halfFaceCount * halfFaceCount;
     const std::size_t maximumEntries =
         std::numeric_limits<std::size_t>::max() / sizeof(double);
-    if (halfFaceCount > maximumEntries
-        || matrixEntries > maximumEntries - halfFaceCount) {
+    if (halfFaceCount > maximumEntries / 7) {
         throw std::length_error(
-            "mimetic local-cell matrix size overflows");
+            "mimetic local-cell factorization size overflows");
     }
-    return (matrixEntries + halfFaceCount) * sizeof(double);
+    return 7 * halfFaceCount * sizeof(double);
 }
 
 void validateInputScalars(const MimeticLocalCellOperator& localOperator,
@@ -209,11 +220,65 @@ std::uint64_t operatorFingerprint(
     for (const double area : localOperator.faceAreasSquareMeters) {
         fingerprint.real(area);
     }
-    fingerprint.integer(localOperator.inverseFluxInnerProduct.size());
-    for (const double value : localOperator.inverseFluxInnerProduct) {
+    fingerprint.integer(localOperator.consistencyRows.size());
+    for (const double value : localOperator.consistencyRows) {
+        fingerprint.real(value);
+    }
+    fingerprint.integer(localOperator.normalRows.size());
+    for (const double value : localOperator.normalRows) {
+        fingerprint.real(value);
+    }
+    for (const double value : localOperator.inverseConsistencyGeometry) {
+        fingerprint.real(value);
+    }
+    for (const double value : localOperator.inverseConsistencyGram) {
         fingerprint.real(value);
     }
     return fingerprint.value();
+}
+
+std::vector<double> applyCompactInverseFluxInnerProduct(
+    const MimeticLocalCellOperator& localOperator,
+    const std::span<const double> values) {
+    const std::size_t count = localOperator.halfFaceCount;
+    std::array<CompensatedSum, 3> normalTransposeValue;
+    std::array<CompensatedSum, 3> consistencyTransposeValue;
+    for (std::size_t face = 0; face < count; ++face) {
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            normalTransposeValue[axis].add(
+                localOperator.normalRows[face * 3 + axis] * values[face]);
+            consistencyTransposeValue[axis].add(
+                localOperator.consistencyRows[face * 3 + axis]
+                * values[face]);
+        }
+    }
+    std::array<CompensatedSum, 3> consistentCoefficient;
+    std::array<CompensatedSum, 3> projectedCoefficient;
+    for (std::size_t row = 0; row < 3; ++row) {
+        for (std::size_t column = 0; column < 3; ++column) {
+            consistentCoefficient[row].add(
+                localOperator.inverseConsistencyGeometry[row * 3 + column]
+                * normalTransposeValue[column].value());
+            projectedCoefficient[row].add(
+                localOperator.inverseConsistencyGram[row * 3 + column]
+                * consistencyTransposeValue[column].value());
+        }
+    }
+    std::vector<double> result(count, 0.0);
+    for (std::size_t face = 0; face < count; ++face) {
+        CompensatedSum consistent;
+        CompensatedSum projected;
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            consistent.add(localOperator.normalRows[face * 3 + axis]
+                * consistentCoefficient[axis].value());
+            projected.add(localOperator.consistencyRows[face * 3 + axis]
+                * projectedCoefficient[axis].value());
+        }
+        result[face] = consistent.value()
+            + localOperator.stabilizationScaleInverseCubicMeters
+                * (values[face] - projected.value());
+    }
+    return result;
 }
 
 } // namespace
@@ -234,7 +299,7 @@ MimeticLocalCellOperator buildMimeticLocalCellOperator(
     const std::size_t ownedStorageBytes = checkedOperatorBytes(count);
     if (ownedStorageBytes > settings.maximumOperatorBytes) {
         throw std::length_error(
-            "mimetic local-cell matrix byte limit exceeded");
+            "mimetic local-cell factorization byte limit exceeded");
     }
     if (!std::isfinite(geometry.volumeCubicMeters)
         || geometry.volumeCubicMeters <= 0.0
@@ -348,21 +413,10 @@ MimeticLocalCellOperator buildMimeticLocalCellOperator(
         consistencyTransposeConsistency,
         "rank-deficient mimetic local-cell consistency rows");
 
-    std::vector<double> consistentMatrix(count * count, 0.0);
-    std::vector<double> nullspaceProjector(count * count, 0.0);
     double consistentTrace = 0.0;
-    for (std::size_t row = 0; row < count; ++row) {
-        for (std::size_t column = 0; column < count; ++column) {
-            const double consistent = bilinear3(
-                normalRows[row], inverseGeometry, normalRows[column]);
-            const double projected = (row == column ? 1.0 : 0.0)
-                - bilinear3(
-                    consistencyRows[row], inverseConsistencyGram,
-                    consistencyRows[column]);
-            consistentMatrix[row * count + column] = consistent;
-            nullspaceProjector[row * count + column] = projected;
-        }
-        consistentTrace += consistentMatrix[row * count + row];
+    for (const auto& normal : normalRows) {
+        consistentTrace += bilinear3(
+            normal, inverseGeometry, normal);
     }
     const double stabilizationScale = consistentTrace
         / static_cast<double>(count - 3);
@@ -372,44 +426,7 @@ MimeticLocalCellOperator buildMimeticLocalCellOperator(
             "invalid mimetic local-cell stabilization scale");
     }
 
-    std::vector<double> matrix(count * count, 0.0);
-    for (std::size_t row = 0; row < count; ++row) {
-        for (std::size_t column = row; column < count; ++column) {
-            const double forward = consistentMatrix[row * count + column]
-                + stabilizationScale
-                    * nullspaceProjector[row * count + column];
-            const double reverse = consistentMatrix[column * count + row]
-                + stabilizationScale
-                    * nullspaceProjector[column * count + row];
-            const double value = 0.5 * (forward + reverse);
-            if (!std::isfinite(value)) {
-                throw std::invalid_argument(
-                    "non-finite mimetic local-cell matrix");
-            }
-            matrix[row * count + column] = value;
-            matrix[column * count + row] = value;
-        }
-    }
-
     double maximumAlgebraicConsistencyError = 0.0;
-    for (std::size_t row = 0; row < count; ++row) {
-        for (std::size_t axis = 0; axis < 3; ++axis) {
-            double value = 0.0;
-            for (std::size_t column = 0; column < count; ++column) {
-                value += matrix[row * count + column]
-                    * consistencyRows[column][axis];
-            }
-            maximumAlgebraicConsistencyError = std::max(
-                maximumAlgebraicConsistencyError,
-                std::abs(value - normalRows[row][axis]));
-        }
-    }
-    if (maximumAlgebraicConsistencyError
-        > settings.algebraicConsistencyTolerance) {
-        throw std::invalid_argument(
-            "mimetic local-cell matrix failed linear consistency");
-    }
-
     MimeticLocalCellOperator result;
     result.halfFaceCount = count;
     result.ownedStorageBytes = ownedStorageBytes;
@@ -419,10 +436,38 @@ MimeticLocalCellOperator buildMimeticLocalCellOperator(
         maximumAreaClosureError;
     result.maximumDivergenceTheoremErrorCubicMeters =
         maximumDivergenceTheoremError;
+    result.faceAreasSquareMeters = std::move(areas);
+    result.consistencyRows.reserve(3 * count);
+    result.normalRows.reserve(3 * count);
+    for (std::size_t face = 0; face < count; ++face) {
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            result.consistencyRows.push_back(
+                consistencyRows[face][axis]);
+            result.normalRows.push_back(normalRows[face][axis]);
+        }
+    }
+    result.inverseConsistencyGeometry = inverseGeometry;
+    result.inverseConsistencyGram = inverseConsistencyGram;
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        std::vector<double> column(count, 0.0);
+        for (std::size_t face = 0; face < count; ++face) {
+            column[face] = consistencyRows[face][axis];
+        }
+        const auto applied = applyCompactInverseFluxInnerProduct(
+            result, column);
+        for (std::size_t face = 0; face < count; ++face) {
+            maximumAlgebraicConsistencyError = std::max(
+                maximumAlgebraicConsistencyError,
+                std::abs(applied[face] - normalRows[face][axis]));
+        }
+    }
+    if (maximumAlgebraicConsistencyError
+        > settings.algebraicConsistencyTolerance) {
+        throw std::invalid_argument(
+            "mimetic local-cell factorization failed linear consistency");
+    }
     result.maximumAlgebraicConsistencyError =
         maximumAlgebraicConsistencyError;
-    result.faceAreasSquareMeters = std::move(areas);
-    result.inverseFluxInnerProduct = std::move(matrix);
     result.fingerprint = operatorFingerprint(result);
     validateMimeticLocalCellOperator(result);
     return result;
@@ -435,8 +480,9 @@ void validateMimeticLocalCellOperator(
         || localOperator.fingerprint == 0
         || count < 4
         || localOperator.faceAreasSquareMeters.size() != count
-        || count > std::numeric_limits<std::size_t>::max() / count
-        || localOperator.inverseFluxInnerProduct.size() != count * count
+        || count > std::numeric_limits<std::size_t>::max() / 3
+        || localOperator.consistencyRows.size() != 3 * count
+        || localOperator.normalRows.size() != 3 * count
         || localOperator.ownedStorageBytes != checkedOperatorBytes(count)
         || !std::isfinite(localOperator.volumeCubicMeters)
         || localOperator.volumeCubicMeters <= 0.0
@@ -461,28 +507,39 @@ void validateMimeticLocalCellOperator(
                 "invalid mimetic local-cell operator area");
         }
     }
-    for (std::size_t row = 0; row < count; ++row) {
-        if (localOperator.inverseFluxInnerProduct[row * count + row]
-            <= 0.0) {
-            throw std::invalid_argument(
-                "invalid mimetic local-cell matrix diagonal");
-        }
-        for (std::size_t column = 0; column < count; ++column) {
-            const double value =
-                localOperator.inverseFluxInnerProduct[
-                    row * count + column];
-            if (!std::isfinite(value)
-                || value != localOperator.inverseFluxInnerProduct[
-                    column * count + row]) {
-                throw std::invalid_argument(
-                    "invalid mimetic local-cell symmetric matrix");
-            }
-        }
+    if (!std::ranges::all_of(
+            localOperator.consistencyRows,
+            [](const double value) { return std::isfinite(value); })
+        || !std::ranges::all_of(
+            localOperator.normalRows,
+            [](const double value) { return std::isfinite(value); })
+        || !std::ranges::all_of(
+            localOperator.inverseConsistencyGeometry,
+            [](const double value) { return std::isfinite(value); })
+        || !std::ranges::all_of(
+            localOperator.inverseConsistencyGram,
+            [](const double value) { return std::isfinite(value); })) {
+        throw std::invalid_argument(
+            "invalid mimetic local-cell compact factorization");
     }
     if (operatorFingerprint(localOperator) != localOperator.fingerprint) {
         throw std::invalid_argument(
             "mimetic local-cell operator fingerprint mismatch");
     }
+}
+
+std::vector<double> applyMimeticInverseFluxInnerProduct(
+    const MimeticLocalCellOperator& localOperator,
+    const std::span<const double> values) {
+    validateMimeticLocalCellOperator(localOperator);
+    if (values.size() != localOperator.halfFaceCount
+        || !std::ranges::all_of(
+            values,
+            [](const double value) { return std::isfinite(value); })) {
+        throw std::invalid_argument(
+            "invalid mimetic inverse-flux input vector");
+    }
+    return applyCompactInverseFluxInnerProduct(localOperator, values);
 }
 
 std::vector<double> applyMimeticLocalNormalFlux(
@@ -498,13 +555,11 @@ std::vector<double> applyMimeticLocalNormalFlux(
             localOperator.faceAreasSquareMeters[face]
             * (faceTraceScalars[face] - cellScalar);
     }
-    std::vector<double> result(count, 0.0);
-    for (std::size_t row = 0; row < count; ++row) {
-        for (std::size_t column = 0; column < count; ++column) {
-            result[row] -= localOperator.inverseFluxInnerProduct[
-                row * count + column] * weightedDifferences[column];
-        }
-        if (!std::isfinite(result[row])) {
+    auto result = applyCompactInverseFluxInnerProduct(
+        localOperator, weightedDifferences);
+    for (double& value : result) {
+        value = -value;
+        if (!std::isfinite(value)) {
             throw std::invalid_argument(
                 "non-finite mimetic local-cell normal flux");
         }
@@ -522,27 +577,24 @@ MimeticLocalCellBalance balanceMimeticLocalCell(
             "non-finite mimetic local-cell integrated source");
     }
     const std::size_t count = localOperator.halfFaceCount;
-    std::vector<double> matrixArea(count, 0.0);
-    std::vector<double> matrixWeightedTrace(count, 0.0);
-    for (std::size_t row = 0; row < count; ++row) {
-        for (std::size_t column = 0; column < count; ++column) {
-            const double matrix =
-                localOperator.inverseFluxInnerProduct[
-                    row * count + column];
-            matrixArea[row] += matrix
-                * localOperator.faceAreasSquareMeters[column];
-            matrixWeightedTrace[row] += matrix
-                * localOperator.faceAreasSquareMeters[column]
-                * faceTraceScalars[column];
-        }
+    const auto matrixArea = applyCompactInverseFluxInnerProduct(
+        localOperator, localOperator.faceAreasSquareMeters);
+    std::vector<double> weightedTrace(count, 0.0);
+    for (std::size_t face = 0; face < count; ++face) {
+        weightedTrace[face] = localOperator.faceAreasSquareMeters[face]
+            * faceTraceScalars[face];
     }
-    double denominator = 0.0;
-    double traceCoupling = 0.0;
+    const auto matrixWeightedTrace = applyCompactInverseFluxInnerProduct(
+        localOperator, weightedTrace);
+    CompensatedSum denominatorSum;
+    CompensatedSum traceCouplingSum;
     for (std::size_t face = 0; face < count; ++face) {
         const double area = localOperator.faceAreasSquareMeters[face];
-        denominator += area * matrixArea[face];
-        traceCoupling += area * matrixWeightedTrace[face];
+        denominatorSum.add(area * matrixArea[face]);
+        traceCouplingSum.add(area * matrixWeightedTrace[face]);
     }
+    const double denominator = denominatorSum.value();
+    const double traceCoupling = traceCouplingSum.value();
     if (!std::isfinite(denominator) || denominator <= 0.0
         || !std::isfinite(traceCoupling)) {
         throw std::invalid_argument(
@@ -555,13 +607,15 @@ MimeticLocalCellBalance balanceMimeticLocalCell(
     result.outwardNormalFluxes = applyMimeticLocalNormalFlux(
         localOperator, result.cellScalar, faceTraceScalars);
     result.integratedOutwardFluxes.resize(count);
+    CompensatedSum integratedOutwardFluxSum;
     for (std::size_t face = 0; face < count; ++face) {
         result.integratedOutwardFluxes[face] =
             localOperator.faceAreasSquareMeters[face]
             * result.outwardNormalFluxes[face];
-        result.integratedOutwardFluxSum +=
-            result.integratedOutwardFluxes[face];
+        integratedOutwardFluxSum.add(
+            result.integratedOutwardFluxes[face]);
     }
+    result.integratedOutwardFluxSum = integratedOutwardFluxSum.value();
     result.conservationResidual =
         result.integratedOutwardFluxSum - integratedSource;
     if (!std::isfinite(result.cellScalar)

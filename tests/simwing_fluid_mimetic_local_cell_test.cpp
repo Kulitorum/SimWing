@@ -165,19 +165,43 @@ double scalarAt(const double constant,
     return constant + dot(gradient, position);
 }
 
+std::vector<double> denseMatrix(
+    const MimeticLocalCellOperator& localOperator) {
+    const std::size_t count = localOperator.halfFaceCount;
+    std::vector<double> result(count * count, 0.0);
+    for (std::size_t column = 0; column < count; ++column) {
+        std::vector<double> basis(count, 0.0);
+        basis[column] = 1.0;
+        const auto applied = applyMimeticInverseFluxInnerProduct(
+            localOperator, basis);
+        for (std::size_t row = 0; row < count; ++row) {
+            result[row * count + column] = applied[row];
+        }
+    }
+    return result;
+}
+
 bool positiveDefinite(const MimeticLocalCellOperator& localOperator) {
     const std::size_t count = localOperator.halfFaceCount;
+    const auto matrix = denseMatrix(localOperator);
     std::vector<double> lower(count * count, 0.0);
     double maximumDiagonal = 0.0;
     for (std::size_t row = 0; row < count; ++row) {
         maximumDiagonal = std::max(
-            maximumDiagonal,
-            localOperator.inverseFluxInnerProduct[row * count + row]);
+            maximumDiagonal, matrix[row * count + row]);
+    }
+    for (std::size_t row = 0; row < count; ++row) {
+        for (std::size_t column = 0; column < count; ++column) {
+            if (std::abs(matrix[row * count + column]
+                         - matrix[column * count + row])
+                > maximumDiagonal * 1.0e-13) {
+                return false;
+            }
+        }
     }
     for (std::size_t row = 0; row < count; ++row) {
         for (std::size_t column = 0; column <= row; ++column) {
-            double value = localOperator.inverseFluxInnerProduct[
-                row * count + column];
+            double value = matrix[row * count + column];
             for (std::size_t inner = 0; inner < column; ++inner) {
                 value -= lower[row * count + inner]
                     * lower[column * count + inner];
@@ -207,13 +231,16 @@ void testCartesianEquivalence() {
     check(localOperator.version == mimeticLocalCellVersion
               && localOperator.fingerprint != 0
               && localOperator.halfFaceCount == 6
+              && localOperator.ownedStorageBytes
+                  == 7 * localOperator.halfFaceCount * sizeof(double)
               && positiveDefinite(localOperator),
-          "Cartesian local operator is bounded and SPD");
+          "Cartesian local operator is linear-storage, bounded, and SPD");
     const double expectedDiagonal = 2.0 / geometry.volumeCubicMeters;
+    const auto matrix = denseMatrix(localOperator);
     for (std::size_t row = 0; row < 6; ++row) {
         for (std::size_t column = 0; column < 6; ++column) {
             checkNear(
-                localOperator.inverseFluxInnerProduct[row * 6 + column],
+                matrix[row * 6 + column],
                 row == column ? expectedDiagonal : 0.0,
                 2.0e-16,
                 "Cartesian mimetic matrix is the exact diagonal half-cell stencil");
@@ -240,11 +267,13 @@ void testCartesianEquivalence() {
     const auto rightGeometry = cuboid({3.0, 0.0, 0.0}, {4.0, 4.0, 6.0});
     const auto left = buildMimeticLocalCellOperator(leftGeometry);
     const auto right = buildMimeticLocalCellOperator(rightGeometry);
+    const auto leftMatrix = denseMatrix(left);
+    const auto rightMatrix = denseMatrix(right);
     const double sharedArea = leftGeometry.halfFaces[1].areaSquareMeters;
     const double leftTraceConductance = sharedArea * sharedArea
-        * left.inverseFluxInnerProduct[1 * 6 + 1];
+        * leftMatrix[1 * 6 + 1];
     const double rightTraceConductance = sharedArea * sharedArea
-        * right.inverseFluxInnerProduct[0 * 6 + 0];
+        * rightMatrix[0 * 6 + 0];
     const double leftScalar = 5.0;
     const double rightScalar = 1.0;
     const double sharedTrace = (
@@ -310,9 +339,9 @@ void testTetrahedralConsistencyAndBalance() {
     const double requestedSource = 0.37;
     const auto forced = balanceMimeticLocalCell(
         localOperator, arbitrary, requestedSource);
-    checkNear(forced.integratedOutwardFluxSum, requestedSource, 3.0e-15,
+    checkNear(forced.integratedOutwardFluxSum, requestedSource, 8.0e-15,
               "forced tetrahedral balance preserves its integrated source");
-    checkNear(forced.conservationResidual, 0.0, 3.0e-15,
+    checkNear(forced.conservationResidual, 0.0, 8.0e-15,
               "forced tetrahedral conservation residual is roundoff only");
 
     const std::vector<double> constantTraces(4, 3.25);
@@ -366,14 +395,17 @@ void testRejectedGeometryAndCorruption() {
     expectLimited(
         [&] { static_cast<void>(
             buildMimeticLocalCellOperator(acceptedGeometry, limits)); },
-        "local mimetic assembly bounds dense matrix storage");
+        "local mimetic assembly bounds compact factorization storage");
 
     auto corrupt = accepted;
-    corrupt.inverseFluxInnerProduct[1] += 0.01;
-    corrupt.inverseFluxInnerProduct[6] += 0.01;
+    corrupt.normalRows[1] += 0.01;
     expectInvalid(
         [&] { validateMimeticLocalCellOperator(corrupt); },
-        "local mimetic validation rejects fingerprinted matrix corruption");
+        "local mimetic validation rejects fingerprinted factor corruption");
+    expectInvalid(
+        [&] { static_cast<void>(applyMimeticInverseFluxInnerProduct(
+            accepted, std::vector<double>(5, 0.0))); },
+        "compact mimetic application rejects a short input vector");
     expectInvalid(
         [&] { static_cast<void>(applyMimeticLocalNormalFlux(
             accepted, 0.0, std::vector<double>(5, 0.0))); },

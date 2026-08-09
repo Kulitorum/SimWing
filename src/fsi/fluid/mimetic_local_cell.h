@@ -2,6 +2,7 @@
 
 #include "grid.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -9,7 +10,7 @@
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t mimeticLocalCellVersion = 1;
+inline constexpr std::uint32_t mimeticLocalCellVersion = 2;
 
 struct MimeticHalfFaceGeometry {
     double areaSquareMeters = 0.0;
@@ -39,9 +40,10 @@ struct MimeticLocalCellSettings {
     bool operator==(const MimeticLocalCellSettings&) const = default;
 };
 
-// One isotropic mixed-hybrid mimetic cell. The row-major matrix W is symmetric
-// positive definite and maps area-weighted face-trace differences to outward
-// normal flux:
+// One isotropic mixed-hybrid mimetic cell. W is retained in its exact compact
+// diagonal-plus-two-rank-three factorization rather than as a dense matrix. It
+// is symmetric positive definite and maps area-weighted face-trace differences
+// to outward normal flux:
 //
 //     u = -W diag(area) (lambda - p_cell 1).
 //
@@ -60,7 +62,10 @@ struct MimeticLocalCellOperator {
     double maximumDivergenceTheoremErrorCubicMeters = 0.0;
     double maximumAlgebraicConsistencyError = 0.0;
     std::vector<double> faceAreasSquareMeters;
-    std::vector<double> inverseFluxInnerProduct;
+    std::vector<double> consistencyRows;
+    std::vector<double> normalRows;
+    std::array<double, 9> inverseConsistencyGeometry{};
+    std::array<double, 9> inverseConsistencyGram{};
 
     bool operator==(const MimeticLocalCellOperator&) const = default;
 };
@@ -82,6 +87,12 @@ struct MimeticLocalCellBalance {
 
 void validateMimeticLocalCellOperator(
     const MimeticLocalCellOperator& localOperator);
+
+// Applies the compact inverse flux inner product W without materializing its
+// dense matrix. This is the matrix-free boundary used by global trace owners.
+[[nodiscard]] std::vector<double> applyMimeticInverseFluxInnerProduct(
+    const MimeticLocalCellOperator& localOperator,
+    std::span<const double> values);
 
 [[nodiscard]] std::vector<double> applyMimeticLocalNormalFlux(
     const MimeticLocalCellOperator& localOperator,

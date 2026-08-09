@@ -823,10 +823,13 @@ place flux in the wrong control-volume row. A new isolated mixed-hybrid
 mimetic local-cell kernel now supplies that formulation's first numerical
 building block without changing the production graph solve. From exact volume,
 cell centroid, and oriented half-face area/centroid/normal geometry it builds a
-fingerprinted SPD inverse flux inner product satisfying linear consistency,
-eliminates the cell scalar with exact integrated conservation, reproduces
-linear normal fluxes on a skew tetrahedron, and reduces exactly to the existing
-`area / centre-distance` stencil after Cartesian trace condensation. An
+fingerprinted SPD inverse flux inner product satisfying linear consistency.
+The exact diagonal-plus-two-rank-three factorization uses seven stored doubles
+per half-face and applies matrix-free; it no longer materializes an `n x n`
+cell matrix. It eliminates the cell scalar with roundoff-only integrated
+conservation, reproduces linear normal fluxes on a skew tetrahedron, and
+reduces exactly to the existing `area / centre-distance` stencil after
+Cartesian trace condensation. An
 immutable scene-side audit now assembles those periodic-image-unwrapped
 half-face shells from Cartesian traces, two-sided material-wall quadrature, and
 cell-owned opening patches. Nested, face-aligned-opening, and deliberately
@@ -844,7 +847,9 @@ A manual `4 x 4 x 4` audit likewise resolves its six formerly ambiguous faces
 and closes all 358 controls. It safely omits 240 material quadrature sides
 whose corresponding cell/region volume is exactly absent, misses no opening
 side, retains 95,984 paired opening half-faces, and reaches 2,947 total
-half-faces in its largest control. Assembling and solving the bounded global
+half-faces in its largest control. Every coarse real-wing shell now also builds
+that compact local factorization within the linear storage bound. Assembling
+and solving the bounded global
 trace system remains open; the production graph operator and worker are
 unchanged.
 Export still requires explicit physical material/pilot settings;

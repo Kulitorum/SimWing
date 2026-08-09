@@ -1032,7 +1032,10 @@ is `u = -W diag(area) (lambda - p_cell 1)`; eliminating `p_cell` against
 `sum(area_f u_f) = source` supplies a conservative trace residual. Manufactured
 tests prove translation invariance, exact linear flux on a skew tetrahedron,
 roundoff-only source closure, and exact Cartesian reduction: condensing the two
-traces on a shared orthogonal face recovers `area / centre_distance`.
+traces on a shared orthogonal face recovers `area / centre_distance`. The
+operator stores the exact formula as seven doubles per half-face plus fixed
+three-by-three factors and applies it matrix-free; no dense local `n x n`
+matrix is retained.
 
 The first immutable scene adapter now assembles each sparse cell/region's
 unwrapped half-face shell from exact Cartesian region subfaces, cell- and
@@ -1058,7 +1061,8 @@ corresponding positive cell/region volume does not exist; those are
 impermeable-wall sides, not missing shared traces. No authored-opening side is
 missing. The refined shell set retains 95,984 paired opening half-faces and at
 most 2,947 total half-faces in one control, exposing the future dense-local-
-matrix storage cost before it enters production. A bounded global trace system
+matrix cost without paying it: every coarse real-wing shell builds the compact
+linear-storage local factorization. A bounded global trace system
 still remains to be assembled; the current graph operator and all worker
 arithmetic are unchanged.
 Scene assembly adds per-sheet bending and preserves the junction graph.
