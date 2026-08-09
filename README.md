@@ -816,9 +816,18 @@ both region centroids lie on the positive side of each local cap plane, so an
 absolute-value coefficient would hide a non-admissible two-point stencil.
 All 24 publish correctly sided one-ring support on both authored sides,
 including validated periodic-image geometry. Direct donor substitution would
-place flux in the wrong control-volume row, so resolving these apertures still
-requires a conservative symmetric multipoint or hybrid pressure formulation.
-Subsequent worker integration remains open.
+place flux in the wrong control-volume row. A new isolated mixed-hybrid
+mimetic local-cell kernel now supplies that formulation's first numerical
+building block without changing the production graph solve. From exact volume,
+cell centroid, and oriented half-face area/centroid/normal geometry it builds a
+fingerprinted SPD inverse flux inner product satisfying linear consistency,
+eliminates the cell scalar with exact integrated conservation, reproduces
+linear normal fluxes on a skew tetrahedron, and reduces exactly to the existing
+`area / centre-distance` stencil after Cartesian trace condensation. The next
+integration stage must assemble one complete periodic-image-unwrapped
+half-face shell per sparse cell/region volume from Cartesian partitions,
+material quadrature, and opening-cap patches; incomplete divergence-theorem
+closure will reject. The production operator and worker remain unchanged.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

@@ -1011,8 +1011,35 @@ replacement would nevertheless move aperture flux into a neighboring
 control-volume row; whole-ring or pairwise volume agglomeration also does not
 restore admissible geometry consistently. Pressure-operator assembly therefore
 continues to reject the incomplete topology. Resolving it requires a derived
-locally conservative symmetric multipoint or hybrid formulation; subsequent
-worker integration remains open.
+locally conservative symmetric multipoint or hybrid formulation.
+
+The first isolated mixed-hybrid mimetic kernel now exists under
+`src/fsi/fluid/mimetic_local_cell.*`; it is not wired into that operator. For
+one three-dimensional cell it defines rows
+`R_f = area_f (x_f - x_cell)^T` and `N_f = n_f^T`, requires the exact closed-cell
+identities `sum(area_f n_f) = 0` and `N^T R = volume I`, and constructs
+
+```text
+W = N (N^T R)^-1 N^T + gamma [I - R (R^T R)^-1 R^T],
+gamma = trace(N (N^T R)^-1 N^T) / (face_count - 3).
+```
+
+`W` is symmetric positive definite and satisfies `W R = N`. The local relation
+is `u = -W diag(area) (lambda - p_cell 1)`; eliminating `p_cell` against
+`sum(area_f u_f) = source` supplies a conservative trace residual. Manufactured
+tests prove translation invariance, exact linear flux on a skew tetrahedron,
+roundoff-only source closure, and exact Cartesian reduction: condensing the two
+traces on a shared orthogonal face recovers `area / centre_distance`.
+
+The remaining integration boundary is geometric ownership, not another local
+coefficient guess. A new immutable scene adapter must assemble every sparse
+cell/region's complete unwrapped half-face shell from exact Cartesian region
+subfaces, cell- and face-owned material quadrature, and embedded or face-aligned
+opening-cap patches. Material facets become zero-normal-flow boundary
+half-faces; opening facets retain shared trace/flux continuity. Assembly must
+reject any shell that fails area-vector or divergence-theorem closure before a
+global trace system is built. The current graph operator and all worker
+arithmetic remain unchanged.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy
@@ -1387,7 +1414,9 @@ pressure-projected second-order temporal transport, Euler and second-order
 SSPRK2 laminar velocity diffusion, their
 transactional selectable composed macro-step, the symmetric second-order
 temporal Strang flow path and bounded transactional subcycling, pressure
-projection, and fixed-topology face-aligned moving
+projection, an isolated fingerprinted SPD mixed-hybrid mimetic local-cell
+kernel with exact linear consistency/conservation and Cartesian two-point
+equivalence, and fixed-topology face-aligned moving
 constraints, plus the first open planar one-partial-cell control-volume
 operator, its exact next-plane topology rebase, and the bounded physical
 cut-surface reaction geometry described above. On solve failure it preserves

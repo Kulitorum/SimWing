@@ -492,6 +492,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/grid.h
     src/fsi/fluid/interface_jump.cpp
     src/fsi/fluid/interface_jump.h
+    src/fsi/fluid/mimetic_local_cell.cpp
+    src/fsi/fluid/mimetic_local_cell.h
     src/fsi/fluid/moving_control_volume.cpp
     src/fsi/fluid/moving_control_volume.h
     src/fsi/fluid/moving_interface.cpp
@@ -1395,6 +1397,11 @@ add_executable(simwing-fluid-control-volume-test
 )
 target_link_libraries(simwing-fluid-control-volume-test PRIVATE simwing_fluid)
 
+add_executable(simwing-fluid-mimetic-local-cell-test
+    tests/simwing_fluid_mimetic_local_cell_test.cpp
+)
+target_link_libraries(simwing-fluid-mimetic-local-cell-test PRIVATE simwing_fluid)
+
 add_executable(simwing-fluid-cut-surface-test
     tests/simwing_fluid_cut_surface_test.cpp
 )
@@ -2019,6 +2026,8 @@ add_test(NAME simwing_fluid_moving_interface
     COMMAND simwing-fluid-moving-interface-test)
 add_test(NAME simwing_fluid_control_volume
     COMMAND simwing-fluid-control-volume-test)
+add_test(NAME simwing_fluid_mimetic_local_cell
+    COMMAND simwing-fluid-mimetic-local-cell-test)
 add_test(NAME simwing_fluid_cut_surface
     COMMAND simwing-fluid-cut-surface-test)
 add_test(NAME simwing_fluid_checkpoint
