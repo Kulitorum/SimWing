@@ -3,6 +3,7 @@
 #include "nurbs_model.h"
 #include "scene_fluid_cell_volume.h"
 #include "scene_fluid_opening_cap.h"
+#include "scene_fluid_pressure_control_volume.h"
 #include "scene_fluid_surface.h"
 #include "scene_structure.h"
 #include "structure_frame.h"
@@ -441,6 +442,19 @@ void testRealDesignCapture(const std::filesystem::path &input,
         simwing::fsi::buildSceneFluidCellVolumes(
             fluidSurface.definition, fluidState, fluidGrid, fluidTransfer,
             fluidEpoch);
+    const simwing::fsi::SceneFluidOpeningQuadratureSet openingQuadrature =
+        simwing::fsi::buildSceneFluidOpeningQuadrature(
+            fluidSurface.definition, fluidState, openingCaps);
+    const simwing::fsi::SceneFluidOpeningGridPatchSet openingPatches =
+        simwing::fsi::buildSceneFluidOpeningGridPatches(
+            fluidSurface.definition, fluidState, openingCaps,
+            openingQuadrature, fluidGrid);
+    const simwing::fsi::SceneFluidRegionConnectivity fluidConnectivity =
+        simwing::fsi::buildSceneFluidRegionConnectivity(
+            fluidSurface.definition);
+    const simwing::fsi::SceneFluidPressureControlVolumeSet pressureVolumes =
+        simwing::fsi::buildSceneFluidPressureControlVolumes(
+            fluidSurface.definition, fluidVolumes, fluidConnectivity);
     check(fluidVolumes.regionVolumes.size() == result.scene.regions.size()
               && fluidVolumes.openingCapCount
                   == result.scene.openings.size()
@@ -451,6 +465,14 @@ void testRealDesignCapture(const std::filesystem::path &input,
               && fluidVolumes.maximumRegionVolumeResidualCubicMeters
                   < 1.0e-10,
           "real multi-region wing retains junction faces and closes its coarse-grid volume ledger");
+    check(pressureVolumes.regions.size() == result.scene.regions.size()
+              && !pressureVolumes.controlVolumes.empty()
+              && openingPatches.patches.size()
+                  >= openingQuadrature.points.size()
+              && std::abs(openingPatches.totalAreaSquareMeters
+                          - openingCaps.totalAreaSquareMeters)
+                  < 1.0e-10,
+          "real wing reaches bounded opening patches and pressure controls");
     const simwing::viewer::StructureFrameMapping mapping =
         simwing::viewer::makeStructureFrameMapping(
             result.scene, assembly, structure);

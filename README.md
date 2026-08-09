@@ -756,8 +756,11 @@ full real wing's three-region skin/rib cycles and consumes its complete opening
 set. Pairwise signed cell-volume accounting also closes the complete real-wing
 region ledger on a centered coarse grid that crosses the canopy. Junctions on
 a Cartesian face survive as pair-specific open chains and explicit unresolved
-partitions; resolving their per-region face areas and subsequent worker
-integration remain open.
+partitions. Opening quadrature/grid patches preserve the full cap area, and
+authored connectivity plus sparse pressure controls assemble. Exact pressure
+face links remain open because at least one coarse embedded opening lacks
+positive projected separation between its two cell-region centroids; resolving
+junction face areas and subsequent worker integration also remain open.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

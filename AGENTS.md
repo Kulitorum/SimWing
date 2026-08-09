@@ -955,8 +955,11 @@ makes this a certified aerodynamic solver.
   complete real-wing opening set. Its full multi-region volume ledger closes
   on a centered coarse grid that crosses the canopy; grid-face junctions are
   preserved as pair-specific chains and explicit unresolved partitions.
-  Resolving their per-region face areas and the subsequent worker path remain
-  open.
+  Opening quadrature and grid patches retain the full cap area, and authored
+  connectivity plus sparse pressure control volumes assemble. Exact pressure
+  face links remain open: at least one coarse embedded opening lacks positive
+  projected separation between its two cell-region centroids. Resolving
+  junction face areas and the subsequent worker path also remain open.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
   loads/state, trusted constraint/membrane/bending assembly, explicit optional
   fabric self-contact, rigid-pilot suspension, diagnostics, and composite

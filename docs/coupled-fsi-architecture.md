@@ -936,8 +936,12 @@ cap facets and captures every opening vertex through the live Structure-to-fluid
 surface adapter. The cap owner validates the three-region skin/rib mouth cycles
 and consumes the complete real-wing opening set. Pairwise cell-volume measures
 close its complete region ledger on a centered coarse grid; grid-face junctions
-remain explicit unresolved partitions. Resolving their per-region face areas
-and subsequent worker integration remain open.
+remain explicit unresolved partitions. Opening quadrature and grid patches
+preserve the full cap area, while authored connectivity and sparse pressure
+control volumes assemble. Exact pressure face links remain open because at
+least one coarse embedded opening lacks positive projected separation between
+its two cell-region centroids. Resolving junction face areas and subsequent
+worker integration also remain open.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy
