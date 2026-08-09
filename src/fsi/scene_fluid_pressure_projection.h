@@ -11,7 +11,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureProjectionVersion = 5;
+inline constexpr std::uint32_t sceneFluidPressureProjectionVersion = 6;
 
 struct SceneFluidPressureLinkFlowContinuation;
 struct SceneFluidRegionLinkFlowPrediction;
@@ -97,9 +97,10 @@ struct SceneFluidPressureProjectionDiagnostics {
 };
 
 // Link-resolved finite-volume projection. Same-region links read
-// their owning MAC normal velocity. Authored-opening links instead reuse the
-// accepted negative-to-positive relative opening flux (fluid minus cap sweep)
-// and orient it from the spatial minus cell to the plus cell. The integrated
+// their owning MAC normal velocity. Face-owned and embedded authored-opening
+// links instead reuse the accepted negative-to-positive relative opening flux
+// (fluid minus cap sweep) and orient it from the link's minus control to its
+// plus control. The integrated
 // pressure solve corrects one flow per link; a partitioned Cartesian face is
 // deliberately not collapsed back to one MAC value.
 //

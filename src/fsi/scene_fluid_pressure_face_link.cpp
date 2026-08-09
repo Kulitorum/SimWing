@@ -72,7 +72,9 @@ bool checkedMultiply(const std::size_t first,
 
 void validateSettings(const SceneFluidPressureFaceLinkSettings& settings) {
     if (!std::isfinite(settings.areaToleranceSquareMeters)
-        || !(settings.areaToleranceSquareMeters > 0.0)) {
+        || !(settings.areaToleranceSquareMeters > 0.0)
+        || !std::isfinite(settings.minimumCenterDistanceMeters)
+        || !(settings.minimumCenterDistanceMeters > 0.0)) {
         throw std::invalid_argument(
             "scene fluid pressure-face-link settings are invalid");
     }
@@ -136,6 +138,20 @@ std::uint64_t openingLinkStableId(const std::uint64_t faceId,
     return fingerprint.value();
 }
 
+std::uint64_t embeddedOpeningLinkStableId(
+    const std::uint64_t patchStableId,
+    const std::size_t cellIndex,
+    const StableId minusRegionId,
+    const StableId plusRegionId) {
+    Fingerprint fingerprint;
+    fingerprint.integer(std::uint64_t{0x70726573656d6264ULL});
+    fingerprint.integer(patchStableId);
+    fingerprint.integer(static_cast<std::uint64_t>(cellIndex));
+    fingerprint.integer(minusRegionId);
+    fingerprint.integer(plusRegionId);
+    return fingerprint.value();
+}
+
 double faceArea(const fluid::Vector3& spacing,
                 const fluid::GridFaceAxis axis) {
     switch (axis) {
@@ -164,6 +180,23 @@ double axisComponent(const Vec3& value,
     case fluid::GridFaceAxis::Z: return value.z;
     }
     throw std::invalid_argument("scene fluid pressure face has invalid axis");
+}
+
+fluid::Vector3 axisNormal(const fluid::GridFaceAxis axis) {
+    switch (axis) {
+    case fluid::GridFaceAxis::X: return {1.0, 0.0, 0.0};
+    case fluid::GridFaceAxis::Y: return {0.0, 1.0, 0.0};
+    case fluid::GridFaceAxis::Z: return {0.0, 0.0, 1.0};
+    }
+    throw std::invalid_argument("scene fluid pressure face has invalid axis");
+}
+
+double projectedDistance(const Vec3& minus,
+                         const Vec3& plus,
+                         const Vec3& unitNormalMinusToPlus) {
+    return (plus.x - minus.x) * unitNormalMinusToPlus.x
+        + (plus.y - minus.y) * unitNormalMinusToPlus.y
+        + (plus.z - minus.z) * unitNormalMinusToPlus.z;
 }
 
 std::size_t minusCellIndex(const fluid::PeriodicCartesianGrid& grid,
@@ -256,8 +289,10 @@ std::uint64_t faceLinkFingerprint(
              faceLinks.lowerMeters.z, faceLinks.upperMeters.x,
              faceLinks.upperMeters.y, faceLinks.upperMeters.z,
              faceLinks.settings.areaToleranceSquareMeters,
+             faceLinks.settings.minimumCenterDistanceMeters,
              faceLinks.totalFaceAreaSquareMeters,
              faceLinks.totalLinkedAreaSquareMeters,
+             faceLinks.totalEmbeddedOpeningAreaSquareMeters,
              faceLinks.maximumResolvedAreaResidualSquareMeters}) {
         fingerprint.real(value);
     }
@@ -266,6 +301,7 @@ std::uint64_t faceLinkFingerprint(
              faceLinks.resolvedFullFaceCount,
              faceLinks.resolvedPartitionFaceCount,
              faceLinks.resolvedOpeningFaceCount,
+             faceLinks.embeddedOpeningLinkCount,
              faceLinks.unresolvedActiveFaceCount,
              faceLinks.unresolvedAmbiguousFaceCount,
              faceLinks.unresolvedOpeningFaceCount}) {
@@ -294,6 +330,7 @@ std::uint64_t faceLinkFingerprint(
         fingerprint.integer(link.stableId);
         fingerprint.integer(static_cast<std::uint64_t>(link.faceIndex));
         fingerprint.enumeration(link.kind);
+        fingerprint.enumeration(link.geometryKind);
         fingerprint.integer(link.minusRegionId);
         fingerprint.integer(link.plusRegionId);
         fingerprint.integer(static_cast<std::uint64_t>(
@@ -310,6 +347,9 @@ std::uint64_t faceLinkFingerprint(
         fingerprint.real(link.areaSquareMeters);
         fingerprint.real(link.centerDistanceMeters);
         fingerprint.real(link.geometryWeightMeters);
+        fingerprint.real(link.unitNormalMinusToPlus.x);
+        fingerprint.real(link.unitNormalMinusToPlus.y);
+        fingerprint.real(link.unitNormalMinusToPlus.z);
     }
     return fingerprint.value();
 }
@@ -494,6 +534,8 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                 minusRegionId, plusRegionId);
         link.faceIndex = face.faceIndex;
         link.kind = kind;
+        link.geometryKind =
+            SceneFluidPressureLinkGeometryKind::CartesianFace;
         link.minusRegionId = minusRegionId;
         link.plusRegionId = plusRegionId;
         link.minusRegionIndex = minus->regionIndex;
@@ -507,6 +549,7 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
         link.centerDistanceMeters = centerDistance(spacing, face.axis);
         link.geometryWeightMeters =
             link.areaSquareMeters / link.centerDistanceMeters;
+        link.unitNormalMinusToPlus = axisNormal(face.axis);
         if (!linkStableIds.insert(link.stableId).second) {
             throw std::invalid_argument(
                 "scene fluid pressure face-link stable ID collides");
@@ -706,6 +749,85 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                 }
             }
         }
+    }
+
+    for (const auto& patch : openingPatches.patches) {
+        if (patch.ownerKind != SceneFluidOpeningPatchOwnerKind::Cell) {
+            continue;
+        }
+        if (patch.cellIndex >= pressureVolumes.cells.size()
+            || !(patch.areaSquareMeters > 0.0)
+            || !std::isfinite(patch.areaSquareMeters)) {
+            throw std::invalid_argument(
+                "scene fluid embedded pressure opening has invalid ownership");
+        }
+        const auto* minus = controlFor(
+            pressureVolumes, patch.cellIndex,
+            patch.negativeSideRegionId);
+        const auto* plus = controlFor(
+            pressureVolumes, patch.cellIndex,
+            patch.positiveSideRegionId);
+        if (!minus || !plus
+            || minus->controlVolumeIndex == plus->controlVolumeIndex
+            || minus->componentIndex != plus->componentIndex
+            || patch.negativeSideRegionId == patch.positiveSideRegionId
+            || patch.openingId == invalidStableId
+            || patch.stableId == 0) {
+            throw std::invalid_argument(
+                "scene fluid embedded pressure opening has no matching control volumes");
+        }
+        const double distance = projectedDistance(
+            minus->centroidMeters, plus->centroidMeters,
+            patch.unitNormalNegativeToPositive);
+        if (!std::isfinite(distance)
+            || distance < settings.minimumCenterDistanceMeters) {
+            throw std::invalid_argument(
+                "scene fluid embedded pressure opening has degenerate centroid separation");
+        }
+        if (result.links.size() == limits.maximumLinks) {
+            throw std::length_error(
+                "scene fluid pressure-face-link exceeds its link limit");
+        }
+        if (result.links.size() == maximumLinksByBytes) {
+            throw std::length_error(
+                "scene fluid pressure-face-link exceeds its byte limit");
+        }
+        SceneFluidPressureFaceLink link;
+        link.linkIndex = result.links.size();
+        link.stableId = embeddedOpeningLinkStableId(
+            patch.stableId, patch.cellIndex,
+            patch.negativeSideRegionId,
+            patch.positiveSideRegionId);
+        link.kind = SceneFluidPressureFaceLinkKind::AuthoredOpening;
+        link.geometryKind =
+            SceneFluidPressureLinkGeometryKind::EmbeddedOpening;
+        link.minusRegionId = patch.negativeSideRegionId;
+        link.plusRegionId = patch.positiveSideRegionId;
+        link.minusRegionIndex = minus->regionIndex;
+        link.plusRegionIndex = plus->regionIndex;
+        link.componentIndex = minus->componentIndex;
+        link.minusControlVolumeIndex = minus->controlVolumeIndex;
+        link.plusControlVolumeIndex = plus->controlVolumeIndex;
+        link.openingId = patch.openingId;
+        link.openingPatchStableId = patch.stableId;
+        link.areaSquareMeters = patch.areaSquareMeters;
+        link.centerDistanceMeters = distance;
+        link.geometryWeightMeters = patch.areaSquareMeters / distance;
+        link.unitNormalMinusToPlus = {
+            patch.unitNormalNegativeToPositive.x,
+            patch.unitNormalNegativeToPositive.y,
+            patch.unitNormalNegativeToPositive.z,
+        };
+        if (!std::isfinite(link.geometryWeightMeters)
+            || !(link.geometryWeightMeters > 0.0)
+            || !linkStableIds.insert(link.stableId).second) {
+            throw std::invalid_argument(
+                "scene fluid embedded pressure opening is invalid");
+        }
+        result.totalEmbeddedOpeningAreaSquareMeters +=
+            patch.areaSquareMeters;
+        ++result.embeddedOpeningLinkCount;
+        result.links.push_back(link);
     }
     result.ownedStorageBytes = storageBytes(result);
     if (result.ownedStorageBytes > limits.maximumLinkBytes) {

@@ -559,24 +559,26 @@ unambiguous common region. A face-aligned authored opening now contributes its
 exact oriented cross-region aperture area plus an unambiguous same-region link
 over the rest of that Cartesian face. The analytic intake therefore retains
 `0.18 m²` of opening and `0.82 m²` of Outside flow area instead of smearing the
-whole face into either one. Material/interface ambiguity remains unlinked, and
-physical pressure coefficients enter only in the downstream fixed-epoch
-projection. For fully resolved geometry,
+whole face into either one. A cell-owned opening patch contributes an embedded
+cross-region link inside its cut cell. Its authored normal and exact area are
+retained, while conductance distance is the positive projected separation of
+the two cell-region pressure centroids. Material/interface ambiguity remains
+unlinked, and physical pressure coefficients enter only in the downstream
+fixed-epoch projection. For fully resolved geometry,
 those links assemble into a bounded symmetric integrated graph Laplacian. Its exact
 constant nullspace, positive link energy, component conservation, and retained
 gauge owners are tested. Assembly requires one connected link graph per
-authored pressure component. The face-aligned intake now joins Cell and Outside
-with exact aperture graph energy, while a complete Cartesian grid with a
-missing off-face intake link still rejects instead of acting like sealed
-fabric. A deterministic component-wise conjugate-gradient layer now solves
+authored pressure component. Face-aligned and tilted off-face intakes now join
+Cell and Outside with exact aperture graph energy instead of acting like
+sealed fabric. A deterministic component-wise conjugate-gradient layer now solves
 manufactured integrated systems on both the nested closed regions and that open
 intake. It rejects incompatible component sources, removes only admitted
 roundoff, explicitly recomputes the final residual, sets every canonical gauge
-to exactly zero, and leaves warm pressure unchanged on failure. Off-face
-opening transmissibility remains future work. A first physical fixed-epoch
+to exactly zero, and leaves warm pressure unchanged on failure. A first physical fixed-epoch
 adapter now maps the predicted MAC field into one oriented volume flow per
 resolved link, substitutes accepted fluid-minus-cap-sweep flow on each exact
-face-aligned aperture patch, assembles `-rho/dt` times the integrated outward
+face-aligned or embedded aperture patch, assembles `-rho/dt` times the
+integrated outward
 flow as the pressure RHS, and applies the solved pressure difference back to
 each link. It publishes pressure and corrected flow only after explicit
 control-volume continuity closes; non-convergence exposes diagnostics without
@@ -595,8 +597,8 @@ appearance donors and retirement recipients. Geometry-volume rates,
 transported momentum, and pressure warm state consume that same fingerprinted
 decision. General
 swept-volume remap,
-corrected-MAC reconstruction across partitioned faces, off-face opening
-transmissibility, and general moving-boundary projection remain future work.
+corrected-MAC and region-momentum continuation across partitioned faces and
+embedded openings, and general moving-boundary projection remain future work.
 Accepted projection pressure now also returns through the authoritative
 surface path. Quadrature-v2 retains the exact cell owner of each authored
 surface side; a bounded sampler resolves those cell/region pressure unknowns,
@@ -623,7 +625,9 @@ and restores both Structure and pressure ownership on iteration exhaustion or
 projection failure. The MAC predictor is held fixed inside each nonlinear
 feedback loop. Accepted corrected link flows can now be conservatively
 area-collapsed back onto one absolute bulk MAC velocity per Cartesian face,
-including oriented intake-cap sweep. The visible pressure-cell canonical uses
+including oriented intake-cap sweep. Embedded opening links reject that
+Cartesian collapse until their oriented flow is carried by region momentum.
+The visible pressure-cell canonical uses
 that field as its next predictor. Region-resolved transport and a local
 material-wall exchange now continue the accepted state after bootstrap;
 general immersed-boundary advection/boundary layers and general topology

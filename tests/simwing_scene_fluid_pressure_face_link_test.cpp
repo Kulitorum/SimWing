@@ -139,6 +139,16 @@ Scene openScene() {
     return scene;
 }
 
+Scene tiltedOpenScene() {
+    auto scene = openScene();
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-pressure-face-tilted-open";
+    scene.vertices[1].positionMeters.x = 2.6;
+    scene.vertices[2].positionMeters.x = 2.8;
+    scene.vertices[3].positionMeters.x = 2.7;
+    return scene;
+}
+
 fluid::PeriodicCartesianGrid grid() {
     return {{4, 4, 4}, {}, {4.0, 4.0, 4.0}};
 }
@@ -252,7 +262,7 @@ void testExactNestedFaceLinks() {
         fixture.volumes, fixture.connectivity, fixture.pressureVolumes);
 }
 
-void testOpeningFacesRemainExplicitlyUnresolved() {
+void testFaceAndEmbeddedOpeningLinks() {
     Fixture fixture(openScene());
     const auto links = fixture.links();
     const auto faceOwnedPatchCount = std::ranges::count(
@@ -300,6 +310,65 @@ void testOpeningFacesRemainExplicitlyUnresolved() {
     }
     checkNear(openingFace->areaResidualSquareMeters, 0.0, 2.0e-15,
               "opening and complementary links close the Cartesian face");
+
+    Fixture tilted(tiltedOpenScene());
+    const auto embeddedLinks = tilted.links();
+    const auto cellOwnedPatchCount = std::ranges::count(
+        tilted.openingPatches.patches,
+        SceneFluidOpeningPatchOwnerKind::Cell,
+        &SceneFluidOpeningGridPatch::ownerKind);
+    const auto embedded = std::ranges::find(
+        embeddedLinks.links,
+        SceneFluidPressureLinkGeometryKind::EmbeddedOpening,
+        &SceneFluidPressureFaceLink::geometryKind);
+    check(cellOwnedPatchCount == 1
+              && embeddedLinks.embeddedOpeningLinkCount == 1
+              && embedded != embeddedLinks.links.end()
+              && embeddedLinks.unresolvedOpeningFaceCount == 0,
+          "tilted off-face intake owns one embedded pressure link");
+    if (embedded != embeddedLinks.links.end()) {
+        const auto& patch = tilted.openingPatches.patches.front();
+        const auto& minus = tilted.pressureVolumes.controlVolumes[
+            embedded->minusControlVolumeIndex];
+        const auto& plus = tilted.pressureVolumes.controlVolumes[
+            embedded->plusControlVolumeIndex];
+        const double projectedDistance =
+            (plus.centroidMeters.x - minus.centroidMeters.x)
+                * patch.unitNormalNegativeToPositive.x
+            + (plus.centroidMeters.y - minus.centroidMeters.y)
+                * patch.unitNormalNegativeToPositive.y
+            + (plus.centroidMeters.z - minus.centroidMeters.z)
+                * patch.unitNormalNegativeToPositive.z;
+        check(embedded->kind
+                      == SceneFluidPressureFaceLinkKind::AuthoredOpening
+                  && embedded->faceIndex
+                      == invalidSceneFluidPressureFaceIndex
+                  && std::abs(patch.unitNormalNegativeToPositive.y) > 0.1
+                  && minus.cellIndex == patch.cellIndex
+                  && plus.cellIndex == patch.cellIndex
+                  && minus.regionId == patch.negativeSideRegionId
+                  && plus.regionId == patch.positiveSideRegionId,
+              "embedded intake joins its exact same-cell side controls");
+        checkNear(embedded->areaSquareMeters, patch.areaSquareMeters, 0.0,
+                  "embedded intake preserves exact clipped patch area");
+        checkNear(embedded->centerDistanceMeters, projectedDistance, 0.0,
+                  "embedded intake uses projected pressure-centroid separation");
+        checkNear(embedded->geometryWeightMeters,
+                  patch.areaSquareMeters / projectedDistance, 0.0,
+                  "embedded intake publishes exact centroid conductance weight");
+        checkNear(embedded->unitNormalMinusToPlus.x,
+                  patch.unitNormalNegativeToPositive.x, 0.0,
+                  "embedded intake preserves authored normal x");
+        checkNear(embedded->unitNormalMinusToPlus.y,
+                  patch.unitNormalNegativeToPositive.y, 0.0,
+                  "embedded intake preserves authored normal y");
+        checkNear(embedded->unitNormalMinusToPlus.z,
+                  patch.unitNormalNegativeToPositive.z, 0.0,
+                  "embedded intake preserves authored normal z");
+    }
+    checkNear(embeddedLinks.totalEmbeddedOpeningAreaSquareMeters,
+              tilted.openingPatches.totalAreaSquareMeters, 0.0,
+              "embedded pressure links consume every off-face opening patch");
 }
 
 void testCorruptionSettingsAndLimits() {
@@ -321,6 +390,18 @@ void testCorruptionSettingsAndLimits() {
     expectInvalid(
         [&] { static_cast<void>(fixture.links(invalidSettings)); },
         "pressure-face-link assembly rejects zero area tolerance");
+    invalidSettings = {};
+    invalidSettings.minimumCenterDistanceMeters = 0.0;
+    expectInvalid(
+        [&] { static_cast<void>(fixture.links(invalidSettings)); },
+        "pressure-face-link assembly rejects zero centroid distance tolerance");
+
+    Fixture tilted(tiltedOpenScene());
+    SceneFluidPressureFaceLinkSettings excessiveDistance;
+    excessiveDistance.minimumCenterDistanceMeters = 10.0;
+    expectInvalid(
+        [&] { static_cast<void>(tilted.links(excessiveDistance)); },
+        "embedded pressure link rejects degenerate centroid separation");
 
     SceneFluidPressureFaceLinkLimits limits;
     limits.maximumFaces = 3 * grid().cellCount() - 1;
@@ -344,7 +425,7 @@ void testCorruptionSettingsAndLimits() {
 int main() {
     try {
         testExactNestedFaceLinks();
-        testOpeningFacesRemainExplicitlyUnresolved();
+        testFaceAndEmbeddedOpeningLinks();
         testCorruptionSettingsAndLimits();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

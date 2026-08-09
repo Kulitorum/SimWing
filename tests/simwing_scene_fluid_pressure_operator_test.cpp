@@ -140,6 +140,16 @@ Scene openScene(const double mouthX = 2.0) {
     return scene;
 }
 
+Scene tiltedOpenScene() {
+    auto scene = openScene();
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-pressure-operator-tilted-open";
+    scene.vertices[1].positionMeters.x = 2.6;
+    scene.vertices[2].positionMeters.x = 2.8;
+    scene.vertices[3].positionMeters.x = 2.7;
+    return scene;
+}
+
 fluid::PeriodicCartesianGrid grid() {
     return {{4, 4, 4}, {}, {4.0, 4.0, 4.0}};
 }
@@ -305,17 +315,41 @@ void testOpeningTopologyBoundaries() {
     checkNear(dot(regionJump, jumpResult), 0.18, 2.0e-15,
               "face-aligned intake contributes its exact aperture graph energy");
 
-    Fixture offFace(openScene(2.8));
+    Fixture offFace(tiltedOpenScene());
     const std::size_t unresolvedFaceCount =
         offFace.faceLinks.unresolvedActiveFaceCount
         + offFace.faceLinks.unresolvedAmbiguousFaceCount
         + offFace.faceLinks.unresolvedOpeningFaceCount;
+    const auto embeddedOperator = offFace.pressureOperator();
+    const auto embeddedLink = std::ranges::find(
+        offFace.faceLinks.links,
+        SceneFluidPressureLinkGeometryKind::EmbeddedOpening,
+        &SceneFluidPressureFaceLink::geometryKind);
     check(unresolvedFaceCount == 0
-              && offFace.pressureVolumes.components.size() == 1,
-          "off-face intake has complete Cartesian faces but one authored component");
-    expectInvalid(
-        [&] { static_cast<void>(offFace.pressureOperator()); },
-        "pressure operator rejects a component disconnected by a missing off-face opening link");
+              && offFace.pressureVolumes.components.size() == 1
+              && offFace.faceLinks.embeddedOpeningLinkCount == 1
+              && embeddedLink != offFace.faceLinks.links.end()
+              && embeddedOperator.components.size() == 1,
+          "tilted off-face intake closes its authored pressure component");
+    const auto embeddedConstant = applySceneFluidPressureOperator(
+        embeddedOperator,
+        std::vector<double>(embeddedOperator.rows.size(), 1.0));
+    check(std::ranges::all_of(
+              embeddedConstant,
+              [](const double value) { return value == 0.0; }),
+          "embedded intake retains the exact constant pressure null mode");
+    std::vector<double> embeddedJump(embeddedOperator.rows.size(), 0.0);
+    for (const auto& control : offFace.pressureVolumes.controlVolumes) {
+        embeddedJump[control.controlVolumeIndex] =
+            control.regionId == 2 ? 1.0 : 0.0;
+    }
+    const auto embeddedResult = applySceneFluidPressureOperator(
+        embeddedOperator, embeddedJump);
+    if (embeddedLink != offFace.faceLinks.links.end()) {
+        checkNear(dot(embeddedJump, embeddedResult),
+                  embeddedLink->geometryWeightMeters, 2.0e-15,
+                  "embedded intake contributes its exact centroid-weighted graph energy");
+    }
 }
 
 void testCorruptionInputsAndLimits() {

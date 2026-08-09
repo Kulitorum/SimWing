@@ -652,8 +652,11 @@ oriented cross-region link for each exact cap patch and, when unambiguous, one
 same-region link over the complementary face area. The analytic triangular
 intake closes its unit Cartesian face as `0.18 m²` of Cell-to-Outside aperture
 plus `0.82 m²` of Outside-to-Outside area. The published geometry weight is
-area over center distance; physical coefficients, off-face opening
-transmissibility, and projection remain unimplemented. For the fully resolved
+area over center distance. A cell-owned patch instead publishes an embedded
+same-cell cross-region link along the full authored normal. Its center distance
+is the positive normal projection between the two exact cell-region centroids;
+degenerate separation rejects instead of creating unbounded conductance. For
+the fully resolved
 subset, a bounded immutable pressure-operator owner now expands every link into
 the two directed rows of a symmetric integrated graph Laplacian. Its action is
 the conservative sum of `area/distance * (p_row - p_neighbour)`, so constants
@@ -662,9 +665,9 @@ operator retains each existing gauge control-volume owner but does not apply a
 gauge or solve. It additionally proves that each authored pressure component
 is exactly one link-connected graph. The face-aligned intake now passes as one
 Cell-plus-Outside component and its unit region jump has exactly `0.18 m` of
-graph energy. An off-face intake with otherwise complete Cartesian faces still
-rejects because its authored component remains split. This prevents a missing
-embedded opening path from becoming an accidental no-flow boundary. A
+graph energy. A tilted off-face intake with otherwise complete Cartesian faces
+now joins its authored component through the embedded patch instead of becoming
+an accidental no-flow boundary. A
 transactional component-wise conjugate-gradient solve now accepts an integrated
 RHS only when every component sum is inside an explicit absolute tolerance,
 removes just that admitted roundoff, and commits only after recomputing the true
@@ -674,7 +677,8 @@ face-aligned intake recover their prescribed pressure fields; incompatible and
 truncated solves preserve the warm start exactly. A subsequent bounded
 fixed-epoch adapter now reads one predicted spatial MAC flow per same-region
 link and the already accepted fluid-minus-cap-sweep flow per oriented
-face-aligned opening patch. Its integrated RHS is `-rho/dt` times each control
+face-aligned or embedded opening patch. Its integrated RHS is `-rho/dt` times
+each control
 volume's net outward predicted flow. After the existing transactional solve,
 every link receives `dt/rho * area/distance * (p_minus - p_plus)` and the result
 is published only when the independently accumulated corrected control-volume
@@ -696,9 +700,9 @@ the predicted net outward link flow before RHS assembly and accepts only when
 `dV/dt + corrected net outward flow` closes locally. Starting from zero air
 velocity, the expanding open tetrahedron develops nonzero pressure and draws
 flow inward through its authored intake; omitting the rate remains the exact
-frozen zero-flow baseline. General conservative swept-volume remap, a unique
-corrected MAC reconstruction for partitioned faces, and off-face opening
-transmissibility remain absent. A
+frozen zero-flow baseline. General conservative swept-volume remap and unique
+corrected MAC/region-momentum continuation for partitioned faces and embedded
+openings remain absent. A
 bounded return-path adapter now samples accepted sparse pressure on the
 authoritative material quadrature. Quadrature-v2 retains exact negative- and
 positive-side cell owners for both cell-owned and face-owned patches. Each
@@ -735,7 +739,9 @@ first feedback owner holds the predicted MAC field fixed across nonlinear
 iterations. Accepted corrected link flows can now be collapsed onto one
 absolute bulk MAC velocity per Cartesian face, restoring oriented cap sweep at
 authored openings and reporting the maximum mixed-region subface velocity
-spread. The pressure-cell worker uses that derived field as the next accepted
+spread. Embedded openings reject this Cartesian collapse until their oriented
+flow participates in region-momentum reconstruction. The pressure-cell worker
+uses that derived field as the next accepted
 predictor. This collapse is pressure-correction continuation, not general
 cut-cell advection, viscosity, or a topology-rebasing CFD step. Its
 topology-stable inverse bookkeeping is now explicit as a separate link-flow

@@ -147,6 +147,16 @@ Scene openScene() {
     return scene;
 }
 
+Scene tiltedOpenScene() {
+    auto scene = openScene();
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-pressure-projection-tilted-open";
+    scene.vertices[1].positionMeters.x = 2.6;
+    scene.vertices[2].positionMeters.x = 2.8;
+    scene.vertices[3].positionMeters.x = 2.7;
+    return scene;
+}
+
 Scene reversedOpenScene() {
     auto scene = openScene();
     scene.metadata.designChecksum =
@@ -438,6 +448,42 @@ void testFaceAlignedOpeningProjection() {
             0.36, 5.0e-15,
             "projection flips authored flow into positive spatial face orientation");
     }
+}
+
+void testEmbeddedOpeningProjection() {
+    Fixture fixture(tiltedOpenScene());
+    fluid::MacVelocityField velocity(grid());
+    std::ranges::fill(velocity.xFaces(), 2.0);
+    std::ranges::fill(velocity.yFaces(), -0.5);
+    std::ranges::fill(velocity.zFaces(), 0.25);
+    const auto openingFlux = fixture.flux(velocity);
+    std::vector<double> warm(fixture.pressureOperator.rows.size(), 0.0);
+    const auto projected = fixture.project(
+        velocity, openingFlux, warm, strictSettings());
+    const auto aperture = std::ranges::find_if(
+        projected.links,
+        [](const auto& link) {
+            return link.kind
+                    == SceneFluidPressureFaceLinkKind::AuthoredOpening
+                && link.faceIndex == invalidSceneFluidPressureFaceIndex;
+        });
+    check(projected.diagnostics.accepted
+              && projected.diagnostics.authoredOpeningLinkCount == 1
+              && openingFlux.samples.size() == 1
+              && aperture != projected.links.end(),
+          "tilted off-face intake participates in an accepted projection");
+    if (aperture != projected.links.end()) {
+        checkNear(
+            aperture->predictedRelativeVolumeFlowRateCubicMetersPerSecond,
+            openingFlux.samples.front()
+                .relativeVolumeFlowRateCubicMetersPerSecond,
+            0.0,
+            "embedded aperture reuses exact off-face staggered flux");
+    }
+    check(projected.diagnostics
+              .correctedNetOutwardVolumeRateMaximumCubicMetersPerSecond
+              < 2.0e-11,
+          "embedded aperture projection closes control-volume continuity");
 }
 
 void testZeroFlowAndRejectedAttempt() {
@@ -1214,6 +1260,7 @@ int main() {
     try {
         testClosedLinkProjection();
         testFaceAlignedOpeningProjection();
+        testEmbeddedOpeningProjection();
         testZeroFlowAndRejectedAttempt();
         testLinkResolvedContinuation();
         testAreaChangingLinkContinuation();

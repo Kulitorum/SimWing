@@ -353,6 +353,10 @@ SceneFluidPressureCoupling::acceptedPressureCorrectedMacVelocity() const {
         throw std::invalid_argument(
             "scene pressure corrected MAC velocity identity is invalid");
     }
+    if (faceLinks.embeddedOpeningLinkCount != 0) {
+        throw std::invalid_argument(
+            "scene pressure corrected MAC velocity cannot collapse embedded opening flow");
+    }
 
     std::map<std::uint64_t, const SceneFluidOpeningGridPatch*>
         openingPatches;

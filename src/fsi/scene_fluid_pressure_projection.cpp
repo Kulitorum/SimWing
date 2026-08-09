@@ -626,7 +626,23 @@ static SceneFluidPressureProjection projectSceneFluidPressureLinkFlowsImpl(
     }
     std::size_t consumedOpeningSamples = 0;
     for (const auto& source : faceLinks.links) {
-        const auto& face = faceLinks.faces[source.faceIndex];
+        const SceneFluidPressureFace* face = nullptr;
+        if (source.geometryKind
+            == SceneFluidPressureLinkGeometryKind::CartesianFace) {
+            if (source.faceIndex >= faceLinks.faces.size()) {
+                throw std::invalid_argument(
+                    "scene fluid pressure projection face link is invalid");
+            }
+            face = &faceLinks.faces[source.faceIndex];
+        } else if (source.geometryKind
+                       != SceneFluidPressureLinkGeometryKind::EmbeddedOpening
+                   || source.kind
+                       != SceneFluidPressureFaceLinkKind::AuthoredOpening
+                   || source.faceIndex
+                       != invalidSceneFluidPressureFaceIndex) {
+            throw std::invalid_argument(
+                "scene fluid pressure projection embedded link is invalid");
+        }
         double predictedFlow = 0.0;
         if (regionLinkFlowPrediction != nullptr) {
             const auto& predicted =
@@ -683,7 +699,8 @@ static SceneFluidPressureProjection projectSceneFluidPressureLinkFlowsImpl(
         } else if (source.kind
                    == SceneFluidPressureFaceLinkKind::SameRegion) {
             predictedFlow = source.areaSquareMeters
-                * faceVelocity(face, grid, predictedVelocityMetersPerSecond);
+                * faceVelocity(
+                    *face, grid, predictedVelocityMetersPerSecond);
         } else {
             const auto found = openingSamples.find(
                 source.openingPatchStableId);
@@ -1167,8 +1184,13 @@ void validateSceneFluidPressureProjectionIntegrity(
     }
     for (std::size_t index = 0; index < projection.links.size(); ++index) {
         const auto& link = projection.links[index];
+        const bool validFaceOwnership = link.faceIndex < faceCount
+            || (link.kind
+                    == SceneFluidPressureFaceLinkKind::AuthoredOpening
+                && link.faceIndex
+                    == invalidSceneFluidPressureFaceIndex);
         if (link.linkIndex != index || link.stableId == 0
-            || link.faceIndex >= faceCount
+            || !validFaceOwnership
             || link.minusControlVolumeIndex
                 >= projection.controlVolumes.size()
             || link.plusControlVolumeIndex
