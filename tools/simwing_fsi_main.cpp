@@ -119,7 +119,8 @@ void printUsage(FILE* stream) {
         "symmetric viscous/projected nonlinear flow advance its bulk MAC predictor;\n"
         "--mimetic-pressure-audit additionally runs the mixed-hybrid pressure\n"
         "path as a read-only pressure-cell shadow after graph convergence; it\n"
-        "reports graph-versus-shadow pressure/load deltas and persists its\n"
+        "reports graph-versus-shadow source/pressure/load deltas and fitted gain,\n"
+        "and persists its\n"
         "compact accepted state in pressure-cell checkpoints;\n"
         "'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
@@ -1663,8 +1664,14 @@ int main(int argc, char* argv[]) {
                                 "wall-traces=%zu, iterations=%zu, "
                                 "pressure-rms-delta=%.6g Pa, "
                                 "pressure-relative-delta=%.6g, "
+                                "pressure-gain=%.6g, "
+                                "pressure-shape-residual=%.6g, "
                                 "force-delta=%.6g N, "
                                 "force-relative-delta=%.6g, "
+                                "nodal-force-gain=%.6g, "
+                                "nodal-force-shape-residual=%.6g, "
+                                "source-relative-delta=%.6g, "
+                                "source-max-delta=%.6g Pa*m, "
                                 "consecutive=%u, wall-predictor=%u\n",
                                 audit->controlCells.controlCells.size(),
                                 audit->condensedTraceSystem.traces.size(),
@@ -1677,8 +1684,20 @@ int main(int argc, char* argv[]) {
                                 comparison->diagnostics
                                     .relativePressureDifferenceDeltaL2,
                                 comparison->diagnostics
+                                    .bestFitShadowPressureScale,
+                                comparison->diagnostics
+                                    .relativeBestFitPressureShapeResidualL2,
+                                comparison->diagnostics
                                     .forceDeltaNormNewtons,
                                 comparison->diagnostics.relativeForceDelta,
+                                comparison->diagnostics
+                                    .bestFitShadowNodalForceScale,
+                                comparison->diagnostics
+                                    .relativeBestFitNodalForceShapeResidualL2,
+                                comparison->sourceDiagnostics.integratedSource
+                                    .relativeDeltaL2,
+                                comparison->sourceDiagnostics.integratedSource
+                                    .maximumAbsoluteDelta,
                                 audit->usesConsecutiveWarmStart ? 1U : 0U,
                                 audit->usesRegionWallPrediction ? 1U : 0U);
                         }

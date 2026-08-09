@@ -1169,7 +1169,10 @@ SceneFluidPressureCoupling::advanceImpl(
                 mimeticPressureComparisonCandidate.emplace(
                     compareSceneFluidPressureShadow(
                         surface_, currentState, transfer_,
-                        currentEpoch.gridEpoch.quadrature, samples,
+                        currentEpoch.gridEpoch.quadrature, projection,
+                        samples,
+                        mimeticPressureAuditCandidate->controlCells,
+                        mimeticPressureAuditCandidate->pressureSources,
                         mimeticPressureAuditCandidate->pressureEpoch
                             .acceptedPressureSamples,
                         settings_.transfer,

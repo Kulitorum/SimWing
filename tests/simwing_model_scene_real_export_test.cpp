@@ -797,6 +797,8 @@ void testRealDesignCapture(const std::filesystem::path &input,
             realPressureZeroComparison);
         realPressureComparisonCloses =
             realPressureComparison.diagnostics.finite
+            && !realPressureComparison.includesSourceComparison
+            && !realPressureZeroComparison.includesSourceComparison
             && realPressureComparison.samples.size()
                 == fluidEpoch.quadrature.points.size()
             && realPressureComparison.diagnostics
@@ -809,6 +811,26 @@ void testRealDesignCapture(const std::filesystem::path &input,
                     .momentDeltaNormNewtonMeters == 0.0
             && realPressureZeroComparison.diagnostics
                     .maximumNodalForceDeltaNewtons == 0.0
+            && realPressureZeroComparison.diagnostics
+                    .bestFitShadowPressureScale > 1.0 - 1.0e-15
+            && realPressureZeroComparison.diagnostics
+                    .bestFitShadowPressureScale < 1.0 + 1.0e-15
+            && realPressureZeroComparison.diagnostics
+                    .pressureDifferenceCosineSimilarity > 1.0 - 1.0e-15
+            && realPressureZeroComparison.diagnostics
+                    .pressureDifferenceCosineSimilarity < 1.0 + 1.0e-15
+            && realPressureZeroComparison.diagnostics
+                    .bestFitPressureShapeResidualL2Pascals == 0.0
+            && realPressureZeroComparison.diagnostics
+                    .bestFitShadowNodalForceScale > 1.0 - 1.0e-15
+            && realPressureZeroComparison.diagnostics
+                    .bestFitShadowNodalForceScale < 1.0 + 1.0e-15
+            && realPressureZeroComparison.diagnostics
+                    .nodalForceCosineSimilarity > 1.0 - 1.0e-15
+            && realPressureZeroComparison.diagnostics
+                    .nodalForceCosineSimilarity < 1.0 + 1.0e-15
+            && realPressureZeroComparison.diagnostics
+                    .bestFitNodalForceShapeResidualL2Newtons == 0.0
             && realPressureComparison.diagnostics.referenceTransfer
                     .forceResidualNormNewtons < 1.0e-8
             && realPressureComparison.diagnostics.shadowTransfer

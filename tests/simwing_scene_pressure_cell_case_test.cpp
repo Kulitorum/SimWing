@@ -506,13 +506,46 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
                          .mimeticPressureComparisonFingerprint
                       == comparison->fingerprint
                   && comparison->diagnostics.finite
+                  && comparison->includesSourceComparison
+                  && comparison->sourceDiagnostics.finite
+                  && comparison->sourceDiagnostics.geometryVolumeRate.exact
+                  && comparison->sourceDiagnostics
+                         .predictedNetOutwardVolumeRate.relativeDeltaL2
+                      < 1.0e-14
+                  && comparison->sourceDiagnostics.continuityResidual
+                         .relativeDeltaL2
+                      < 1.0e-14
+                  && comparison->sourceDiagnostics.integratedSource
+                         .relativeDeltaL2
+                      < 1.0e-14
+                  && comparison->diagnostics.bestFitShadowPressureScale > 2.0
+                  && comparison->diagnostics.bestFitShadowPressureScale < 3.0
+                  && comparison->diagnostics
+                         .pressureDifferenceCosineSimilarity
+                      > 1.0 - 1.0e-14
+                  && comparison->diagnostics
+                         .relativeBestFitPressureShapeResidualL2
+                      < 1.0e-14
+                  && comparison->diagnostics.bestFitShadowNodalForceScale
+                      > 2.0
+                  && comparison->diagnostics.bestFitShadowNodalForceScale
+                      < 3.0
+                  && comparison->diagnostics.nodalForceCosineSimilarity
+                      > 1.0 - 1.0e-14
+                  && comparison->diagnostics
+                         .relativeBestFitNodalForceShapeResidualL2
+                      < 1.0e-14
+                  && comparison->shadowControlCellFingerprint
+                      == endpoint->controlCells.fingerprint
+                  && comparison->shadowPressureSourceFingerprint
+                      == endpoint->pressureSources.fingerprint
                   && comparison->samples.size()
                       == endpoint->pressureEpoch
                              .acceptedPressureSamples.bindings.size()
                   && 2 * endpoint->pressureEpoch
                              .acceptedPressureSamples.bindings.size()
                       == endpoint->controlCells.materialWallHalfFaceCount,
-              "opt-in mimetic audit publishes one complete accepted endpoint after the graph step converges");
+              "opt-in mimetic audit publishes one complete endpoint with roundoff-equivalent graph and shadow sources after graph convergence");
         if (endpoint != nullptr && comparison != nullptr) {
             fsi::validateSceneFluidMimeticPressureAuditEndpointIntegrity(
                 *endpoint);
@@ -558,6 +591,18 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
     }
     check(rejected,
           "mimetic pressure comparison rejects per-sample delta corruption");
+    corruptedComparison = *audited.acceptedMimeticPressureComparison();
+    corruptedComparison.controlSources.front()
+        .integratedSourceDeltaPascalsMeters += 0.01;
+    rejected = false;
+    try {
+        fsi::validateSceneFluidPressureShadowComparisonIntegrity(
+            corruptedComparison);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected,
+          "mimetic pressure comparison rejects per-control source corruption");
 
     fsi::SceneFluidMimeticPressureAuditConfiguration limitedConfiguration;
     limitedConfiguration.enabled = true;
@@ -605,6 +650,29 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
               && serializedCheckpoint(comparisonLimited.checkpoint())
                   == beforeComparisonRejection,
           "mimetic pressure-comparison limit failure rolls Structure and every accepted owner back transactionally");
+
+    auto sourceCountLimitedConfiguration = comparisonLimitedConfiguration;
+    sourceCountLimitedConfiguration.comparisonLimits.maximumOwnedBytes =
+        1024ULL * 1024ULL * 1024ULL;
+    sourceCountLimitedConfiguration.comparisonLimits.maximumControlVolumes =
+        0;
+    fsi::ScenePressureCellCase sourceCountLimited(
+        sourceCountLimitedConfiguration);
+    const auto beforeSourceCountRejection = serializedCheckpoint(
+        sourceCountLimited.checkpoint());
+    rejected = false;
+    try {
+        static_cast<void>(sourceCountLimited.advance());
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected
+              && sourceCountLimited.acceptedMimeticPressureAudit() == nullptr
+              && sourceCountLimited.acceptedMimeticPressureComparison()
+                  == nullptr
+              && serializedCheckpoint(sourceCountLimited.checkpoint())
+                  == beforeSourceCountRejection,
+          "mimetic pressure source-comparison count failure rolls Structure and every accepted owner back transactionally");
 }
 
 void testPersistentMimeticPressureAuditRestart() {

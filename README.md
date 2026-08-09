@@ -804,6 +804,15 @@ applying the shadow load. The diagnostic is decisive on the current pressure
 cell: relative pressure-jump and net-force differences are about `0.60` both
 at step 4 and after 600 steps. Mimetic load selection therefore remains
 disabled rather than treating solver acceptance as physical agreement.
+The mismatch has now been narrowed further. The graph and mimetic source
+vectors agree to relative roundoff (`5.3e-16` at step 4 and `1.7e-16` after
+600 steps), while the shadow pressure and every transferred nodal load are
+almost exact scalar multiples of the graph result: gains `2.53035` and
+`2.50693`, with post-fit relative shape residuals near `2e-16`. That locates
+the open question in the cut-cell graph versus mixed-hybrid operator response,
+not pressure-source units, gauge-safe surface sampling, or load transfer. It
+does not by itself establish which spatial operator is the better physical
+reference.
 Its checkpoint also stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and

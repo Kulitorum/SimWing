@@ -1232,6 +1232,21 @@ oracle. The live pressure-cell disagreement is not small: relative pressure
 and force delta are about `0.605` at step 4 and `0.601` after 600 steps. This
 is evidence against enabling mimetic loads yet, not a tolerance to waive.
 
+The comparison also retains every upstream control source row. On the live
+cell, graph and mimetic geometry rates are exact and their predicted-flow,
+continuity, and integrated-source vectors agree to summation roundoff: relative
+integrated-source differences are `5.29e-16` at step 4 and `1.66e-16` after
+600 steps. A gauge-safe least-squares decomposition then shows that the shadow
+pressure jumps and conservative nodal loads are almost pure rescalings of the
+graph result. The shadow gains are `2.53035` and `2.50693`, respectively, and
+the relative residual after removing that one gain is around `1e-16` to
+`2e-16`. Thus the present discrepancy is downstream of forcing and upstream
+of sampling/transfer: it is the response of the two spatial pressure
+operators on the cut-cell geometry. The Cartesian mimetic kernel already has
+an exact area-over-centre-distance oracle; a richer cut-cell manufactured-mode
+comparison is required before deciding whether the graph two-point response
+or the mixed-hybrid response should own production loads.
+
 The experiment is exposed as `simwing-fsi --case pressure-cell
 --mimetic-pressure-audit` and reports control/trace counts plus iteration and
 predictor mode separately from the established worker summary. The flag is
