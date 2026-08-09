@@ -501,6 +501,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/interface_jump.h
     src/fsi/fluid/mimetic_local_cell.cpp
     src/fsi/fluid/mimetic_local_cell.h
+    src/fsi/fluid/mimetic_wall_condensation.cpp
+    src/fsi/fluid/mimetic_wall_condensation.h
     src/fsi/fluid/moving_control_volume.cpp
     src/fsi/fluid/moving_control_volume.h
     src/fsi/fluid/moving_interface.cpp

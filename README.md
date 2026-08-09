@@ -829,7 +829,12 @@ per half-face and applies matrix-free; it no longer materializes an `n x n`
 cell matrix. It eliminates the cell scalar with roundoff-only integrated
 conservation, reproduces linear normal fluxes on a skew tetrahedron, and
 reduces exactly to the existing `area / centre-distance` stencil after
-Cartesian trace condensation. An
+Cartesian trace condensation. A companion exact local Schur kernel now removes
+prescribed-zero-flux material-wall trace equations without a dense wall
+matrix. It exploits the cell trace operator's diagonal-plus-seven-low-rank
+form, retains one equilibrated `7 x 7` Woodbury inverse and linear face data,
+and matches independent dense action, diagonal, right-hand-side, and wall-trace
+reconstruction oracles while preserving the active constant null mode. An
 immutable scene-side audit now assembles those periodic-image-unwrapped
 half-face shells from Cartesian traces, two-sided material-wall quadrature, and
 cell-owned opening patches. Nested, face-aligned-opening, and deliberately
@@ -869,11 +874,13 @@ that compact local factorization within the linear storage bound. The complete
 coarse system has 191,579 trace unknowns and retains 13,132,336 bytes of compact
 local factors; its full matrix-free component-constant action is roundoff-null.
 The real-wing regression also executes one finite, residual-reducing PCG step
-over all 191,579 rows and proves truncated non-publication. Practical
-full-wing convergence still needs exact material-wall trace condensation or a
-stronger local/multilevel preconditioner; physical right-hand-side assembly
-and production integration also remain open. The production graph operator
-and worker are unchanged.
+over all 191,579 rows and proves truncated non-publication. All 138 local
+controls now accept exact wall condensation: 148,652 one-sided wall traces
+reduce to 42,927 shared global traces using 3,986,602 bytes of linear Schur
+data, and their assembled condensed diagonals are positive. Assembling that
+local elimination into the global solve, any further local/multilevel
+preconditioning, physical right-hand-side assembly, and production integration
+remain open. The production graph operator and worker are unchanged.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

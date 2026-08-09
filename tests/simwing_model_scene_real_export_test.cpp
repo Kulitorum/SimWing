@@ -1,5 +1,6 @@
 #include "engine_paths.h"
 #include "input_migration.h"
+#include "fluid/mimetic_wall_condensation.h"
 #include "nurbs_model.h"
 #include "scene_fluid_cell_volume.h"
 #include "scene_fluid_capped_face_partition.h"
@@ -491,6 +492,48 @@ void testRealDesignCapture(const std::filesystem::path &input,
     const simwing::fsi::SceneFluidMimeticTraceSystem mimeticTraceSystem =
         simwing::fsi::buildSceneFluidMimeticTraceSystem(
             mimeticControlCells);
+    bool wallCondensationsBuilt = true;
+    std::size_t wallCondensationBytes = 0;
+    std::size_t condensedActiveHalfFaceCount = 0;
+    std::vector<double> condensedTraceDiagonals(
+        mimeticTraceSystem.traces.size(), 0.0);
+    for (std::size_t cell = 0;
+         cell < mimeticTraceSystem.localOperators.size(); ++cell) {
+        const auto& local = mimeticTraceSystem.localOperators[cell];
+        const auto& control = mimeticControlCells.controlCells[cell];
+        std::vector<std::uint8_t> wallMask(local.halfFaceCount, 0);
+        for (std::size_t face = 0; face < local.halfFaceCount; ++face) {
+            wallMask[face] = mimeticControlCells.halfFaces[
+                control.firstHalfFace + face].kind
+                    == simwing::fsi::SceneFluidMimeticHalfFaceKind::MaterialWall;
+        }
+        try {
+            const auto condensation =
+                simwing::fsi::fluid::buildMimeticWallCondensation(
+                    local, wallMask);
+            wallCondensationBytes += condensation.ownedStorageBytes;
+            condensedActiveHalfFaceCount +=
+                condensation.activeHalfFaceCount;
+            for (std::size_t face = 0; face < local.halfFaceCount; ++face) {
+                const std::size_t trace =
+                    mimeticTraceSystem.halfFaceTraceIndices[
+                        control.firstHalfFace + face];
+                condensedTraceDiagonals[trace] +=
+                    condensation.condensedOperatorDiagonal[face];
+            }
+        } catch (const std::exception&) {
+            wallCondensationsBuilt = false;
+        }
+    }
+    bool condensedSharedDiagonalsPositive = true;
+    for (const auto& trace : mimeticTraceSystem.traces) {
+        const bool wall = trace.kind
+            == simwing::fsi::SceneFluidMimeticHalfFaceKind::MaterialWall;
+        condensedSharedDiagonalsPositive =
+            condensedSharedDiagonalsPositive
+            && (wall ? condensedTraceDiagonals[trace.traceIndex] == 0.0
+                     : condensedTraceDiagonals[trace.traceIndex] > 0.0);
+    }
     std::vector<double> componentConstantTraces(
         mimeticTraceSystem.traces.size(), 0.0);
     for (const auto& trace : mimeticTraceSystem.traces) {
@@ -563,6 +606,15 @@ void testRealDesignCapture(const std::filesystem::path &input,
             == mimeticTraceSystem.incidences.size()
         && mimeticTraceSystem.localOperatorStorageBytes
             == 7 * mimeticControlCells.halfFaces.size() * sizeof(double)
+        && wallCondensationsBuilt
+        && mimeticTraceSystem.sharedTraceCount == 42'927
+        && mimeticTraceSystem.materialWallTraceCount == 148'652
+        && condensedActiveHalfFaceCount
+            == 2 * mimeticTraceSystem.sharedTraceCount
+        && wallCondensationBytes
+            == mimeticControlCells.halfFaces.size()
+                * (sizeof(std::uint8_t) + 2 * sizeof(double))
+        && condensedSharedDiagonalsPositive
         && maximumConstantTraceAction < 1.0e-9
         && traceSolveDiagnostics.compatible
         && !traceSolveDiagnostics.converged
@@ -574,7 +626,7 @@ void testRealDesignCapture(const std::filesystem::path &input,
     if (!mimeticAuditMatches) {
         std::fprintf(
             stderr,
-            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu classified=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu traces=%zu compact-bytes=%zu max-null=%.17g solve-compatible=%d solve-converged=%d solve-finite=%d solve-iterations=%zu solve-compatibility=%.17g solve-initial=%.17g solve-final=%.17g solve-final-max=%.17g max-area=%.17g max-moment=%.17g\n",
+            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu classified=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu traces=%zu shared=%zu walls=%zu compact-bytes=%zu wall-condensation-bytes=%zu wall-condensations=%d condensed-diagonals=%d max-null=%.17g solve-compatible=%d solve-converged=%d solve-finite=%d solve-iterations=%zu solve-compatibility=%.17g solve-initial=%.17g solve-final=%.17g solve-final-max=%.17g max-area=%.17g max-moment=%.17g\n",
             mimeticControlCells.readyControlCellCount,
             mimeticControlCells.controlCells.size(),
             mimeticControlCells.incompleteTopologyControlCellCount,
@@ -590,7 +642,12 @@ void testRealDesignCapture(const std::filesystem::path &input,
             mimeticControlCells.openingHalfFaceCount,
             mimeticControlCells.maximumHalfFaceCountPerControl,
             mimeticTraceSystem.traces.size(),
+            mimeticTraceSystem.sharedTraceCount,
+            mimeticTraceSystem.materialWallTraceCount,
             mimeticTraceSystem.localOperatorStorageBytes,
+            wallCondensationBytes,
+            wallCondensationsBuilt ? 1 : 0,
+            condensedSharedDiagonalsPositive ? 1 : 0,
             maximumConstantTraceAction,
             traceSolveDiagnostics.compatible ? 1 : 0,
             traceSolveDiagnostics.converged ? 1 : 0,

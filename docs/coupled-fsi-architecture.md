@@ -1037,6 +1037,26 @@ operator stores the exact formula as seven doubles per half-face plus fixed
 three-by-three factors and applies it matrix-free; no dense local `n x n`
 matrix is retained.
 
+`src/fsi/fluid/mimetic_wall_condensation.*` exactly eliminates a selected
+material-wall block after cell-scalar condensation. With `A = diag(area)`,
+`g = A W area`, and `d = area^T W area`, the local trace matrix is
+
+```text
+H = gamma A^2 + U K U^T,
+U = [A N, A R, g],
+K = blockdiag((N^T R)^-1, -gamma (R^T R)^-1, -1/d).
+```
+
+The wall principal block is positive definite whenever at least one active
+trace remains. Its inverse therefore uses one equilibrated `7 x 7` Woodbury
+core and linear wall-face work; no dense wall matrix is stored. The kernel
+publishes the exact active Schur action and diagonal, condenses a full local
+right-hand side, and reconstructs the eliminated wall traces. Independent
+dense tetrahedral oracles verify all four operations, the active constant null
+mode, the no-wall identity path, bounds, and fingerprinted corruption
+rejection. An all-wall cell rejects because its constant mode requires a global
+gauge rather than an invertible wall block.
+
 `src/fsi/scene_fluid_mimetic_trace_system.*` now assembles the first global
 audit operator over those local kernels. Stable Cartesian and
 authored-opening identities create exactly one two-incidence shared trace;
@@ -1092,11 +1112,14 @@ linear-storage local factorization. The global coarse audit contains 191,579
 trace unknowns and 13,132,336 bytes of compact local factor data, and its full
 component-constant matrix-free action is roundoff-null. A bounded gauge-fixed
 Jacobi-PCG step now runs across the complete real system, reduces its residual,
-and rolls back exactly when deliberately truncated. Jacobi alone is not yet a
-practical full-wing preconditioner: exact material-wall trace condensation or
-a stronger local/multilevel preconditioner remains open, as do physical
-right-hand-side assembly and production integration. The current graph
-operator and all worker arithmetic are unchanged.
+and rolls back exactly when deliberately truncated. Every one of the 138
+coarse controls now builds the exact local wall Schur data: 148,652 wall traces
+can be eliminated, leaving 42,927 shared global traces, with 3,986,602 bytes of
+linear condensation storage and positive assembled reduced diagonals. Global
+condensed-system assembly/solve, any further local or multilevel
+preconditioning, physical right-hand-side assembly, and production integration
+remain open. The current graph operator and all worker arithmetic are
+unchanged.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy

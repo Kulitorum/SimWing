@@ -1,4 +1,5 @@
 #include "fluid/mimetic_local_cell.h"
+#include "fluid/mimetic_wall_condensation.h"
 
 #include <algorithm>
 #include <array>
@@ -181,6 +182,73 @@ std::vector<double> denseMatrix(
     return result;
 }
 
+std::vector<double> denseTraceMatrix(
+    const MimeticLocalCellOperator& localOperator) {
+    const std::size_t count = localOperator.halfFaceCount;
+    std::vector<double> result(count * count, 0.0);
+    for (std::size_t column = 0; column < count; ++column) {
+        std::vector<double> basis(count, 0.0);
+        basis[column] = 1.0;
+        const auto balance = balanceMimeticLocalCell(
+            localOperator, basis, 0.0);
+        for (std::size_t row = 0; row < count; ++row) {
+            result[row * count + column] =
+                -balance.integratedOutwardFluxes[row];
+        }
+    }
+    return result;
+}
+
+std::vector<double> multiplyDense(
+    const std::vector<double>& matrix,
+    const std::vector<double>& values) {
+    const std::size_t count = values.size();
+    std::vector<double> result(count, 0.0);
+    for (std::size_t row = 0; row < count; ++row) {
+        for (std::size_t column = 0; column < count; ++column) {
+            result[row] += matrix[row * count + column] * values[column];
+        }
+    }
+    return result;
+}
+
+std::vector<double> solveDense(
+    std::vector<double> matrix,
+    std::vector<double> rightHandSide) {
+    const std::size_t count = rightHandSide.size();
+    for (std::size_t column = 0; column < count; ++column) {
+        std::size_t pivot = column;
+        for (std::size_t row = column + 1; row < count; ++row) {
+            if (std::abs(matrix[row * count + column])
+                > std::abs(matrix[pivot * count + column])) {
+                pivot = row;
+            }
+        }
+        check(std::abs(matrix[pivot * count + column]) > 1.0e-14,
+              "dense wall oracle remains nonsingular");
+        for (std::size_t entry = 0; entry < count; ++entry) {
+            std::swap(matrix[column * count + entry],
+                      matrix[pivot * count + entry]);
+        }
+        std::swap(rightHandSide[column], rightHandSide[pivot]);
+        const double diagonal = matrix[column * count + column];
+        for (std::size_t entry = column; entry < count; ++entry) {
+            matrix[column * count + entry] /= diagonal;
+        }
+        rightHandSide[column] /= diagonal;
+        for (std::size_t row = 0; row < count; ++row) {
+            if (row == column) continue;
+            const double factor = matrix[row * count + column];
+            for (std::size_t entry = column; entry < count; ++entry) {
+                matrix[row * count + entry] -= factor
+                    * matrix[column * count + entry];
+            }
+            rightHandSide[row] -= factor * rightHandSide[column];
+        }
+    }
+    return rightHandSide;
+}
+
 bool positiveDefinite(const MimeticLocalCellOperator& localOperator) {
     const std::size_t count = localOperator.halfFaceCount;
     const auto matrix = denseMatrix(localOperator);
@@ -359,6 +427,173 @@ void testTetrahedralConsistencyAndBalance() {
           "constant local null mode has no face flux");
 }
 
+void testExactMaterialWallCondensation() {
+    const auto localOperator = buildMimeticLocalCellOperator(
+        tetrahedron());
+    const std::vector<std::uint8_t> wallMask{0, 0, 1, 1};
+    const auto first = buildMimeticWallCondensation(
+        localOperator, wallMask);
+    const auto repeated = buildMimeticWallCondensation(
+        localOperator, wallMask);
+    check(first == repeated
+              && first.version == mimeticWallCondensationVersion
+              && first.fingerprint != 0
+              && first.localOperatorFingerprint
+                  == localOperator.fingerprint
+              && first.wallHalfFaceCount == 2
+              && first.activeHalfFaceCount == 2
+              && first.ownedStorageBytes
+                  == localOperator.halfFaceCount
+                      * (sizeof(std::uint8_t) + 2 * sizeof(double)),
+          "material-wall condensation is deterministic and linear-storage");
+
+    const auto fullMatrix = denseTraceMatrix(localOperator);
+    const std::vector<std::size_t> active{0, 1};
+    const std::vector<std::size_t> walls{2, 3};
+    const auto denseCondensedAction = [&](
+        const std::vector<double>& activeValues) {
+        std::vector<double> wallMatrix(4, 0.0);
+        std::vector<double> wallCoupling(2, 0.0);
+        for (std::size_t row = 0; row < 2; ++row) {
+            for (std::size_t column = 0; column < 2; ++column) {
+                wallMatrix[row * 2 + column] = fullMatrix[
+                    walls[row] * 4 + walls[column]];
+                wallCoupling[row] += fullMatrix[
+                    walls[row] * 4 + active[column]]
+                    * activeValues[active[column]];
+            }
+        }
+        const auto wallSolution = solveDense(
+            wallMatrix, wallCoupling);
+        auto fullValues = activeValues;
+        for (std::size_t wall = 0; wall < 2; ++wall) {
+            fullValues[walls[wall]] = -wallSolution[wall];
+        }
+        return multiplyDense(fullMatrix, fullValues);
+    };
+
+    const std::vector<double> activeValues{0.7, -0.25, 0.0, 0.0};
+    const auto condensed = applyMimeticWallCondensedTraceOperator(
+        first, localOperator, activeValues);
+    const auto denseOracle = denseCondensedAction(activeValues);
+    for (const std::size_t face : active) {
+        checkNear(condensed[face], denseOracle[face], 2.0e-12,
+                  "low-rank wall Schur action matches the dense oracle");
+    }
+    for (const std::size_t face : walls) {
+        check(condensed[face] == 0.0,
+              "wall-condensed action publishes no eliminated row");
+    }
+    for (const std::size_t face : active) {
+        std::vector<double> basis(4, 0.0);
+        basis[face] = 1.0;
+        const auto basisAction = applyMimeticWallCondensedTraceOperator(
+            first, localOperator, basis);
+        checkNear(first.condensedOperatorDiagonal[face],
+                  basisAction[face], 2.0e-12,
+                  "stored wall-condensed diagonal matches basis action");
+    }
+
+    const std::vector<double> constantActive{2.5, 2.5, 0.0, 0.0};
+    const auto constantAction = applyMimeticWallCondensedTraceOperator(
+        first, localOperator, constantActive);
+    check(std::abs(constantAction[0]) < 2.0e-12
+              && std::abs(constantAction[1]) < 2.0e-12,
+          "wall condensation preserves the active constant null mode");
+
+    const std::vector<double> manufactured{
+        1.2, -0.4, 0.7, 2.1,
+    };
+    const auto fullRightHandSide = multiplyDense(
+        fullMatrix, manufactured);
+    std::vector<double> manufacturedActive = manufactured;
+    manufacturedActive[2] = 0.0;
+    manufacturedActive[3] = 0.0;
+    const auto condensedRightHandSide =
+        condenseMimeticWallTraceRightHandSide(
+            first, localOperator, fullRightHandSide);
+    const auto manufacturedAction =
+        applyMimeticWallCondensedTraceOperator(
+            first, localOperator, manufacturedActive);
+    for (const std::size_t face : active) {
+        checkNear(condensedRightHandSide[face],
+                  manufacturedAction[face], 3.0e-12,
+                  "wall RHS condensation matches the active Schur action");
+    }
+    const auto reconstructed = reconstructMimeticWallTraces(
+        first, localOperator, fullRightHandSide, manufacturedActive);
+    for (std::size_t face = 0; face < reconstructed.size(); ++face) {
+        checkNear(reconstructed[face], manufactured[face], 3.0e-12,
+                  "wall trace reconstruction recovers the dense solution");
+    }
+    const auto reconstructedResidual = multiplyDense(
+        fullMatrix, reconstructed);
+    for (const std::size_t face : walls) {
+        checkNear(reconstructedResidual[face],
+                  fullRightHandSide[face], 3.0e-12,
+                  "reconstructed wall trace closes its eliminated equation");
+    }
+
+    const std::vector<std::uint8_t> noWalls(4, 0);
+    const auto identity = buildMimeticWallCondensation(
+        localOperator, noWalls);
+    const auto identityAction = applyMimeticWallCondensedTraceOperator(
+        identity, localOperator, manufactured);
+    const auto fullAction = multiplyDense(fullMatrix, manufactured);
+    for (std::size_t face = 0; face < fullAction.size(); ++face) {
+        checkNear(identityAction[face], fullAction[face], 2.0e-14,
+                  "zero-wall condensation is the exact identity path");
+    }
+}
+
+void testWallCondensationRejection() {
+    const auto localOperator = buildMimeticLocalCellOperator(
+        cuboid({}, {2.0, 4.0, 6.0}));
+    expectInvalid(
+        [&] { static_cast<void>(buildMimeticWallCondensation(
+            localOperator, std::vector<std::uint8_t>(6, 1))); },
+        "wall condensation rejects elimination of the local constant mode");
+    expectInvalid(
+        [&] { static_cast<void>(buildMimeticWallCondensation(
+            localOperator, std::vector<std::uint8_t>(5, 0))); },
+        "wall condensation rejects a short wall mask");
+    auto invalidMask = std::vector<std::uint8_t>(6, 0);
+    invalidMask[2] = 2;
+    expectInvalid(
+        [&] { static_cast<void>(buildMimeticWallCondensation(
+            localOperator, invalidMask)); },
+        "wall condensation rejects a non-binary mask");
+
+    MimeticWallCondensationSettings limits;
+    limits.maximumHalfFaces = 5;
+    expectLimited(
+        [&] { static_cast<void>(buildMimeticWallCondensation(
+            localOperator, std::vector<std::uint8_t>(6, 0), limits)); },
+        "wall condensation bounds half-face count");
+    limits = {};
+    limits.maximumOwnedBytes = 1;
+    expectLimited(
+        [&] { static_cast<void>(buildMimeticWallCondensation(
+            localOperator, std::vector<std::uint8_t>(6, 0), limits)); },
+        "wall condensation bounds linear storage");
+
+    const std::vector<std::uint8_t> acceptedMask{0, 0, 1, 1, 1, 1};
+    const auto accepted = buildMimeticWallCondensation(
+        localOperator, acceptedMask);
+    auto corrupt = accepted;
+    corrupt.wallSchurMetric[0] += 0.01;
+    expectInvalid(
+        [&] { validateMimeticWallCondensation(corrupt, localOperator); },
+        "wall condensation rejects fingerprinted Schur corruption");
+    std::vector<double> invalidActive(6, 0.0);
+    invalidActive[2] = 1.0;
+    expectInvalid(
+        [&] { static_cast<void>(
+            applyMimeticWallCondensedTraceOperator(
+                accepted, localOperator, invalidActive)); },
+        "wall-condensed action rejects data on an eliminated trace");
+}
+
 void testRejectedGeometryAndCorruption() {
     const auto acceptedGeometry = cuboid({}, {2.0, 4.0, 6.0});
     const auto accepted = buildMimeticLocalCellOperator(acceptedGeometry);
@@ -427,6 +662,8 @@ int main() {
     try {
         testCartesianEquivalence();
         testTetrahedralConsistencyAndBalance();
+        testExactMaterialWallCondensation();
+        testWallCondensationRejection();
         testRejectedGeometryAndCorruption();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
