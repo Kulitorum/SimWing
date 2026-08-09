@@ -1,5 +1,6 @@
 #include "scene_pressure_cell_case.h"
 #include "scene_pressure_cell_checkpoint_persistence.h"
+#include "scene_fluid_pressure_operator_response_audit.h"
 #include "viewer_protocol.h"
 
 #include <algorithm>
@@ -675,6 +676,132 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
           "mimetic pressure source-comparison count failure rolls Structure and every accepted owner back transactionally");
 }
 
+void testManufacturedPressureOperatorResponses() {
+    fsi::ScenePressureCellCase simulation(true);
+    static_cast<void>(simulation.advance());
+    const auto* endpoint = simulation.acceptedMimeticPressureAudit();
+    check(endpoint != nullptr,
+          "manufactured operator audit has an accepted mimetic topology");
+    if (endpoint == nullptr) return;
+    fsi::SceneFluidPressureOperatorResponseAuditSettings settings;
+    settings.graphSolve.absoluteResidualTolerancePascalsMeters = 1.0e-10;
+    settings.graphSolve.relativeResidualTolerance = 1.0e-11;
+    settings.graphSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    settings.shadowSolve.absoluteResidualTolerancePascalsMeters = 1.0e-10;
+    settings.shadowSolve.relativeResidualTolerance = 1.0e-11;
+    settings.shadowSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    const auto acceptedSource =
+        fsi::sceneFluidMimeticIntegratedCellSources(
+            endpoint->pressureSources);
+    const auto audit = fsi::auditSceneFluidPressureOperatorResponses(
+        simulation.acceptedPressureEpoch().pressureOperator,
+        endpoint->controlCells, endpoint->fullTraceSystem,
+        endpoint->condensedTraceSystem, acceptedSource, settings);
+    const auto repeated = fsi::auditSceneFluidPressureOperatorResponses(
+        simulation.acceptedPressureEpoch().pressureOperator,
+        endpoint->controlCells, endpoint->fullTraceSystem,
+        endpoint->condensedTraceSystem, acceptedSource, settings);
+    fsi::validateSceneFluidPressureOperatorResponseAuditIntegrity(audit);
+    check(audit == repeated && audit.includesAcceptedSource
+              && audit.modes.size() == 6
+              && audit.responses.size()
+                  == 6 * endpoint->controlCells.controlCells.size()
+              && audit.modes[0].bestFitShadowPressureScale > 2.0
+              && audit.modes[0].bestFitShadowPressureScale < 3.0
+              && std::abs(
+                     audit.modes[0].bestFitShadowPressureScale
+                     - 2.53935427074188)
+                  < 1.0e-9
+              && std::abs(
+                     audit.modes[0].relativeBestFitShapeResidualL2
+                     - 0.024412292727059)
+                  < 1.0e-9,
+          "accepted pressure source is a special high-gain cut-cell response mode");
+    constexpr double expectedGains[] = {
+        0.999104345858666,
+        1.00488697756112,
+        1.00722994317487,
+        0.99966665199924,
+        1.00469290834379,
+    };
+    constexpr double expectedResiduals[] = {
+        0.086616065926422,
+        0.012315965046049,
+        0.04435725726353,
+        0.037803572674267,
+        0.164611785658836,
+    };
+    for (std::size_t mode = 1; mode < audit.modes.size(); ++mode) {
+        check(audit.modes[mode].finite
+                  && audit.modes[mode].bestFitShadowPressureScale > 0.9
+                  && audit.modes[mode].bestFitShadowPressureScale < 1.1
+                  && audit.modes[mode].relativeBestFitShapeResidualL2 < 0.18
+                  && std::abs(
+                         audit.modes[mode].bestFitShadowPressureScale
+                         - expectedGains[mode - 1])
+                      < 1.0e-9
+                  && std::abs(
+                         audit.modes[mode].relativeBestFitShapeResidualL2
+                         - expectedResiduals[mode - 1])
+                      < 1.0e-9,
+              "independent manufactured pressure modes remain near unit gain with bounded shape disagreement");
+    }
+    const auto manufacturedOnly =
+        fsi::auditSceneFluidPressureOperatorResponses(
+            simulation.acceptedPressureEpoch().pressureOperator,
+            endpoint->controlCells, endpoint->fullTraceSystem,
+            endpoint->condensedTraceSystem, {}, settings);
+    check(!manufacturedOnly.includesAcceptedSource
+              && manufacturedOnly.modes.size() == 5
+              && manufacturedOnly.modes.front().kind
+                  == fsi::SceneFluidPressureOperatorResponseModeKind::
+                      CoordinateX,
+          "operator-response audit supports a five-mode manufactured-only oracle");
+    auto corrupt = audit;
+    corrupt.responses.front()
+        .shadowMinusBestFitGraphPressurePascals += 0.01;
+    bool rejected = false;
+    try {
+        fsi::validateSceneFluidPressureOperatorResponseAuditIntegrity(
+            corrupt);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected,
+          "operator-response audit rejects response corruption");
+
+    fsi::SceneFluidPressureOperatorResponseAuditLimits limited;
+    limited.maximumModes = 5;
+    rejected = false;
+    try {
+        static_cast<void>(fsi::auditSceneFluidPressureOperatorResponses(
+            simulation.acceptedPressureEpoch().pressureOperator,
+            endpoint->controlCells, endpoint->fullTraceSystem,
+            endpoint->condensedTraceSystem, acceptedSource, settings,
+            limited));
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected,
+          "operator-response audit enforces its aggregate mode limit before solving");
+    limited.maximumModes = 64;
+    limited.maximumOwnedBytes = 0;
+    rejected = false;
+    try {
+        static_cast<void>(fsi::auditSceneFluidPressureOperatorResponses(
+            simulation.acceptedPressureEpoch().pressureOperator,
+            endpoint->controlCells, endpoint->fullTraceSystem,
+            endpoint->condensedTraceSystem, acceptedSource, settings,
+            limited));
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected,
+          "operator-response audit enforces its aggregate byte limit before solving");
+}
+
 void testPersistentMimeticPressureAuditRestart() {
     fsi::ScenePressureCellCase initial(true);
     const auto initialCheckpoint = initial.checkpoint();
@@ -794,6 +921,7 @@ int main() {
         testVisibleStrongPressureCellAndReplay();
         testPersistentCheckpointAndRejection();
         testOptInMimeticPressureAuditIsShadowOnly();
+        testManufacturedPressureOperatorResponses();
         testPersistentMimeticPressureAuditRestart();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

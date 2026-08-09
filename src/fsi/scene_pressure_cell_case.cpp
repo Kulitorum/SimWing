@@ -630,6 +630,11 @@ ScenePressureCellCase::diagnostics() const noexcept {
     return diagnostics_;
 }
 
+const SceneFluidPressureEpoch&
+ScenePressureCellCase::acceptedPressureEpoch() const noexcept {
+    return coupling_.acceptedPressureEpoch();
+}
+
 const SceneFluidRegionMomentumState*
 ScenePressureCellCase::acceptedRegionMomentum() const noexcept {
     return acceptedRegionMomentum_

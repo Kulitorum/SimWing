@@ -73,6 +73,8 @@ public:
         const noexcept;
     [[nodiscard]] const ScenePressureCellDiagnostics& diagnostics()
         const noexcept;
+    [[nodiscard]] const SceneFluidPressureEpoch& acceptedPressureEpoch()
+        const noexcept;
     [[nodiscard]] const SceneFluidRegionMomentumState* acceptedRegionMomentum()
         const noexcept;
     [[nodiscard]] const SceneFluidMimeticPressureAuditEndpoint*

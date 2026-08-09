@@ -813,6 +813,15 @@ the open question in the cut-cell graph versus mixed-hybrid operator response,
 not pressure-source units, gauge-safe surface sampling, or load transfer. It
 does not by itself establish which spatial operator is the better physical
 reference.
+An offline inverse-response audit now probes that operator question with the
+accepted source and five independent manufactured modes on the same 65-control
+cut-cell topology. The accepted direction remains exceptional: its
+gauge-aligned control pressures have about `2.54` shadow gain and `2.4%`
+post-fit shape residual. The coordinate/mixed/high-frequency probes instead
+have gains from `0.999` to `1.007`; their shape residuals range from `1.2%` to
+`16.5%`. This rules out a global pressure-unit or normalization repair. The
+operator discrepancy is mode-dependent, so transition work needs richer
+manufactured cut-cell reference cases rather than rescaling live loads.
 Its checkpoint also stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and
