@@ -749,7 +749,14 @@ substep count bounds each control volume's outgoing-volume Courant number and
 explicit viscous row number. Every stage checks energy, and the complete step
 checks global momentum before publishing. This kernel currently rejects a
 moving-volume projection: conservative GCL momentum remapping and material-wall
-viscosity remain separate ownership problems. The
+viscosity remain separate ownership problems. The next topology-stable
+boundary performs that GCL remap explicitly: it retains transported
+cell/region velocity while recomputing momentum from current physical volume,
+averages endpoint components onto the current Cartesian links, and subtracts
+the exact current opening-cap sweep. The moving pressure projection consumes
+that fingerprinted first-order predictor together with its dV/dt product and
+verifies every predicted link flow exactly. Topology rebase, material-wall
+flux, and accepted worker ownership of the region state remain separate. The
 first composite in-memory checkpoint stores Structure and the accepted sparse
 pressure projection. Restore uses a temporary Structure, rebuilds the entire
 pressure epoch, resamples the validated projection, and reconstructs the
@@ -783,9 +790,10 @@ projection beside the trusted nested Structure payload. Deterministic initial
 and accepted round trips, exact next-frame replay, CLI autosave/resume, and
 transactional corruption/foreign-file rejection are covered. Restore derives
 the exact bulk MAC continuation from that projection instead of duplicating it
-or the transient bulk pressure on the wire. `SWPCELL5` additionally persists
-the optional link-continuation provenance field in a projection, while this
-worker rejects a nonzero marker until it actually owns that transport. A
+or the transient bulk pressure on the wire. `SWPCELL6` additionally persists
+the optional static-link and transported-region predictor provenance fields in
+a projection, while this worker rejects either nonzero marker until it owns
+the accepted region-momentum state. A
 canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded

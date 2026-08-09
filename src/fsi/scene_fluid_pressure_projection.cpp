@@ -1,6 +1,7 @@
 #include "scene_fluid_pressure_projection.h"
 
 #include "scene_fluid_pressure_link_flow.h"
+#include "scene_fluid_region_link_flow.h"
 
 #include <algorithm>
 #include <bit>
@@ -159,6 +160,7 @@ std::uint64_t projectionFingerprint(
     fingerprint.integer(projection.openingFluxFingerprint);
     fingerprint.integer(projection.velocityFingerprint);
     fingerprint.integer(projection.linkFlowContinuationFingerprint);
+    fingerprint.integer(projection.regionLinkFlowPredictionFingerprint);
     fingerprint.integer(projection.acceptedStepCount);
     fingerprint.real(projection.simulationTimeSeconds);
     fingerprint.integer(static_cast<std::uint64_t>(projection.cellCounts.x));
@@ -452,6 +454,8 @@ static SceneFluidPressureProjection projectSceneFluidPressureLinkFlowsImpl(
     const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
     const SceneFluidPressureLinkFlowContinuation* const
         linkFlowContinuation,
+    const SceneFluidRegionLinkFlowPrediction* const
+        regionLinkFlowPrediction,
     const SceneFluidCellVolumeSet& volumes,
     const SceneFluidRegionConnectivity& connectivity,
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
@@ -469,9 +473,39 @@ static SceneFluidPressureProjection projectSceneFluidPressureLinkFlowsImpl(
     validateSceneFluidOpeningFlux(
         openingFlux, surface, state, caps, openingQuadrature,
         openingPatches, grid, predictedVelocityMetersPerSecond);
+    if (linkFlowContinuation != nullptr
+        && regionLinkFlowPrediction != nullptr) {
+        throw std::invalid_argument(
+            "scene fluid pressure projection has multiple explicit link predictors");
+    }
     if (linkFlowContinuation != nullptr) {
         validateSceneFluidPressureLinkFlowContinuation(
             *linkFlowContinuation, grid, faceLinks, openingFlux);
+    }
+    if (regionLinkFlowPrediction != nullptr) {
+        validateSceneFluidRegionLinkFlowPredictionIntegrity(
+            *regionLinkFlowPrediction);
+        if (regionLinkFlowPrediction
+                ->currentPressureControlVolumeFingerprint
+                != pressureVolumes.fingerprint
+            || regionLinkFlowPrediction
+                   ->currentPressureFaceLinkFingerprint
+                != faceLinks.fingerprint
+            || regionLinkFlowPrediction->currentOpeningFluxFingerprint
+                != openingFlux.fingerprint
+            || regionLinkFlowPrediction->currentVelocityFingerprint
+                != openingFlux.velocityFingerprint
+            || regionLinkFlowPrediction->currentAcceptedStepCount
+                != faceLinks.acceptedStepCount
+            || regionLinkFlowPrediction->currentSimulationTimeSeconds
+                != faceLinks.simulationTimeSeconds
+            || regionLinkFlowPrediction->densityKgPerCubicMeter
+                != settings.densityKgPerCubicMeter
+            || regionLinkFlowPrediction->links.size()
+                != faceLinks.links.size()) {
+            throw std::invalid_argument(
+                "scene fluid pressure projection region link-flow prediction is foreign");
+        }
     }
     if (volumeRates != nullptr) {
         validateSceneFluidPressureVolumeRateIntegrity(*volumeRates);
@@ -541,6 +575,9 @@ static SceneFluidPressureProjection projectSceneFluidPressureLinkFlowsImpl(
     result.linkFlowContinuationFingerprint =
         linkFlowContinuation == nullptr
         ? 0 : linkFlowContinuation->fingerprint;
+    result.regionLinkFlowPredictionFingerprint =
+        regionLinkFlowPrediction == nullptr
+        ? 0 : regionLinkFlowPrediction->fingerprint;
     result.acceptedStepCount = pressureOperator.acceptedStepCount;
     result.simulationTimeSeconds = pressureOperator.simulationTimeSeconds;
     result.cellCounts = grid.cellCounts();
@@ -587,7 +624,33 @@ static SceneFluidPressureProjection projectSceneFluidPressureLinkFlowsImpl(
     for (const auto& source : faceLinks.links) {
         const auto& face = faceLinks.faces[source.faceIndex];
         double predictedFlow = 0.0;
-        if (linkFlowContinuation != nullptr) {
+        if (regionLinkFlowPrediction != nullptr) {
+            const auto& predicted =
+                regionLinkFlowPrediction->links[source.linkIndex];
+            if (predicted.linkIndex != source.linkIndex
+                || predicted.stableId != source.stableId
+                || predicted.faceIndex != source.faceIndex
+                || predicted.kind != source.kind
+                || predicted.openingPatchStableId
+                    != source.openingPatchStableId) {
+                throw std::invalid_argument(
+                    "scene fluid pressure projection region link-flow prediction is foreign");
+            }
+            predictedFlow = predicted
+                .predictedRelativeVolumeFlowRateCubicMetersPerSecond;
+            if (source.kind
+                == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
+                const auto found = openingSamples.find(
+                    source.openingPatchStableId);
+                if (found == openingSamples.end()) {
+                    throw std::invalid_argument(
+                        "scene fluid pressure projection is missing a region-predicted opening-flux sample");
+                }
+                openingSamples.erase(found);
+                ++consumedOpeningSamples;
+                ++result.diagnostics.authoredOpeningLinkCount;
+            }
+        } else if (linkFlowContinuation != nullptr) {
             const auto& continued =
                 linkFlowContinuation->links[source.linkIndex];
             if (continued.linkIndex != source.linkIndex
@@ -840,7 +903,7 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
     return projectSceneFluidPressureLinkFlowsImpl(
         surface, state, grid, transfer, epoch, caps, openingQuadrature,
         openingPatches, openingFlux, predictedVelocityMetersPerSecond,
-        nullptr, volumes, connectivity, pressureVolumes, faceLinks,
+        nullptr, nullptr, volumes, connectivity, pressureVolumes, faceLinks,
         pressureOperator, nullptr, warmPressurePascals, settings, limits);
 }
 
@@ -867,9 +930,66 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
     return projectSceneFluidPressureLinkFlowsImpl(
         surface, state, grid, transfer, epoch, caps, openingQuadrature,
         openingPatches, openingFlux, predictedVelocityMetersPerSecond,
-        nullptr, volumes, connectivity, pressureVolumes, faceLinks,
+        nullptr, nullptr, volumes, connectivity, pressureVolumes, faceLinks,
         pressureOperator, &volumeRates, warmPressurePascals, settings,
         limits);
+}
+
+SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidGridEpoch& epoch,
+    const SceneFluidOpeningCapSet& caps,
+    const SceneFluidOpeningQuadratureSet& openingQuadrature,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidRegionLinkFlowPrediction& regionLinkFlowPrediction,
+    const SceneFluidCellVolumeSet& volumes,
+    const SceneFluidRegionConnectivity& connectivity,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidPressureOperator& pressureOperator,
+    const std::span<const double> warmPressurePascals,
+    const SceneFluidPressureProjectionSettings& settings,
+    const SceneFluidPressureProjectionLimits& limits) {
+    return projectSceneFluidPressureLinkFlowsImpl(
+        surface, state, grid, transfer, epoch, caps, openingQuadrature,
+        openingPatches, openingFlux, predictedVelocityMetersPerSecond,
+        nullptr, &regionLinkFlowPrediction, volumes, connectivity,
+        pressureVolumes, faceLinks, pressureOperator, nullptr,
+        warmPressurePascals, settings, limits);
+}
+
+SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidGridEpoch& epoch,
+    const SceneFluidOpeningCapSet& caps,
+    const SceneFluidOpeningQuadratureSet& openingQuadrature,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidRegionLinkFlowPrediction& regionLinkFlowPrediction,
+    const SceneFluidCellVolumeSet& volumes,
+    const SceneFluidRegionConnectivity& connectivity,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidPressureOperator& pressureOperator,
+    const SceneFluidPressureVolumeRateSet& volumeRates,
+    const std::span<const double> warmPressurePascals,
+    const SceneFluidPressureProjectionSettings& settings,
+    const SceneFluidPressureProjectionLimits& limits) {
+    return projectSceneFluidPressureLinkFlowsImpl(
+        surface, state, grid, transfer, epoch, caps, openingQuadrature,
+        openingPatches, openingFlux, predictedVelocityMetersPerSecond,
+        nullptr, &regionLinkFlowPrediction, volumes, connectivity,
+        pressureVolumes, faceLinks, pressureOperator, &volumeRates,
+        warmPressurePascals, settings, limits);
 }
 
 SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
@@ -895,7 +1015,7 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
     return projectSceneFluidPressureLinkFlowsImpl(
         surface, state, grid, transfer, epoch, caps, openingQuadrature,
         openingPatches, openingFlux, predictedVelocityMetersPerSecond,
-        &linkFlowContinuation, volumes, connectivity, pressureVolumes,
+        &linkFlowContinuation, nullptr, volumes, connectivity, pressureVolumes,
         faceLinks, pressureOperator, nullptr, warmPressurePascals, settings,
         limits);
 }
@@ -924,7 +1044,7 @@ SceneFluidPressureProjection projectSceneFluidPressureLinkFlows(
     return projectSceneFluidPressureLinkFlowsImpl(
         surface, state, grid, transfer, epoch, caps, openingQuadrature,
         openingPatches, openingFlux, predictedVelocityMetersPerSecond,
-        &linkFlowContinuation, volumes, connectivity, pressureVolumes,
+        &linkFlowContinuation, nullptr, volumes, connectivity, pressureVolumes,
         faceLinks, pressureOperator, &volumeRates, warmPressurePascals,
         settings, limits);
 }
@@ -943,6 +1063,8 @@ void validateSceneFluidPressureProjectionIntegrity(
         || projection.pressureControlVolumeFingerprint == 0
         || diagnostics.usesMovingVolumeRates
             != (projection.pressureVolumeRateFingerprint != 0)
+        || (projection.linkFlowContinuationFingerprint != 0
+            && projection.regionLinkFlowPredictionFingerprint != 0)
         || projection.openingFluxFingerprint == 0
         || projection.velocityFingerprint == 0
         || !finite(projection.simulationTimeSeconds)

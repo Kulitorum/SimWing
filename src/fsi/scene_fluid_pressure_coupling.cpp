@@ -501,7 +501,9 @@ void SceneFluidPressureCoupling::restore(
                    ->pressureOperatorFingerprint
                 != restoredEpoch.pressureOperator.fingerprint
             || checkpointValue.pressureProjection
-                   ->linkFlowContinuationFingerprint != 0) {
+                   ->linkFlowContinuationFingerprint != 0
+            || checkpointValue.pressureProjection
+                   ->regionLinkFlowPredictionFingerprint != 0) {
             throw std::invalid_argument(
                 "scene pressure coupling checkpoint projection is foreign");
         }

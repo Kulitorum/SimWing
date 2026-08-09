@@ -11,9 +11,10 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureProjectionVersion = 3;
+inline constexpr std::uint32_t sceneFluidPressureProjectionVersion = 4;
 
 struct SceneFluidPressureLinkFlowContinuation;
+struct SceneFluidRegionLinkFlowPrediction;
 
 struct SceneFluidPressureProjectionSettings {
     double densityKgPerCubicMeter = 1.225;
@@ -118,6 +119,7 @@ struct SceneFluidPressureProjection {
     std::uint64_t openingFluxFingerprint = 0;
     std::uint64_t velocityFingerprint = 0;
     std::uint64_t linkFlowContinuationFingerprint = 0;
+    std::uint64_t regionLinkFlowPredictionFingerprint = 0;
     std::uint64_t acceptedStepCount = 0;
     double simulationTimeSeconds = 0.0;
     fluid::GridCellCounts cellCounts;
@@ -150,6 +152,55 @@ projectSceneFluidPressureLinkFlows(
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidPressureOperator& pressureOperator,
+    std::span<const double> warmPressurePascals,
+    const SceneFluidPressureProjectionSettings& settings = {},
+    const SceneFluidPressureProjectionLimits& limits = {});
+
+// Uses the moving-epoch link predictor reconstructed from an accepted region
+// momentum transport candidate. The supplied opening-flux/MAC chain remains
+// the immutable geometry and fallback identity; its bulk link values are
+// overridden by the region prediction.
+[[nodiscard]] SceneFluidPressureProjection
+projectSceneFluidPressureLinkFlows(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidGridEpoch& epoch,
+    const SceneFluidOpeningCapSet& caps,
+    const SceneFluidOpeningQuadratureSet& openingQuadrature,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidRegionLinkFlowPrediction& regionLinkFlowPrediction,
+    const SceneFluidCellVolumeSet& volumes,
+    const SceneFluidRegionConnectivity& connectivity,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidPressureOperator& pressureOperator,
+    std::span<const double> warmPressurePascals,
+    const SceneFluidPressureProjectionSettings& settings = {},
+    const SceneFluidPressureProjectionLimits& limits = {});
+
+[[nodiscard]] SceneFluidPressureProjection
+projectSceneFluidPressureLinkFlows(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidGridEpoch& epoch,
+    const SceneFluidOpeningCapSet& caps,
+    const SceneFluidOpeningQuadratureSet& openingQuadrature,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidRegionLinkFlowPrediction& regionLinkFlowPrediction,
+    const SceneFluidCellVolumeSet& volumes,
+    const SceneFluidRegionConnectivity& connectivity,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidPressureOperator& pressureOperator,
+    const SceneFluidPressureVolumeRateSet& volumeRates,
     std::span<const double> warmPressurePascals,
     const SceneFluidPressureProjectionSettings& settings = {},
     const SceneFluidPressureProjectionLimits& limits = {});

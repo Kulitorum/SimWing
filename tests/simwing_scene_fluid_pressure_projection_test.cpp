@@ -2,6 +2,7 @@
 #include "scene_fluid_pressure_link_flow.h"
 #include "scene_fluid_pressure_epoch.h"
 #include "scene_fluid_region_momentum.h"
+#include "scene_fluid_region_link_flow.h"
 #include "scene_fluid_region_transport.h"
 
 #include <algorithm>
@@ -615,6 +616,16 @@ void testAreaChangingLinkContinuation() {
         fixture.pressureOperator.rows.size(), 0.0);
     const auto previousProjection = fixture.project(
         velocity, previousFlux, warm, strictSettings());
+    const auto previousMomentum = reconstructSceneFluidRegionMomentumState(
+        grid(), fixture.pressureVolumes, fixture.faceLinks,
+        fixture.openingPatches, previousProjection, velocity);
+    SceneFluidRegionTransportSettings transportSettings;
+    transportSettings.timeStepSeconds = strictSettings().timeStepSeconds;
+    const auto transport = advanceSceneFluidRegionMomentum(
+        previousMomentum, fixture.faceLinks, previousProjection,
+        transportSettings);
+    check(transport.diagnostics.accepted,
+          "area-changing link continuation advances region momentum");
 
     const auto apex = std::ranges::find(
         fixture.structureAssembly.mappings.nodeVertexIds, StableId{10});
@@ -656,6 +667,79 @@ void testAreaChangingLinkContinuation() {
                      .maximumAbsoluteFaceFlowClosureCubicMetersPerSecond
                   < 1.0e-15,
           "area-changing link continuation recenters carried deviations without changing face-total flow");
+
+    const auto regionPrediction = predictSceneFluidRegionLinkFlows(
+        transport, grid(), currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentFlux);
+    const auto repeatedPrediction = predictSceneFluidRegionLinkFlows(
+        transport, grid(), currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentFlux);
+    check(regionPrediction == repeatedPrediction
+              && regionPrediction.diagnostics.finite
+              && regionPrediction.diagnostics.openingLinkCount == 1
+              && regionPrediction.diagnostics
+                     .maximumAbsoluteVolumeChangeCubicMeters > 0.0
+              && regionPrediction.links.size()
+                  == currentEpoch.pressureFaceLinks.links.size(),
+          "transported region momentum deterministically predicts the moving epoch link flow and GCL remap");
+    validateSceneFluidRegionLinkFlowPrediction(
+        regionPrediction, transport, grid(),
+        currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentFlux);
+
+    const auto volumeRates = buildSceneFluidPressureVolumeRates(
+        fixture.volumes, currentEpoch.cellVolumes,
+        currentEpoch.pressureControlVolumes);
+    std::vector<double> currentWarm(
+        currentEpoch.pressureOperator.rows.size(), 0.0);
+    const auto regionProjection = projectSceneFluidPressureLinkFlows(
+        fixture.surface.definition, currentState, grid(), fixture.transfer,
+        currentEpoch.gridEpoch, currentEpoch.openingCaps,
+        currentEpoch.openingQuadrature, currentEpoch.openingPatches,
+        currentFlux, velocity, regionPrediction, currentEpoch.cellVolumes,
+        fixture.connectivity, currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentEpoch.pressureOperator,
+        volumeRates, currentWarm, strictSettings());
+    bool exactPredictedFlow = regionProjection.links.size()
+        == regionPrediction.links.size();
+    for (std::size_t index = 0;
+         exactPredictedFlow && index < regionProjection.links.size();
+         ++index) {
+        exactPredictedFlow = regionProjection.links[index]
+            .predictedRelativeVolumeFlowRateCubicMetersPerSecond
+            == regionPrediction.links[index]
+                .predictedRelativeVolumeFlowRateCubicMetersPerSecond;
+    }
+    check(regionProjection.diagnostics.accepted
+              && regionProjection.regionLinkFlowPredictionFingerprint
+                  == regionPrediction.fingerprint
+              && regionProjection.linkFlowContinuationFingerprint == 0
+              && regionProjection.pressureVolumeRateFingerprint
+                  == volumeRates.fingerprint
+              && exactPredictedFlow,
+          "moving pressure projection consumes the transported region link predictor exactly");
+
+    auto corruptPrediction = regionPrediction;
+    corruptPrediction.links.front()
+        .predictedRelativeVolumeFlowRateCubicMetersPerSecond += 0.01;
+    expectInvalid(
+        [&] {
+            validateSceneFluidRegionLinkFlowPredictionIntegrity(
+                corruptPrediction);
+        },
+        "region link-flow integrity rejects predicted-flow corruption");
+
+    SceneFluidRegionLinkFlowLimits predictionLimits;
+    predictionLimits.maximumLinks =
+        currentEpoch.pressureFaceLinks.links.size() - 1;
+    expectLimited(
+        [&] {
+            static_cast<void>(predictSceneFluidRegionLinkFlows(
+                transport, grid(), currentEpoch.pressureControlVolumes,
+                currentEpoch.pressureFaceLinks, currentFlux,
+                predictionLimits));
+        },
+        "region link-flow prediction bounds its moving link state");
 }
 
 void testRegionMomentumReconstruction() {

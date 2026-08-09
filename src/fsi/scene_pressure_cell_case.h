@@ -10,10 +10,10 @@
 namespace simwing::fsi {
 
 inline constexpr char scenePressureCellCaseChecksum[] =
-    "sha256:simwing-scene-pressure-feedback-cell-v5";
+    "sha256:simwing-scene-pressure-feedback-cell-v6";
 inline constexpr char scenePressureCellCaseSolverId[] =
-    "simwing-fsi-scene-pressure-feedback-worker-v5";
-inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 5;
+    "simwing-fsi-scene-pressure-feedback-worker-v6";
+inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 6;
 
 struct ScenePressureCellDiagnostics {
     SceneFluidPressureCouplingStepDiagnostics coupling;

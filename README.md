@@ -640,8 +640,12 @@ donor-cell vector-momentum flux over the corrected pressure links, followed by
 equal-and-opposite graph-viscous impulses. It deterministically subcycles from
 the smallest local outgoing-volume and viscous stability limits, conserves
 global momentum, requires non-increasing stage energy, and publishes no
-candidate on a failed ledger. Moving-volume GCL transport, material-wall
-viscosity, and a new pressure projection remain explicit next steps.
+candidate on a failed ledger. A topology-stable moving-epoch adapter retains
+those transported cell/region velocities while remapping momentum to current
+physical volumes, averages them onto current pressure links, subtracts exact
+opening-cap sweep, and supplies the fingerprinted predictor to pressure
+projection alongside dV/dt. Topology rebase, material-wall viscosity, and
+accepted worker ownership of that region state remain explicit next steps.
 Its in-memory composite checkpoint retains Structure plus the accepted sparse
 pressure projection; restore rebuilds and validates the complete pressure
 epoch and conservative load before committing either owner. Initial and
@@ -667,14 +671,15 @@ diagnostic, not a general immersed-boundary CFD or wing-aerodynamics claim. A
 600-step headless run remains topology-stable for 10 simulated seconds and
 reports about `1.12 Pa` peak pressure, `9.01 mm` maximum deformation, and
 `0.926 m/s` maximum MAC speed.
-Its bounded `SWPCELL5` checkpoint stores the trusted Structure state and the
+Its bounded `SWPCELL6` checkpoint stores the trusted Structure state and the
 complete accepted sparse pressure projection. Initial and accepted files
 round-trip deterministically, reject foreign/corrupt input transactionally,
 resume through the normal worker checkpoint flags, and reconstruct the exact
 derived MAC continuation without duplicating either it or transient bulk
-pressure on the wire. Version 5 also records whether a pressure projection was
-formed from the explicit link-flow continuation; canonical worker checkpoints
-require that marker to remain zero until cut-region momentum transport owns it.
+pressure on the wire. Version 6 also records whether a pressure projection was
+formed from either explicit static-link continuation or transported-region
+prediction; canonical worker checkpoints require both markers to remain zero
+until the worker owns the accepted cut-region momentum state.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own
