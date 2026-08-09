@@ -752,6 +752,94 @@ void testSourceDrivenTraceBalance() {
                   < 3.0e-13,
           "atomic mimetic pressure transaction publishes only the closed reconstructed state");
 
+    SceneFluidMimeticPressureSourceSettings sourceSettings;
+    sourceSettings.densityKgPerCubicMeter = 2.0;
+    sourceSettings.timeStepSeconds = 0.5;
+    std::vector<double> predictedVolumeRates(sources.size(), 0.0);
+    std::vector<double> geometryVolumeRates(sources.size(), 0.0);
+    if (receiver < sources.size()) {
+        predictedVolumeRates[0] = -0.03;
+        geometryVolumeRates[0] = -0.02;
+        predictedVolumeRates[receiver] = 0.04;
+        geometryVolumeRates[receiver] = 0.01;
+    }
+    const auto physicalSources = buildSceneFluidMimeticPressureSources(
+        shells, predictedVolumeRates, geometryVolumeRates,
+        sourceSettings);
+    const auto repeatedPhysicalSources =
+        buildSceneFluidMimeticPressureSources(
+            shells, predictedVolumeRates, geometryVolumeRates,
+            sourceSettings);
+    const auto integratedPhysicalSources =
+        sceneFluidMimeticIntegratedCellSources(physicalSources);
+    check(physicalSources == repeatedPhysicalSources
+              && physicalSources.fingerprint != 0
+              && physicalSources.mimeticControlCellFingerprint
+                  == shells.fingerprint
+              && physicalSources.componentCount == system.componentCount
+              && physicalSources.controls.size() == sources.size()
+              && maximumError(integratedPhysicalSources, sources) < 2.0e-15
+              && physicalSources
+                    .maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond
+                  < 2.0e-17
+              && physicalSources
+                    .maximumAbsoluteComponentIntegratedSourcePascalsMeters
+                  < 8.0e-17,
+          "physical mimetic source bridge preserves the production sign, units, and component balance");
+    const auto pressureFromPhysicalSources =
+        solveSceneFluidMimeticPressureSystem(
+            condensed, system, physicalSources, zeroWarmStart,
+            strictSolveSettings());
+    check(pressureFromPhysicalSources.diagnostics.accepted
+              && pressureFromPhysicalSources.fullTraceSystemFingerprint
+                  == system.fingerprint
+              && pressureFromPhysicalSources
+                    .condensedTraceSystemFingerprint
+                  == condensed.fingerprint
+              && pressureFromPhysicalSources.pressureSourceFingerprint
+                  == physicalSources.fingerprint
+              && maximumError(
+                     pressureFromPhysicalSources.reducedTracePascals,
+                     pressure.reducedTracePascals) < 3.0e-12
+              && maximumError(
+                     pressureFromPhysicalSources.fullTracePascals,
+                     pressure.fullTracePascals) < 3.0e-12,
+          "fingerprinted physical sources feed the same atomic pressure solution");
+    validateSceneFluidMimeticPressureSources(physicalSources, shells);
+
+    auto corruptPhysicalSources = physicalSources;
+    corruptPhysicalSources.controls.front()
+        .integratedSourcePascalsMeters += 0.01;
+    expectInvalid(
+        [&] { validateSceneFluidMimeticPressureSourceIntegrity(
+            corruptPhysicalSources); },
+        "physical mimetic sources reject fingerprinted field corruption");
+    SceneFluidMimeticPressureSourceLimits sourceLimits;
+    sourceLimits.maximumControlCells = sources.size() - 1;
+    expectLimited(
+        [&] { static_cast<void>(buildSceneFluidMimeticPressureSources(
+            shells, predictedVolumeRates, sourceSettings, sourceLimits)); },
+        "physical mimetic sources bound control count");
+    sourceLimits = {};
+    sourceLimits.maximumComponents = physicalSources.componentCount - 1;
+    expectLimited(
+        [&] { static_cast<void>(buildSceneFluidMimeticPressureSources(
+            shells, predictedVolumeRates, sourceSettings, sourceLimits)); },
+        "physical mimetic sources bound component count");
+    sourceLimits = {};
+    sourceLimits.maximumOwnedBytes = physicalSources.ownedStorageBytes - 1;
+    expectLimited(
+        [&] { static_cast<void>(buildSceneFluidMimeticPressureSources(
+            shells, predictedVolumeRates, geometryVolumeRates,
+            sourceSettings, sourceLimits)); },
+        "physical mimetic sources bound owned storage");
+    auto invalidSourceSettings = sourceSettings;
+    invalidSourceSettings.timeStepSeconds = 0.0;
+    expectInvalid(
+        [&] { static_cast<void>(buildSceneFluidMimeticPressureSources(
+            shells, predictedVolumeRates, invalidSourceSettings)); },
+        "physical mimetic sources reject a non-positive time step");
+
     auto truncatedSettings = strictSolveSettings();
     truncatedSettings.absoluteResidualTolerancePascalsMeters = 1.0e-30;
     truncatedSettings.relativeResidualTolerance = 0.0;

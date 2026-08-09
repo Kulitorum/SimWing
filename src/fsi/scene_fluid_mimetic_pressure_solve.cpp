@@ -62,6 +62,8 @@ solveSceneFluidMimeticPressureSystem(
     }
 
     SceneFluidMimeticPressureSolveResult result;
+    result.fullTraceSystemFingerprint = fullSystem.fingerprint;
+    result.condensedTraceSystemFingerprint = condensedSystem.fingerprint;
     const auto fullRightHandSide =
         buildSceneFluidMimeticTraceRightHandSide(
             fullSystem, integratedCellSources);
@@ -110,6 +112,33 @@ solveSceneFluidMimeticPressureSystem(
     result.reducedTracePascals = std::move(reducedCandidate);
     result.fullTracePascals = std::move(fullCandidate);
     result.evaluation = std::move(evaluation);
+    return result;
+}
+
+SceneFluidMimeticPressureSolveResult
+solveSceneFluidMimeticPressureSystem(
+    const SceneFluidMimeticCondensedTraceSystem& condensedSystem,
+    const SceneFluidMimeticTraceSystem& fullSystem,
+    const SceneFluidMimeticPressureSourceSet& sources,
+    const std::span<const double> reducedTraceWarmStartPascals,
+    const SceneFluidMimeticTraceSolveSettings& settings) {
+    validateSceneFluidMimeticPressureSourceIntegrity(sources);
+    if (sources.mimeticControlCellFingerprint
+            != fullSystem.mimeticControlCellFingerprint
+        || sources.structureDefinitionFingerprint
+            != fullSystem.structureDefinitionFingerprint
+        || sources.acceptedStepCount != fullSystem.acceptedStepCount
+        || sources.simulationTimeSeconds != fullSystem.simulationTimeSeconds
+        || sources.controls.size() != fullSystem.localOperators.size()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic pressure source is foreign");
+    }
+    const auto integratedSources =
+        sceneFluidMimeticIntegratedCellSources(sources);
+    auto result = solveSceneFluidMimeticPressureSystem(
+        condensedSystem, fullSystem, integratedSources,
+        reducedTraceWarmStartPascals, settings);
+    result.pressureSourceFingerprint = sources.fingerprint;
     return result;
 }
 

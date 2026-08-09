@@ -1,5 +1,6 @@
 #pragma once
 
+#include "scene_fluid_mimetic_pressure_source.h"
 #include "scene_fluid_mimetic_trace_solve.h"
 
 #include <span>
@@ -26,6 +27,9 @@ struct SceneFluidMimeticPressureSolveDiagnostics {
 // tolerances. The caller-supplied reduced field is a read-only warm start; no
 // partial candidate can escape on failure.
 struct SceneFluidMimeticPressureSolveResult {
+    std::uint64_t fullTraceSystemFingerprint = 0;
+    std::uint64_t condensedTraceSystemFingerprint = 0;
+    std::uint64_t pressureSourceFingerprint = 0;
     SceneFluidMimeticPressureSolveDiagnostics diagnostics;
     std::vector<double> reducedTracePascals;
     std::vector<double> fullTracePascals;
@@ -37,6 +41,14 @@ solveSceneFluidMimeticPressureSystem(
     const SceneFluidMimeticCondensedTraceSystem& condensedSystem,
     const SceneFluidMimeticTraceSystem& fullSystem,
     std::span<const double> integratedCellSources,
+    std::span<const double> reducedTraceWarmStartPascals,
+    const SceneFluidMimeticTraceSolveSettings& settings = {});
+
+[[nodiscard]] SceneFluidMimeticPressureSolveResult
+solveSceneFluidMimeticPressureSystem(
+    const SceneFluidMimeticCondensedTraceSystem& condensedSystem,
+    const SceneFluidMimeticTraceSystem& fullSystem,
+    const SceneFluidMimeticPressureSourceSet& sources,
     std::span<const double> reducedTraceWarmStartPascals,
     const SceneFluidMimeticTraceSolveSettings& settings = {});
 

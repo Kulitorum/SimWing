@@ -1112,8 +1112,26 @@ component-compatibility tolerance returns diagnostics with no published state.
 The coarse real wing accepts a balanced `+0.02/-0.02` cell-source pair after
 307 iterations: reconstructed full residual is `6.17e-9` RMS and `2.59e-6`
 maximum, with `5.05e-10` maximum local conservation residual. The transaction
-starts from integrated sources; deriving those sources from a velocity
-predictor, moving-volume GCL, density, and time step remains future work.
+results remain bound to the full, condensed, and optional source fingerprints.
+
+`src/fsi/scene_fluid_mimetic_pressure_source.*` owns the physical-unit source
+conversion shared with the production projection convention. For each mimetic
+control it accepts predicted net-outward volume flow and optional moving-volume
+rate, then stores
+
+```text
+continuity = dV/dt + predicted_net_outward_flow
+integrated_source = -(density / time_step) * continuity
+```
+
+in `Pa*m`. The immutable product is count/byte bounded, fingerprinted to the
+complete control-cell epoch, and retains compensated component sums so a
+physically incompatible predictor remains diagnosable before the trace solver
+rejects it. Analytic tests split one continuity residual across geometry and
+flow terms and recover the same atomic solution as a direct integrated source;
+the real balanced-source audit enters through this product as well. Sampling
+one relative predicted flow per shared mimetic trace and adapting the accepted
+moving-volume-rate product remain future upstream stages.
 
 The first immutable scene adapter now assembles each sparse cell/region's
 unwrapped half-face shell from exact Cartesian region subfaces, cell- and
@@ -1154,10 +1172,10 @@ runs on that reduced real system as well. It rolls back exactly after a
 deliberately truncated iteration, and a separate manufactured solve reaches
 `1e-5` relative RMS within 300 iterations before reconstructing the complete
 191,579-row operator below `2e-4` maximum residual. Further local or multilevel
-preconditioning, predictor/GCL-to-source assembly, and production integration
-remain open. The atomic integrated-source transaction additionally converges a
-balanced real source pair and publishes only after reconstructed full-space
-closure. The current graph operator and all worker arithmetic are unchanged.
+preconditioning, link-flow/GCL sampling, and production integration remain
+open. The atomic source-bound transaction additionally converges a balanced
+real source pair and publishes only after reconstructed full-space closure.
+The current graph operator and all worker arithmetic are unchanged.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy

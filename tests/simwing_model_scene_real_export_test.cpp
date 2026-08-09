@@ -653,7 +653,7 @@ void testRealDesignCapture(const std::filesystem::path &input,
             std::abs(reconstructedConvergedFullAction[trace]
                      - manufacturedCondensedFullRightHandSide[trace]));
     }
-    std::vector<double> realIntegratedCellSources(
+    std::vector<double> realPredictedContinuityRates(
         mimeticTraceSystem.localOperators.size(), 0.0);
     std::size_t sourceReceiver = 1;
     while (sourceReceiver < mimeticControlCells.controlCells.size()
@@ -664,16 +664,27 @@ void testRealDesignCapture(const std::filesystem::path &input,
     }
     simwing::fsi::SceneFluidMimeticPressureSolveResult
         realSourcePressure;
-    if (sourceReceiver < realIntegratedCellSources.size()) {
-        realIntegratedCellSources[0] = 0.02;
-        realIntegratedCellSources[sourceReceiver] = -0.02;
+    simwing::fsi::SceneFluidMimeticPressureSourceSet realPhysicalSources;
+    if (sourceReceiver < realPredictedContinuityRates.size()) {
+        simwing::fsi::SceneFluidMimeticPressureSourceSettings
+            realSourceSettings;
+        const double sourceContinuityRate = -0.02
+            * realSourceSettings.timeStepSeconds
+            / realSourceSettings.densityKgPerCubicMeter;
+        realPredictedContinuityRates[0] = sourceContinuityRate;
+        realPredictedContinuityRates[sourceReceiver] =
+            -sourceContinuityRate;
+        realPhysicalSources =
+            simwing::fsi::buildSceneFluidMimeticPressureSources(
+                mimeticControlCells, realPredictedContinuityRates,
+                realSourceSettings);
         auto realSourceSolveSettings =
             convergedReducedTraceSolveSettings;
         realSourceSolveSettings.maximumIterations = 1000;
         realSourcePressure =
             simwing::fsi::solveSceneFluidMimeticPressureSystem(
                 condensedTraceSystem, mimeticTraceSystem,
-                realIntegratedCellSources,
+                realPhysicalSources,
                 std::vector<double>(
                     condensedTraceSystem.traces.size(), 0.0),
                 realSourceSolveSettings);
@@ -739,8 +750,14 @@ void testRealDesignCapture(const std::filesystem::path &input,
                 * convergedReducedTraceSolveDiagnostics
                     .initialResidualL2PascalsMeters
         && maximumReconstructedFullResidual < 2.0e-4
-        && sourceReceiver < realIntegratedCellSources.size()
+        && sourceReceiver < realPredictedContinuityRates.size()
+        && realPhysicalSources.fingerprint != 0
+        && realPhysicalSources
+                .maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond
+            < 1.0e-18
         && realSourcePressure.diagnostics.accepted
+        && realSourcePressure.pressureSourceFingerprint
+            == realPhysicalSources.fingerprint
         && realSourcePressure.diagnostics
             .reconstructedFullResidualConverged
         && realSourcePressure.diagnostics.reducedTraceSolve.converged
@@ -810,7 +827,7 @@ void testRealDesignCapture(const std::filesystem::path &input,
             convergedReducedTraceSolveDiagnostics
                 .finalResidualMaximumPascalsMeters,
             maximumReconstructedFullResidual,
-            sourceReceiver < realIntegratedCellSources.size() ? 1 : 0,
+            sourceReceiver < realPredictedContinuityRates.size() ? 1 : 0,
             realSourcePressure.diagnostics.accepted ? 1 : 0,
             realSourcePressure.diagnostics
                     .reconstructedFullResidualConverged
