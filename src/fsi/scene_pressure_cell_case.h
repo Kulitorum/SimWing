@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fluid/projected_advection.h"
 #include "scene_fluid_pressure_coupling.h"
 #include "structure_frame.h"
 #include "viewer_protocol.h"
@@ -9,15 +10,18 @@
 namespace simwing::fsi {
 
 inline constexpr char scenePressureCellCaseChecksum[] =
-    "sha256:simwing-scene-pressure-feedback-cell-v2";
+    "sha256:simwing-scene-pressure-feedback-cell-v3";
 inline constexpr char scenePressureCellCaseSolverId[] =
-    "simwing-fsi-scene-pressure-feedback-worker-v2";
-inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 2;
+    "simwing-fsi-scene-pressure-feedback-worker-v3";
+inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 3;
 
 struct ScenePressureCellDiagnostics {
     SceneFluidPressureCouplingStepDiagnostics coupling;
     SceneFluidPressureMacVelocityCollapseDiagnostics macVelocity;
-    double actuatorForceNewtons = 0.0;
+    fluid::ProjectedMacAdvectionSspRk2Diagnostics bulkAdvection;
+    double targetMeanWindMetersPerSecond = 0.0;
+    double meanWindBeforePumpMetersPerSecond = 0.0;
+    double flowPumpForceNewtons = 0.0;
     StructureVector3 pressureForceNewtons;
     double maximumAbsolutePressurePascals = 0.0;
     double maximumDisplacementMeters = 0.0;
@@ -31,10 +35,12 @@ struct ScenePressureCellCheckpoint {
     SceneFluidPressureCouplingCheckpoint coupling;
 };
 
-// A visible analytic open cell driven by a bounded sinusoidal apex force. Its
-// geometry is rebuilt by the scene-v2 cut-cell path and its pressure load is
-// strongly coupled back to the same XPBD Structure. This is a diagnostic
-// pressure-feedback canonical, not a complete momentum-evolving CFD model.
+// A visible analytic open cell driven by a prescribed periodic mean-flow
+// pump. The accepted collapsed MAC state receives one existing projected
+// nonlinear bulk-advection step before scene-v2 pressure is strongly coupled
+// back to the same XPBD Structure. Immersed-boundary convection remains an
+// approximation: cut-region pressure is exact for this subset, but the bulk
+// advection stages do not yet resolve distinct per-region subface velocities.
 class ScenePressureCellCase final {
 public:
     ScenePressureCellCase();
@@ -66,7 +72,6 @@ private:
     SceneFluidPressureCoupling coupling_;
     fluid::MacVelocityField predictedVelocity_;
     viewer::StructureFrameMapping frameMapping_;
-    std::size_t apexNode_ = 0;
     ScenePressureCellDiagnostics diagnostics_;
 };
 

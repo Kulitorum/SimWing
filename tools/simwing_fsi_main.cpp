@@ -113,8 +113,8 @@ void printUsage(FILE* stream) {
         "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"
         "shared-node open XPBD fabric cell;\n"
         "'pressure-cell' strongly couples scene-v2 moving cut-volume pressure\n"
-        "back to a driven open XPBD cell and advances a pressure-corrected bulk\n"
-        "MAC predictor between accepted steps;\n"
+        "back to an open XPBD cell while a prescribed mean-flow pump and\n"
+        "projected nonlinear advection advance its bulk MAC predictor;\n"
         "'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
         "'strong-piston' strongly iterates that chain for a light added-mass plate;\n"
@@ -1587,7 +1587,7 @@ int main(int argc, char* argv[]) {
                     const auto& coupled = simulation.diagnostics();
                     std::printf(
                         "simwing-fsi completed %llu pressure-cell step(s), "
-                        "t=%.9g s, actuator=%.6g N, pressure-force="
+                        "t=%.9g s, wind=%.6g m/s, pump=%.6g N, pressure-force="
                         "[%.6g %.6g %.6g] N, max-pressure=%.6g Pa, "
                         "max-motion=%.6g m, coupling-iterations=%llu, "
                         "mac-speed=%.6g m/s, subface-spread=%.3g m/s, "
@@ -1596,7 +1596,8 @@ int main(int argc, char* argv[]) {
                         static_cast<unsigned long long>(
                             checkpoint.acceptedStepCount),
                         checkpoint.simulationTimeSeconds,
-                        coupled.actuatorForceNewtons,
+                        coupled.targetMeanWindMetersPerSecond,
+                        coupled.flowPumpForceNewtons,
                         coupled.pressureForceNewtons.x,
                         coupled.pressureForceNewtons.y,
                         coupled.pressureForceNewtons.z,

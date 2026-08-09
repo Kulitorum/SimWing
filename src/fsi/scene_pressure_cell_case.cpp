@@ -5,7 +5,6 @@
 #include <cmath>
 #include <limits>
 #include <map>
-#include <numbers>
 #include <ranges>
 #include <stdexcept>
 #include <utility>
@@ -15,8 +14,7 @@ namespace simwing::fsi {
 namespace {
 
 constexpr StableId apexVertexId = 10;
-constexpr double actuatorAccelerationMetersPerSecondSquared = 30.0;
-constexpr double actuatorFrequencyHertz = 0.5;
+constexpr double targetMeanWindMetersPerSecond = -0.85;
 
 template<std::size_t VertexCount>
 std::array<Vec2, 3> intrinsicChart(
@@ -153,14 +151,27 @@ viewer::StructureFrameMappingDefinition makeFrameMapping(
     return result;
 }
 
-std::size_t findApexNode(const SceneStructureAssembly& assembly) {
-    const auto found = std::ranges::find(
-        assembly.mappings.nodeVertexIds, apexVertexId);
-    if (found == assembly.mappings.nodeVertexIds.end()) {
-        throw std::logic_error("scene pressure cell apex is missing");
+fluid::MacVelocityField makeInitialVelocity(
+    const fluid::PeriodicCartesianGrid& grid) {
+    fluid::MacVelocityField result(grid);
+    std::ranges::fill(
+        result.xFaces(), targetMeanWindMetersPerSecond);
+    return result;
+}
+
+double meanXVelocity(const fluid::MacVelocityField& velocity) {
+    double result = 0.0;
+    for (const double value : velocity.xFaces()) {
+        result += value;
     }
-    return static_cast<std::size_t>(
-        found - assembly.mappings.nodeVertexIds.begin());
+    return result / static_cast<double>(velocity.xFaces().size());
+}
+
+double gridVolume(const fluid::PeriodicCartesianGrid& grid) {
+    const auto lower = grid.lowerMeters();
+    const auto upper = grid.upperMeters();
+    return (upper.x - lower.x) * (upper.y - lower.y)
+        * (upper.z - lower.z);
 }
 
 double vectorNorm(const StructureVector3& value) {
@@ -190,7 +201,11 @@ double maximumDisplacement(const Structure& structure) {
 bool finite(const ScenePressureCellDiagnostics& diagnostics) {
     return diagnostics.coupling.finite
         && diagnostics.macVelocity.finite
-        && std::isfinite(diagnostics.actuatorForceNewtons)
+        && diagnostics.bulkAdvection.finite
+        && diagnostics.bulkAdvection.accepted
+        && std::isfinite(diagnostics.targetMeanWindMetersPerSecond)
+        && std::isfinite(diagnostics.meanWindBeforePumpMetersPerSecond)
+        && std::isfinite(diagnostics.flowPumpForceNewtons)
         && std::isfinite(diagnostics.pressureForceNewtons.x)
         && std::isfinite(diagnostics.pressureForceNewtons.y)
         && std::isfinite(diagnostics.pressureForceNewtons.z)
@@ -207,23 +222,32 @@ ScenePressureCellCase::ScenePressureCellCase()
       structure_(assembly_.definition),
       coupling_(surface_.definition, assembly_.mappings, structure_,
                 makeGrid(), makeSettings()),
-      predictedVelocity_(coupling_.grid()),
-      frameMapping_(structure_, makeFrameMapping(scene_, assembly_)),
-      apexNode_(findApexNode(assembly_)) {}
+      predictedVelocity_(makeInitialVelocity(coupling_.grid())),
+      frameMapping_(structure_, makeFrameMapping(scene_, assembly_)) {}
 
 viewer::TraceHeader ScenePressureCellCase::traceHeader() const {
     return {scenePressureCellCaseChecksum, scenePressureCellCaseSolverId};
 }
 
 viewer::DiagnosticFrame ScenePressureCellCase::advance() {
-    const double nextTime = structure_.simulationTimeSeconds()
-        + coupling_.settings().structure.timeStepSeconds;
-    const double acceleration = -actuatorAccelerationMetersPerSecondSquared
-        * std::sin(2.0 * std::numbers::pi
-                   * actuatorFrequencyHertz * nextTime);
-    const double actuatorForce =
-        structure_.definition().nodes[apexNode_].massKg * acceleration;
-    structure_.addExternalForce(apexNode_, {actuatorForce, 0.0, 0.0});
+    const double meanWind = meanXVelocity(predictedVelocity_);
+    const double pumpVelocityIncrement =
+        targetMeanWindMetersPerSecond - meanWind;
+    for (double& value : predictedVelocity_.xFaces()) {
+        value += pumpVelocityIncrement;
+    }
+    fluid::CellScalarField bulkPressure(coupling_.grid());
+    fluid::ProjectedMacAdvectionSspRk2Settings bulkSettings;
+    bulkSettings.densityKgPerCubicMeter = coupling_.settings()
+        .pressureProjection.densityKgPerCubicMeter;
+    bulkSettings.timeStepSeconds =
+        coupling_.settings().structure.timeStepSeconds;
+    const auto bulk = fluid::advectVelocityProjectedSspRk2(
+        coupling_.grid(), predictedVelocity_, bulkPressure, bulkSettings);
+    if (!bulk.accepted) {
+        throw std::runtime_error(
+            "scene pressure cell bulk advection rejected its collapsed MAC predictor");
+    }
     const auto coupled = coupling_.advance(structure_, predictedVelocity_);
     if (!coupled.accepted) {
         throw std::runtime_error(
@@ -236,7 +260,14 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
     ScenePressureCellDiagnostics nextDiagnostics;
     nextDiagnostics.coupling = coupled;
     nextDiagnostics.macVelocity = correctedMac.diagnostics;
-    nextDiagnostics.actuatorForceNewtons = actuatorForce;
+    nextDiagnostics.bulkAdvection = bulk;
+    nextDiagnostics.targetMeanWindMetersPerSecond =
+        targetMeanWindMetersPerSecond;
+    nextDiagnostics.meanWindBeforePumpMetersPerSecond = meanWind;
+    nextDiagnostics.flowPumpForceNewtons =
+        bulkSettings.densityKgPerCubicMeter
+        * gridVolume(coupling_.grid()) * pumpVelocityIncrement
+        / bulkSettings.timeStepSeconds;
     nextDiagnostics.pressureForceNewtons =
         coupling_.acceptedPressureTransfer().diagnostics()
             .transferredNodalForceNewtons;
@@ -358,6 +389,17 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
         {diagnostics_.macVelocity
              .maximumSubfaceVelocityDeviationMetersPerSecond},
     });
+    frame.scalarFields.push_back({
+        "pressure_cell.bulk_advection_change", "m/s",
+        viewer::FieldAssociation::Global,
+        {diagnostics_.bulkAdvection
+             .maximumVelocityChangeMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "pressure_cell.bulk_divergence", "1/s",
+        viewer::FieldAssociation::Global,
+        {diagnostics_.bulkAdvection.finalDivergenceL2PerSecond},
+    });
 
     std::vector<viewer::Vec3d> nodalPressureForces(
         structure_.definition().nodes.size());
@@ -378,9 +420,9 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
           diagnostics_.pressureForceNewtons.z}},
     });
     frame.vectorFields.push_back({
-        "pressure_cell.actuator_force", "N",
+        "pressure_cell.flow_pump_force", "N",
         viewer::FieldAssociation::Global,
-        {{diagnostics_.actuatorForceNewtons, 0.0, 0.0}},
+        {{diagnostics_.flowPumpForceNewtons, 0.0, 0.0}},
     });
 
     viewer::ProtocolError error;
@@ -431,7 +473,7 @@ void ScenePressureCellCase::restore(
             "scene pressure cell checkpoint version is invalid");
     }
     coupling_.restore(structure_, checkpointValue.coupling);
-    predictedVelocity_ = fluid::MacVelocityField(coupling_.grid());
+    predictedVelocity_ = makeInitialVelocity(coupling_.grid());
     if (coupling_.acceptedPressureProjection() != nullptr) {
         predictedVelocity_ = coupling_
             .acceptedPressureCorrectedMacVelocity()

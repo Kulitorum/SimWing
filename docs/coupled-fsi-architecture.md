@@ -720,8 +720,8 @@ iterations. Accepted corrected link flows can now be collapsed onto one
 absolute bulk MAC velocity per Cartesian face, restoring oriented cap sweep at
 authored openings and reporting the maximum mixed-region subface velocity
 spread. The pressure-cell worker uses that derived field as the next accepted
-predictor. This is pressure-correction continuation, not cut-cell advection,
-viscosity, or a topology-rebasing CFD step. Its
+predictor. This collapse is pressure-correction continuation, not general
+cut-cell advection, viscosity, or a topology-rebasing CFD step. Its
 first composite in-memory checkpoint stores Structure and the accepted sparse
 pressure projection. Restore uses a temporary Structure, rebuilds the entire
 pressure epoch, resamples the validated projection, and reconstructs the
@@ -731,23 +731,28 @@ equivalent owner; foreign solver settings, corrupt pressure, and a missing
 noninitial projection leave the current accepted run untouched. A
 selectable `pressure-cell` worker now exercises that owner through the normal
 trace/viewer path. Its soft three-panel tetrahedral cell has one face-aligned
-triangular intake, three fixed mouth vertices, and a sinusoidally driven apex.
-Frames expose deformation, area-averaged triangle pressure jump, nodal and
-total pressure force, actuator force, strong-iteration count, maximum bulk MAC
-speed, and mixed-subface collapse spread. Two runs are
-byte-deterministic, its in-memory checkpoint reproduces the exact next frame,
-and the default 600-step/10-second headless run remains topology-stable while
-reaching centimetre-scale motion. It is deliberately a visible diagnostic of
-pressure feedback with a predictor fixed inside each strong solve, not
-aerodynamic truth. Between accepted steps the predictor advances from the
-area-collapsed pressure-corrected link flow; that reduced bulk field cannot
-retain distinct velocities on multiple region links sharing one face. Its
+triangular intake and three fixed mouth vertices. Two runs are byte-
+deterministic, its in-memory checkpoint reproduces the exact next frame, and
+the default 600-step/10-second headless run remains topology-stable. The
+mechanical apex drive is gone. A uniform correction maintains
+a prescribed `-0.85 m/s` periodic mean wind, the existing projected nonlinear
+SSPRK2 operator advances that bulk MAC field, and only the resulting scene
+pressure loads the free apex. The reference run reports about `1.12 Pa` peak
+pressure and `9.00 mm` maximum deformation. Frames expose the mean-flow pump
+force plus bulk-advection change and final divergence in place of actuator
+force. It is deliberately a visible bootstrap diagnostic, not aerodynamic
+truth. The bulk operator's two intermediate pressure projections have one
+velocity per Cartesian face and cannot retain distinct velocities on multiple
+cut-region links sharing a face. The final scene projection is sparse and
+region-aware, and its predictor remains fixed inside each strong solve.
+Between accepted steps that predictor advances from the area-collapsed
+pressure-corrected link flow. Its
 bounded canonical checkpoint persists the complete accepted sparse pressure
 projection beside the trusted nested Structure payload. Deterministic initial
 and accepted round trips, exact next-frame replay, CLI autosave/resume, and
 transactional corruption/foreign-file rejection are covered. Restore derives
 the exact bulk MAC continuation from that projection instead of duplicating it
-on the wire. A
+or the transient bulk pressure on the wire. A
 canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded

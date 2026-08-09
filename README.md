@@ -616,7 +616,7 @@ feedback loop. Accepted corrected link flows can now be conservatively
 area-collapsed back onto one absolute bulk MAC velocity per Cartesian face,
 including oriented intake-cap sweep. The visible pressure-cell canonical uses
 that field as its next predictor; general cut-cell momentum transport,
-advection, viscosity, and topology rebasing remain later work.
+region-resolved advection, viscosity, and topology rebasing remain later work.
 Its in-memory composite checkpoint retains Structure plus the accepted sparse
 pressure projection; restore rebuilds and validates the complete pressure
 epoch and conservative load before committing either owner. Initial and
@@ -624,19 +624,27 @@ post-step checkpoints reproduce the exact next coupled result in the same or
 an equivalent owner, while foreign settings and corrupt or missing accepted
 pressure reject transactionally.
 The selectable `pressure-cell` worker makes this path visible. A soft
-three-panel tetrahedral cell has one triangular intake, three fixed mouth
-vertices, and a sinusoidally driven apex. Its immutable frames publish
-deformation, area-averaged triangle pressure jump, nodal/total pressure force,
-actuator force, strong-iteration count, bulk MAC speed, and the maximum
-mixed-subface velocity spread discarded by the area collapse. A 600-step
-headless run remains topology-stable for 10 simulated seconds and reaches
-centimetre-scale motion;
-this is a diagnostic of the new feedback path, not wing aerodynamics.
-Its bounded `SWPCELL2` checkpoint stores the trusted Structure state and the
+three-panel tetrahedral cell has one triangular intake and three fixed mouth
+vertices. A prescribed `-0.85 m/s` periodic mean wind replaces the former
+mechanical apex actuator: a uniform mean-flow correction pumps the accepted
+bulk MAC field, the existing projected nonlinear SSPRK2 operator advances it,
+and the scene pressure solve supplies the only load on the free apex. Its
+immutable frames publish deformation, area-averaged triangle pressure jump,
+nodal/total pressure force, mean-flow pump force, bulk-advection change and
+divergence, strong-iteration count, bulk MAC speed, and the maximum
+mixed-subface velocity spread discarded by the area collapse. The final scene
+projection remains cut-region-aware, but the two intermediate bulk-advection
+projections see only one velocity per Cartesian face; this is a bootstrap
+diagnostic, not a general immersed-boundary CFD or wing-aerodynamics claim. A
+600-step headless run remains topology-stable for 10 simulated seconds and
+reports about `1.12 Pa` peak pressure, `9.00 mm` maximum deformation, and
+`0.926 m/s` maximum MAC speed.
+Its bounded `SWPCELL3` checkpoint stores the trusted Structure state and the
 complete accepted sparse pressure projection. Initial and accepted files
 round-trip deterministically, reject foreign/corrupt input transactionally,
 resume through the normal worker checkpoint flags, and reconstruct the exact
-derived MAC continuation without duplicating it on the wire.
+derived MAC continuation without duplicating either it or transient bulk
+pressure on the wire.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own
