@@ -1085,15 +1085,17 @@ than retaining more null modes than its one authored gauge. No global matrix is
 stored.
 
 `src/fsi/scene_fluid_mimetic_trace_solve.*` supplies the first bounded reduced
-solve without changing the production pressure path. It fixes each retained
-trace gauge exactly, admits only a declared component-sum roundoff defect,
-closes that defect deterministically, and applies Jacobi-preconditioned
-conjugate gradients using the stored condensed diagonal. Candidate traces stay
-private until an explicitly recomputed full residual converges. Incompatible
-sources, non-finite arithmetic, or iteration exhaustion leave the caller's
-warm start bit-for-bit unchanged. Manufactured multi-component fields recover
-their gauge-normalized solution, and compatible cell sources close local
-conservation plus all shared and material-wall trace equations.
+solve without changing the production pressure path. One solver core accepts
+either the complete trace system or the globally material-wall-condensed shared
+system. It fixes each retained trace gauge exactly, admits only a declared
+component-sum roundoff defect, closes that defect deterministically, and applies
+Jacobi-preconditioned conjugate gradients using the stored diagonal. Candidate
+traces stay private until an explicitly recomputed residual converges.
+Incompatible sources, non-finite arithmetic, or iteration exhaustion leave the
+caller's warm start bit-for-bit unchanged. Manufactured reduced fields recover
+their gauge-normalized solution; exact wall reconstruction then closes every
+row of the original full operator. Compatible cell sources likewise close
+local conservation plus all shared and material-wall trace equations.
 
 The first immutable scene adapter now assembles each sparse cell/region's
 unwrapped half-face shell from exact Cartesian region subfaces, cell- and
@@ -1129,10 +1131,12 @@ coarse controls now builds the exact local wall Schur data, and the global
 adapter eliminates 148,652 wall traces into a separate 42,927-row shared
 system. It retains 3,986,602 bytes of linear condensation storage, positive
 assembled reduced diagonals, a roundoff-null component-constant action, and
-full-system wall reconstruction. The reduced solve, any further local or
-multilevel preconditioning, physical right-hand-side assembly, and production
-integration remain open. The current graph operator and all worker arithmetic
-are unchanged.
+full-system wall reconstruction. The same transactional Jacobi-PCG core now
+runs on that reduced real system as well, reduces a manufactured residual, and
+rolls back exactly after the deliberately truncated iteration. Further local
+or multilevel preconditioning, physical right-hand-side assembly, and
+production integration remain open. The current graph operator and all worker
+arithmetic are unchanged.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy

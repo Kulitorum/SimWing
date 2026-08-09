@@ -1,5 +1,6 @@
 #pragma once
 
+#include "scene_fluid_mimetic_condensed_trace_system.h"
 #include "scene_fluid_mimetic_trace_system.h"
 
 #include <cstddef>
@@ -63,6 +64,20 @@ solveSceneFluidMimeticTraceSystem(
     const SceneFluidMimeticTraceSystem& system,
     std::span<const double> integratedRightHandSidePascalsMeters,
     std::vector<double>& tracePascals,
+    const SceneFluidMimeticTraceSolveSettings& settings = {});
+
+// Solves the material-wall-condensed shared-trace system. The RHS must first
+// be produced by condenseSceneFluidMimeticTraceRightHandSide; after a
+// successful solve, reconstructSceneFluidMimeticFullTraces recovers the wall
+// traces and permits the residual to be checked against the original full
+// system. The reduced warm start has the same transactional commit contract as
+// the full solve above.
+[[nodiscard]] SceneFluidMimeticTraceSolveDiagnostics
+solveSceneFluidMimeticCondensedTraceSystem(
+    const SceneFluidMimeticCondensedTraceSystem& condensedSystem,
+    const SceneFluidMimeticTraceSystem& fullSystem,
+    std::span<const double> integratedReducedRightHandSidePascalsMeters,
+    std::vector<double>& reducedTracePascals,
     const SceneFluidMimeticTraceSolveSettings& settings = {});
 
 } // namespace simwing::fsi

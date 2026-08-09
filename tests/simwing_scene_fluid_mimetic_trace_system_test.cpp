@@ -247,7 +247,8 @@ SceneFluidMimeticTraceSolveSettings strictSolveSettings() {
     return settings;
 }
 
-void normalizeTraceGauges(const SceneFluidMimeticTraceSystem& system,
+template<typename System>
+void normalizeTraceGauges(const System& system,
                           std::vector<double>& values) {
     std::vector<double> gauges(system.componentCount, 0.0);
     for (std::size_t component = 0;
@@ -564,14 +565,57 @@ void testGlobalMaterialWallCondensation() {
     check(maximumError(
               condensedRightHandSide, expectedReducedAction) < 3.0e-10,
           "global RHS condensation matches the reduced manufactured action");
+    std::vector<double> firstSolvedReduced(first.traces.size(), 0.0);
+    std::vector<double> secondSolvedReduced(first.traces.size(), 0.0);
+    const auto firstSolve = solveSceneFluidMimeticCondensedTraceSystem(
+        first, full, condensedRightHandSide, firstSolvedReduced,
+        strictSolveSettings());
+    const auto secondSolve = solveSceneFluidMimeticCondensedTraceSystem(
+        first, full, condensedRightHandSide, secondSolvedReduced,
+        strictSolveSettings());
+    check(firstSolve == secondSolve
+              && firstSolvedReduced == secondSolvedReduced
+              && firstSolve.compatible && firstSolve.converged
+              && firstSolve.finite && firstSolve.iterationCount > 0
+              && firstSolve.traceSystemFingerprint == first.fingerprint,
+          "wall-condensed Jacobi-PCG converges transactionally and deterministically");
+    check(maximumError(firstSolvedReduced, expectedReduced) < 4.0e-9,
+          "wall-condensed solve recovers the manufactured shared traces");
     const auto reconstructed = reconstructSceneFluidMimeticFullTraces(
+        first, full, fullRightHandSide, firstSolvedReduced);
+    const auto exactReconstructed = reconstructSceneFluidMimeticFullTraces(
         first, full, fullRightHandSide, expectedReduced);
-    check(maximumError(reconstructed, expectedFull) < 5.0e-9,
+    check(maximumError(exactReconstructed, expectedFull) < 5.0e-9,
           "global wall reconstruction recovers every manufactured full trace");
     const auto reconstructedAction = applySceneFluidMimeticTraceOperator(
         full, reconstructed);
-    check(maximumError(reconstructedAction, fullRightHandSide) < 3.0e-9,
-          "reconstructed full traces close every shared and wall equation");
+    check(maximumError(reconstructedAction, fullRightHandSide) < 4.0e-9,
+          "solved and reconstructed traces close every original full equation");
+
+    auto truncatedSettings = strictSolveSettings();
+    truncatedSettings.absoluteResidualTolerancePascalsMeters = 1.0e-30;
+    truncatedSettings.relativeResidualTolerance = 0.0;
+    truncatedSettings.maximumIterations = 1;
+    std::vector<double> truncatedWarmStart(first.traces.size(), 3.25);
+    const auto originalTruncatedWarmStart = truncatedWarmStart;
+    const auto truncated = solveSceneFluidMimeticCondensedTraceSystem(
+        first, full, condensedRightHandSide, truncatedWarmStart,
+        truncatedSettings);
+    check(truncated.compatible && !truncated.converged
+              && truncated.finite && truncated.iterationCount == 1
+              && truncatedWarmStart == originalTruncatedWarmStart,
+          "truncated wall-condensed solve rolls its warm start back exactly");
+    auto incompatible = condensedRightHandSide;
+    incompatible.front() += 1.0e-4;
+    const auto incompatibleDiagnostics =
+        solveSceneFluidMimeticCondensedTraceSystem(
+            first, full, incompatible, truncatedWarmStart,
+            strictSolveSettings());
+    check(!incompatibleDiagnostics.compatible
+              && !incompatibleDiagnostics.converged
+              && incompatibleDiagnostics.finite
+              && truncatedWarmStart == originalTruncatedWarmStart,
+          "incompatible wall-condensed RHS is reported without state mutation");
     validateSceneFluidMimeticCondensedTraceSystem(first, full);
 }
 
@@ -660,6 +704,26 @@ void testSourceDrivenTraceBalance() {
               && balance.maximumTraceFluxImbalance < 2.0e-10
               && balance.maximumCellConservationResidual < 2.0e-13,
           "source-driven trace solve closes local conservation and every hybrid trace");
+
+    const auto condensed =
+        buildSceneFluidMimeticCondensedTraceSystem(system);
+    const auto reducedRightHandSide =
+        condenseSceneFluidMimeticTraceRightHandSide(
+            condensed, system, rightHandSide);
+    std::vector<double> reducedTraces(condensed.traces.size(), 0.0);
+    const auto reducedDiagnostics =
+        solveSceneFluidMimeticCondensedTraceSystem(
+            condensed, system, reducedRightHandSide, reducedTraces,
+            strictSolveSettings());
+    const auto reconstructed = reconstructSceneFluidMimeticFullTraces(
+        condensed, system, rightHandSide, reducedTraces);
+    const auto reducedBalance = evaluateSceneFluidMimeticTraceSystem(
+        system, reconstructed, sources);
+    check(reducedDiagnostics.compatible && reducedDiagnostics.converged
+              && reducedDiagnostics.finite
+              && reducedBalance.maximumTraceFluxImbalance < 3.0e-10
+              && reducedBalance.maximumCellConservationResidual < 3.0e-13,
+          "source-driven condensed solve reconstructs a conservative full trace field");
 }
 
 void testTraceSolveRollbackAndValidation() {

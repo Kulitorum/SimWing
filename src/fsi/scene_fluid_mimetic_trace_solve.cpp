@@ -68,8 +68,9 @@ double vectorMaximumAbsolute(const std::span<const double> values) {
     return result;
 }
 
+template<typename System>
 void shiftComponentGauges(
-    const SceneFluidMimeticTraceSystem& system,
+    const System& system,
     std::vector<double>& traceValues) {
     std::vector<double> gaugeValues(system.componentCount, 0.0);
     for (std::size_t component = 0;
@@ -91,12 +92,13 @@ bool allFinite(const std::span<const double> values) {
         values, [](const double value) { return std::isfinite(value); });
 }
 
+template<typename ApplyOperator>
 bool applyOperatorFinite(
-    const SceneFluidMimeticTraceSystem& system,
+    ApplyOperator&& applyOperator,
     const std::span<const double> values,
     std::vector<double>& result) {
     try {
-        result = applySceneFluidMimeticTraceOperator(system, values);
+        result = applyOperator(values);
     } catch (const std::invalid_argument&) {
         return false;
     } catch (const std::overflow_error&) {
@@ -105,15 +107,13 @@ bool applyOperatorFinite(
     return allFinite(result);
 }
 
-} // namespace
-
-SceneFluidMimeticTraceSolveDiagnostics
-solveSceneFluidMimeticTraceSystem(
-    const SceneFluidMimeticTraceSystem& system,
+template<typename System, typename ApplyOperator>
+SceneFluidMimeticTraceSolveDiagnostics solveTraceSystem(
+    const System& system,
     const std::span<const double> integratedRightHandSidePascalsMeters,
     std::vector<double>& tracePascals,
-    const SceneFluidMimeticTraceSolveSettings& settings) {
-    validateSceneFluidMimeticTraceSystemIntegrity(system);
+    const SceneFluidMimeticTraceSolveSettings& settings,
+    ApplyOperator&& applyOperator) {
     validateSettings(settings);
     if (integratedRightHandSidePascalsMeters.size()
             != system.traces.size()
@@ -200,7 +200,8 @@ solveSceneFluidMimeticTraceSystem(
     std::vector<double> candidateTrace = tracePascals;
     shiftComponentGauges(system, candidateTrace);
     std::vector<double> operatorTrace;
-    if (!applyOperatorFinite(system, candidateTrace, operatorTrace)) {
+    if (!applyOperatorFinite(
+            applyOperator, candidateTrace, operatorTrace)) {
         diagnostics.finite = false;
         return diagnostics;
     }
@@ -255,7 +256,7 @@ solveSceneFluidMimeticTraceSystem(
            && diagnostics.iterationCount < settings.maximumIterations) {
         if (!(residualPreconditionedResidual > 0.0)) break;
         if (!applyOperatorFinite(
-                system, direction, operatorDirection)) {
+                applyOperator, direction, operatorDirection)) {
             diagnostics.finite = false;
             break;
         }
@@ -325,7 +326,7 @@ solveSceneFluidMimeticTraceSystem(
 
     if (diagnostics.converged) {
         if (!applyOperatorFinite(
-                system, candidateTrace, operatorTrace)) {
+                applyOperator, candidateTrace, operatorTrace)) {
             diagnostics.finite = false;
             diagnostics.converged = false;
             return diagnostics;
@@ -350,6 +351,43 @@ solveSceneFluidMimeticTraceSystem(
     }
     tracePascals = std::move(candidateTrace);
     return diagnostics;
+}
+
+} // namespace
+
+SceneFluidMimeticTraceSolveDiagnostics
+solveSceneFluidMimeticTraceSystem(
+    const SceneFluidMimeticTraceSystem& system,
+    const std::span<const double> integratedRightHandSidePascalsMeters,
+    std::vector<double>& tracePascals,
+    const SceneFluidMimeticTraceSolveSettings& settings) {
+    validateSceneFluidMimeticTraceSystemIntegrity(system);
+    const auto applyOperator = [&](const std::span<const double> values) {
+        return applySceneFluidMimeticTraceOperator(system, values);
+    };
+    return solveTraceSystem(
+        system, integratedRightHandSidePascalsMeters, tracePascals,
+        settings, applyOperator);
+}
+
+SceneFluidMimeticTraceSolveDiagnostics
+solveSceneFluidMimeticCondensedTraceSystem(
+    const SceneFluidMimeticCondensedTraceSystem& condensedSystem,
+    const SceneFluidMimeticTraceSystem& fullSystem,
+    const std::span<const double>
+        integratedReducedRightHandSidePascalsMeters,
+    std::vector<double>& reducedTracePascals,
+    const SceneFluidMimeticTraceSolveSettings& settings) {
+    validateSceneFluidMimeticCondensedTraceSystem(
+        condensedSystem, fullSystem);
+    const auto applyOperator = [&](const std::span<const double> values) {
+        return applySceneFluidMimeticCondensedTraceOperator(
+            condensedSystem, fullSystem, values);
+    };
+    return solveTraceSystem(
+        condensedSystem,
+        integratedReducedRightHandSidePascalsMeters,
+        reducedTracePascals, settings, applyOperator);
 }
 
 } // namespace simwing::fsi
