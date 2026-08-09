@@ -691,9 +691,12 @@ owner now consumes the exact face partitions and connects only matching
 same-region pressure volumes. Every Cartesian link retains the exact centroid
 of its region subface; aperture complements derive theirs by subtracting exact
 opening first moments from the full face. A resolved nested face retains its exact
-exterior, annular-cell, and inner-cell areas as separate links; an untouched
-face receives one full-area link only when both adjacent sparse cells have one
-unambiguous common region. A transversely cap-crossed face instead consumes
+exterior, annular-cell, and inner-cell areas as separate links. An untouched
+face receives one full-area link directly when both adjacent sparse cells have
+one unambiguous common region. When those supports overlap, the accepted
+material-plus-virtual-cap closed surface may instead prove one region at the
+face centroid by oriented solid angle; the classified region must still own a
+control in both cells. A transversely cap-crossed face instead consumes
 the exact capped partition, superseding the material-only result; unsupported
 capped arrangements retain a distinct unresolved status. The analytic open
 tetrahedron reaches pressure links with `0.105 m²` of Cell and `0.895 m²` of
@@ -1042,28 +1045,22 @@ fingerprints remain explicit. Nested, face-aligned-opening, and deliberately
 rejected embedded-opening fixtures close every control and build the generic
 local SPD kernel.
 
-The coarse real wing classifies the remaining gap instead of hiding it. It has
-138 sparse controls; 130 close both their area vector and `N^T R = volume I`.
-The eight Outside controls, one in each `2 x 2 x 2` Cartesian cell, fail by the
-same missing face-scale measure because ten untouched faces remain
-`UnresolvedAmbiguous`. Both cells adjacent to those inactive faces contain many
-authored region IDs, so the old common-membership test cannot prove that the
-full face is Outside. The audit consequently marks all incident controls
-topology-incomplete. Separately, all 42,826 cell-owned opening patches become
-85,652 paired half-faces, proving that the 24 non-admissible embedded
-two-point links are geometrically present. The next geometry slice must resolve
-untouched-face region classification from authoritative surface ownership,
-without choosing a dominant cell region or using closure as a fabricated
-label. Only then can a bounded global trace system be assembled. The current
-graph operator and all worker arithmetic remain unchanged. A manual refined
-`4 x 4 x 4` audit reaches 358 controls: 346 close geometrically, six ambiguous
-untouched faces leave 12 Outside controls open, and conservative incident
-marking leaves 250 ready. The adapter omits 240 material quadrature sides whose
+The coarse real wing now closes all 138 sparse controls. Ten untouched faces
+whose adjacent sparse cells contain many authored region IDs are independently
+proven Outside by the accepted material-plus-cap closed surface. The result
+uses neither dominant volume nor shell closure as a label, and every control
+is topology-complete. Separately, all 42,826 cell-owned opening patches become
+85,652 paired half-faces, proving that the 24 non-admissible embedded two-point
+links are geometrically present. A manual refined `4 x 4 x 4` audit likewise
+classifies its six formerly ambiguous untouched faces and closes all 358
+controls. The adapter safely omits 240 material quadrature sides whose
 corresponding positive cell/region volume does not exist; those are
 impermeable-wall sides, not missing shared traces. No authored-opening side is
 missing. The refined shell set retains 95,984 paired opening half-faces and at
 most 2,947 total half-faces in one control, exposing the future dense-local-
-matrix storage cost before it enters production.
+matrix storage cost before it enters production. A bounded global trace system
+still remains to be assembled; the current graph operator and all worker
+arithmetic are unchanged.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy

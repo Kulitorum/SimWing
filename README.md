@@ -588,8 +588,11 @@ cells and full interior cells close independently and exactly recover all
 region and domain volumes. A complementary immutable face topology now links
 those unknowns only through exact same-region Cartesian areas and their exact
 subface centroids. Resolved nested
-interfaces retain one link per region partition; untouched faces require one
-unambiguous common region. On a transversely cap-crossed face, the exact capped
+interfaces retain one link per region partition. Untouched faces use their one
+unambiguous common region when available; when sparse supports overlap, the
+accepted material-plus-cap closed surface may instead prove one region at the
+face centroid by oriented solid angle, and that region must still own controls
+in both adjacent cells. On a transversely cap-crossed face, the exact capped
 material-plus-opening partition supersedes the material-only result; an
 unsupported arrangement has its own unresolved status and no fabricated link.
 The analytic open tetrahedron carries its `0.105 m²` Cell section and
@@ -830,23 +833,19 @@ cell-owned opening patches. Nested, face-aligned-opening, and deliberately
 two-point-rejected embedded-opening fixtures close every area vector and
 `N^T R = volume I`; every completed shell builds the generic SPD kernel.
 
-The coarse real-wing audit now makes the next ownership gap precise. Of 138
-sparse cell/region controls, 130 close geometrically. The eight Outside
-controls—one per `2 x 2 x 2` grid cell—remain open because ten untouched
-Cartesian faces are `UnresolvedAmbiguous`: both adjacent coarse cells contain
-many authored regions, so common region membership cannot prove which region
-owns the otherwise uncut face. The adapter conservatively marks every incident
-control topology-incomplete and publishes no coefficient. All 42,826
-cell-owned opening patches still appear as 85,652 exactly paired half-faces;
-the 24 non-admissible two-point rejections are therefore no longer missing
-geometry. Resolving untouched-face region classification, then assembling and
-solving the global trace system, remains open. A manual `4 x 4 x 4` audit
-confirms this is not only a coarse-grid artifact: 346 of 358 controls close
-geometrically, but six ambiguous untouched faces leave 12 Outside controls
-open and conservatively reduce ready controls to 250. It omits 240 material
-quadrature sides whose corresponding cell/region volume is exactly absent,
-while missing no opening side; 95,984 opening half-faces remain paired and the
-largest local shell has 2,947 faces. The production operator and worker are
+The coarse real-wing audit now closes all 138 sparse cell/region shells. Ten
+untouched Cartesian faces whose adjacent cells share many authored region IDs
+are proven Outside by the accepted material-plus-cap closed surface; no
+dominant-volume or closure-derived label is used. All controls are topology
+complete and build-ready. All 42,826 cell-owned opening patches still appear
+as 85,652 exactly paired half-faces, so the 24 non-admissible two-point
+rejections are geometrically complete rather than missing aperture geometry.
+A manual `4 x 4 x 4` audit likewise resolves its six formerly ambiguous faces
+and closes all 358 controls. It safely omits 240 material quadrature sides
+whose corresponding cell/region volume is exactly absent, misses no opening
+side, retains 95,984 paired opening half-faces, and reaches 2,947 total
+half-faces in its largest control. Assembling and solving the bounded global
+trace system remains open; the production graph operator and worker are
 unchanged.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam

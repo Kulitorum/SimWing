@@ -123,6 +123,25 @@ Scene nestedScene() {
     return scene;
 }
 
+Scene disconnectedSameRegionScene() {
+    Scene scene;
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-pressure-face-disconnected-region";
+    scene.metadata.exporterVersion =
+        "scene-fluid-pressure-face-link-test/2";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "disconnected-cell"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900.0, 650.0, 220.0, 0.015,
+         0.041, 0.02, 0.0125, 2.5e-12},
+    };
+    addTetra(scene, 10, 500, 2, 1, 0.2, 0.8, 0.15, 0.15, 900);
+    addTetra(scene, 20, 600, 2, 1, 1.2, 1.8, 0.15, 0.15, 901);
+    return scene;
+}
+
 Scene openScene() {
     Scene scene;
     scene.metadata.designChecksum =
@@ -363,6 +382,31 @@ void testExactNestedFaceLinks() {
         fixture.volumes, fixture.connectivity, fixture.pressureVolumes);
 }
 
+void testClosedSurfaceClassifiesUntouchedAmbiguousSupport() {
+    Fixture fixture(disconnectedSameRegionScene());
+    check(fixture.surface.ok() && fixture.structureAssembly.ok(),
+          "disconnected-region pressure-face fixture assembles");
+    const auto links = fixture.links();
+    const auto sharedFace = std::ranges::find_if(
+        links.faces,
+        [](const SceneFluidPressureFace& face) {
+            return face.axis == fluid::GridFaceAxis::X
+                && face.i == 1 && face.j == 1 && face.k == 1;
+        });
+    check(sharedFace != links.faces.end()
+              && sharedFace->status
+                  == SceneFluidPressureFaceStatus::ResolvedFull
+              && sharedFace->linkCount == 1
+              && links.surfaceClassifiedFullFaceCount == 1
+              && links.unresolvedAmbiguousFaceCount == 0,
+          "closed oriented surface classifies the untouched face between mixed sparse cells");
+    if (sharedFace != links.faces.end() && sharedFace->linkCount == 1) {
+        const auto& link = links.links[sharedFace->firstLink];
+        check(link.minusRegionId == 1 && link.plusRegionId == 1,
+              "surface-classified untouched face retains the proven Outside region");
+    }
+}
+
 void testFaceAndEmbeddedOpeningLinks() {
     Fixture fixture(openScene());
     const auto links = fixture.links();
@@ -532,6 +576,11 @@ void testCorruptionSettingsAndLimits() {
             fixture.volumes, fixture.connectivity,
             fixture.pressureVolumes); },
         "pressure-face-link validation rejects nested corruption");
+    corrupt = accepted;
+    corrupt.openingCapFingerprint ^= 1U;
+    expectInvalid(
+        [&] { validateSceneFluidPressureFaceLinkIntegrity(corrupt); },
+        "pressure-face-link integrity binds closed-surface cap identity");
 
     SceneFluidPressureFaceLinkSettings invalidSettings;
     invalidSettings.areaToleranceSquareMeters = 0.0;
@@ -806,6 +855,7 @@ void testCorruptionSettingsAndLimits() {
 int main() {
     try {
         testExactNestedFaceLinks();
+        testClosedSurfaceClassifiesUntouchedAmbiguousSupport();
         testFaceAndEmbeddedOpeningLinks();
         testCorruptionSettingsAndLimits();
     } catch (const std::exception& exception) {

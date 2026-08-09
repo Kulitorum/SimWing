@@ -4,6 +4,8 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <numbers>
+#include <optional>
 #include <stdexcept>
 #include <type_traits>
 #include <unordered_set>
@@ -268,6 +270,132 @@ std::vector<StableId> commonRegions(
     return result;
 }
 
+std::optional<StableId> classifyClosedSurfaceRegion(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const SceneFluidOpeningCapSet& caps,
+    const fluid::Vector3& point) {
+    std::size_t outsideIndex = surface.regions.size();
+    for (std::size_t regionIndex = 0;
+         regionIndex < surface.regions.size(); ++regionIndex) {
+        if (surface.regions[regionIndex].kind != RegionKind::Outside) {
+            continue;
+        }
+        if (outsideIndex != surface.regions.size()) return std::nullopt;
+        outsideIndex = regionIndex;
+    }
+    if (outsideIndex == surface.regions.size()) return std::nullopt;
+
+    // Each closed negative-to-positive interface contributes +1 inside its
+    // negative region and -1 inside its positive region. Seeding Outside with
+    // one therefore leaves exactly one unit membership at every off-surface
+    // point, including nested and multi-region arrangements.
+    std::vector<long double> membership(surface.regions.size(), 0.0L);
+    std::vector<long double> membershipCorrection(
+        surface.regions.size(), 0.0L);
+    membership[outsideIndex] = 1.0L;
+    constexpr long double fourPi = 4.0L * std::numbers::pi_v<long double>;
+    const auto addMembership = [&](const std::size_t regionIndex,
+                                   const long double value) {
+        const long double corrected =
+            value - membershipCorrection[regionIndex];
+        const long double sum = membership[regionIndex] + corrected;
+        membershipCorrection[regionIndex] =
+            (sum - membership[regionIndex]) - corrected;
+        membership[regionIndex] = sum;
+    };
+    const auto accumulateTriangle = [&](
+        const std::array<std::size_t, 3>& vertices,
+        const std::size_t negativeRegion,
+        const std::size_t positiveRegion) {
+        if (negativeRegion >= membership.size()
+            || positiveRegion >= membership.size()
+            || vertices[0] >= state.vertices.size()
+            || vertices[1] >= state.vertices.size()
+            || vertices[2] >= state.vertices.size()) {
+            return false;
+        }
+        if (negativeRegion == positiveRegion) return true;
+        const auto relative = [&](const std::size_t vertex) {
+            const auto& position = state.vertices[vertex].positionMeters;
+            return std::array<long double, 3>{
+                static_cast<long double>(position.x - point.x),
+                static_cast<long double>(position.y - point.y),
+                static_cast<long double>(position.z - point.z),
+            };
+        };
+        const auto first = relative(vertices[0]);
+        const auto second = relative(vertices[1]);
+        const auto third = relative(vertices[2]);
+        const auto dotProduct = [](
+            const auto& left, const auto& right) {
+            return left[0] * right[0] + left[1] * right[1]
+                + left[2] * right[2];
+        };
+        const long double firstLength = std::sqrt(dotProduct(first, first));
+        const long double secondLength =
+            std::sqrt(dotProduct(second, second));
+        const long double thirdLength = std::sqrt(dotProduct(third, third));
+        if (!(firstLength > 0.0L) || !(secondLength > 0.0L)
+            || !(thirdLength > 0.0L)) {
+            return false;
+        }
+        const long double numerator =
+            first[0] * (second[1] * third[2] - second[2] * third[1])
+            - first[1] * (second[0] * third[2] - second[2] * third[0])
+            + first[2] * (second[0] * third[1] - second[1] * third[0]);
+        const long double denominator =
+            firstLength * secondLength * thirdLength
+            + dotProduct(first, second) * thirdLength
+            + dotProduct(second, third) * firstLength
+            + dotProduct(third, first) * secondLength;
+        if (numerator == 0.0L && denominator <= 0.0L) {
+            return false;
+        }
+        const long double solidAngle =
+            2.0L * std::atan2(numerator, denominator);
+        if (!std::isfinite(solidAngle)) return false;
+        const long double contribution = solidAngle / fourPi;
+        addMembership(negativeRegion, contribution);
+        addMembership(positiveRegion, -contribution);
+        return true;
+    };
+    for (const auto& triangle : surface.triangles) {
+        if (!accumulateTriangle(
+                triangle.vertexIndices,
+                triangle.negativeSideRegionIndex,
+                triangle.positiveSideRegionIndex)) {
+            return std::nullopt;
+        }
+    }
+    for (const auto& triangle : caps.triangles) {
+        if (triangle.openingIndex >= caps.caps.size()) return std::nullopt;
+        const auto& cap = caps.caps[triangle.openingIndex];
+        if (!accumulateTriangle(
+                triangle.vertexIndices,
+                cap.negativeSideRegionIndex,
+                cap.positiveSideRegionIndex)) {
+            return std::nullopt;
+        }
+    }
+
+    constexpr long double classificationTolerance = 1.0e-8L;
+    std::optional<std::size_t> classifiedIndex;
+    for (std::size_t regionIndex = 0;
+         regionIndex < membership.size(); ++regionIndex) {
+        if (std::abs(membership[regionIndex] - 1.0L)
+            <= classificationTolerance) {
+            if (classifiedIndex) return std::nullopt;
+            classifiedIndex = regionIndex;
+        } else if (std::abs(membership[regionIndex])
+                   > classificationTolerance) {
+            return std::nullopt;
+        }
+    }
+    if (!classifiedIndex) return std::nullopt;
+    return surface.regions[*classifiedIndex].id;
+}
+
 std::size_t storageBytesForCounts(const std::size_t faceCount,
                                   const std::size_t linkCount,
                                   const std::size_t rejectionCount = 0,
@@ -310,6 +438,7 @@ std::uint64_t faceLinkFingerprint(
              faceLinks.surfaceDefinitionFingerprint,
              faceLinks.surfaceStateFingerprint,
              faceLinks.gridEpochFingerprint,
+             faceLinks.openingCapFingerprint,
              faceLinks.openingPatchFingerprint,
              faceLinks.cappedFacePartitionFingerprint,
              faceLinks.pressureControlVolumeFingerprint,
@@ -337,6 +466,7 @@ std::uint64_t faceLinkFingerprint(
     for (const std::size_t value : {
              faceLinks.ownedStorageBytes,
              faceLinks.resolvedFullFaceCount,
+             faceLinks.surfaceClassifiedFullFaceCount,
              faceLinks.resolvedPartitionFaceCount,
              faceLinks.resolvedOpeningFaceCount,
              faceLinks.embeddedOpeningLinkCount,
@@ -467,6 +597,7 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
     const SceneFluidSurfaceState& state,
     const fluid::PeriodicCartesianGrid& grid,
     const SceneFluidGridEpoch& epoch,
+    const SceneFluidOpeningCapSet& caps,
     const SceneFluidOpeningGridPatchSet& openingPatches,
     const SceneFluidCappedFacePartitionSet& cappedFacePartitions,
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
@@ -602,6 +733,7 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
     result.surfaceDefinitionFingerprint = surface.fingerprint;
     result.surfaceStateFingerprint = state.fingerprint;
     result.gridEpochFingerprint = epoch.fingerprint;
+    result.openingCapFingerprint = caps.fingerprint;
     result.openingPatchFingerprint = openingPatches.fingerprint;
     result.cappedFacePartitionFingerprint =
         cappedFacePartitions.fingerprint;
@@ -885,13 +1017,29 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                         const auto common = commonRegions(
                             pressureVolumes,
                             face.minusCellIndex, face.plusCellIndex);
+                        StableId faceRegionId = invalidStableId;
                         if (common.size() == 1) {
+                            faceRegionId = common.front();
+                        } else {
+                            const auto classified =
+                                classifyClosedSurfaceRegion(
+                                    surface, state, caps,
+                                    cartesianFaceCentroid(
+                                        grid, axis, i, j, k));
+                            if (classified
+                                && std::ranges::find(common, *classified)
+                                    != common.end()) {
+                                faceRegionId = *classified;
+                                ++result.surfaceClassifiedFullFaceCount;
+                            }
+                        }
+                        if (faceRegionId != invalidStableId) {
                             face.status =
                                 SceneFluidPressureFaceStatus::ResolvedFull;
                             appendLink(
                                 face,
                                 SceneFluidPressureFaceLinkKind::SameRegion,
-                                common.front(), common.front(),
+                                faceRegionId, faceRegionId,
                                 face.faceAreaSquareMeters,
                                 cartesianFaceCentroid(
                                     grid, axis, i, j, k),
@@ -1349,7 +1497,7 @@ SceneFluidPressureFaceLinkSet buildSceneFluidPressureFaceLinks(
     validateSceneFluidPressureControlVolumes(
         pressureVolumes, surface, volumes, connectivity);
     auto result = buildFaceLinks(
-        surface, state, grid, epoch, openingPatches,
+        surface, state, grid, epoch, caps, openingPatches,
         cappedFacePartitions, pressureVolumes, settings, limits);
     validateSceneFluidPressureFaceLinks(
         result, surface, state, grid, transfer, epoch, caps,
@@ -1365,6 +1513,7 @@ void validateSceneFluidPressureFaceLinkIntegrity(
         || faceLinks.surfaceDefinitionFingerprint == 0
         || faceLinks.surfaceStateFingerprint == 0
         || faceLinks.gridEpochFingerprint == 0
+        || faceLinks.openingCapFingerprint == 0
         || faceLinks.cappedFacePartitionFingerprint == 0
         || faceLinks.pressureControlVolumeFingerprint == 0
         || faceLinks.ownedStorageBytes != storageBytes(faceLinks)
@@ -1403,6 +1552,7 @@ void validateSceneFluidPressureFaceLinks(
     if (faceLinks.surfaceDefinitionFingerprint != surface.fingerprint
         || faceLinks.surfaceStateFingerprint != state.fingerprint
         || faceLinks.gridEpochFingerprint != epoch.fingerprint
+        || faceLinks.openingCapFingerprint != caps.fingerprint
         || faceLinks.openingPatchFingerprint != openingPatches.fingerprint
         || faceLinks.cappedFacePartitionFingerprint
             != cappedFacePartitions.fingerprint
@@ -1419,8 +1569,9 @@ void validateSceneFluidPressureFaceLinks(
         std::numeric_limits<std::size_t>::max(),
     };
     const auto expected = buildFaceLinks(
-        surface, state, grid, epoch, openingPatches, cappedFacePartitions,
-        pressureVolumes, faceLinks.settings, unlimited);
+        surface, state, grid, epoch, caps, openingPatches,
+        cappedFacePartitions, pressureVolumes, faceLinks.settings,
+        unlimited);
     if (faceLinks != expected) {
         throw std::invalid_argument(
             "scene fluid pressure-face-link payload is invalid");

@@ -10,7 +10,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureFaceLinkVersion = 8;
+inline constexpr std::uint32_t sceneFluidPressureFaceLinkVersion = 9;
 inline constexpr std::size_t invalidSceneFluidPressureFaceIndex =
     std::numeric_limits<std::size_t>::max();
 
@@ -163,7 +163,11 @@ struct SceneFluidEmbeddedOpeningOneRingSupport {
 // centroid. On a face crossed transversely by
 // a virtual opening cap, the capped material-plus-opening partition supersedes
 // that material-only result. An untouched face is linked over its full area
-// only when the two adjacent sparse cells have one unambiguous common region.
+// when the two adjacent sparse cells have one unambiguous common region. If
+// their sparse volume supports overlap in more than one region, the accepted
+// material-plus-virtual-cap closed surface may instead prove the unique region
+// at the face centroid by oriented solid angle. The classified region must
+// still exist in both cells.
 // A face-aligned authored opening instead contributes oriented cross-region
 // links over its exact patch area and, when unambiguous, one complementary
 // same-region link. A cell-owned opening patch instead connects its two
@@ -184,6 +188,7 @@ struct SceneFluidPressureFaceLinkSet {
     std::uint64_t surfaceDefinitionFingerprint = 0;
     std::uint64_t surfaceStateFingerprint = 0;
     std::uint64_t gridEpochFingerprint = 0;
+    std::uint64_t openingCapFingerprint = 0;
     std::uint64_t openingPatchFingerprint = 0;
     std::uint64_t cappedFacePartitionFingerprint = 0;
     std::uint64_t pressureControlVolumeFingerprint = 0;
@@ -196,6 +201,7 @@ struct SceneFluidPressureFaceLinkSet {
     SceneFluidPressureFaceLinkSettings settings;
     std::size_t ownedStorageBytes = 0;
     std::size_t resolvedFullFaceCount = 0;
+    std::size_t surfaceClassifiedFullFaceCount = 0;
     std::size_t resolvedPartitionFaceCount = 0;
     std::size_t resolvedOpeningFaceCount = 0;
     std::size_t embeddedOpeningLinkCount = 0;

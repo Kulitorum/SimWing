@@ -486,36 +486,22 @@ void testRealDesignCapture(const std::filesystem::path &input,
         openingPatches.patches,
         simwing::fsi::SceneFluidOpeningPatchOwnerKind::Cell,
         &simwing::fsi::SceneFluidOpeningGridPatch::ownerKind);
-    const auto outsideRegion = std::ranges::find(
-        fluidSurface.definition.regions,
-        simwing::fsi::RegionKind::Outside,
-        &simwing::fsi::SceneFluidSurfaceRegion::kind);
-    const bool nonclosingControlsAreOutside =
-        outsideRegion != fluidSurface.definition.regions.end()
-        && std::ranges::all_of(
-            mimeticControlCells.controlCells,
-            [&](const simwing::fsi::SceneFluidMimeticControlCell& cell) {
-                return (cell.areaVectorClosed
-                            && cell.divergenceTheoremClosed)
-                    || cell.regionId == outsideRegion->id;
-            });
     const bool mimeticAuditMatches =
-        mimeticControlCells.readyControlCellCount == 0
-        && mimeticControlCells.incompleteTopologyControlCellCount
+        mimeticControlCells.readyControlCellCount
             == mimeticControlCells.controlCells.size()
-        && mimeticControlCells.nonclosingControlCellCount
-            == fluidGrid.cellCount()
-        && mimeticControlCells.unresolvedCartesianFaceCount == 10
-        && pressureFaceLinks.unresolvedAmbiguousFaceCount == 10
+        && mimeticControlCells.incompleteTopologyControlCellCount == 0
+        && mimeticControlCells.nonclosingControlCellCount == 0
+        && mimeticControlCells.unresolvedCartesianFaceCount == 0
+        && pressureFaceLinks.unresolvedAmbiguousFaceCount == 0
+        && pressureFaceLinks.surfaceClassifiedFullFaceCount == 10
         && mimeticControlCells.omittedZeroVolumeMaterialSideCount == 0
         && mimeticControlCells.missingOpeningControlSideCount == 0
         && mimeticControlCells.openingHalfFaceCount
-            == 2 * cellOwnedOpeningPatchCount
-        && nonclosingControlsAreOutside;
+            == 2 * cellOwnedOpeningPatchCount;
     if (!mimeticAuditMatches) {
         std::fprintf(
             stderr,
-            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu max-area=%.17g max-moment=%.17g\n",
+            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu classified=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu max-area=%.17g max-moment=%.17g\n",
             mimeticControlCells.readyControlCellCount,
             mimeticControlCells.controlCells.size(),
             mimeticControlCells.incompleteTopologyControlCellCount,
@@ -523,6 +509,7 @@ void testRealDesignCapture(const std::filesystem::path &input,
             mimeticControlCells.unresolvedCartesianFaceCount,
             pressureFaceLinks.unresolvedActiveFaceCount,
             pressureFaceLinks.unresolvedAmbiguousFaceCount,
+            pressureFaceLinks.surfaceClassifiedFullFaceCount,
             pressureFaceLinks.unresolvedOpeningFaceCount,
             pressureFaceLinks.unresolvedCappedFaceCount,
             mimeticControlCells.omittedZeroVolumeMaterialSideCount,
