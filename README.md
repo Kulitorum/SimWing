@@ -553,16 +553,19 @@ cut cells and full interior cells close independently and exactly recover all
 region and domain volumes. A complementary immutable face topology now links
 those unknowns only through exact same-region Cartesian areas. Resolved nested
 interfaces retain one link per region partition; untouched faces require one
-unambiguous common region. Material/interface ambiguity remains unlinked, and
-a face-owned authored opening is explicitly reserved for future opening
-coupling instead of being smeared into a full-face link. Physical pressure
-coefficients are still absent. For fully resolved closed geometry, those links
-now assemble into a bounded symmetric integrated graph Laplacian. Its exact
+unambiguous common region. A face-aligned authored opening now contributes its
+exact oriented cross-region aperture area plus an unambiguous same-region link
+over the rest of that Cartesian face. The analytic intake therefore retains
+`0.18 m²` of opening and `0.82 m²` of Outside flow area instead of smearing the
+whole face into either one. Material/interface ambiguity remains unlinked, and
+physical pressure coefficients are still absent. For fully resolved geometry,
+those links assemble into a bounded symmetric integrated graph Laplacian. Its exact
 constant nullspace, positive link energy, component conservation, and retained
 gauge owners are tested. Assembly requires one connected link graph per
-authored pressure component, so both a face-owned unresolved intake and a
-complete Cartesian grid with a missing off-face intake link reject instead of
-acting like sealed fabric. Opening links, RHS construction, and the actual
+authored pressure component. The face-aligned intake now joins Cell and Outside
+with exact aperture graph energy, while a complete Cartesian grid with a
+missing off-face intake link still rejects instead of acting like sealed
+fabric. Off-face opening transmissibility, RHS construction, and the actual
 projection remain future work.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid

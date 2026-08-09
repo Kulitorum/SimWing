@@ -309,6 +309,7 @@ SceneFluidPressureOperator buildOperator(
     if (unresolvedFaceCount != 0
         || faceLinks.resolvedFullFaceCount
             + faceLinks.resolvedPartitionFaceCount
+            + faceLinks.resolvedOpeningFaceCount
             != faceLinks.faces.size()) {
         throw std::invalid_argument(
             "scene fluid pressure operator requires complete face ownership");

@@ -217,13 +217,15 @@ void testExactNestedFaceLinks() {
     for (std::size_t offset = 0;
          offset < partitionFace->linkCount; ++offset) {
         const auto& link = first.links[partitionFace->firstLink + offset];
-        areas.emplace(link.regionId, link.areaSquareMeters);
+        areas.emplace(link.minusRegionId, link.areaSquareMeters);
         const auto& minus = fixture.pressureVolumes.controlVolumes[
             link.minusControlVolumeIndex];
         const auto& plus = fixture.pressureVolumes.controlVolumes[
             link.plusControlVolumeIndex];
-        check(minus.regionId == link.regionId
-                  && plus.regionId == link.regionId
+        check(link.kind == SceneFluidPressureFaceLinkKind::SameRegion
+                  && link.minusRegionId == link.plusRegionId
+                  && minus.regionId == link.minusRegionId
+                  && plus.regionId == link.plusRegionId
                   && minus.componentIndex == link.componentIndex
                   && plus.componentIndex == link.componentIndex,
               "pressure face link joins matching same-region control volumes");
@@ -239,6 +241,7 @@ void testExactNestedFaceLinks() {
     checkNear(areas.at(3), 0.005, 3.0e-15,
               "partitioned pressure face retains inner-cell area");
     check(first.resolvedFullFaceCount + first.resolvedPartitionFaceCount
+              + first.resolvedOpeningFaceCount
               == first.faces.size()
               && first.maximumResolvedAreaResidualSquareMeters < 4.0e-15,
           "every nested-scene periodic face closes its exact linked area");
@@ -257,17 +260,46 @@ void testOpeningFacesRemainExplicitlyUnresolved() {
         SceneFluidOpeningPatchOwnerKind::Face,
         &SceneFluidOpeningGridPatch::ownerKind);
     check(faceOwnedPatchCount == 1
-              && links.unresolvedOpeningFaceCount == 1,
-          "authored opening owns exactly one unresolved pressure face");
-    for (const auto& face : links.faces) {
-        if (face.status
-            != SceneFluidPressureFaceStatus::UnresolvedOpening) {
-            continue;
+              && links.resolvedOpeningFaceCount == 1
+              && links.unresolvedOpeningFaceCount == 0,
+          "face-aligned authored opening owns one resolved pressure face");
+    const auto openingFace = std::ranges::find(
+        links.faces,
+        SceneFluidPressureFaceStatus::ResolvedOpening,
+        &SceneFluidPressureFace::status);
+    check(openingFace != links.faces.end()
+              && openingFace->linkCount == 2,
+          "resolved opening face owns aperture and complementary links");
+    const SceneFluidPressureFaceLink* aperture = nullptr;
+    const SceneFluidPressureFaceLink* complement = nullptr;
+    for (std::size_t offset = 0;
+         offset < openingFace->linkCount; ++offset) {
+        const auto& link = links.links[openingFace->firstLink + offset];
+        if (link.kind
+            == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
+            aperture = &link;
+        } else {
+            complement = &link;
         }
-        check(face.linkCount == 0
-                  && face.linkedAreaSquareMeters == 0.0,
-              "unresolved opening face owns no smeared pressure link");
     }
+    check(aperture != nullptr
+              && aperture->minusRegionId == 2
+              && aperture->plusRegionId == 1
+              && aperture->openingId == 700
+              && aperture->openingPatchStableId != 0,
+          "opening pressure link follows authored negative-to-positive orientation");
+    check(complement != nullptr
+              && complement->minusRegionId == 1
+              && complement->plusRegionId == 1,
+          "opening pressure face retains its same-region complement");
+    if (aperture != nullptr && complement != nullptr) {
+        checkNear(aperture->areaSquareMeters, 0.18, 2.0e-15,
+                  "opening pressure link retains exact aperture area");
+        checkNear(complement->areaSquareMeters, 0.82, 2.0e-15,
+                  "opening pressure link retains exact complementary area");
+    }
+    checkNear(openingFace->areaResidualSquareMeters, 0.0, 2.0e-15,
+              "opening and complementary links close the Cartesian face");
 }
 
 void testCorruptionSettingsAndLimits() {

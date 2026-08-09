@@ -114,12 +114,25 @@ std::uint64_t faceStableId(const fluid::GridFaceAxis axis,
     return fingerprint.value();
 }
 
-std::uint64_t linkStableId(const std::uint64_t faceId,
-                           const StableId regionId) {
+std::uint64_t sameRegionLinkStableId(const std::uint64_t faceId,
+                                     const StableId regionId) {
     Fingerprint fingerprint;
     fingerprint.integer(std::uint64_t{0x70726573736c696eULL});
     fingerprint.integer(faceId);
     fingerprint.integer(regionId);
+    return fingerprint.value();
+}
+
+std::uint64_t openingLinkStableId(const std::uint64_t faceId,
+                                  const std::uint64_t patchStableId,
+                                  const StableId minusRegionId,
+                                  const StableId plusRegionId) {
+    Fingerprint fingerprint;
+    fingerprint.integer(std::uint64_t{0x707265736f70656eULL});
+    fingerprint.integer(faceId);
+    fingerprint.integer(patchStableId);
+    fingerprint.integer(minusRegionId);
+    fingerprint.integer(plusRegionId);
     return fingerprint.value();
 }
 
@@ -139,6 +152,16 @@ double centerDistance(const fluid::Vector3& spacing,
     case fluid::GridFaceAxis::X: return spacing.x;
     case fluid::GridFaceAxis::Y: return spacing.y;
     case fluid::GridFaceAxis::Z: return spacing.z;
+    }
+    throw std::invalid_argument("scene fluid pressure face has invalid axis");
+}
+
+double axisComponent(const Vec3& value,
+                     const fluid::GridFaceAxis axis) {
+    switch (axis) {
+    case fluid::GridFaceAxis::X: return value.x;
+    case fluid::GridFaceAxis::Y: return value.y;
+    case fluid::GridFaceAxis::Z: return value.z;
     }
     throw std::invalid_argument("scene fluid pressure face has invalid axis");
 }
@@ -242,6 +265,7 @@ std::uint64_t faceLinkFingerprint(
              faceLinks.ownedStorageBytes,
              faceLinks.resolvedFullFaceCount,
              faceLinks.resolvedPartitionFaceCount,
+             faceLinks.resolvedOpeningFaceCount,
              faceLinks.unresolvedActiveFaceCount,
              faceLinks.unresolvedAmbiguousFaceCount,
              faceLinks.unresolvedOpeningFaceCount}) {
@@ -269,13 +293,20 @@ std::uint64_t faceLinkFingerprint(
         fingerprint.integer(static_cast<std::uint64_t>(link.linkIndex));
         fingerprint.integer(link.stableId);
         fingerprint.integer(static_cast<std::uint64_t>(link.faceIndex));
-        fingerprint.integer(link.regionId);
-        fingerprint.integer(static_cast<std::uint64_t>(link.regionIndex));
+        fingerprint.enumeration(link.kind);
+        fingerprint.integer(link.minusRegionId);
+        fingerprint.integer(link.plusRegionId);
+        fingerprint.integer(static_cast<std::uint64_t>(
+            link.minusRegionIndex));
+        fingerprint.integer(static_cast<std::uint64_t>(
+            link.plusRegionIndex));
         fingerprint.integer(static_cast<std::uint64_t>(link.componentIndex));
         fingerprint.integer(static_cast<std::uint64_t>(
             link.minusControlVolumeIndex));
         fingerprint.integer(static_cast<std::uint64_t>(
             link.plusControlVolumeIndex));
+        fingerprint.integer(link.openingId);
+        fingerprint.integer(link.openingPatchStableId);
         fingerprint.real(link.areaSquareMeters);
         fingerprint.real(link.centerDistanceMeters);
         fingerprint.real(link.geometryWeightMeters);
@@ -353,7 +384,7 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
         }
         partitionsByActiveFace[partition.activeFaceIndex] = partitionIndex;
     }
-    std::vector<std::uint8_t> openingFaces(faceCount, 0);
+    std::vector<std::size_t> openingPatchCounts(faceCount, 0);
     for (const auto& patch : openingPatches.patches) {
         if (patch.ownerKind != SceneFluidOpeningPatchOwnerKind::Face) {
             continue;
@@ -361,7 +392,35 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
         const auto axis = gridFaceAxis(patch.faceAxis);
         const std::size_t ordinal = faceOrdinal(
             grid, axis, patch.faceI, patch.faceJ, patch.faceK);
-        openingFaces[ordinal] = 1;
+        ++openingPatchCounts[ordinal];
+    }
+    std::size_t openingOffsetCount = 0;
+    if (!checkedAdd(faceCount, std::size_t{1}, openingOffsetCount)) {
+        throw std::length_error(
+            "scene fluid pressure opening-patch offset count overflows");
+    }
+    std::vector<std::size_t> openingPatchOffsets(openingOffsetCount, 0);
+    for (std::size_t ordinal = 0; ordinal < faceCount; ++ordinal) {
+        if (!checkedAdd(openingPatchOffsets[ordinal],
+                        openingPatchCounts[ordinal],
+                        openingPatchOffsets[ordinal + 1])) {
+            throw std::length_error(
+                "scene fluid pressure opening-patch range overflows");
+        }
+    }
+    std::vector<std::size_t> openingPatchIndices(
+        openingPatchOffsets.back(), 0);
+    auto openingPatchCursors = openingPatchOffsets;
+    for (std::size_t patchIndex = 0;
+         patchIndex < openingPatches.patches.size(); ++patchIndex) {
+        const auto& patch = openingPatches.patches[patchIndex];
+        if (patch.ownerKind != SceneFluidOpeningPatchOwnerKind::Face) {
+            continue;
+        }
+        const std::size_t ordinal = faceOrdinal(
+            grid, gridFaceAxis(patch.faceAxis),
+            patch.faceI, patch.faceJ, patch.faceK);
+        openingPatchIndices[openingPatchCursors[ordinal]++] = patchIndex;
     }
 
     SceneFluidPressureFaceLinkSet result;
@@ -391,18 +450,29 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
     faceStableIds.reserve(faceCount);
 
     const auto appendLink = [&](SceneFluidPressureFace& face,
-                                const StableId regionId,
-                                const double areaSquareMeters) {
+                                const SceneFluidPressureFaceLinkKind kind,
+                                const StableId minusRegionId,
+                                const StableId plusRegionId,
+                                const double areaSquareMeters,
+                                const StableId openingId,
+                                const std::uint64_t openingPatchStableId) {
         if (!(areaSquareMeters > 0.0) || !std::isfinite(areaSquareMeters)) {
             throw std::invalid_argument(
                 "scene fluid pressure face link has invalid area");
         }
         const auto* minus = controlFor(
-            pressureVolumes, face.minusCellIndex, regionId);
+            pressureVolumes, face.minusCellIndex, minusRegionId);
         const auto* plus = controlFor(
-            pressureVolumes, face.plusCellIndex, regionId);
-        if (!minus || !plus || minus->regionIndex != plus->regionIndex
-            || minus->componentIndex != plus->componentIndex) {
+            pressureVolumes, face.plusCellIndex, plusRegionId);
+        if (!minus || !plus
+            || minus->componentIndex != plus->componentIndex
+            || (kind == SceneFluidPressureFaceLinkKind::SameRegion
+                && (minusRegionId != plusRegionId
+                    || minus->regionIndex != plus->regionIndex))
+            || (kind == SceneFluidPressureFaceLinkKind::AuthoredOpening
+                && (minusRegionId == plusRegionId
+                    || openingId == invalidStableId
+                    || openingPatchStableId == 0))) {
             throw std::invalid_argument(
                 "scene fluid pressure face area has no matching control volumes");
         }
@@ -416,13 +486,23 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
         }
         SceneFluidPressureFaceLink link;
         link.linkIndex = result.links.size();
-        link.stableId = linkStableId(face.stableId, regionId);
+        link.stableId = kind
+            == SceneFluidPressureFaceLinkKind::SameRegion
+            ? sameRegionLinkStableId(face.stableId, minusRegionId)
+            : openingLinkStableId(
+                face.stableId, openingPatchStableId,
+                minusRegionId, plusRegionId);
         link.faceIndex = face.faceIndex;
-        link.regionId = regionId;
-        link.regionIndex = minus->regionIndex;
+        link.kind = kind;
+        link.minusRegionId = minusRegionId;
+        link.plusRegionId = plusRegionId;
+        link.minusRegionIndex = minus->regionIndex;
+        link.plusRegionIndex = plus->regionIndex;
         link.componentIndex = minus->componentIndex;
         link.minusControlVolumeIndex = minus->controlVolumeIndex;
         link.plusControlVolumeIndex = plus->controlVolumeIndex;
+        link.openingId = openingId;
+        link.openingPatchStableId = openingPatchStableId;
         link.areaSquareMeters = areaSquareMeters;
         link.centerDistanceMeters = centerDistance(spacing, face.axis);
         link.geometryWeightMeters =
@@ -463,10 +543,88 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                         grid, axis, i, j, k);
                     const std::size_t activeIndex =
                         activeFaceIndices[ordinal];
-                    if (openingFaces[ordinal] != 0) {
-                        face.status = SceneFluidPressureFaceStatus::
-                            UnresolvedOpening;
-                        ++result.unresolvedOpeningFaceCount;
+                    const std::size_t openingFirst =
+                        openingPatchOffsets[ordinal];
+                    const std::size_t openingEnd =
+                        openingPatchOffsets[ordinal + 1];
+                    if (openingFirst != openingEnd) {
+                        bool supported = activeIndex
+                            == std::numeric_limits<std::size_t>::max();
+                        double openingAreaSquareMeters = 0.0;
+                        StableId openingId = invalidStableId;
+                        for (std::size_t openingOffset = openingFirst;
+                             openingOffset < openingEnd; ++openingOffset) {
+                            const auto& patch = openingPatches.patches[
+                                openingPatchIndices[openingOffset]];
+                            openingAreaSquareMeters += patch.areaSquareMeters;
+                            if (openingId == invalidStableId) {
+                                openingId = patch.openingId;
+                            } else if (openingId != patch.openingId) {
+                                supported = false;
+                            }
+                            const double normalComponent = axisComponent(
+                                patch.unitNormalNegativeToPositive, axis);
+                            if (!std::isfinite(normalComponent)
+                                || std::abs(std::abs(normalComponent) - 1.0)
+                                    > 1.0e-10) {
+                                supported = false;
+                            }
+                        }
+                        double residualAreaSquareMeters =
+                            face.faceAreaSquareMeters
+                            - openingAreaSquareMeters;
+                        const auto common = commonRegions(
+                            pressureVolumes, face.minusCellIndex,
+                            face.plusCellIndex);
+                        if (!std::isfinite(openingAreaSquareMeters)
+                            || !(openingAreaSquareMeters > 0.0)
+                            || residualAreaSquareMeters
+                                < -settings.areaToleranceSquareMeters
+                            || (residualAreaSquareMeters
+                                    > settings.areaToleranceSquareMeters
+                                && common.size() != 1)) {
+                            supported = false;
+                        }
+                        if (!supported) {
+                            face.status = SceneFluidPressureFaceStatus::
+                                UnresolvedOpening;
+                            ++result.unresolvedOpeningFaceCount;
+                        } else {
+                            face.status = SceneFluidPressureFaceStatus::
+                                ResolvedOpening;
+                            for (std::size_t openingOffset = openingFirst;
+                                 openingOffset < openingEnd; ++openingOffset) {
+                                const auto& patch = openingPatches.patches[
+                                    openingPatchIndices[openingOffset]];
+                                const double normalComponent = axisComponent(
+                                    patch.unitNormalNegativeToPositive, axis);
+                                const StableId minusRegionId =
+                                    normalComponent > 0.0
+                                    ? patch.negativeSideRegionId
+                                    : patch.positiveSideRegionId;
+                                const StableId plusRegionId =
+                                    normalComponent > 0.0
+                                    ? patch.positiveSideRegionId
+                                    : patch.negativeSideRegionId;
+                                appendLink(
+                                    face,
+                                    SceneFluidPressureFaceLinkKind::
+                                        AuthoredOpening,
+                                    minusRegionId, plusRegionId,
+                                    patch.areaSquareMeters,
+                                    patch.openingId, patch.stableId);
+                            }
+                            if (residualAreaSquareMeters
+                                > settings.areaToleranceSquareMeters) {
+                                appendLink(
+                                    face,
+                                    SceneFluidPressureFaceLinkKind::SameRegion,
+                                    common.front(), common.front(),
+                                    residualAreaSquareMeters,
+                                    invalidStableId, 0);
+                            }
+                            ++result.resolvedOpeningFaceCount;
+                        }
                     } else if (activeIndex
                         == std::numeric_limits<std::size_t>::max()) {
                         const auto common = commonRegions(
@@ -475,8 +633,12 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                         if (common.size() == 1) {
                             face.status =
                                 SceneFluidPressureFaceStatus::ResolvedFull;
-                            appendLink(face, common.front(),
-                                       face.faceAreaSquareMeters);
+                            appendLink(
+                                face,
+                                SceneFluidPressureFaceLinkKind::SameRegion,
+                                common.front(), common.front(),
+                                face.faceAreaSquareMeters,
+                                invalidStableId, 0);
                             ++result.resolvedFullFaceCount;
                         } else {
                             face.status = SceneFluidPressureFaceStatus::
@@ -502,8 +664,12 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                                     epoch.facePartitions.regionAreas[
                                         partition.firstRegionArea + offset];
                                 if (regionArea.areaSquareMeters == 0.0) continue;
-                                appendLink(face, regionArea.regionId,
-                                           regionArea.areaSquareMeters);
+                                appendLink(
+                                    face,
+                                    SceneFluidPressureFaceLinkKind::SameRegion,
+                                    regionArea.regionId, regionArea.regionId,
+                                    regionArea.areaSquareMeters,
+                                    invalidStableId, 0);
                             }
                             ++result.resolvedPartitionFaceCount;
                         }
@@ -515,7 +681,9 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                     if (face.status
                             == SceneFluidPressureFaceStatus::ResolvedFull
                         || face.status
-                            == SceneFluidPressureFaceStatus::ResolvedPartition) {
+                            == SceneFluidPressureFaceStatus::ResolvedPartition
+                        || face.status
+                            == SceneFluidPressureFaceStatus::ResolvedOpening) {
                         result.maximumResolvedAreaResidualSquareMeters =
                             std::max(
                                 result.maximumResolvedAreaResidualSquareMeters,

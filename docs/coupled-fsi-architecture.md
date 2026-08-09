@@ -631,22 +631,26 @@ same-region pressure volumes. A resolved nested face retains its exact
 exterior, annular-cell, and inner-cell areas as separate links; an untouched
 face receives one full-area link only when both adjacent sparse cells have one
 unambiguous common region. Material/open-chain/coplanar ambiguity remains
-explicitly unresolved, and face-owned authored openings are reserved and
-unlinked rather than silently becoming full same-region faces. The published
-geometry weight is area over center distance; physical coefficients, opening
-links, and projection remain unimplemented. For the fully resolved closed
+explicitly unresolved. A face-owned authored opening instead contributes an
+oriented cross-region link for each exact cap patch and, when unambiguous, one
+same-region link over the complementary face area. The analytic triangular
+intake closes its unit Cartesian face as `0.18 m²` of Cell-to-Outside aperture
+plus `0.82 m²` of Outside-to-Outside area. The published geometry weight is
+area over center distance; physical coefficients, off-face opening
+transmissibility, and projection remain unimplemented. For the fully resolved
 subset, a bounded immutable pressure-operator owner now expands every link into
 the two directed rows of a symmetric integrated graph Laplacian. Its action is
 the conservative sum of `area/distance * (p_row - p_neighbour)`, so constants
 are exact null modes and quadratic energy is the positive sum over links. The
 operator retains each existing gauge control-volume owner but does not apply a
 gauge or solve. It additionally proves that each authored pressure component
-is exactly one link-connected graph. The face-aligned intake rejects because
-its face is unresolved; an off-face intake with otherwise complete Cartesian
-faces rejects because its authored component remains split. This prevents both
-missing opening paths from becoming accidental no-flow boundaries. RHS
-construction, opening transmissibility, gauge application, and projection are
-still absent. A canonical Qt-free structural
+is exactly one link-connected graph. The face-aligned intake now passes as one
+Cell-plus-Outside component and its unit region jump has exactly `0.18 m` of
+graph energy. An off-face intake with otherwise complete Cartesian faces still
+rejects because its authored component remains split. This prevents a missing
+embedded opening path from becoming an accidental no-flow boundary. RHS
+construction, off-face opening transmissibility, gauge application, and
+projection are still absent. A canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.

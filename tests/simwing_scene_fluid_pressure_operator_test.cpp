@@ -282,13 +282,28 @@ void testSymmetricConservativeOperator() {
     fixture.validate(first);
 }
 
-void testIncompleteOpeningTopologyRejects() {
+void testOpeningTopologyBoundaries() {
     Fixture fixture(openScene());
-    check(fixture.faceLinks.unresolvedOpeningFaceCount == 1,
-          "opening fixture exposes its unresolved authored face");
-    expectInvalid(
-        [&] { static_cast<void>(fixture.pressureOperator()); },
-        "pressure operator rejects unresolved opening ownership");
+    const auto faceAligned = fixture.pressureOperator();
+    check(fixture.faceLinks.resolvedOpeningFaceCount == 1
+              && fixture.faceLinks.unresolvedOpeningFaceCount == 0
+              && faceAligned.components.size() == 1,
+          "face-aligned intake closes one connected pressure component");
+    const auto constantResult = applySceneFluidPressureOperator(
+        faceAligned, std::vector<double>(faceAligned.rows.size(), 1.0));
+    check(std::ranges::all_of(constantResult, [](const double value) {
+              return value == 0.0;
+          }),
+          "connected intake operator retains its exact constant null mode");
+    std::vector<double> regionJump(faceAligned.rows.size(), 0.0);
+    for (const auto& control : fixture.pressureVolumes.controlVolumes) {
+        regionJump[control.controlVolumeIndex] =
+            control.regionId == 2 ? 1.0 : 0.0;
+    }
+    const auto jumpResult = applySceneFluidPressureOperator(
+        faceAligned, regionJump);
+    checkNear(dot(regionJump, jumpResult), 0.18, 2.0e-15,
+              "face-aligned intake contributes its exact aperture graph energy");
 
     Fixture offFace(openScene(2.8));
     const std::size_t unresolvedFaceCount =
@@ -353,7 +368,7 @@ void testCorruptionInputsAndLimits() {
 int main() {
     try {
         testSymmetricConservativeOperator();
-        testIncompleteOpeningTopologyRejects();
+        testOpeningTopologyBoundaries();
         testCorruptionInputsAndLimits();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
