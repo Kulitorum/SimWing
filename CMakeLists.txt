@@ -452,6 +452,10 @@ target_link_libraries(simwing_scene_fluid_pressure_coupling PUBLIC
 add_library(simwing_scene_pressure_cell_case STATIC
     src/fsi/scene_pressure_cell_case.cpp
     src/fsi/scene_pressure_cell_case.h
+    src/fsi/scene_pressure_cell_geometry.cpp
+    src/fsi/scene_pressure_cell_geometry.h
+    src/fsi/scene_pressure_cell_operator_refinement_audit.cpp
+    src/fsi/scene_pressure_cell_operator_refinement_audit.h
     src/fsi/scene_pressure_cell_checkpoint_persistence.cpp
     src/fsi/scene_pressure_cell_checkpoint_persistence.h
 )

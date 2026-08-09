@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fluid/evolution.h"
+#include "scene_pressure_cell_geometry.h"
 #include "scene_fluid_pressure_coupling.h"
 #include "structure_frame.h"
 #include "viewer_protocol.h"
@@ -9,10 +10,6 @@
 
 namespace simwing::fsi {
 
-inline constexpr char scenePressureCellCaseChecksum[] =
-    "sha256:simwing-scene-pressure-feedback-cell-v9";
-inline constexpr char scenePressureCellCaseSolverId[] =
-    "simwing-fsi-scene-pressure-feedback-worker-v9";
 inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 10;
 
 struct ScenePressureCellDiagnostics {

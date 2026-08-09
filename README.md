@@ -828,6 +828,16 @@ two-terminal conductance, while the mixed-hybrid cut-cell response gives
 normalization repair and localizes the transition question to authored-opening
 cut-cell closure rather than bulk response. Neither value is yet treated as
 the physical oracle.
+A separate rest-geometry refinement audit now removes the visible case's
+face-aligned special position. It uses a fixed skew tetrahedral intake and
+rebuilds the complete graph and mixed-hybrid topologies at `2^3`, `4^3`, and
+`8^3`. The graph/shadow conductance ratios are `28.024`, `33.672`, and `8.830`.
+After multiplying conductance by nominal cell width and dividing by intake
+area, the shadow sequence rises smoothly from `0.102` through `0.358` to
+`0.503`; the graph sequence jumps from `2.857` to `12.063` and back to `4.446`.
+This demonstrates strong grid sensitivity in the embedded two-point graph
+coefficient. It is not a convergence proof for the shadow method, so live
+loads remain on the established graph path.
 Its checkpoint also stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and

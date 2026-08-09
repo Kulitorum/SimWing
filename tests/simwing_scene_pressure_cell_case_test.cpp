@@ -1,5 +1,6 @@
 #include "scene_pressure_cell_case.h"
 #include "scene_pressure_cell_checkpoint_persistence.h"
+#include "scene_pressure_cell_operator_refinement_audit.h"
 #include "scene_fluid_pressure_operator_response_audit.h"
 #include "viewer_protocol.h"
 
@@ -837,6 +838,120 @@ void testManufacturedPressureOperatorResponses() {
           "operator-response audit enforces its aggregate byte limit before solving");
 }
 
+void testRestOperatorRefinementAudit() {
+    fsi::ScenePressureCellOperatorRefinementAuditSettings settings;
+    settings.response.graphSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-10;
+    settings.response.graphSolve.relativeResidualTolerance = 1.0e-11;
+    settings.response.graphSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    settings.response.shadowSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-10;
+    settings.response.shadowSolve.relativeResidualTolerance = 1.0e-11;
+    settings.response.shadowSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    const std::vector<fsi::fluid::GridCellCounts> resolutions{
+        {2, 2, 2}, {4, 4, 4}, {8, 8, 8},
+    };
+    const auto audit = fsi::auditScenePressureCellOperatorRefinement(
+        resolutions, settings);
+    const auto repeated = fsi::auditScenePressureCellOperatorRefinement(
+        resolutions, settings);
+    fsi::validateScenePressureCellOperatorRefinementAuditIntegrity(audit);
+    check(audit == repeated
+              && audit.samples.size() == resolutions.size()
+              && audit.structureDefinitionFingerprint != 0
+              && audit.ownedStorageBytes > 0,
+          "rest pressure-cell refinement audit owns three validated resolutions");
+    constexpr double expectedGraphConductance[] = {
+        0.306328421033639,
+        2.58638935233124,
+        1.90639953337707,
+    };
+    constexpr double expectedShadowConductance[] = {
+        0.0109310650855869,
+        0.0768124070857098,
+        0.215905072160453,
+    };
+    constexpr double expectedRatios[] = {
+        28.0236572223457,
+        33.6715050401331,
+        8.82980429454805,
+    };
+    constexpr double expectedNormalizedGraph[] = {
+        2.85744545106773,
+        12.0629787869036,
+        4.44574539981043,
+    };
+    constexpr double expectedNormalizedShadow[] = {
+        0.101965472543292,
+        0.358254814346008,
+        0.503493084501934,
+    };
+    for (std::size_t index = 0; index < audit.samples.size(); ++index) {
+        const auto& sample = audit.samples[index];
+        check(std::abs(
+                  sample.graphConductanceMeters
+                  - expectedGraphConductance[index]) < 1.0e-9
+                  && std::abs(
+                      sample.shadowConductanceMeters
+                      - expectedShadowConductance[index]) < 1.0e-9
+                  && std::abs(
+                      sample.graphToShadowConductanceRatio
+                      - expectedRatios[index]) < 1.0e-9
+                  && std::abs(
+                      sample.normalizedGraphConductance
+                      - expectedNormalizedGraph[index]) < 1.0e-9
+                  && std::abs(
+                      sample.normalizedShadowConductance
+                      - expectedNormalizedShadow[index]) < 1.0e-9,
+              "skew-intake refinement retains exact graph and shadow conductance spectra");
+    }
+    check(audit.samples[0].normalizedShadowConductance
+                  < audit.samples[1].normalizedShadowConductance
+              && audit.samples[1].normalizedShadowConductance
+                  < audit.samples[2].normalizedShadowConductance
+              && audit.samples[0].graphToShadowConductanceRatio > 20.0
+              && audit.samples[1].graphToShadowConductanceRatio > 20.0
+              && audit.samples[2].graphToShadowConductanceRatio > 8.0,
+          "skew-intake refinement exposes a smoother shadow trend while both operators remain far apart");
+
+    auto corrupt = audit;
+    corrupt.samples.back().normalizedShadowConductance += 0.01;
+    bool rejected = false;
+    try {
+        fsi::validateScenePressureCellOperatorRefinementAuditIntegrity(
+            corrupt);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected,
+          "rest pressure-cell refinement audit rejects derived-value corruption");
+
+    const std::vector<fsi::fluid::GridCellCounts> invalid{{5, 4, 5}};
+    rejected = false;
+    try {
+        static_cast<void>(fsi::auditScenePressureCellOperatorRefinement(
+            invalid, settings));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected,
+          "rest pressure-cell refinement audit rejects an anisotropic grid");
+
+    fsi::ScenePressureCellOperatorRefinementAuditLimits limited;
+    limited.maximumGridCellsPerSample = 7;
+    rejected = false;
+    try {
+        static_cast<void>(fsi::auditScenePressureCellOperatorRefinement(
+            std::span(resolutions).first(1), settings, limited));
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected,
+          "rest pressure-cell refinement audit enforces its grid-cell limit before assembly");
+}
+
 void testPersistentMimeticPressureAuditRestart() {
     fsi::ScenePressureCellCase initial(true);
     const auto initialCheckpoint = initial.checkpoint();
@@ -957,6 +1072,7 @@ int main() {
         testPersistentCheckpointAndRejection();
         testOptInMimeticPressureAuditIsShadowOnly();
         testManufacturedPressureOperatorResponses();
+        testRestOperatorRefinementAudit();
         testPersistentMimeticPressureAuditRestart();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

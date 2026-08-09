@@ -436,7 +436,9 @@ src/fsi/
     scene_fluid_region_wall.* two-sided material-wall momentum exchange
     scene_fluid_region_link_flow.* current-link region predictor
     scene_fluid_pressure_coupling.* strong pressure/shear feedback
+    scene_pressure_cell_geometry.* shared visible/refinement tetrahedra
     scene_pressure_cell_case.* visible open-cell pressure-feedback canonical
+    scene_pressure_cell_operator_refinement_audit.* skew-intake grid spectrum
     scene_pressure_cell_checkpoint_persistence.* bounded canonical restart
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
@@ -1282,6 +1284,32 @@ not a missing global coefficient. The existing orthogonal Cartesian local-cell
 oracle still recovers area over centre distance exactly. No global correction
 is admissible, and neither non-orthogonal opening response is yet declared
 physically authoritative.
+
+`src/fsi/scene_pressure_cell_operator_refinement_audit.*` then removes the
+visible tetrahedron's face-aligned special position. Its separately checksummed
+rest geometry has a deliberately skew, embedded intake whose vertices avoid
+the sampled Cartesian planes. Each bounded isotropic resolution rebuilds the
+complete surface ownership, pressure graph, mimetic control shells, full and
+wall-condensed trace systems, and the six manufactured response modes. The
+product retains nested integrity, exact counts, physical intake area, cell
+spacing, dimensional conductances, and conductance multiplied by nominal cell
+width and divided by intake area.
+
+The first accepted spectrum is:
+
+| Grid | Controls | Full/reduced traces | Graph conductance | Shadow conductance | Graph/shadow | Normalized graph/shadow |
+|---|---:|---:|---:|---:|---:|---:|
+| `2^3` | 10 | 38 / 26 | `0.306328 m` | `0.0109311 m` | `28.0237` | `2.85745 / 0.101965` |
+| `4^3` | 66 | 206 / 194 | `2.58639 m` | `0.0768124 m` | `33.6715` | `12.0630 / 0.358255` |
+| `8^3` | 527 | 1625 / 1565 | `1.90640 m` | `0.215905 m` | `8.82980` | `4.44575 / 0.503493` |
+
+The shadow sequence is smoother under this refinement, whereas the embedded
+two-point graph coefficient is strongly grid-phase sensitive. Three coarse
+samples do not establish a continuum limit or make the mixed-hybrid response
+physically authoritative. They do rule out using the graph result as the
+reference merely because it is the current production path. Live arithmetic
+therefore remains unchanged while a stronger manufactured continuum oracle is
+developed.
 
 The experiment is exposed as `simwing-fsi --case pressure-cell
 --mimetic-pressure-audit` and reports control/trace counts plus iteration and
