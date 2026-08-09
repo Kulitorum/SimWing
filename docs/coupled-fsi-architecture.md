@@ -419,6 +419,7 @@ src/fsi/
     scene_fluid_opening_flux.* read-only relative MAC volume-flow ledger
     scene_fluid_cell_volume.* signed-chain sparse region volumes
     scene_fluid_region_continuity.* consecutive volume/flux compatibility
+    scene_fluid_region_connectivity.* pressure components and gauges
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -608,8 +609,15 @@ flow and reports `delta volume + integrated flow` per region. An analytically
 driven expanding cell closes with matching intake transport; removing that
 transport produces equal-and-opposite local failures despite a zero global
 residual. This remains diagnostic and does not yet connect openings to the
-projection. A canonical Qt-free structural worker now
-launches the viewer by default and publishes accepted steps through a bounded
+projection. Authored openings now separately form deterministic undirected
+pressure-connectivity components, while retaining their directed transport
+sign. Components are ordered by their smallest stable region ID, which also
+owns the future pressure gauge. Intake and crossport regressions prove the
+expected connectivity; a moving pair of sealed cells proves component-wise
+incompatibility cannot be hidden by equal-and-opposite global volume change.
+Opening source rates also cancel independently inside each component. A
+canonical Qt-free structural worker now launches the viewer by default and
+publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.
 The same worker can now select a smooth periodic Taylor-Green CFD case. Its
 owning adapter copies accepted cell pressure and averaged MAC velocity into

@@ -540,11 +540,16 @@ region balances cancel globally. A bounded two-epoch audit now pairs those
 balances with sparse region volumes and evaluates `delta volume + outward
 relative flow` using endpoint trapezoidal integration. The expanding-cell
 regression closes only with its matching inlet transport and reports a local
-mismatch when that flow is removed. Projection connectivity and pressure
-response to that flux remain future work. Nonplanar or concave openings, surface junctions,
-periodic-boundary ambiguity, and general moving-boundary fluid equations still
-reject or remain open; the grid epoch itself continues to own geometry and
-transfer only.
+mismatch when that flow is removed. Authored openings now also define
+deterministic pressure-connectivity components: an intake joins its cell to
+Outside, while a crossport joins only its adjacent cells. Every component owns
+one stable gauge ID and a component-wise continuity/source check. Thus two
+sealed cells with equal-and-opposite volume changes are rejected locally even
+though their global volume residual is zero. Applying these components to the
+grid projection remains future work. Nonplanar or concave openings, surface
+junctions, periodic-boundary ambiguity, and general moving-boundary fluid
+equations still reject or remain open; the grid epoch itself continues to own
+geometry and transfer only.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,
