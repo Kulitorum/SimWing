@@ -10,7 +10,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidCappedFacePartitionVersion = 2;
+inline constexpr std::uint32_t sceneFluidCappedFacePartitionVersion = 3;
 inline constexpr std::size_t invalidSceneFluidActiveFaceIndex =
     std::numeric_limits<std::size_t>::max();
 inline constexpr std::size_t invalidSceneFluidCappedFacePartitionIndex =
@@ -52,11 +52,30 @@ struct SceneFluidCappedFacePartition {
     bool operator==(const SceneFluidCappedFacePartition&) const = default;
 };
 
+enum class SceneFluidCappedFaceStatus : std::uint8_t {
+    Resolved = 0,
+    FaceOwnedOpeningArea = 1,
+    CoplanarMaterial = 2,
+    InvalidSourceGeometry = 3,
+    UnpairedMaterialEndpoint = 4,
+    UnpairedOpeningEndpoint = 5,
+    UnstitchedIntersection = 6,
+    ConflictingWinding = 7,
+    AmbiguousRegionOwnership = 8,
+    AreaClosureFailure = 9,
+    InvalidArrangementTopology = 10,
+};
+
 struct SceneFluidCappedFace {
     fluid::GridFaceAxis axis = fluid::GridFaceAxis::X;
     std::size_t i = 0;
     std::size_t j = 0;
     std::size_t k = 0;
+    SceneFluidCappedFaceStatus status =
+        SceneFluidCappedFaceStatus::InvalidSourceGeometry;
+    // The unique material-chain or opening-crossing stable ID responsible for
+    // a classified failure, when one source can be named without guessing.
+    StableId failureSourceStableId = invalidStableId;
     std::size_t partitionIndex =
         invalidSceneFluidCappedFacePartitionIndex;
 
@@ -67,10 +86,10 @@ struct SceneFluidCappedFace {
 // more virtual opening-cap triangles. Directed material-chain segments and cap
 // segments share one bounded planar arrangement. Face-owned aperture patches
 // remain excluded because pressure links already own their cross-region area.
-// `faces` contains exactly one deterministic record per touched face; an
-// invalid partition index marks explicit unresolved geometry.
-// Unsupported coplanar material, unpaired endpoints, unstitched crossings, or
-// conflicting authored winding remain explicit unresolved touched faces.
+// `faces` contains exactly one deterministic record per touched face. Status
+// records why unresolved geometry was rejected; only Resolved has a valid
+// partition index. Unsupported coplanar material, unpaired endpoints,
+// unstitched crossings, or conflicting authored winding remain explicit.
 struct SceneFluidCappedFacePartitionSet {
     std::uint32_t version = sceneFluidCappedFacePartitionVersion;
     std::uint64_t fingerprint = 0;

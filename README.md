@@ -553,7 +553,13 @@ crossings with the material chains on each touched face. It supports
 disconnected signed cycles, publishes exact same-region areas when they close,
 and otherwise retains an explicit unresolved face record. The coarse real wing
 closes five of nine cap-crossed faces through this path. Face-owned aperture
-area remains with its existing owner. The pressure epoch retains the complete
+area remains with its existing owner. Every rejected face carries a stable
+reason and, when one source is uniquely responsible, its material-chain or
+opening-crossing stable ID. The real wing's four residuals are specifically
+interior unpaired material endpoints: they are neither grid-boundary nor
+authored-opening endpoints, so they cannot be joined to a virtual cap without
+inventing the still-unauthored seam/junction topology. The pressure epoch
+retains the complete
 product without turning caps into fabric. A
 read-only flux epoch binds the complete MAC field, reads exact resolved face
 flow or deterministic off-face staggered quadrature, and reports signed fluid

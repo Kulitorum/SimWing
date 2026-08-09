@@ -335,7 +335,13 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   same-region area plus a resolved-or-unresolved record for every touched
   Cartesian face. Face-owned aperture area remains with its existing owner.
   On the coarse real wing this closes five of nine cap-crossed faces; the other
-  four remain explicit. Neither product makes the cap fabric. A
+  four are classified as interior unpaired material endpoints and retain their
+  distinct source-chain stable IDs. They are not opening or grid-boundary
+  endpoints, so never snap them to a cap: exact closure requires authoritative
+  seam/junction topology. Other rejection statuses distinguish face-owned
+  aperture overlap, coplanar material, invalid source geometry, opening-owned
+  dangling endpoints, unstitched intersections, winding/region ambiguity, and
+  area-closure failure. Neither product makes the cap fabric. A
   read-only evaluator samples exact face-normal MAC values or bounded
   staggered interpolation, subtracts cap motion, and publishes oriented volume
   flow. Each opening contributes equal-and-opposite outward fluid, surface,

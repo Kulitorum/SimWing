@@ -487,6 +487,17 @@ void testRealDesignCapture(const std::filesystem::path &input,
         cappedFacePartitions.faces,
         simwing::fsi::invalidSceneFluidCappedFacePartitionIndex,
         &simwing::fsi::SceneFluidCappedFace::partitionIndex);
+    const auto unpairedMaterialFaceCount = std::ranges::count(
+        cappedFacePartitions.faces,
+        simwing::fsi::SceneFluidCappedFaceStatus::
+            UnpairedMaterialEndpoint,
+        &simwing::fsi::SceneFluidCappedFace::status);
+    std::set<simwing::fsi::StableId> cappedFailureSourceIds;
+    for (const auto& face : cappedFacePartitions.faces) {
+        if (face.failureSourceStableId != simwing::fsi::invalidStableId) {
+            cappedFailureSourceIds.insert(face.failureSourceStableId);
+        }
+    }
     check(fluidVolumes.regionVolumes.size() == result.scene.regions.size()
               && fluidVolumes.openingCapCount
                   == result.scene.openings.size()
@@ -516,6 +527,8 @@ void testRealDesignCapture(const std::filesystem::path &input,
               && cappedFacePartitions.partitions.size() == 5
               && cappedFacePartitions.unresolvedTouchedFaceCount == 4
               && unresolvedCappedFaceRecordCount == 4
+              && unpairedMaterialFaceCount == 4
+              && cappedFailureSourceIds.size() == 4
               && cappedFacePartitions.segmentPairTestCount > 0
               && std::abs(openingPatches.totalAreaSquareMeters
                           - openingCaps.totalAreaSquareMeters)

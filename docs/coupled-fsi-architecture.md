@@ -635,7 +635,15 @@ directed material chains on every touched Cartesian face. Disconnected signed
 cycles are accounted explicitly; a supported arrangement publishes exact
 same-region areas, while an unsupported one remains a first-class unresolved
 face. Five of the coarse real wing's nine cap-crossed faces now close. The
-accepted pressure epoch retains this capped material-plus-opening partition,
+immutable touched-face record classifies face-owned opening overlap, coplanar
+material, invalid source geometry, material- versus opening-owned dangling
+endpoints, unstitched intersections, winding/region ambiguity, and area-closure
+failure. It also retains the unique failing source stable ID when one exists.
+The four real-wing residuals are interior unpaired material endpoints, not
+authored-opening or grid-boundary endpoints; no cap segment owns those gaps,
+and closure therefore waits for authored seam/junction topology rather than a
+geometric snap. The accepted pressure epoch retains this capped
+material-plus-opening partition,
 while face-owned aperture area remains separate. A read-only flux epoch now
 binds the entire MAC field. Face owners use the exact normal degree of freedom;
 cell owners use bounded degree-three quadrature of periodic staggered
@@ -962,7 +970,10 @@ surface adapter. The cap owner validates the three-region skin/rib mouth cycles
 and consumes the complete real-wing opening set. Pairwise cell-volume measures
 close its complete region ledger on a centered coarse grid. One simple
 boundary-to-boundary interface resolves exactly, while grid-face junctions
-remain explicit unresolved partitions. Opening quadrature and grid patches
+remain explicit unresolved partitions. Their four cap-touched residual faces
+are classified as interior unpaired material endpoints with distinct source
+chain IDs; the exporter has no paired seam chains from which an exact closure
+could be derived. Opening quadrature and grid patches
 preserve the full cap area, while authored connectivity and sparse pressure
 control volumes assemble. Face-link construction now retains every coarse
 embedded opening without positive projected cell-region centroid separation as

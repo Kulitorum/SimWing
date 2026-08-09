@@ -188,6 +188,10 @@ void testClosedOpeningSection(const fluid::GridFaceAxis axis) {
               && first.touchedFaceCount == 1
               && first.unresolvedTouchedFaceCount == 0
               && first.faces.size() == 1
+              && first.faces.front().status
+                  == SceneFluidCappedFaceStatus::Resolved
+              && first.faces.front().failureSourceStableId
+                  == invalidStableId
               && first.faces.front().partitionIndex == 0
               && first.partitions.size() == 1
               && first.materialChainReferences.size() == 1
@@ -243,6 +247,15 @@ void testCorruptionSettingsAndLimits() {
             fixture.transfer, fixture.epoch, fixture.caps,
             fixture.quadrature, fixture.patches, fixture.crossings); },
         "capped-face validation rejects payload corruption");
+    corrupt = accepted;
+    corrupt.faces.front().status =
+        SceneFluidCappedFaceStatus::UnpairedMaterialEndpoint;
+    expectInvalid(
+        [&] { validateSceneFluidCappedFacePartitions(
+            corrupt, fixture.surface.definition, fixture.state, grid(),
+            fixture.transfer, fixture.epoch, fixture.caps,
+            fixture.quadrature, fixture.patches, fixture.crossings); },
+        "capped-face validation rejects status corruption");
     corrupt = accepted;
     corrupt.faces.front().partitionIndex =
         invalidSceneFluidCappedFacePartitionIndex;

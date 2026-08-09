@@ -106,6 +106,28 @@ struct Point2 {
     double v = 0.0;
 };
 
+class ArrangementFailure final : public std::invalid_argument {
+public:
+    ArrangementFailure(const SceneFluidCappedFaceStatus status,
+                       const char* message,
+                       const StableId sourceStableId = invalidStableId)
+        : std::invalid_argument(message),
+          status_(status),
+          sourceStableId_(sourceStableId) {}
+
+    [[nodiscard]] SceneFluidCappedFaceStatus status() const noexcept {
+        return status_;
+    }
+
+    [[nodiscard]] StableId sourceStableId() const noexcept {
+        return sourceStableId_;
+    }
+
+private:
+    SceneFluidCappedFaceStatus status_;
+    StableId sourceStableId_;
+};
+
 Point2 facePoint(const fluid::GridFaceAxis axis, const Vec3& point) {
     if (axis == fluid::GridFaceAxis::X) return {point.y, point.z};
     if (axis == fluid::GridFaceAxis::Y) return {point.z, point.x};
@@ -218,7 +240,8 @@ bool pointInside(const Point2& point,
     for (std::size_t i = 0, j = polygon.size() - 1;
          i < polygon.size(); j = i++) {
         if (onSegment(polygon[j], polygon[i], point, tolerance)) {
-            throw std::invalid_argument(
+            throw ArrangementFailure(
+                SceneFluidCappedFaceStatus::UnstitchedIntersection,
                 "capped face partition components touch");
         }
         const bool straddles = (polygon[i].v > point.v)
@@ -263,7 +286,8 @@ double boundaryParameter(const Point2& point,
     if (near(point.u, bounds.minimumU, tolerance)) {
         return 2.0 * width + height + bounds.maximumV - point.v;
     }
-    throw std::invalid_argument(
+    throw ArrangementFailure(
+        SceneFluidCappedFaceStatus::InvalidArrangementTopology,
         "capped face partition boundary point has no owner");
 }
 
@@ -275,7 +299,8 @@ Point2 normalizedPoint(const Point2& point,
         || point.u > bounds.maximumU + tolerance
         || point.v < bounds.minimumV - tolerance
         || point.v > bounds.maximumV + tolerance) {
-        throw std::invalid_argument(
+        throw ArrangementFailure(
+            SceneFluidCappedFaceStatus::InvalidSourceGeometry,
             "capped face partition point lies outside its face");
     }
     Point2 result{std::clamp(point.u, bounds.minimumU, bounds.maximumU),
@@ -293,11 +318,18 @@ bool isBoundaryPoint(const Point2& point,
         || point.v == bounds.minimumV || point.v == bounds.maximumV;
 }
 
+enum class InputSegmentKind : std::uint8_t {
+    Material,
+    Opening,
+};
+
 struct InputSegment {
     Point2 first;
     Point2 second;
     StableId negativeSideRegionId = invalidStableId;
     StableId positiveSideRegionId = invalidStableId;
+    InputSegmentKind kind = InputSegmentKind::Material;
+    StableId sourceStableId = invalidStableId;
 };
 
 struct ArrangementNode {
@@ -313,6 +345,8 @@ struct ArrangementEdge {
     std::size_t directedToNode = 0;
     StableId negativeSideRegionId = invalidStableId;
     StableId positiveSideRegionId = invalidStableId;
+    InputSegmentKind sourceKind = InputSegmentKind::Material;
+    StableId sourceStableId = invalidStableId;
 };
 
 struct ArrangementHalfEdge {
@@ -350,7 +384,8 @@ std::map<StableId, double> arrangementAreas(
     const double faceArea = width * height;
     if (!(width > 0.0) || !(height > 0.0)
         || !std::isfinite(faceArea) || segments.empty()) {
-        throw std::invalid_argument(
+        throw ArrangementFailure(
+            SceneFluidCappedFaceStatus::InvalidSourceGeometry,
             "capped face partition has invalid bounds or no segments");
     }
 
@@ -366,7 +401,8 @@ std::map<StableId, double> arrangementAreas(
             if (samePoint(nodes[index].point, point,
                           settings.geometryToleranceMeters)) {
                 if (match != nodes.size()) {
-                    throw std::invalid_argument(
+                    throw ArrangementFailure(
+                        SceneFluidCappedFaceStatus::InvalidSourceGeometry,
                         "capped face partition endpoint matches multiple nodes");
                 }
                 match = index;
@@ -382,19 +418,25 @@ std::map<StableId, double> arrangementAreas(
             || segment.positiveSideRegionId == invalidStableId
             || segment.negativeSideRegionId
                 == segment.positiveSideRegionId) {
-            throw std::invalid_argument(
-                "capped face partition source regions are invalid");
+            throw ArrangementFailure(
+                SceneFluidCappedFaceStatus::InvalidSourceGeometry,
+                "capped face partition source regions are invalid",
+                segment.sourceStableId);
         }
         const std::size_t from = nodeFor(segment.first);
         const std::size_t to = nodeFor(segment.second);
         if (from == to) {
-            throw std::invalid_argument(
-                "capped face partition source edge is degenerate");
+            throw ArrangementFailure(
+                SceneFluidCappedFaceStatus::InvalidSourceGeometry,
+                "capped face partition source edge is degenerate",
+                segment.sourceStableId);
         }
         const auto key = std::minmax(from, to);
         if (!edgeKeys.emplace(key.first, key.second).second) {
-            throw std::invalid_argument(
-                "capped face partition repeats a source edge");
+            throw ArrangementFailure(
+                SceneFluidCappedFaceStatus::InvalidSourceGeometry,
+                "capped face partition repeats a source edge",
+                segment.sourceStableId);
         }
         ArrangementEdge edge;
         edge.firstNode = key.first;
@@ -404,6 +446,8 @@ std::map<StableId, double> arrangementAreas(
         edge.directedToNode = to;
         edge.negativeSideRegionId = segment.negativeSideRegionId;
         edge.positiveSideRegionId = segment.positiveSideRegionId;
+        edge.sourceKind = segment.kind;
+        edge.sourceStableId = segment.sourceStableId;
         edges.push_back(edge);
     }
 
@@ -427,20 +471,23 @@ std::map<StableId, double> arrangementAreas(
     }
     std::ranges::sort(boundaryNodes);
     if (boundaryNodes.size() < 4) {
-        throw std::invalid_argument(
+        throw ArrangementFailure(
+            SceneFluidCappedFaceStatus::InvalidArrangementTopology,
             "capped face partition boundary is incomplete");
     }
     for (std::size_t index = 1; index < boundaryNodes.size(); ++index) {
         if (boundaryNodes[index].first - boundaryNodes[index - 1].first
             <= settings.geometryToleranceMeters) {
-            throw std::invalid_argument(
+            throw ArrangementFailure(
+                SceneFluidCappedFaceStatus::InvalidArrangementTopology,
                 "capped face partition boundary nodes overlap");
         }
     }
     if (boundaryNodes.front().first + perimeter
             - boundaryNodes.back().first
         <= settings.geometryToleranceMeters) {
-        throw std::invalid_argument(
+        throw ArrangementFailure(
+            SceneFluidCappedFaceStatus::InvalidArrangementTopology,
             "capped face partition boundary nodes overlap");
     }
     for (std::size_t index = 0; index < boundaryNodes.size(); ++index) {
@@ -449,7 +496,8 @@ std::map<StableId, double> arrangementAreas(
             (index + 1) % boundaryNodes.size()].second;
         const auto key = std::minmax(first, second);
         if (!edgeKeys.emplace(key.first, key.second).second) {
-            throw std::invalid_argument(
+            throw ArrangementFailure(
+                SceneFluidCappedFaceStatus::InvalidArrangementTopology,
                 "capped face partition overlaps its rectangular boundary");
         }
         ArrangementEdge edge;
@@ -466,16 +514,34 @@ std::map<StableId, double> arrangementAreas(
     }
     for (std::size_t nodeIndex = 0;
          nodeIndex < nodes.size(); ++nodeIndex) {
-        if ((sourceDegree[nodeIndex] == 1 && !nodes[nodeIndex].onBoundary)
-            || (nodes[nodeIndex].onBoundary
-                && sourceDegree[nodeIndex] == 0
-                && std::ranges::none_of(
-                    corners, [&](const Point2& corner) {
-                        return nodes[nodeIndex].point.u == corner.u
-                            && nodes[nodeIndex].point.v == corner.v;
-                    }))) {
-            throw std::invalid_argument(
-                "capped face partition has an unpaired source endpoint");
+        if (sourceDegree[nodeIndex] == 1 && !nodes[nodeIndex].onBoundary) {
+            const auto incident = std::ranges::find_if(
+                edges, [&](const ArrangementEdge& edge) {
+                    return edge.source
+                        && (edge.firstNode == nodeIndex
+                            || edge.secondNode == nodeIndex);
+                });
+            if (incident == edges.end()) {
+                throw std::logic_error(
+                    "capped face partition source degree is inconsistent");
+            }
+            throw ArrangementFailure(
+                incident->sourceKind == InputSegmentKind::Material
+                    ? SceneFluidCappedFaceStatus::UnpairedMaterialEndpoint
+                    : SceneFluidCappedFaceStatus::UnpairedOpeningEndpoint,
+                "capped face partition has an unpaired source endpoint",
+                incident->sourceStableId);
+        }
+        if (nodes[nodeIndex].onBoundary
+            && sourceDegree[nodeIndex] == 0
+            && std::ranges::none_of(
+                corners, [&](const Point2& corner) {
+                    return nodes[nodeIndex].point.u == corner.u
+                        && nodes[nodeIndex].point.v == corner.v;
+                })) {
+            throw ArrangementFailure(
+                SceneFluidCappedFaceStatus::InvalidArrangementTopology,
+                "capped face partition has an unpaired boundary node");
         }
     }
 
@@ -495,8 +561,13 @@ std::map<StableId, double> arrangementAreas(
                     nodes[a.firstNode].point, nodes[a.secondNode].point,
                     nodes[b.firstNode].point, nodes[b.secondNode].point,
                     settings.geometryToleranceMeters)) {
-                throw std::invalid_argument(
-                    "capped face partition contains an unstitched crossing");
+                const StableId sourceStableId =
+                    a.sourceStableId == b.sourceStableId
+                    ? a.sourceStableId : invalidStableId;
+                throw ArrangementFailure(
+                    SceneFluidCappedFaceStatus::UnstitchedIntersection,
+                    "capped face partition contains an unstitched crossing",
+                    sourceStableId);
             }
         }
     }
@@ -516,8 +587,10 @@ std::map<StableId, double> arrangementAreas(
             };
             if (!(std::hypot(delta.u, delta.v)
                     > settings.geometryToleranceMeters)) {
-                throw std::invalid_argument(
-                    "capped face partition has a short edge");
+                throw ArrangementFailure(
+                    SceneFluidCappedFaceStatus::InvalidSourceGeometry,
+                    "capped face partition has a short edge",
+                    edge.sourceStableId);
             }
             const std::size_t halfEdgeIndex = halfEdges.size();
             halfEdges.push_back({
@@ -541,7 +614,8 @@ std::map<StableId, double> arrangementAreas(
                 second += 2.0 * std::acos(-1.0);
             }
             if (second - first <= angularTolerance) {
-                throw std::invalid_argument(
+                throw ArrangementFailure(
+                    SceneFluidCappedFaceStatus::InvalidArrangementTopology,
                     "capped face partition has overlapping rays");
             }
         }
@@ -557,7 +631,8 @@ std::map<StableId, double> arrangementAreas(
         while (true) {
             if (cycle.edgeIndices.size() > halfEdges.size()
                 || visited[current]) {
-                throw std::invalid_argument(
+                throw ArrangementFailure(
+                    SceneFluidCappedFaceStatus::InvalidArrangementTopology,
                     "capped face partition cycle is invalid");
             }
             visited[current] = true;
@@ -574,7 +649,8 @@ std::map<StableId, double> arrangementAreas(
                 if (cycle.regionId == invalidStableId) {
                     cycle.regionId = candidate;
                 } else if (cycle.regionId != candidate) {
-                    throw std::invalid_argument(
+                    throw ArrangementFailure(
+                        SceneFluidCappedFaceStatus::ConflictingWinding,
                         "capped face partition authored winding conflicts");
                 }
             }
@@ -606,7 +682,8 @@ std::map<StableId, double> arrangementAreas(
         cycle.signedAreaSquareMeters = 0.5 * twiceSignedArea;
         if (!std::isfinite(cycle.signedAreaSquareMeters)
             || cycle.signedAreaSquareMeters == 0.0) {
-            throw std::invalid_argument(
+            throw ArrangementFailure(
+                SceneFluidCappedFaceStatus::InvalidArrangementTopology,
                 "capped face partition cycle area is invalid");
         }
         std::ranges::sort(cycle.edgeIndices);
@@ -628,14 +705,16 @@ std::map<StableId, double> arrangementAreas(
     }
     if (unlabeledNegativeCycleCount != 1
         || unlabeledPositiveCycles.size() > 1) {
-        throw std::invalid_argument(
+        throw ArrangementFailure(
+            SceneFluidCappedFaceStatus::AmbiguousRegionOwnership,
             "capped face partition has ambiguous unlabeled cycles");
     }
     if (!unlabeledPositiveCycles.empty()) {
         const auto& base = cycles[unlabeledPositiveCycles.front()];
         if (std::abs(base.signedAreaSquareMeters - faceArea)
             > settings.areaClosureToleranceSquareMeters) {
-            throw std::invalid_argument(
+            throw ArrangementFailure(
+                SceneFluidCappedFaceStatus::AmbiguousRegionOwnership,
                 "capped face partition unlabeled base is not the full face");
         }
         StableId rootRegionId = invalidStableId;
@@ -666,13 +745,15 @@ std::map<StableId, double> arrangementAreas(
                 if (rootRegionId == invalidStableId) {
                     rootRegionId = candidate.regionId;
                 } else if (rootRegionId != candidate.regionId) {
-                    throw std::invalid_argument(
+                    throw ArrangementFailure(
+                        SceneFluidCappedFaceStatus::AmbiguousRegionOwnership,
                         "capped face partition has conflicting root regions");
                 }
             }
         }
         if (rootRegionId == invalidStableId) {
-            throw std::invalid_argument(
+            throw ArrangementFailure(
+                SceneFluidCappedFaceStatus::AmbiguousRegionOwnership,
                 "capped face partition has no root region");
         }
         areas[rootRegionId] += faceArea;
@@ -688,7 +769,8 @@ std::map<StableId, double> arrangementAreas(
                 iterator = areas.erase(iterator);
                 continue;
             }
-            throw std::invalid_argument(
+            throw ArrangementFailure(
+                SceneFluidCappedFaceStatus::AreaClosureFailure,
                 "capped face partition region area is invalid");
         }
         assignedArea += iterator->second;
@@ -697,7 +779,8 @@ std::map<StableId, double> arrangementAreas(
     if (areas.size() < 2 || !std::isfinite(assignedArea)
         || std::abs(assignedArea - faceArea)
             > settings.areaClosureToleranceSquareMeters) {
-        throw std::invalid_argument(
+        throw ArrangementFailure(
+            SceneFluidCappedFaceStatus::AreaClosureFailure,
             "capped face partition does not close exact region area");
     }
     return areas;
@@ -732,13 +815,17 @@ InputSegment openingSegment(
     const Point2 actual{second.u - first.u, second.v - first.v};
     const double alignment = dot(actual, preferred);
     if (!std::isfinite(alignment) || alignment == 0.0) {
-        throw std::invalid_argument(
-            "capped face partition opening crossing has no direction");
+        throw ArrangementFailure(
+            SceneFluidCappedFaceStatus::InvalidSourceGeometry,
+            "capped face partition opening crossing has no direction",
+            crossing.stableId);
     }
     if (alignment < 0.0) std::swap(first, second);
     return {first, second,
             crossing.negativeSideRegionId,
-            crossing.positiveSideRegionId};
+            crossing.positiveSideRegionId,
+            InputSegmentKind::Opening,
+            crossing.stableId};
 }
 
 std::uint64_t partitionStableId(
@@ -859,6 +946,8 @@ std::uint64_t partitionsFingerprint(
         fingerprint.integer(static_cast<std::uint64_t>(face.i));
         fingerprint.integer(static_cast<std::uint64_t>(face.j));
         fingerprint.integer(static_cast<std::uint64_t>(face.k));
+        fingerprint.enumeration(face.status);
+        fingerprint.integer(face.failureSourceStableId);
         fingerprint.integer(static_cast<std::uint64_t>(
             face.partitionIndex));
     }
@@ -984,10 +1073,18 @@ SceneFluidCappedFacePartitionSet buildPartitions(
         const auto active = activeFaces.find(key);
         const std::size_t activeFaceIndex = active == activeFaces.end()
             ? invalidSceneFluidActiveFaceIndex : active->second;
-        if (faceOwnedOpeningArea.contains(key)
-            || (activeFaceIndex != invalidSceneFluidActiveFaceIndex
-                && epoch.faceTopology.activeFaces[activeFaceIndex]
-                        .coplanarPatchReferenceCount != 0)) {
+        if (faceOwnedOpeningArea.contains(key)) {
+            cappedFace.status =
+                SceneFluidCappedFaceStatus::FaceOwnedOpeningArea;
+            ++result.unresolvedTouchedFaceCount;
+            result.faces.push_back(cappedFace);
+            continue;
+        }
+        if (activeFaceIndex != invalidSceneFluidActiveFaceIndex
+            && epoch.faceTopology.activeFaces[activeFaceIndex]
+                    .coplanarPatchReferenceCount != 0) {
+            cappedFace.status =
+                SceneFluidCappedFaceStatus::CoplanarMaterial;
             ++result.unresolvedTouchedFaceCount;
             result.faces.push_back(cappedFace);
             continue;
@@ -1022,12 +1119,22 @@ SceneFluidCappedFacePartitionSet buildPartitions(
                                         .positionMeters),
                     chain.negativeSideRegionId,
                     chain.positiveSideRegionId,
+                    InputSegmentKind::Material,
+                    chain.stableId,
                 });
             }
         }
-        for (const std::size_t crossingIndex : openingReferences) {
-            segments.push_back(openingSegment(
-                openingCrossings.crossings[crossingIndex]));
+        try {
+            for (const std::size_t crossingIndex : openingReferences) {
+                segments.push_back(openingSegment(
+                    openingCrossings.crossings[crossingIndex]));
+            }
+        } catch (const ArrangementFailure& failure) {
+            cappedFace.status = failure.status();
+            cappedFace.failureSourceStableId = failure.sourceStableId();
+            ++result.unresolvedTouchedFaceCount;
+            result.faces.push_back(cappedFace);
+            continue;
         }
         std::size_t newSourceCount = 0;
         if (!checkedAdd(sourceSegmentCount, segments.size(), newSourceCount)
@@ -1042,7 +1149,9 @@ SceneFluidCappedFacePartitionSet buildPartitions(
             areas = arrangementAreas(
                 faceBounds(grid, axis, i, j, k), segments,
                 settings, limits, result.segmentPairTestCount);
-        } catch (const std::invalid_argument&) {
+        } catch (const ArrangementFailure& failure) {
+            cappedFace.status = failure.status();
+            cappedFace.failureSourceStableId = failure.sourceStableId();
             ++result.unresolvedTouchedFaceCount;
             result.faces.push_back(cappedFace);
             continue;
@@ -1132,6 +1241,7 @@ SceneFluidCappedFacePartitionSet buildPartitions(
             throw std::invalid_argument(
                 "capped face partition stable ID collides");
         }
+        cappedFace.status = SceneFluidCappedFaceStatus::Resolved;
         cappedFace.partitionIndex = result.partitions.size();
         result.partitions.push_back(partition);
         result.faces.push_back(cappedFace);
