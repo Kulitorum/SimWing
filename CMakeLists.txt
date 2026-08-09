@@ -376,6 +376,8 @@ add_library(simwing_scene_fluid_cell_volume STATIC
     src/fsi/scene_fluid_pressure_projection.h
     src/fsi/scene_fluid_region_momentum.cpp
     src/fsi/scene_fluid_region_momentum.h
+    src/fsi/scene_fluid_region_transport.cpp
+    src/fsi/scene_fluid_region_transport.h
     src/fsi/scene_fluid_pressure_sampling.cpp
     src/fsi/scene_fluid_pressure_sampling.h
     src/fsi/scene_fluid_pressure_volume_rate.cpp

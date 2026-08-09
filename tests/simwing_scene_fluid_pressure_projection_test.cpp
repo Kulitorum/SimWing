@@ -2,6 +2,7 @@
 #include "scene_fluid_pressure_link_flow.h"
 #include "scene_fluid_pressure_epoch.h"
 #include "scene_fluid_region_momentum.h"
+#include "scene_fluid_region_transport.h"
 
 #include <algorithm>
 #include <array>
@@ -743,6 +744,140 @@ void testRegionMomentumReconstruction() {
           "zero corrected flow reconstructs exact zero region momentum");
 }
 
+void testRegionMomentumTransport() {
+    Fixture fixture(nestedScene(), true);
+    const auto velocity = manufacturedVelocity();
+    const auto openingFlux = fixture.flux(velocity);
+    std::vector<double> warm(
+        fixture.pressureOperator.rows.size(), 0.0);
+    const auto projection = fixture.project(
+        velocity, openingFlux, warm, strictSettings());
+    const auto momentum = reconstructSceneFluidRegionMomentumState(
+        grid(), fixture.pressureVolumes, fixture.faceLinks,
+        fixture.openingPatches, projection, velocity);
+    SceneFluidRegionTransportSettings settings;
+    settings.timeStepSeconds = 0.01;
+    const auto transport = advanceSceneFluidRegionMomentum(
+        momentum, fixture.faceLinks, projection, settings);
+    const auto repeated = advanceSceneFluidRegionMomentum(
+        momentum, fixture.faceLinks, projection, settings);
+    const double energyTolerance = settings.absoluteEnergyToleranceJoules
+        + settings.relativeEnergyTolerance
+            * std::max(1.0, transport.diagnostics.kineticEnergyBeforeJoules);
+    const double momentumTolerance =
+        settings.absoluteMomentumToleranceKilogramMetersPerSecond
+        + settings.relativeMomentumTolerance
+            * std::max(
+                1.0,
+                std::sqrt(
+                    transport.diagnostics
+                            .momentumBeforeKilogramMetersPerSecond.x
+                        * transport.diagnostics
+                            .momentumBeforeKilogramMetersPerSecond.x
+                    + transport.diagnostics
+                            .momentumBeforeKilogramMetersPerSecond.y
+                        * transport.diagnostics
+                            .momentumBeforeKilogramMetersPerSecond.y
+                    + transport.diagnostics
+                            .momentumBeforeKilogramMetersPerSecond.z
+                        * transport.diagnostics
+                            .momentumBeforeKilogramMetersPerSecond.z));
+    check(transport == repeated
+              && transport.fingerprint != 0
+              && transport.diagnostics.finite
+              && transport.diagnostics.accepted
+              && transport.diagnostics.failureStage
+                  == SceneFluidRegionTransportFailureStage::None
+              && transport.diagnostics.substepCount > 0
+              && transport.diagnostics
+                     .maximumAcceptedSubstepOutgoingCourantNumber
+                  <= settings.maximumOutgoingCourantNumber
+              && transport.diagnostics
+                     .maximumAcceptedSubstepViscousNumber
+                  <= settings.maximumViscousNumber
+              && transport.controlVolumes.size()
+                  == momentum.controlVolumes.size()
+              && transport.diagnostics.kineticEnergyAfterJoules
+                  <= transport.diagnostics.kineticEnergyBeforeJoules
+                      + energyTolerance
+              && transport.diagnostics.advectiveEnergyLossJoules
+                  >= -energyTolerance
+              && transport.diagnostics.viscousEnergyLossJoules
+                  >= -energyTolerance
+              && transport.diagnostics
+                     .momentumResidualNormKilogramMetersPerSecond
+                  <= momentumTolerance,
+          "region transport deterministically advances conservative donor-cell momentum with dissipative graph viscosity");
+    checkNear(
+        transport.diagnostics.advectiveEnergyLossJoules
+            + transport.diagnostics.viscousEnergyLossJoules,
+        transport.diagnostics.kineticEnergyBeforeJoules
+            - transport.diagnostics.kineticEnergyAfterJoules,
+        energyTolerance,
+        "region transport closes its split energy-loss ledger");
+    validateSceneFluidRegionTransport(
+        transport, momentum, fixture.faceLinks, projection);
+
+    auto corrupt = transport;
+    corrupt.controlVolumes.front().velocityMetersPerSecond.x += 0.01;
+    expectInvalid(
+        [&] { validateSceneFluidRegionTransportIntegrity(corrupt); },
+        "region transport integrity rejects velocity corruption");
+
+    auto limitedSettings = settings;
+    limitedSettings.timeStepSeconds = 100.0;
+    limitedSettings.maximumSubsteps = 1;
+    const auto limited = advanceSceneFluidRegionMomentum(
+        momentum, fixture.faceLinks, projection, limitedSettings);
+    check(!limited.diagnostics.accepted
+              && limited.diagnostics.finite
+              && limited.diagnostics.failureStage
+                  == SceneFluidRegionTransportFailureStage::SubstepLimit
+              && limited.controlVolumes.empty(),
+          "region transport rejects an excessive substep demand without publishing momentum");
+
+    SceneFluidRegionTransportLimits limits;
+    limits.maximumLinks = fixture.faceLinks.links.size() - 1;
+    expectLimited(
+        [&] {
+            static_cast<void>(advanceSceneFluidRegionMomentum(
+                momentum, fixture.faceLinks, projection, settings, limits));
+        },
+        "region transport bounds its pressure-link input");
+    limits.maximumLinks = fixture.faceLinks.links.size();
+    limits.maximumTransportBytes = 0;
+    expectLimited(
+        [&] {
+            static_cast<void>(advanceSceneFluidRegionMomentum(
+                momentum, fixture.faceLinks, projection, settings, limits));
+        },
+        "region transport bounds its complete working storage");
+
+    fluid::MacVelocityField zeroVelocity(grid());
+    const auto zeroFlux = fixture.flux(zeroVelocity);
+    std::vector<double> zeroWarm(
+        fixture.pressureOperator.rows.size(), 0.0);
+    const auto zeroProjection = fixture.project(
+        zeroVelocity, zeroFlux, zeroWarm, strictSettings());
+    const auto zeroMomentum = reconstructSceneFluidRegionMomentumState(
+        grid(), fixture.pressureVolumes, fixture.faceLinks,
+        fixture.openingPatches, zeroProjection, zeroVelocity);
+    const auto zeroTransport = advanceSceneFluidRegionMomentum(
+        zeroMomentum, fixture.faceLinks, zeroProjection, settings);
+    check(zeroTransport.diagnostics.accepted
+              && zeroTransport.diagnostics
+                     .momentumBeforeKilogramMetersPerSecond
+                  == fluid::Vector3{}
+              && zeroTransport.diagnostics
+                     .momentumAfterKilogramMetersPerSecond
+                  == fluid::Vector3{}
+              && zeroTransport.diagnostics.kineticEnergyBeforeJoules == 0.0
+              && zeroTransport.diagnostics.kineticEnergyAfterJoules == 0.0
+              && zeroTransport.diagnostics
+                     .maximumVelocityChangeMetersPerSecond == 0.0,
+          "zero region momentum is an exact fixed point of transport and viscosity");
+}
+
 void testValidationAndLimits() {
     Fixture fixture(openScene());
     fluid::MacVelocityField velocity(grid());
@@ -796,6 +931,7 @@ int main() {
         testLinkResolvedContinuation();
         testAreaChangingLinkContinuation();
         testRegionMomentumReconstruction();
+        testRegionMomentumTransport();
         testValidationAndLimits();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

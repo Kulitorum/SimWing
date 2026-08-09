@@ -633,8 +633,15 @@ incident absolute link velocities; components without an incident face retain
 the cell-centred value from the exact MAC predictor bound to the projection.
 The state reports momentum, kinetic energy, fallback coverage, and the loss in
 mapping staggered link normals to collocated region vectors. It is the explicit
-input boundary for conservative region transport and does not yet advance or
-apply a wall model.
+input boundary for conservative region transport and does not itself advance
+or apply a wall model.
+A fixed-epoch transport kernel now advances that state with first-order
+donor-cell vector-momentum flux over the corrected pressure links, followed by
+equal-and-opposite graph-viscous impulses. It deterministically subcycles from
+the smallest local outgoing-volume and viscous stability limits, conserves
+global momentum, requires non-increasing stage energy, and publishes no
+candidate on a failed ledger. Moving-volume GCL transport, material-wall
+viscosity, and a new pressure projection remain explicit next steps.
 Its in-memory composite checkpoint retains Structure plus the accepted sparse
 pressure projection; restore rebuilds and validates the complete pressure
 epoch and conservative load before committing either owner. Initial and

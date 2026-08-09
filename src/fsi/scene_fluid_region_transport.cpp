@@ -1,0 +1,741 @@
+#include "scene_fluid_region_transport.h"
+
+#include <algorithm>
+#include <bit>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
+#include <type_traits>
+
+namespace simwing::fsi {
+namespace {
+
+constexpr std::uint64_t fnvOffsetBasis = 14695981039346656037ULL;
+constexpr std::uint64_t fnvPrime = 1099511628211ULL;
+
+class Fingerprint final {
+public:
+    template<typename Unsigned>
+    void integer(Unsigned value) {
+        static_assert(std::is_unsigned_v<Unsigned>);
+        for (std::size_t index = 0; index < sizeof(value); ++index) {
+            byte(static_cast<std::uint8_t>(value & 0xffU));
+            value >>= 8U;
+        }
+    }
+
+    template<typename Enumeration>
+    void enumeration(const Enumeration value) {
+        using Underlying = std::underlying_type_t<Enumeration>;
+        using Unsigned = std::make_unsigned_t<Underlying>;
+        integer(static_cast<Unsigned>(value));
+    }
+
+    void real(const double value) {
+        integer(std::bit_cast<std::uint64_t>(value));
+    }
+
+    [[nodiscard]] std::uint64_t value() const noexcept {
+        return value_ == 0 ? 1 : value_;
+    }
+
+private:
+    void byte(const std::uint8_t value) noexcept {
+        value_ ^= value;
+        value_ *= fnvPrime;
+    }
+
+    std::uint64_t value_ = fnvOffsetBasis;
+};
+
+bool finite(const fluid::Vector3& value) {
+    return std::isfinite(value.x)
+        && std::isfinite(value.y)
+        && std::isfinite(value.z);
+}
+
+fluid::Vector3 add(const fluid::Vector3& first,
+                   const fluid::Vector3& second) {
+    return {
+        first.x + second.x,
+        first.y + second.y,
+        first.z + second.z,
+    };
+}
+
+fluid::Vector3 subtract(const fluid::Vector3& first,
+                        const fluid::Vector3& second) {
+    return {
+        first.x - second.x,
+        first.y - second.y,
+        first.z - second.z,
+    };
+}
+
+fluid::Vector3 scale(const fluid::Vector3& value, const double factor) {
+    return {factor * value.x, factor * value.y, factor * value.z};
+}
+
+double norm(const fluid::Vector3& value) {
+    return std::sqrt(
+        value.x * value.x + value.y * value.y + value.z * value.z);
+}
+
+double maximumAbsoluteComponent(const fluid::Vector3& value) {
+    return std::max({std::abs(value.x), std::abs(value.y),
+                     std::abs(value.z)});
+}
+
+double tolerance(const double absolute,
+                 const double relative,
+                 const double reference) {
+    return absolute + relative * std::max(1.0, std::abs(reference));
+}
+
+double kineticEnergy(
+    const std::span<const SceneFluidRegionTransportControlVolume> controls,
+    const double density) {
+    double result = 0.0;
+    for (const auto& control : controls) {
+        result += 0.5 * density * control.volumeCubicMeters
+            * (control.velocityMetersPerSecond.x
+                   * control.velocityMetersPerSecond.x
+               + control.velocityMetersPerSecond.y
+                   * control.velocityMetersPerSecond.y
+               + control.velocityMetersPerSecond.z
+                   * control.velocityMetersPerSecond.z);
+    }
+    return result;
+}
+
+fluid::Vector3 totalMomentum(
+    const std::span<const SceneFluidRegionTransportControlVolume> controls) {
+    fluid::Vector3 result;
+    for (const auto& control : controls) {
+        result = add(result, control.momentumKilogramMetersPerSecond);
+    }
+    return result;
+}
+
+std::size_t storageBytesForControlVolumes(const std::size_t count) {
+    if (count > std::numeric_limits<std::size_t>::max()
+                    / sizeof(SceneFluidRegionTransportControlVolume)) {
+        throw std::length_error(
+            "scene fluid region transport storage size overflows");
+    }
+    return count * sizeof(SceneFluidRegionTransportControlVolume);
+}
+
+std::size_t checkedMultiply(const std::size_t first,
+                            const std::size_t second) {
+    if (first != 0
+        && second > std::numeric_limits<std::size_t>::max() / first) {
+        throw std::length_error(
+            "scene fluid region transport working storage size overflows");
+    }
+    return first * second;
+}
+
+std::size_t checkedAdd(const std::size_t first,
+                       const std::size_t second) {
+    if (second > std::numeric_limits<std::size_t>::max() - first) {
+        throw std::length_error(
+            "scene fluid region transport working storage size overflows");
+    }
+    return first + second;
+}
+
+std::size_t workingStorageBytes(const std::size_t controlVolumeCount,
+                                const std::size_t linkCount) {
+    const std::size_t perControl =
+        sizeof(SceneFluidRegionTransportControlVolume)
+        + 3 * sizeof(double) + sizeof(fluid::Vector3);
+    return checkedAdd(
+        checkedMultiply(controlVolumeCount, perControl),
+        checkedMultiply(linkCount, sizeof(double)));
+}
+
+std::uint64_t transportFingerprint(
+    const SceneFluidRegionTransport& transport) {
+    Fingerprint fingerprint;
+    fingerprint.integer(transport.version);
+    fingerprint.integer(transport.sourceMomentumFingerprint);
+    fingerprint.integer(transport.pressureProjectionFingerprint);
+    fingerprint.integer(transport.pressureFaceLinkFingerprint);
+    fingerprint.integer(transport.acceptedStepCount);
+    fingerprint.real(transport.sourceSimulationTimeSeconds);
+    fingerprint.real(transport.targetSimulationTimeSeconds);
+    fingerprint.real(transport.densityKgPerCubicMeter);
+    const auto& settings = transport.settings;
+    fingerprint.real(settings.timeStepSeconds);
+    fingerprint.real(settings.kinematicViscositySquareMetersPerSecond);
+    fingerprint.real(settings.maximumOutgoingCourantNumber);
+    fingerprint.real(settings.maximumViscousNumber);
+    fingerprint.integer(static_cast<std::uint64_t>(
+        settings.maximumSubsteps));
+    fingerprint.real(
+        settings.absoluteMomentumToleranceKilogramMetersPerSecond);
+    fingerprint.real(settings.relativeMomentumTolerance);
+    fingerprint.real(settings.absoluteEnergyToleranceJoules);
+    fingerprint.real(settings.relativeEnergyTolerance);
+    fingerprint.integer(static_cast<std::uint64_t>(
+        transport.ownedStorageBytes));
+    const auto& diagnostics = transport.diagnostics;
+    fingerprint.integer(static_cast<std::uint64_t>(
+        diagnostics.controlVolumeCount));
+    fingerprint.integer(static_cast<std::uint64_t>(diagnostics.linkCount));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        diagnostics.openingLinkCount));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        diagnostics.substepCount));
+    fingerprint.real(
+        diagnostics.maximumCorrectedContinuityResidualCubicMetersPerSecond);
+    fingerprint.real(
+        diagnostics.maximumFullStepOutgoingCourantNumber);
+    fingerprint.real(
+        diagnostics.maximumAcceptedSubstepOutgoingCourantNumber);
+    fingerprint.real(diagnostics.maximumFullStepViscousNumber);
+    fingerprint.real(diagnostics.maximumAcceptedSubstepViscousNumber);
+    for (const double value : {
+             diagnostics.momentumBeforeKilogramMetersPerSecond.x,
+             diagnostics.momentumBeforeKilogramMetersPerSecond.y,
+             diagnostics.momentumBeforeKilogramMetersPerSecond.z,
+             diagnostics.momentumAfterKilogramMetersPerSecond.x,
+             diagnostics.momentumAfterKilogramMetersPerSecond.y,
+             diagnostics.momentumAfterKilogramMetersPerSecond.z,
+             diagnostics.momentumResidualKilogramMetersPerSecond.x,
+             diagnostics.momentumResidualKilogramMetersPerSecond.y,
+             diagnostics.momentumResidualKilogramMetersPerSecond.z,
+             diagnostics.momentumResidualNormKilogramMetersPerSecond,
+             diagnostics.kineticEnergyBeforeJoules,
+             diagnostics.kineticEnergyAfterAdvectionJoules,
+             diagnostics.kineticEnergyAfterJoules,
+             diagnostics.advectiveEnergyLossJoules,
+             diagnostics.viscousEnergyLossJoules,
+             diagnostics.maximumVelocityChangeMetersPerSecond}) {
+        fingerprint.real(value);
+    }
+    fingerprint.enumeration(diagnostics.failureStage);
+    fingerprint.integer(static_cast<std::uint8_t>(
+        diagnostics.finite ? 1 : 0));
+    fingerprint.integer(static_cast<std::uint8_t>(
+        diagnostics.accepted ? 1 : 0));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        transport.controlVolumes.size()));
+    for (const auto& control : transport.controlVolumes) {
+        fingerprint.integer(static_cast<std::uint64_t>(
+            control.controlVolumeIndex));
+        fingerprint.integer(control.stableId);
+        fingerprint.real(control.volumeCubicMeters);
+        for (const double value : {
+                 control.velocityMetersPerSecond.x,
+                 control.velocityMetersPerSecond.y,
+                 control.velocityMetersPerSecond.z,
+                 control.momentumKilogramMetersPerSecond.x,
+                 control.momentumKilogramMetersPerSecond.y,
+                 control.momentumKilogramMetersPerSecond.z}) {
+            fingerprint.real(value);
+        }
+    }
+    return fingerprint.value();
+}
+
+bool validSettings(const SceneFluidRegionTransportSettings& settings) {
+    return std::isfinite(settings.timeStepSeconds)
+        && settings.timeStepSeconds > 0.0
+        && std::isfinite(
+            settings.kinematicViscositySquareMetersPerSecond)
+        && settings.kinematicViscositySquareMetersPerSecond >= 0.0
+        && std::isfinite(settings.maximumOutgoingCourantNumber)
+        && settings.maximumOutgoingCourantNumber > 0.0
+        && settings.maximumOutgoingCourantNumber <= 1.0
+        && std::isfinite(settings.maximumViscousNumber)
+        && settings.maximumViscousNumber > 0.0
+        && settings.maximumViscousNumber <= 1.0
+        && settings.maximumSubsteps != 0
+        && std::isfinite(
+            settings.absoluteMomentumToleranceKilogramMetersPerSecond)
+        && settings.absoluteMomentumToleranceKilogramMetersPerSecond >= 0.0
+        && std::isfinite(settings.relativeMomentumTolerance)
+        && settings.relativeMomentumTolerance >= 0.0
+        && std::isfinite(settings.absoluteEnergyToleranceJoules)
+        && settings.absoluteEnergyToleranceJoules >= 0.0
+        && std::isfinite(settings.relativeEnergyTolerance)
+        && settings.relativeEnergyTolerance >= 0.0;
+}
+
+std::size_t requiredSubsteps(const double fullStepValue,
+                             const double maximumValue) {
+    if (!(fullStepValue > maximumValue)) {
+        return 1;
+    }
+    const double required = std::ceil(fullStepValue / maximumValue);
+    if (!std::isfinite(required)
+        || required > static_cast<double>(
+            std::numeric_limits<std::size_t>::max())) {
+        return std::numeric_limits<std::size_t>::max();
+    }
+    return static_cast<std::size_t>(required);
+}
+
+void updateVelocities(
+    std::vector<SceneFluidRegionTransportControlVolume>& controls,
+    const double density) {
+    for (auto& control : controls) {
+        const double inverseMass =
+            1.0 / (density * control.volumeCubicMeters);
+        control.velocityMetersPerSecond = scale(
+            control.momentumKilogramMetersPerSecond, inverseMass);
+    }
+}
+
+} // namespace
+
+SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidPressureProjection& correctedProjection,
+    const SceneFluidRegionTransportSettings& settings,
+    const SceneFluidRegionTransportLimits& limits) {
+    validateSceneFluidRegionMomentumStateIntegrity(sourceMomentum);
+    validateSceneFluidPressureProjectionIntegrity(correctedProjection);
+    if (!validSettings(settings)) {
+        throw std::invalid_argument(
+            "scene fluid region transport settings are invalid");
+    }
+    if (faceLinks.version != sceneFluidPressureFaceLinkVersion
+        || faceLinks.fingerprint == 0
+        || sourceMomentum.pressureProjectionFingerprint
+            != correctedProjection.fingerprint
+        || sourceMomentum.pressureFaceLinkFingerprint
+            != faceLinks.fingerprint
+        || correctedProjection.pressureFaceLinkFingerprint
+            != faceLinks.fingerprint
+        || correctedProjection.pressureVolumeRateFingerprint != 0
+        || correctedProjection.diagnostics.usesMovingVolumeRates
+        || !correctedProjection.diagnostics.accepted
+        || sourceMomentum.acceptedStepCount
+            != correctedProjection.acceptedStepCount
+        || sourceMomentum.simulationTimeSeconds
+            != correctedProjection.simulationTimeSeconds
+        || sourceMomentum.densityKgPerCubicMeter
+            != correctedProjection.settings.densityKgPerCubicMeter
+        || sourceMomentum.controlVolumes.size()
+            != correctedProjection.controlVolumes.size()
+        || correctedProjection.links.size() != faceLinks.links.size()) {
+        throw std::invalid_argument(
+            "scene fluid region transport identity is invalid");
+    }
+    const std::size_t storageBytes = storageBytesForControlVolumes(
+        sourceMomentum.controlVolumes.size());
+    const std::size_t workingBytes = workingStorageBytes(
+        sourceMomentum.controlVolumes.size(), faceLinks.links.size());
+    if (sourceMomentum.controlVolumes.size() > limits.maximumControlVolumes
+        || faceLinks.links.size() > limits.maximumLinks
+        || workingBytes > limits.maximumTransportBytes) {
+        throw std::length_error(
+            "scene fluid region transport exceeds its limits");
+    }
+
+    SceneFluidRegionTransport result;
+    result.sourceMomentumFingerprint = sourceMomentum.fingerprint;
+    result.pressureProjectionFingerprint = correctedProjection.fingerprint;
+    result.pressureFaceLinkFingerprint = faceLinks.fingerprint;
+    result.acceptedStepCount = sourceMomentum.acceptedStepCount;
+    result.sourceSimulationTimeSeconds = sourceMomentum.simulationTimeSeconds;
+    result.targetSimulationTimeSeconds = sourceMomentum.simulationTimeSeconds
+        + settings.timeStepSeconds;
+    result.densityKgPerCubicMeter = sourceMomentum.densityKgPerCubicMeter;
+    result.settings = settings;
+    auto& diagnostics = result.diagnostics;
+    diagnostics.controlVolumeCount = sourceMomentum.controlVolumes.size();
+    diagnostics.linkCount = faceLinks.links.size();
+    diagnostics.momentumBeforeKilogramMetersPerSecond =
+        sourceMomentum.diagnostics.totalMomentumKilogramMetersPerSecond;
+    diagnostics.kineticEnergyBeforeJoules =
+        sourceMomentum.diagnostics.kineticEnergyJoules;
+
+    std::vector<double> correctedFlows(faceLinks.links.size(), 0.0);
+    std::vector<double> outwardRates(sourceMomentum.controlVolumes.size(), 0.0);
+    std::vector<double> netOutwardRates(
+        sourceMomentum.controlVolumes.size(), 0.0);
+    std::vector<double> viscousGeometryWeights(
+        sourceMomentum.controlVolumes.size(), 0.0);
+    for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
+        const auto& source = faceLinks.links[index];
+        const auto& projected = correctedProjection.links[index];
+        if (source.linkIndex != index
+            || source.minusControlVolumeIndex >= outwardRates.size()
+            || source.plusControlVolumeIndex >= outwardRates.size()
+            || projected.linkIndex != index
+            || projected.stableId != source.stableId
+            || projected.minusControlVolumeIndex
+                != source.minusControlVolumeIndex
+            || projected.plusControlVolumeIndex
+                != source.plusControlVolumeIndex
+            || projected.kind != source.kind
+            || !(source.areaSquareMeters > 0.0)
+            || !(source.centerDistanceMeters > 0.0)) {
+            throw std::invalid_argument(
+                "scene fluid region transport link binding is invalid");
+        }
+        const double flow = projected
+            .correctedRelativeVolumeFlowRateCubicMetersPerSecond;
+        if (!std::isfinite(flow)) {
+            throw std::overflow_error(
+                "scene fluid region transport flow is non-finite");
+        }
+        correctedFlows[index] = flow;
+        netOutwardRates[source.minusControlVolumeIndex] += flow;
+        netOutwardRates[source.plusControlVolumeIndex] -= flow;
+        outwardRates[source.minusControlVolumeIndex] += std::max(0.0, flow);
+        outwardRates[source.plusControlVolumeIndex] += std::max(0.0, -flow);
+        viscousGeometryWeights[source.minusControlVolumeIndex] +=
+            source.geometryWeightMeters;
+        viscousGeometryWeights[source.plusControlVolumeIndex] +=
+            source.geometryWeightMeters;
+        if (source.kind
+            == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
+            ++diagnostics.openingLinkCount;
+        }
+    }
+    for (std::size_t index = 0; index < outwardRates.size(); ++index) {
+        const double volume =
+            sourceMomentum.controlVolumes[index].volumeCubicMeters;
+        diagnostics.maximumFullStepOutgoingCourantNumber = std::max(
+            diagnostics.maximumFullStepOutgoingCourantNumber,
+            settings.timeStepSeconds * outwardRates[index] / volume);
+        diagnostics.maximumCorrectedContinuityResidualCubicMetersPerSecond =
+            std::max(
+                diagnostics
+                    .maximumCorrectedContinuityResidualCubicMetersPerSecond,
+                std::abs(netOutwardRates[index]));
+        diagnostics.maximumFullStepViscousNumber = std::max(
+            diagnostics.maximumFullStepViscousNumber,
+            settings.timeStepSeconds
+                * settings.kinematicViscositySquareMetersPerSecond
+                * viscousGeometryWeights[index] / volume);
+    }
+    const double continuityTolerance = std::max(
+        correctedProjection.settings
+            .absoluteCorrectedVolumeRateToleranceCubicMetersPerSecond,
+        correctedProjection.settings.relativeCorrectedVolumeRateTolerance
+            * correctedProjection.diagnostics
+                .predictedContinuityResidualMaximumCubicMetersPerSecond);
+    if (diagnostics.maximumCorrectedContinuityResidualCubicMetersPerSecond
+        > continuityTolerance) {
+        diagnostics.failureStage =
+            SceneFluidRegionTransportFailureStage::FlowContinuity;
+    }
+    const std::size_t advectionSubsteps = requiredSubsteps(
+        diagnostics.maximumFullStepOutgoingCourantNumber,
+        settings.maximumOutgoingCourantNumber);
+    const std::size_t viscositySubsteps = requiredSubsteps(
+        diagnostics.maximumFullStepViscousNumber,
+        settings.maximumViscousNumber);
+    diagnostics.substepCount = std::max(advectionSubsteps, viscositySubsteps);
+    if (diagnostics.substepCount > settings.maximumSubsteps) {
+        diagnostics.failureStage =
+            SceneFluidRegionTransportFailureStage::SubstepLimit;
+    }
+    if (diagnostics.failureStage
+        != SceneFluidRegionTransportFailureStage::None) {
+        diagnostics.finite = true;
+        result.fingerprint = transportFingerprint(result);
+        validateSceneFluidRegionTransportIntegrity(result);
+        return result;
+    }
+    diagnostics.maximumAcceptedSubstepOutgoingCourantNumber =
+        diagnostics.maximumFullStepOutgoingCourantNumber
+        / static_cast<double>(diagnostics.substepCount);
+    diagnostics.maximumAcceptedSubstepViscousNumber =
+        diagnostics.maximumFullStepViscousNumber
+        / static_cast<double>(diagnostics.substepCount);
+
+    std::vector<SceneFluidRegionTransportControlVolume> candidate;
+    candidate.reserve(sourceMomentum.controlVolumes.size());
+    for (const auto& source : sourceMomentum.controlVolumes) {
+        candidate.push_back({
+            source.controlVolumeIndex,
+            source.stableId,
+            source.volumeCubicMeters,
+            source.velocityMetersPerSecond,
+            source.momentumKilogramMetersPerSecond,
+        });
+    }
+    const double substepSeconds = settings.timeStepSeconds
+        / static_cast<double>(diagnostics.substepCount);
+    double energyAfterAdvection = diagnostics.kineticEnergyBeforeJoules;
+    double energyAfterViscosity = diagnostics.kineticEnergyBeforeJoules;
+    double advectiveEnergyLoss = 0.0;
+    double viscousEnergyLoss = 0.0;
+    std::vector<fluid::Vector3> impulse(candidate.size());
+    for (std::size_t substep = 0;
+         substep < diagnostics.substepCount; ++substep) {
+        std::ranges::fill(impulse, fluid::Vector3{});
+        for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
+            const auto& link = faceLinks.links[index];
+            const double flow = correctedFlows[index];
+            const auto& donor = flow >= 0.0
+                ? candidate[link.minusControlVolumeIndex]
+                      .velocityMetersPerSecond
+                : candidate[link.plusControlVolumeIndex]
+                      .velocityMetersPerSecond;
+            const auto transported = scale(
+                donor, result.densityKgPerCubicMeter
+                    * flow * substepSeconds);
+            impulse[link.minusControlVolumeIndex] = subtract(
+                impulse[link.minusControlVolumeIndex], transported);
+            impulse[link.plusControlVolumeIndex] = add(
+                impulse[link.plusControlVolumeIndex], transported);
+        }
+        for (std::size_t index = 0; index < candidate.size(); ++index) {
+            candidate[index].momentumKilogramMetersPerSecond = add(
+                candidate[index].momentumKilogramMetersPerSecond,
+                impulse[index]);
+        }
+        updateVelocities(candidate, result.densityKgPerCubicMeter);
+        energyAfterAdvection = kineticEnergy(
+            candidate, result.densityKgPerCubicMeter);
+        const double advectionReference = std::max(
+            diagnostics.kineticEnergyBeforeJoules, energyAfterViscosity);
+        if (!std::isfinite(energyAfterAdvection)
+            || energyAfterAdvection > energyAfterViscosity
+                + tolerance(
+                    settings.absoluteEnergyToleranceJoules,
+                    settings.relativeEnergyTolerance,
+                    advectionReference)) {
+            diagnostics.failureStage =
+                SceneFluidRegionTransportFailureStage::AdvectionEnergy;
+            break;
+        }
+        advectiveEnergyLoss +=
+            energyAfterViscosity - energyAfterAdvection;
+
+        std::ranges::fill(impulse, fluid::Vector3{});
+        for (const auto& link : faceLinks.links) {
+            const auto difference = subtract(
+                candidate[link.plusControlVolumeIndex]
+                    .velocityMetersPerSecond,
+                candidate[link.minusControlVolumeIndex]
+                    .velocityMetersPerSecond);
+            const double coefficient = result.densityKgPerCubicMeter
+                * settings.kinematicViscositySquareMetersPerSecond
+                * link.geometryWeightMeters * substepSeconds;
+            const auto exchanged = scale(difference, coefficient);
+            impulse[link.minusControlVolumeIndex] = add(
+                impulse[link.minusControlVolumeIndex], exchanged);
+            impulse[link.plusControlVolumeIndex] = subtract(
+                impulse[link.plusControlVolumeIndex], exchanged);
+        }
+        for (std::size_t index = 0; index < candidate.size(); ++index) {
+            candidate[index].momentumKilogramMetersPerSecond = add(
+                candidate[index].momentumKilogramMetersPerSecond,
+                impulse[index]);
+        }
+        updateVelocities(candidate, result.densityKgPerCubicMeter);
+        energyAfterViscosity = kineticEnergy(
+            candidate, result.densityKgPerCubicMeter);
+        if (!std::isfinite(energyAfterViscosity)
+            || energyAfterViscosity > energyAfterAdvection
+                + tolerance(
+                    settings.absoluteEnergyToleranceJoules,
+                    settings.relativeEnergyTolerance,
+                    energyAfterAdvection)) {
+            diagnostics.failureStage =
+                SceneFluidRegionTransportFailureStage::ViscosityEnergy;
+            break;
+        }
+        viscousEnergyLoss +=
+            energyAfterAdvection - energyAfterViscosity;
+    }
+    diagnostics.kineticEnergyAfterAdvectionJoules = energyAfterAdvection;
+    diagnostics.kineticEnergyAfterJoules = energyAfterViscosity;
+    diagnostics.advectiveEnergyLossJoules = advectiveEnergyLoss;
+    diagnostics.viscousEnergyLossJoules = viscousEnergyLoss;
+    diagnostics.momentumAfterKilogramMetersPerSecond =
+        totalMomentum(candidate);
+    diagnostics.momentumResidualKilogramMetersPerSecond = subtract(
+        diagnostics.momentumAfterKilogramMetersPerSecond,
+        diagnostics.momentumBeforeKilogramMetersPerSecond);
+    diagnostics.momentumResidualNormKilogramMetersPerSecond = norm(
+        diagnostics.momentumResidualKilogramMetersPerSecond);
+    const double momentumReference = std::max(
+        norm(diagnostics.momentumBeforeKilogramMetersPerSecond),
+        norm(diagnostics.momentumAfterKilogramMetersPerSecond));
+    if (diagnostics.failureStage
+            == SceneFluidRegionTransportFailureStage::None
+        && diagnostics.momentumResidualNormKilogramMetersPerSecond
+            > tolerance(
+                settings.absoluteMomentumToleranceKilogramMetersPerSecond,
+                settings.relativeMomentumTolerance, momentumReference)) {
+        diagnostics.failureStage =
+            SceneFluidRegionTransportFailureStage::Conservation;
+    }
+    for (std::size_t index = 0; index < candidate.size(); ++index) {
+        diagnostics.maximumVelocityChangeMetersPerSecond = std::max(
+            diagnostics.maximumVelocityChangeMetersPerSecond,
+            norm(subtract(
+                candidate[index].velocityMetersPerSecond,
+                sourceMomentum.controlVolumes[index]
+                    .velocityMetersPerSecond)));
+    }
+    diagnostics.finite = finite(
+            diagnostics.momentumBeforeKilogramMetersPerSecond)
+        && finite(diagnostics.momentumAfterKilogramMetersPerSecond)
+        && finite(diagnostics.momentumResidualKilogramMetersPerSecond)
+        && std::isfinite(
+            diagnostics.momentumResidualNormKilogramMetersPerSecond)
+        && std::isfinite(diagnostics.kineticEnergyBeforeJoules)
+        && std::isfinite(diagnostics.kineticEnergyAfterAdvectionJoules)
+        && std::isfinite(diagnostics.kineticEnergyAfterJoules)
+        && std::isfinite(diagnostics.advectiveEnergyLossJoules)
+        && std::isfinite(diagnostics.viscousEnergyLossJoules)
+        && std::isfinite(
+            diagnostics.maximumVelocityChangeMetersPerSecond)
+        && std::ranges::all_of(candidate, [](const auto& control) {
+            return finite(control.velocityMetersPerSecond)
+                && finite(control.momentumKilogramMetersPerSecond);
+        });
+    if (!diagnostics.finite
+        && diagnostics.failureStage
+            == SceneFluidRegionTransportFailureStage::None) {
+        diagnostics.failureStage =
+            SceneFluidRegionTransportFailureStage::NonFinite;
+    }
+    if (diagnostics.failureStage
+            == SceneFluidRegionTransportFailureStage::None
+        && diagnostics.finite) {
+        diagnostics.accepted = true;
+        result.ownedStorageBytes = storageBytes;
+        result.controlVolumes = std::move(candidate);
+    }
+    result.fingerprint = transportFingerprint(result);
+    validateSceneFluidRegionTransportIntegrity(result);
+    return result;
+}
+
+void validateSceneFluidRegionTransportIntegrity(
+    const SceneFluidRegionTransport& transport) {
+    const auto& diagnostics = transport.diagnostics;
+    bool controlsValid = true;
+    for (std::size_t index = 0;
+         index < transport.controlVolumes.size(); ++index) {
+        const auto& control = transport.controlVolumes[index];
+        controlsValid = controlsValid
+            && control.controlVolumeIndex == index
+            && control.stableId != 0
+            && std::isfinite(control.volumeCubicMeters)
+            && control.volumeCubicMeters > 0.0
+            && finite(control.velocityMetersPerSecond)
+            && finite(control.momentumKilogramMetersPerSecond);
+        const auto reconstructedMomentum = scale(
+            control.velocityMetersPerSecond,
+            transport.densityKgPerCubicMeter
+                * control.volumeCubicMeters);
+        controlsValid = controlsValid
+            && norm(subtract(
+                   control.momentumKilogramMetersPerSecond,
+                   reconstructedMomentum))
+                <= tolerance(
+                    transport.settings
+                        .absoluteMomentumToleranceKilogramMetersPerSecond,
+                    transport.settings.relativeMomentumTolerance,
+                    norm(control.momentumKilogramMetersPerSecond));
+    }
+    const bool acceptedShape = diagnostics.accepted
+        && diagnostics.failureStage
+            == SceneFluidRegionTransportFailureStage::None
+        && transport.controlVolumes.size()
+            == diagnostics.controlVolumeCount
+        && transport.ownedStorageBytes
+            == storageBytesForControlVolumes(
+                transport.controlVolumes.size());
+    const bool rejectedShape = !diagnostics.accepted
+        && diagnostics.failureStage
+            != SceneFluidRegionTransportFailureStage::None
+        && transport.controlVolumes.empty()
+        && transport.ownedStorageBytes == 0;
+    if (transport.version != sceneFluidRegionTransportVersion
+        || transport.fingerprint == 0
+        || transport.sourceMomentumFingerprint == 0
+        || transport.pressureProjectionFingerprint == 0
+        || transport.pressureFaceLinkFingerprint == 0
+        || !std::isfinite(transport.sourceSimulationTimeSeconds)
+        || !std::isfinite(transport.targetSimulationTimeSeconds)
+        || transport.targetSimulationTimeSeconds
+            != transport.sourceSimulationTimeSeconds
+                + transport.settings.timeStepSeconds
+        || !std::isfinite(transport.densityKgPerCubicMeter)
+        || !(transport.densityKgPerCubicMeter > 0.0)
+        || !validSettings(transport.settings)
+        || diagnostics.controlVolumeCount == 0
+        || diagnostics.linkCount == 0
+        || diagnostics.openingLinkCount > diagnostics.linkCount
+        || diagnostics.substepCount == 0
+        || !std::isfinite(diagnostics
+            .maximumCorrectedContinuityResidualCubicMetersPerSecond)
+        || !std::isfinite(
+            diagnostics.maximumFullStepOutgoingCourantNumber)
+        || !std::isfinite(
+            diagnostics.maximumAcceptedSubstepOutgoingCourantNumber)
+        || !std::isfinite(diagnostics.maximumFullStepViscousNumber)
+        || !std::isfinite(
+            diagnostics.maximumAcceptedSubstepViscousNumber)
+        || !finite(diagnostics.momentumBeforeKilogramMetersPerSecond)
+        || !finite(diagnostics.momentumAfterKilogramMetersPerSecond)
+        || !finite(diagnostics.momentumResidualKilogramMetersPerSecond)
+        || !std::isfinite(
+            diagnostics.momentumResidualNormKilogramMetersPerSecond)
+        || !std::isfinite(diagnostics.kineticEnergyBeforeJoules)
+        || !std::isfinite(diagnostics.kineticEnergyAfterAdvectionJoules)
+        || !std::isfinite(diagnostics.kineticEnergyAfterJoules)
+        || !std::isfinite(diagnostics.advectiveEnergyLossJoules)
+        || !std::isfinite(diagnostics.viscousEnergyLossJoules)
+        || !std::isfinite(
+            diagnostics.maximumVelocityChangeMetersPerSecond)
+        || !diagnostics.finite
+        || (!acceptedShape && !rejectedShape)
+        || !controlsValid
+        || transport.fingerprint != transportFingerprint(transport)) {
+        throw std::invalid_argument(
+            "scene fluid region transport integrity is invalid");
+    }
+}
+
+void validateSceneFluidRegionTransport(
+    const SceneFluidRegionTransport& transport,
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidPressureProjection& correctedProjection) {
+    validateSceneFluidRegionTransportIntegrity(transport);
+    validateSceneFluidRegionMomentumStateIntegrity(sourceMomentum);
+    validateSceneFluidPressureProjectionIntegrity(correctedProjection);
+    if (transport.sourceMomentumFingerprint != sourceMomentum.fingerprint
+        || transport.pressureProjectionFingerprint
+            != correctedProjection.fingerprint
+        || transport.pressureFaceLinkFingerprint != faceLinks.fingerprint
+        || transport.acceptedStepCount != sourceMomentum.acceptedStepCount
+        || transport.sourceSimulationTimeSeconds
+            != sourceMomentum.simulationTimeSeconds
+        || transport.densityKgPerCubicMeter
+            != sourceMomentum.densityKgPerCubicMeter) {
+        throw std::invalid_argument(
+            "scene fluid region transport binding is invalid");
+    }
+    if (transport.diagnostics.accepted) {
+        for (std::size_t index = 0;
+             index < transport.controlVolumes.size(); ++index) {
+            const auto& control = transport.controlVolumes[index];
+            const auto& source = sourceMomentum.controlVolumes[index];
+            if (control.controlVolumeIndex != source.controlVolumeIndex
+                || control.stableId != source.stableId
+                || control.volumeCubicMeters != source.volumeCubicMeters) {
+                throw std::invalid_argument(
+                    "scene fluid region transport control binding is invalid");
+            }
+        }
+    }
+}
+
+} // namespace simwing::fsi
