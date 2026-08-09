@@ -857,7 +857,18 @@ graph means are `3.9025`, `6.2525`, and `4.5187`, while shadow means rise from
 but not a convergence claim—the graph ownership gate censors six of eight
 fine-grid phases before a paired response can be recorded. The next offline
 step is therefore a graph-independent shadow phase spectrum, not a live solver
-switch or a repair that silently seals unresolved intake patches.
+switch or a repair that silently seals unresolved intake patches. Its generic
+terminal primitive is now in place: it finds permeable cross-region traces in
+the trusted mixed-hybrid topology, represents a face-aligned authored opening
+as a Cartesian trace and an embedded opening as an authored-opening trace,
+excludes material walls, and distributes a balanced fixed transfer uniformly
+by aperture area. The direct condensed solve reports conductance from
+gauge-invariant source work. It gives `0.0700820848335194 m` on the
+face-aligned case, within `3.6e-14 m` of the earlier graph-manufactured shadow
+measurement, and `0.0608388978079532 m` on the embedded two-point fixture.
+This removes the graph operator from source manufacture; applying the
+primitive across every phase/refinement sample is still required before any
+shadow convergence assessment.
 Its checkpoint also stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and

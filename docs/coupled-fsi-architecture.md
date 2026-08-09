@@ -441,6 +441,7 @@ src/fsi/
     scene_pressure_cell_operator_phase_audit.h fixed-grid placement spectrum
     scene_pressure_cell_operator_phase_refinement_audit.* phase/refinement matrix
     scene_pressure_cell_operator_refinement_audit.* skew-intake grid spectrum
+    scene_fluid_mimetic_region_conductance_audit.* graph-free terminal response
     scene_pressure_cell_checkpoint_persistence.* bounded canonical restart
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
@@ -1359,6 +1360,24 @@ audit currently builds the graph before the response comparison, so graph
 failure censors the shadow sample. An independent shadow-only phase spectrum
 is required before assessing convergence; unresolved graph phases remain
 explicit and are never converted into sealed walls.
+
+`src/fsi/scene_fluid_mimetic_region_conductance_audit.*` now provides the
+graph-independent terminal primitive needed for that spectrum. On a trusted
+one-component/two-region mixed-hybrid topology it pairs every permeable
+cross-region trace, rejects material-wall traces, and recognizes both
+face-aligned Cartesian and embedded authored-opening representations of the
+same authored aperture. It allocates a fixed balanced Neumann transfer at
+uniform source per aperture area, solves the condensed system from a zero warm
+start, removes the component pressure gauge, and defines conductance as
+squared achieved transfer divided by source work. Every opening, source,
+gauge-aligned pressure, topology fingerprint, solve diagnostic, and aggregate
+is retained in one bounded immutable product. The face-aligned pressure-cell
+result is `0.0700820848335194 m`, only `3.6e-14 m` from the earlier shadow
+response driven by the graph-manufactured source; the embedded two-point
+fixture gives `0.0608388978079532 m`. These are deterministic compatibility
+oracles for the diagnostic, not Dirichlet data, a continuum truth claim, or a
+new live pressure/load owner. The next product must apply this primitive to
+all eight phases at every refinement without first requiring graph assembly.
 
 The experiment is exposed as `simwing-fsi --case pressure-cell
 --mimetic-pressure-audit` and reports control/trace counts plus iteration and

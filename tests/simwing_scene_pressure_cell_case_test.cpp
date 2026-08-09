@@ -3,6 +3,7 @@
 #include "scene_pressure_cell_operator_phase_audit.h"
 #include "scene_pressure_cell_operator_phase_refinement_audit.h"
 #include "scene_pressure_cell_operator_refinement_audit.h"
+#include "scene_fluid_mimetic_region_conductance_audit.h"
 #include "scene_fluid_pressure_operator_response_audit.h"
 #include "viewer_protocol.h"
 
@@ -814,6 +815,88 @@ void testManufacturedPressureOperatorResponses() {
                   < 1.0e-12
               && regionContrast.pressureCosineSimilarity > 0.9998,
           "authored-region contrast measures the intake-only graph and shadow two-terminal conductances");
+    fsi::SceneFluidMimeticRegionConductanceAuditSettings
+        terminalSettings;
+    terminalSettings.solve = settings.shadowSolve;
+    const auto terminal =
+        fsi::auditSceneFluidMimeticRegionConductance(
+            endpoint->controlCells, endpoint->fullTraceSystem,
+            endpoint->condensedTraceSystem, terminalSettings);
+    const auto repeatedTerminal =
+        fsi::auditSceneFluidMimeticRegionConductance(
+            endpoint->controlCells, endpoint->fullTraceSystem,
+            endpoint->condensedTraceSystem, terminalSettings);
+    fsi::validateSceneFluidMimeticRegionConductanceAuditIntegrity(
+        terminal);
+    check(terminal == repeatedTerminal
+              && terminal.componentCount == 1
+              && terminal.lowerTerminalRegionId == 1
+              && terminal.upperTerminalRegionId == 2
+              && terminal.openings.size() == 1
+              && terminal.openings.front().traceKind
+                  == fsi::SceneFluidMimeticHalfFaceKind::CartesianTrace
+              && std::abs(terminal.openingAreaSquareMeters - 0.18)
+                  < 1.0e-14
+              && terminal.openings.front()
+                     .integratedTransferPascalsMeters == 1.0
+              && terminal.lowerTerminalIntegratedSourcePascalsMeters
+                  == 1.0
+              && terminal.upperTerminalIntegratedSourcePascalsMeters
+                  == -1.0
+              && terminal.componentIntegratedSourcePascalsMeters == 0.0
+              && std::abs(
+                     terminal.sourcePressureWorkPascalsSquaredMeters
+                     - 14.2689818999465)
+                  < 1.0e-12
+              && std::abs(
+                     terminal.conductanceMeters
+                     - 0.0700820848335194)
+                  < 1.0e-14
+              && std::abs(
+                     terminal.conductanceMeters
+                     - regionContrast.shadowTwoTerminalConductanceMeters)
+                  < 1.0e-12,
+          "graph-independent terminal audit closes against the face-aligned shadow conductance");
+    auto corruptTerminal = terminal;
+    corruptTerminal.responses.front().gaugeAlignedPressurePascals += 0.01;
+    bool terminalRejected = false;
+    try {
+        fsi::validateSceneFluidMimeticRegionConductanceAuditIntegrity(
+            corruptTerminal);
+    } catch (const std::exception&) {
+        terminalRejected = true;
+    }
+    check(terminalRejected,
+          "terminal conductance audit rejects response corruption");
+    fsi::SceneFluidMimeticRegionConductanceAuditLimits terminalLimits;
+    terminalLimits.maximumControlCells =
+        endpoint->controlCells.controlCells.size() - 1;
+    terminalRejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditSceneFluidMimeticRegionConductance(
+                endpoint->controlCells, endpoint->fullTraceSystem,
+                endpoint->condensedTraceSystem, terminalSettings,
+                terminalLimits));
+    } catch (const std::length_error&) {
+        terminalRejected = true;
+    }
+    check(terminalRejected,
+          "terminal conductance audit enforces its control-cell limit before solving");
+    terminalLimits = {};
+    terminalLimits.maximumOwnedBytes = 0;
+    terminalRejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditSceneFluidMimeticRegionConductance(
+                endpoint->controlCells, endpoint->fullTraceSystem,
+                endpoint->condensedTraceSystem, terminalSettings,
+                terminalLimits));
+    } catch (const std::length_error&) {
+        terminalRejected = true;
+    }
+    check(terminalRejected,
+          "terminal conductance audit enforces its aggregate byte limit before solving");
     const auto manufacturedOnly =
         fsi::auditSceneFluidPressureOperatorResponses(
             simulation.acceptedPressureEpoch().pressureOperator,

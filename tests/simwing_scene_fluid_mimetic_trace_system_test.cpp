@@ -1,6 +1,7 @@
 #include "scene_fluid_mimetic_trace_system.h"
 #include "scene_fluid_mimetic_condensed_trace_system.h"
 #include "scene_fluid_mimetic_pressure_solve.h"
+#include "scene_fluid_mimetic_region_conductance_audit.h"
 #include "scene_fluid_mimetic_pressure_state.h"
 #include "scene_fluid_mimetic_pressure_state_persistence.h"
 #include "scene_fluid_mimetic_trace_flow.h"
@@ -422,6 +423,36 @@ void testRejectedTwoPointOpeningStillBuildsHybridTrace() {
               && opening->incidenceCount == 2
               && opening->operatorDiagonal > 0.0,
           "hybrid aperture trace has two owners and positive local scaling");
+    const auto condensed =
+        buildSceneFluidMimeticCondensedTraceSystem(system);
+    SceneFluidMimeticRegionConductanceAuditSettings auditSettings;
+    auditSettings.solve = strictSolveSettings();
+    const auto audit = auditSceneFluidMimeticRegionConductance(
+        shells, system, condensed, auditSettings);
+    const auto repeated = auditSceneFluidMimeticRegionConductance(
+        shells, system, condensed, auditSettings);
+    validateSceneFluidMimeticRegionConductanceAuditIntegrity(audit);
+    check(audit == repeated
+              && audit.responses.size() == 66
+              && audit.openings.size() == 1
+              && audit.openings.front().traceKind
+                  == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace
+              && std::abs(
+                     audit.openingAreaSquareMeters
+                     - 0.189736659610103)
+                  < 1.0e-14
+              && audit.lowerTerminalIntegratedSourcePascalsMeters == 1.0
+              && audit.upperTerminalIntegratedSourcePascalsMeters == -1.0
+              && audit.componentIntegratedSourcePascalsMeters == 0.0
+              && std::abs(
+                     audit.sourcePressureWorkPascalsSquaredMeters
+                     - 16.4368526720626)
+                  < 1.0e-12
+              && std::abs(
+                     audit.conductanceMeters
+                     - 0.0608388978079532)
+                  < 1.0e-14,
+          "graph-independent terminal audit accepts the embedded authored-opening trace");
 }
 
 void testGaugeFixedJacobiPcgRecovery() {
