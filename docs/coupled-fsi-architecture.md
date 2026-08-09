@@ -1051,11 +1051,13 @@ The wall principal block is positive definite whenever at least one active
 trace remains. Its inverse therefore uses one equilibrated `7 x 7` Woodbury
 core and linear wall-face work; no dense wall matrix is stored. The kernel
 publishes the exact active Schur action and diagonal, condenses a full local
-right-hand side, and reconstructs the eliminated wall traces. Independent
-dense tetrahedral oracles verify all four operations, the active constant null
-mode, the no-wall identity path, bounds, and fingerprinted corruption
-rejection. An all-wall cell rejects because its constant mode requires a global
-gauge rather than an invertible wall block.
+right-hand side, and reconstructs the eliminated wall traces. With
+`Q = U_w^T H_ww^-1 U_w`, repeated action is fused directly as
+`D_a + U_a (K - K Q K) U_a^T`; it no longer evaluates two full local balances
+and a wall solve. Independent dense tetrahedral oracles verify all four
+operations, the active constant null mode, the no-wall identity path, bounds,
+and fingerprinted corruption rejection. An all-wall cell rejects because its
+constant mode requires a global gauge rather than an invertible wall block.
 
 `src/fsi/scene_fluid_mimetic_condensed_trace_system.*` composes those local
 Schur products into one immutable global field containing only shared
@@ -1095,7 +1097,10 @@ Incompatible sources, non-finite arithmetic, or iteration exhaustion leave the
 caller's warm start bit-for-bit unchanged. Manufactured reduced fields recover
 their gauge-normalized solution; exact wall reconstruction then closes every
 row of the original full operator. Compatible cell sources likewise close
-local conservation plus all shared and material-wall trace equations.
+local conservation plus all shared and material-wall trace equations. The
+public action validates its immutable product on every independent call; the
+solver validates once and then uses a private assuming-validated action during
+PCG, so integrity scans are not multiplied by the iteration count.
 
 The first immutable scene adapter now assembles each sparse cell/region's
 unwrapped half-face shell from exact Cartesian region subfaces, cell- and
@@ -1132,11 +1137,13 @@ adapter eliminates 148,652 wall traces into a separate 42,927-row shared
 system. It retains 3,986,602 bytes of linear condensation storage, positive
 assembled reduced diagonals, a roundoff-null component-constant action, and
 full-system wall reconstruction. The same transactional Jacobi-PCG core now
-runs on that reduced real system as well, reduces a manufactured residual, and
-rolls back exactly after the deliberately truncated iteration. Further local
-or multilevel preconditioning, physical right-hand-side assembly, and
-production integration remain open. The current graph operator and all worker
-arithmetic are unchanged.
+runs on that reduced real system as well. It rolls back exactly after a
+deliberately truncated iteration, and a separate manufactured solve reaches
+`1e-5` relative RMS within 300 iterations before reconstructing the complete
+191,579-row operator below `2e-4` maximum residual. Further local or multilevel
+preconditioning, physical right-hand-side assembly, and production integration
+remain open. The current graph operator and all worker arithmetic are
+unchanged.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy

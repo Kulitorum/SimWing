@@ -1,4 +1,5 @@
 #include "mimetic_wall_condensation.h"
+#include "mimetic_wall_condensation_detail.h"
 
 #include <algorithm>
 #include <bit>
@@ -502,34 +503,80 @@ void validateMimeticWallCondensation(
     }
 }
 
+std::vector<double>
+detail::applyMimeticWallCondensedTraceOperatorAssumingValidated(
+    const MimeticWallCondensation& condensation,
+    const MimeticLocalCellOperator& localOperator,
+    const std::span<const double> activeTraceValues) {
+    // H = D + U K U^T before wall elimination. The retained Schur metric is
+    // Q = U_w^T H_ww^-1 U_w, so the active operator is exactly
+    // D_a + U_a (K - K Q K) U_a^T. Apply that seven-mode representation
+    // directly instead of evaluating two full local balances and a wall solve.
+    std::array<CompensatedSum, 7> transposeProduct;
+    for (std::size_t face = 0;
+         face < condensation.halfFaceCount; ++face) {
+        if (condensation.wallMask[face] != 0) continue;
+        const auto row = lowRankRow(localOperator, condensation, face);
+        for (std::size_t mode = 0; mode < 7; ++mode) {
+            transposeProduct[mode].add(
+                row[mode] * activeTraceValues[face]);
+        }
+    }
+    std::array<double, 7> transposeValues{};
+    for (std::size_t mode = 0; mode < 7; ++mode) {
+        transposeValues[mode] = transposeProduct[mode].value();
+    }
+    auto coefficient = multiplySignedCore(
+        localOperator, condensation, transposeValues);
+    if (condensation.wallHalfFaceCount != 0) {
+        std::array<double, 7> wallMetricCoefficient{};
+        for (std::size_t row = 0; row < 7; ++row) {
+            CompensatedSum value;
+            for (std::size_t column = 0; column < 7; ++column) {
+                value.add(condensation.wallSchurMetric[
+                              row * 7 + column]
+                          * coefficient[column]);
+            }
+            wallMetricCoefficient[row] = value.value();
+        }
+        const auto correction = multiplySignedCore(
+            localOperator, condensation, wallMetricCoefficient);
+        for (std::size_t mode = 0; mode < 7; ++mode) {
+            coefficient[mode] -= correction[mode];
+        }
+    }
+
+    std::vector<double> result(condensation.halfFaceCount, 0.0);
+    for (std::size_t face = 0;
+         face < condensation.halfFaceCount; ++face) {
+        if (condensation.wallMask[face] != 0) continue;
+        const auto row = lowRankRow(localOperator, condensation, face);
+        CompensatedSum lowRankAction;
+        for (std::size_t mode = 0; mode < 7; ++mode) {
+            lowRankAction.add(row[mode] * coefficient[mode]);
+        }
+        const double area = localOperator.faceAreasSquareMeters[face];
+        result[face] =
+            localOperator.stabilizationScaleInverseCubicMeters
+                * area * area * activeTraceValues[face]
+            + lowRankAction.value();
+        if (!std::isfinite(result[face])) {
+            throw std::overflow_error(
+                "mimetic wall-condensed action overflowed");
+        }
+    }
+    return result;
+}
+
 std::vector<double> applyMimeticWallCondensedTraceOperator(
     const MimeticWallCondensation& condensation,
     const MimeticLocalCellOperator& localOperator,
     const std::span<const double> activeTraceValues) {
     validateMimeticWallCondensation(condensation, localOperator);
     validateField(condensation, activeTraceValues, true);
-    auto first = applyFullLocalTraceOperator(
-        localOperator, activeTraceValues);
-    if (condensation.wallHalfFaceCount == 0) return first;
-    const auto wallSolution = solveWallBlock(
-        condensation, localOperator, first);
-    std::vector<double> correction(condensation.halfFaceCount, 0.0);
-    for (std::size_t face = 0; face < correction.size(); ++face) {
-        if (condensation.wallMask[face] != 0) {
-            correction[face] = -wallSolution[face];
-        }
-    }
-    const auto second = applyFullLocalTraceOperator(
-        localOperator, correction);
-    for (std::size_t face = 0; face < first.size(); ++face) {
-        first[face] = condensation.wallMask[face] == 0
-            ? first[face] + second[face] : 0.0;
-        if (!std::isfinite(first[face])) {
-            throw std::overflow_error(
-                "mimetic wall-condensed action overflowed");
-        }
-    }
-    return first;
+    return detail::
+        applyMimeticWallCondensedTraceOperatorAssumingValidated(
+            condensation, localOperator, activeTraceValues);
 }
 
 std::vector<double> condenseMimeticWallTraceRightHandSide(

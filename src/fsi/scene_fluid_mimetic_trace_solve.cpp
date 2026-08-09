@@ -1,4 +1,5 @@
 #include "scene_fluid_mimetic_trace_solve.h"
+#include "scene_fluid_mimetic_condensed_trace_system_detail.h"
 
 #include <algorithm>
 #include <cmath>
@@ -381,7 +382,8 @@ solveSceneFluidMimeticCondensedTraceSystem(
     validateSceneFluidMimeticCondensedTraceSystem(
         condensedSystem, fullSystem);
     const auto applyOperator = [&](const std::span<const double> values) {
-        return applySceneFluidMimeticCondensedTraceOperator(
+        return detail::
+            applySceneFluidMimeticCondensedTraceOperatorAssumingValidated(
             condensedSystem, fullSystem, values);
     };
     return solveTraceSystem(

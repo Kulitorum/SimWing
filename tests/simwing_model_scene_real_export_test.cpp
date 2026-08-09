@@ -600,6 +600,58 @@ void testRealDesignCapture(const std::filesystem::path &input,
             condensedTraceSystem, mimeticTraceSystem,
             manufacturedReducedTraceRightHandSide,
             truncatedReducedTraceWarmStart, reducedTraceSolveSettings);
+    auto manufacturedCondensedFullTraceValues =
+        manufacturedTraceValues;
+    std::vector<double> condensedFullGaugeValues(
+        condensedTraceSystem.componentCount, 0.0);
+    for (std::size_t component = 0;
+         component < condensedTraceSystem.componentCount; ++component) {
+        const auto& reducedGauge = condensedTraceSystem.traces[
+            condensedTraceSystem.componentGaugeTraceIndices[component]];
+        condensedFullGaugeValues[component] =
+            manufacturedCondensedFullTraceValues[
+                reducedGauge.fullTraceIndex];
+    }
+    for (const auto& trace : mimeticTraceSystem.traces) {
+        manufacturedCondensedFullTraceValues[trace.traceIndex] -=
+            condensedFullGaugeValues[trace.componentIndex];
+    }
+    const auto manufacturedCondensedFullRightHandSide =
+        simwing::fsi::applySceneFluidMimeticTraceOperator(
+            mimeticTraceSystem,
+            manufacturedCondensedFullTraceValues);
+    const auto manufacturedCondensedRightHandSide =
+        simwing::fsi::condenseSceneFluidMimeticTraceRightHandSide(
+            condensedTraceSystem, mimeticTraceSystem,
+            manufacturedCondensedFullRightHandSide);
+    std::vector<double> convergedReducedTraceValues(
+        condensedTraceSystem.traces.size(), 0.0);
+    auto convergedReducedTraceSolveSettings = reducedTraceSolveSettings;
+    convergedReducedTraceSolveSettings.relativeResidualTolerance = 1.0e-5;
+    convergedReducedTraceSolveSettings.maximumIterations = 300;
+    const auto convergedReducedTraceSolveDiagnostics =
+        simwing::fsi::solveSceneFluidMimeticCondensedTraceSystem(
+            condensedTraceSystem, mimeticTraceSystem,
+            manufacturedCondensedRightHandSide,
+            convergedReducedTraceValues,
+            convergedReducedTraceSolveSettings);
+    const auto reconstructedConvergedFullTraceValues =
+        simwing::fsi::reconstructSceneFluidMimeticFullTraces(
+            condensedTraceSystem, mimeticTraceSystem,
+            manufacturedCondensedFullRightHandSide,
+            convergedReducedTraceValues);
+    const auto reconstructedConvergedFullAction =
+        simwing::fsi::applySceneFluidMimeticTraceOperator(
+            mimeticTraceSystem,
+            reconstructedConvergedFullTraceValues);
+    double maximumReconstructedFullResidual = 0.0;
+    for (std::size_t trace = 0;
+         trace < reconstructedConvergedFullAction.size(); ++trace) {
+        maximumReconstructedFullResidual = std::max(
+            maximumReconstructedFullResidual,
+            std::abs(reconstructedConvergedFullAction[trace]
+                     - manufacturedCondensedFullRightHandSide[trace]));
+    }
     const bool mimeticAuditMatches =
         mimeticControlCells.readyControlCellCount
             == mimeticControlCells.controlCells.size()
@@ -649,11 +701,22 @@ void testRealDesignCapture(const std::filesystem::path &input,
         && reducedTraceSolveDiagnostics.finalResidualL2PascalsMeters
             < reducedTraceSolveDiagnostics.initialResidualL2PascalsMeters
         && truncatedReducedTraceWarmStart
-            == originalTruncatedReducedTraceWarmStart;
+            == originalTruncatedReducedTraceWarmStart
+        && convergedReducedTraceSolveDiagnostics.compatible
+        && convergedReducedTraceSolveDiagnostics.converged
+        && convergedReducedTraceSolveDiagnostics.finite
+        && convergedReducedTraceSolveDiagnostics.iterationCount > 1
+        && convergedReducedTraceSolveDiagnostics.iterationCount <= 300
+        && convergedReducedTraceSolveDiagnostics
+                .finalResidualL2PascalsMeters
+            <= 1.0e-5
+                * convergedReducedTraceSolveDiagnostics
+                    .initialResidualL2PascalsMeters
+        && maximumReconstructedFullResidual < 2.0e-4;
     if (!mimeticAuditMatches) {
         std::fprintf(
             stderr,
-            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu classified=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu traces=%zu shared=%zu walls=%zu compact-bytes=%zu wall-condensation-bytes=%zu condensed-traces=%zu condensed-locals=%zu max-null=%.17g max-condensed-null=%.17g solve-compatible=%d solve-converged=%d solve-finite=%d solve-iterations=%zu solve-compatibility=%.17g solve-initial=%.17g solve-final=%.17g solve-final-max=%.17g reduced-solve-compatible=%d reduced-solve-converged=%d reduced-solve-finite=%d reduced-solve-iterations=%zu reduced-solve-compatibility=%.17g reduced-solve-initial=%.17g reduced-solve-final=%.17g reduced-solve-final-max=%.17g max-area=%.17g max-moment=%.17g\n",
+            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu classified=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu traces=%zu shared=%zu walls=%zu compact-bytes=%zu wall-condensation-bytes=%zu condensed-traces=%zu condensed-locals=%zu max-null=%.17g max-condensed-null=%.17g solve-compatible=%d solve-converged=%d solve-finite=%d solve-iterations=%zu solve-compatibility=%.17g solve-initial=%.17g solve-final=%.17g solve-final-max=%.17g reduced-solve-compatible=%d reduced-solve-converged=%d reduced-solve-finite=%d reduced-solve-iterations=%zu reduced-solve-compatibility=%.17g reduced-solve-initial=%.17g reduced-solve-final=%.17g reduced-solve-final-max=%.17g converged-reduced-compatible=%d converged-reduced-converged=%d converged-reduced-finite=%d converged-reduced-iterations=%zu converged-reduced-compatibility=%.17g converged-reduced-initial=%.17g converged-reduced-final=%.17g converged-reduced-final-max=%.17g reconstructed-full-max=%.17g max-area=%.17g max-moment=%.17g\n",
             mimeticControlCells.readyControlCellCount,
             mimeticControlCells.controlCells.size(),
             mimeticControlCells.incompleteTopologyControlCellCount,
@@ -698,6 +761,19 @@ void testRealDesignCapture(const std::filesystem::path &input,
                 .finalResidualL2PascalsMeters,
             reducedTraceSolveDiagnostics
                 .finalResidualMaximumPascalsMeters,
+            convergedReducedTraceSolveDiagnostics.compatible ? 1 : 0,
+            convergedReducedTraceSolveDiagnostics.converged ? 1 : 0,
+            convergedReducedTraceSolveDiagnostics.finite ? 1 : 0,
+            convergedReducedTraceSolveDiagnostics.iterationCount,
+            convergedReducedTraceSolveDiagnostics
+                .maximumAbsoluteComponentCompatibilityPascalsMeters,
+            convergedReducedTraceSolveDiagnostics
+                .initialResidualL2PascalsMeters,
+            convergedReducedTraceSolveDiagnostics
+                .finalResidualL2PascalsMeters,
+            convergedReducedTraceSolveDiagnostics
+                .finalResidualMaximumPascalsMeters,
+            maximumReconstructedFullResidual,
             mimeticControlCells.maximumAreaClosureErrorSquareMeters,
             mimeticControlCells.maximumDivergenceTheoremErrorCubicMeters);
         for (const auto& cell : mimeticControlCells.controlCells) {

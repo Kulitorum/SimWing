@@ -631,6 +631,15 @@ void testGlobalWallCondensationLimitsAndCorruption() {
         [&] { validateSceneFluidMimeticCondensedTraceSystem(
             corrupt, full); },
         "global wall condensation rejects fingerprinted diagonal corruption");
+    expectInvalid(
+        [&] {
+            std::vector<double> traces(corrupt.traces.size(), 0.0);
+            static_cast<void>(solveSceneFluidMimeticCondensedTraceSystem(
+                corrupt, full,
+                std::vector<double>(corrupt.traces.size(), 0.0),
+                traces, strictSolveSettings()));
+        },
+        "condensed PCG validates its immutable product before trusted iteration");
 
     SceneFluidMimeticCondensedTraceSystemLimits limits;
     limits.maximumReducedTraces = accepted.traces.size() - 1;

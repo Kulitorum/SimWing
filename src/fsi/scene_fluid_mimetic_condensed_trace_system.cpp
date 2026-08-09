@@ -1,4 +1,7 @@
 #include "scene_fluid_mimetic_condensed_trace_system.h"
+#include "scene_fluid_mimetic_condensed_trace_system_detail.h"
+
+#include "fluid/mimetic_wall_condensation_detail.h"
 
 #include <algorithm>
 #include <bit>
@@ -396,16 +399,11 @@ void validateSceneFluidMimeticCondensedTraceSystem(
     }
 }
 
-std::vector<double> applySceneFluidMimeticCondensedTraceOperator(
+std::vector<double>
+detail::applySceneFluidMimeticCondensedTraceOperatorAssumingValidated(
     const SceneFluidMimeticCondensedTraceSystem& condensedSystem,
     const SceneFluidMimeticTraceSystem& fullSystem,
     const std::span<const double> reducedTraceScalars) {
-    validatePayload(condensedSystem, fullSystem);
-    if (reducedTraceScalars.size() != condensedSystem.traces.size()
-        || !finiteField(reducedTraceScalars)) {
-        throw std::invalid_argument(
-            "scene fluid condensed trace field is invalid");
-    }
     std::vector<double> result(condensedSystem.traces.size(), 0.0);
     std::size_t firstHalfFace = 0;
     for (std::size_t cell = 0;
@@ -423,7 +421,8 @@ std::vector<double> applySceneFluidMimeticCondensedTraceOperator(
             }
         }
         const auto localAction =
-            fluid::applyMimeticWallCondensedTraceOperator(
+            fluid::detail::
+                applyMimeticWallCondensedTraceOperatorAssumingValidated(
                 condensedSystem.localCondensations[cell],
                 localOperator, localTraces);
         for (std::size_t face = 0;
@@ -443,6 +442,21 @@ std::vector<double> applySceneFluidMimeticCondensedTraceOperator(
             "scene fluid condensed trace action overflowed");
     }
     return result;
+}
+
+std::vector<double> applySceneFluidMimeticCondensedTraceOperator(
+    const SceneFluidMimeticCondensedTraceSystem& condensedSystem,
+    const SceneFluidMimeticTraceSystem& fullSystem,
+    const std::span<const double> reducedTraceScalars) {
+    validatePayload(condensedSystem, fullSystem);
+    if (reducedTraceScalars.size() != condensedSystem.traces.size()
+        || !finiteField(reducedTraceScalars)) {
+        throw std::invalid_argument(
+            "scene fluid condensed trace field is invalid");
+    }
+    return detail::
+        applySceneFluidMimeticCondensedTraceOperatorAssumingValidated(
+            condensedSystem, fullSystem, reducedTraceScalars);
 }
 
 std::vector<double> condenseSceneFluidMimeticTraceRightHandSide(
