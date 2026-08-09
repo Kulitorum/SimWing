@@ -191,6 +191,27 @@ fluid::Vector3 axisNormal(const fluid::GridFaceAxis axis) {
     throw std::invalid_argument("scene fluid pressure face has invalid axis");
 }
 
+fluid::Vector3 cartesianFaceCentroid(
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::GridFaceAxis axis,
+    const std::size_t i,
+    const std::size_t j,
+    const std::size_t k) {
+    const auto lower = grid.lowerMeters();
+    const auto spacing = grid.cellSpacingMeters();
+    return {
+        axis == fluid::GridFaceAxis::X
+            ? lower.x + static_cast<double>(i) * spacing.x
+            : lower.x + (static_cast<double>(i) + 0.5) * spacing.x,
+        axis == fluid::GridFaceAxis::Y
+            ? lower.y + static_cast<double>(j) * spacing.y
+            : lower.y + (static_cast<double>(j) + 0.5) * spacing.y,
+        axis == fluid::GridFaceAxis::Z
+            ? lower.z + static_cast<double>(k) * spacing.z
+            : lower.z + (static_cast<double>(k) + 0.5) * spacing.z,
+    };
+}
+
 double projectedDistance(const Vec3& minus,
                          const Vec3& plus,
                          const Vec3& unitNormalMinusToPlus) {
@@ -367,6 +388,9 @@ std::uint64_t faceLinkFingerprint(
         fingerprint.integer(link.openingId);
         fingerprint.integer(link.openingPatchStableId);
         fingerprint.real(link.areaSquareMeters);
+        fingerprint.real(link.faceCentroidMeters.x);
+        fingerprint.real(link.faceCentroidMeters.y);
+        fingerprint.real(link.faceCentroidMeters.z);
         fingerprint.real(link.centerDistanceMeters);
         fingerprint.real(link.geometryWeightMeters);
         fingerprint.real(link.unitNormalMinusToPlus.x);
@@ -604,12 +628,16 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
 
     const auto appendLink = [&](SceneFluidPressureFace& face,
                                 const SceneFluidPressureFaceLinkKind kind,
-                                const StableId minusRegionId,
-                                const StableId plusRegionId,
-                                const double areaSquareMeters,
-                                const StableId openingId,
+                                 const StableId minusRegionId,
+                                 const StableId plusRegionId,
+                                 const double areaSquareMeters,
+                                 const auto& faceCentroidMeters,
+                                 const StableId openingId,
                                 const std::uint64_t openingPatchStableId) {
-        if (!(areaSquareMeters > 0.0) || !std::isfinite(areaSquareMeters)) {
+        if (!(areaSquareMeters > 0.0) || !std::isfinite(areaSquareMeters)
+            || !std::isfinite(faceCentroidMeters.x)
+            || !std::isfinite(faceCentroidMeters.y)
+            || !std::isfinite(faceCentroidMeters.z)) {
             throw std::invalid_argument(
                 "scene fluid pressure face link has invalid area");
         }
@@ -663,6 +691,11 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
         link.openingId = openingId;
         link.openingPatchStableId = openingPatchStableId;
         link.areaSquareMeters = areaSquareMeters;
+        link.faceCentroidMeters = {
+            faceCentroidMeters.x,
+            faceCentroidMeters.y,
+            faceCentroidMeters.z,
+        };
         link.centerDistanceMeters = centerDistance(spacing, face.axis);
         link.geometryWeightMeters =
             link.areaSquareMeters / link.centerDistanceMeters;
@@ -711,12 +744,22 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                         bool supported = activeIndex
                             == std::numeric_limits<std::size_t>::max();
                         double openingAreaSquareMeters = 0.0;
+                        Vec3 openingFirstMomentMeters3;
                         StableId openingId = invalidStableId;
                         for (std::size_t openingOffset = openingFirst;
                              openingOffset < openingEnd; ++openingOffset) {
                             const auto& patch = openingPatches.patches[
                                 openingPatchIndices[openingOffset]];
                             openingAreaSquareMeters += patch.areaSquareMeters;
+                            openingFirstMomentMeters3.x +=
+                                patch.areaSquareMeters
+                                * patch.centroidMeters.x;
+                            openingFirstMomentMeters3.y +=
+                                patch.areaSquareMeters
+                                * patch.centroidMeters.y;
+                            openingFirstMomentMeters3.z +=
+                                patch.areaSquareMeters
+                                * patch.centroidMeters.z;
                             if (openingId == invalidStableId) {
                                 openingId = patch.openingId;
                             } else if (openingId != patch.openingId) {
@@ -772,15 +815,34 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                                         AuthoredOpening,
                                     minusRegionId, plusRegionId,
                                     patch.areaSquareMeters,
+                                    patch.centroidMeters,
                                     patch.openingId, patch.stableId);
                             }
                             if (residualAreaSquareMeters
                                 > settings.areaToleranceSquareMeters) {
+                                const auto fullCentroid =
+                                    cartesianFaceCentroid(
+                                        grid, axis, i, j, k);
+                                const Vec3 residualCentroid{
+                                    (face.faceAreaSquareMeters
+                                            * fullCentroid.x
+                                        - openingFirstMomentMeters3.x)
+                                        / residualAreaSquareMeters,
+                                    (face.faceAreaSquareMeters
+                                            * fullCentroid.y
+                                        - openingFirstMomentMeters3.y)
+                                        / residualAreaSquareMeters,
+                                    (face.faceAreaSquareMeters
+                                            * fullCentroid.z
+                                        - openingFirstMomentMeters3.z)
+                                        / residualAreaSquareMeters,
+                                };
                                 appendLink(
                                     face,
                                     SceneFluidPressureFaceLinkKind::SameRegion,
                                     common.front(), common.front(),
                                     residualAreaSquareMeters,
+                                    residualCentroid,
                                     invalidStableId, 0);
                             }
                             ++result.resolvedOpeningFaceCount;
@@ -813,6 +875,7 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                                     SceneFluidPressureFaceLinkKind::SameRegion,
                                     regionArea.regionId, regionArea.regionId,
                                     regionArea.areaSquareMeters,
+                                    regionArea.centroidMeters,
                                     invalidStableId, 0);
                             }
                             ++result.resolvedPartitionFaceCount;
@@ -830,6 +893,8 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                                 SceneFluidPressureFaceLinkKind::SameRegion,
                                 common.front(), common.front(),
                                 face.faceAreaSquareMeters,
+                                cartesianFaceCentroid(
+                                    grid, axis, i, j, k),
                                 invalidStableId, 0);
                             ++result.resolvedFullFaceCount;
                         } else {
@@ -861,6 +926,7 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
                                     SceneFluidPressureFaceLinkKind::SameRegion,
                                     regionArea.regionId, regionArea.regionId,
                                     regionArea.areaSquareMeters,
+                                    regionArea.centroidMeters,
                                     invalidStableId, 0);
                             }
                             ++result.resolvedPartitionFaceCount;
@@ -1222,6 +1288,11 @@ SceneFluidPressureFaceLinkSet buildFaceLinks(
         link.openingId = patch.openingId;
         link.openingPatchStableId = patch.stableId;
         link.areaSquareMeters = patch.areaSquareMeters;
+        link.faceCentroidMeters = {
+            patch.centroidMeters.x,
+            patch.centroidMeters.y,
+            patch.centroidMeters.z,
+        };
         link.centerDistanceMeters = distance;
         link.geometryWeightMeters = patch.areaSquareMeters / distance;
         link.unitNormalMinusToPlus = {

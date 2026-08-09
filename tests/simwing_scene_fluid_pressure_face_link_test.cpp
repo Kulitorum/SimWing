@@ -257,6 +257,50 @@ struct Fixture {
     }
 };
 
+void checkCartesianFaceLinkMoments(
+    const SceneFluidPressureFaceLinkSet& faceLinks) {
+    const auto fluidGrid = grid();
+    const auto lower = fluidGrid.lowerMeters();
+    const auto spacing = fluidGrid.cellSpacingMeters();
+    for (const auto& face : faceLinks.faces) {
+        if (face.status != SceneFluidPressureFaceStatus::ResolvedFull
+            && face.status != SceneFluidPressureFaceStatus::ResolvedPartition
+            && face.status != SceneFluidPressureFaceStatus::ResolvedOpening) {
+            continue;
+        }
+        fluid::Vector3 summedMoment;
+        for (std::size_t offset = 0; offset < face.linkCount; ++offset) {
+            const auto& link = faceLinks.links[face.firstLink + offset];
+            summedMoment.x +=
+                link.areaSquareMeters * link.faceCentroidMeters.x;
+            summedMoment.y +=
+                link.areaSquareMeters * link.faceCentroidMeters.y;
+            summedMoment.z +=
+                link.areaSquareMeters * link.faceCentroidMeters.z;
+        }
+        const fluid::Vector3 center{
+            face.axis == fluid::GridFaceAxis::X
+                ? lower.x + static_cast<double>(face.i) * spacing.x
+                : lower.x + (static_cast<double>(face.i) + 0.5) * spacing.x,
+            face.axis == fluid::GridFaceAxis::Y
+                ? lower.y + static_cast<double>(face.j) * spacing.y
+                : lower.y + (static_cast<double>(face.j) + 0.5) * spacing.y,
+            face.axis == fluid::GridFaceAxis::Z
+                ? lower.z + static_cast<double>(face.k) * spacing.z
+                : lower.z + (static_cast<double>(face.k) + 0.5) * spacing.z,
+        };
+        checkNear(summedMoment.x,
+                  face.faceAreaSquareMeters * center.x, 4.0e-15,
+                  "pressure links close Cartesian face x first moment");
+        checkNear(summedMoment.y,
+                  face.faceAreaSquareMeters * center.y, 4.0e-15,
+                  "pressure links close Cartesian face y first moment");
+        checkNear(summedMoment.z,
+                  face.faceAreaSquareMeters * center.z, 4.0e-15,
+                  "pressure links close Cartesian face z first moment");
+    }
+}
+
 void testExactNestedFaceLinks() {
     Fixture fixture(nestedScene());
     check(fixture.surface.ok() && fixture.structureAssembly.ok(),
@@ -310,6 +354,7 @@ void testExactNestedFaceLinks() {
               == first.faces.size()
               && first.maximumResolvedAreaResidualSquareMeters < 4.0e-15,
           "every nested-scene periodic face closes its exact linked area");
+    checkCartesianFaceLinkMoments(first);
     validateSceneFluidPressureFaceLinks(
         first, fixture.surface.definition, fixture.state, grid(),
         fixture.transfer, fixture.epoch, fixture.caps,
@@ -366,6 +411,7 @@ void testFaceAndEmbeddedOpeningLinks() {
     }
     checkNear(openingFace->areaResidualSquareMeters, 0.0, 2.0e-15,
               "opening and complementary links close the Cartesian face");
+    checkCartesianFaceLinkMoments(links);
 
     Fixture tilted(tiltedOpenScene());
     const auto embeddedLinks = tilted.links();
@@ -410,6 +456,15 @@ void testFaceAndEmbeddedOpeningLinks() {
               "embedded intake joins its exact same-cell side controls");
         checkNear(embedded->areaSquareMeters, patch.areaSquareMeters, 0.0,
                   "embedded intake preserves exact clipped patch area");
+        checkNear(embedded->faceCentroidMeters.x,
+                  patch.centroidMeters.x, 0.0,
+                  "embedded intake preserves exact patch centroid x");
+        checkNear(embedded->faceCentroidMeters.y,
+                  patch.centroidMeters.y, 0.0,
+                  "embedded intake preserves exact patch centroid y");
+        checkNear(embedded->faceCentroidMeters.z,
+                  patch.centroidMeters.z, 0.0,
+                  "embedded intake preserves exact patch centroid z");
         checkNear(embedded->centerDistanceMeters, projectedDistance, 0.0,
                   "embedded intake uses projected pressure-centroid separation");
         checkNear(embedded->geometryWeightMeters,

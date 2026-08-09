@@ -250,10 +250,60 @@ SceneFluidFacePartitionSet partitions(const Pipeline& p,
         settings,limits);
 }
 
+void checkRegionMoments(const SceneFluidFacePartitionSet& partitions,
+                        const SceneFluidFacePartition& partition,
+                        const SceneFluidActiveFace& face) {
+    Vec3 summedMoment;
+    for (std::size_t offset = 0;
+         offset < partition.regionAreaCount; ++offset) {
+        const auto& area = partitions.regionAreas[
+            partition.firstRegionArea + offset];
+        checkNear(area.firstMomentMeters3.x,
+                  area.areaSquareMeters * area.centroidMeters.x,
+                  3.0e-15,
+                  "face partition: region x first moment matches centroid");
+        checkNear(area.firstMomentMeters3.y,
+                  area.areaSquareMeters * area.centroidMeters.y,
+                  3.0e-15,
+                  "face partition: region y first moment matches centroid");
+        checkNear(area.firstMomentMeters3.z,
+                  area.areaSquareMeters * area.centroidMeters.z,
+                  3.0e-15,
+                  "face partition: region z first moment matches centroid");
+        summedMoment.x += area.firstMomentMeters3.x;
+        summedMoment.y += area.firstMomentMeters3.y;
+        summedMoment.z += area.firstMomentMeters3.z;
+    }
+    const auto fluidGrid = grid();
+    const auto lower = fluidGrid.lowerMeters();
+    const auto spacing = fluidGrid.cellSpacingMeters();
+    const Vec3 center{
+        face.axis == GridFaceAxis::X
+            ? lower.x + static_cast<double>(face.i) * spacing.x
+            : lower.x + (static_cast<double>(face.i) + 0.5) * spacing.x,
+        face.axis == GridFaceAxis::Y
+            ? lower.y + static_cast<double>(face.j) * spacing.y
+            : lower.y + (static_cast<double>(face.j) + 0.5) * spacing.y,
+        face.axis == GridFaceAxis::Z
+            ? lower.z + static_cast<double>(face.k) * spacing.z
+            : lower.z + (static_cast<double>(face.k) + 0.5) * spacing.z,
+    };
+    checkNear(summedMoment.x,
+              partition.faceAreaSquareMeters * center.x, 3.0e-15,
+              "face partition: region x first moments close the face");
+    checkNear(summedMoment.y,
+              partition.faceAreaSquareMeters * center.y, 3.0e-15,
+              "face partition: region y first moments close the face");
+    checkNear(summedMoment.z,
+              partition.faceAreaSquareMeters * center.z, 3.0e-15,
+              "face partition: region z first moments close the face");
+}
+
 void testNestedPartition() {
     Pipeline p;
     auto a=partitions(p), b=partitions(p);
-    check(a==b && a.fingerprint!=0 && a.partitions.size()==1
+    check(a==b && a.version == sceneFluidFacePartitionVersion
+          && a.fingerprint!=0 && a.partitions.size()==1
           && a.loopContainment.size()==2 && a.unresolvedActiveFaceCount==0,
           "face partition: nested loops partition deterministically");
     const auto& part=a.partitions.front();
@@ -275,6 +325,7 @@ void testNestedPartition() {
     checkNear(areas[3],0.005,3e-15,"face partition: nested region area closes");
     checkNear(part.assignedAreaSquareMeters,1.0,3e-15,"face partition: all region areas sum to face area");
     checkNear(part.areaResidualSquareMeters,0.0,3e-15,"face partition: area residual closes");
+    checkRegionMoments(a, part, p.topology.activeFaces[part.activeFaceIndex]);
     validateSceneFluidFacePartitions(a,p.surface.definition,p.state,grid(),p.candidates,
         p.intersections,p.patches,p.ownership,p.crossings,p.topology,p.graph,p.chains,p.loops);
 }
@@ -327,6 +378,8 @@ void testBoundaryOpenChainPartition() {
               "face partition: boundary-chain areas close the face");
     checkNear(found->areaResidualSquareMeters, 0.0, 3.0e-15,
               "face partition: boundary-chain residual is exact");
+    checkRegionMoments(first, *found,
+                       p.topology.activeFaces[found->activeFaceIndex]);
     validateSceneFluidFacePartitions(
         first, p.surface.definition, p.state, grid(), p.candidates,
         p.intersections, p.patches, p.ownership, p.crossings, p.topology,
@@ -354,7 +407,10 @@ void testBoundaryOpenChainPartition() {
         checkNear(rotatedAreas.at(1), 0.4, 3.0e-15,
                   "face partition: Y/Z chart keeps negative-side area");
         checkNear(rotatedAreas.at(2), 0.6, 3.0e-15,
-                  "face partition: Y/Z chart keeps positive-side area");
+                   "face partition: Y/Z chart keeps positive-side area");
+        checkRegionMoments(
+            rotatedPartitions, *rotatedFound,
+            rotated.topology.activeFaces[rotatedFound->activeFaceIndex]);
     }
 
     SceneFluidFacePartitionLimits limits;
@@ -416,6 +472,7 @@ void testBoundaryJunctionArrangement() {
               "face partition: junction sectors close the face");
     checkNear(found->areaResidualSquareMeters, 0.0, 3.0e-15,
               "face partition: junction area residual is exact");
+    checkRegionMoments(first, *found, activeFace);
     validateSceneFluidFacePartitions(
         first, p.surface.definition, p.state, grid(), p.candidates,
         p.intersections, p.patches, p.ownership, p.crossings, p.topology,
@@ -444,7 +501,10 @@ void testBoundaryJunctionArrangement() {
         checkNear(rotatedAreas.at(2), 0.25, 3.0e-15,
                   "face partition: Y/Z junction keeps first cell sector");
         checkNear(rotatedAreas.at(3), 0.25, 3.0e-15,
-                  "face partition: Y/Z junction keeps second cell sector");
+                   "face partition: Y/Z junction keeps second cell sector");
+        checkRegionMoments(
+            rotatedPartitions, *rotatedFound,
+            rotated.topology.activeFaces[rotatedFound->activeFaceIndex]);
     }
 
     SceneFluidFacePartitionLimits limits;
@@ -530,6 +590,9 @@ void testSameRegionSheetOwnsFullRegionArea() {
           "face partition: same-region sheet keeps its authored region");
     checkNear(area.areaSquareMeters, 1.0, 3.0e-15,
               "face partition: same-region sheet owns the complete face area");
+    checkRegionMoments(
+        first, partition,
+        p.topology.activeFaces[partition.activeFaceIndex]);
     checkNear(partition.areaResidualSquareMeters, 0.0, 0.0,
               "face partition: same-region sheet closes with zero residual");
     validateSceneFluidFacePartitions(

@@ -141,6 +141,87 @@ struct FaceBounds {
     double maximumV = 0.0;
 };
 
+struct AreaMoment2 {
+    double areaSquareMeters = 0.0;
+    double firstMomentUMeters3 = 0.0;
+    double firstMomentVMeters3 = 0.0;
+};
+
+AreaMoment2 polygonAreaMoment(const std::vector<Point2>& polygon) {
+    AreaMoment2 result;
+    for (std::size_t index = 0; index < polygon.size(); ++index) {
+        const auto& first = polygon[index];
+        const auto& second = polygon[(index + 1) % polygon.size()];
+        const double cross = first.u * second.v - second.u * first.v;
+        result.areaSquareMeters += 0.5 * cross;
+        result.firstMomentUMeters3 +=
+            (first.u + second.u) * cross / 6.0;
+        result.firstMomentVMeters3 +=
+            (first.v + second.v) * cross / 6.0;
+    }
+    return result;
+}
+
+AreaMoment2 rectangleAreaMoment(const FaceBounds& bounds) {
+    const double area = (bounds.maximumU - bounds.minimumU)
+        * (bounds.maximumV - bounds.minimumV);
+    return {
+        area,
+        area * 0.5 * (bounds.minimumU + bounds.maximumU),
+        area * 0.5 * (bounds.minimumV + bounds.maximumV),
+    };
+}
+
+double facePlaneCoordinate(const PeriodicCartesianGrid& grid,
+                           const SceneFluidActiveFace& face) {
+    const auto lower = grid.lowerMeters();
+    const auto spacing = grid.cellSpacingMeters();
+    if (face.axis == GridFaceAxis::X) {
+        return lower.x + static_cast<double>(face.i) * spacing.x;
+    }
+    if (face.axis == GridFaceAxis::Y) {
+        return lower.y + static_cast<double>(face.j) * spacing.y;
+    }
+    return lower.z + static_cast<double>(face.k) * spacing.z;
+}
+
+SceneFluidFaceRegionArea makeRegionArea(
+    const StableId regionId,
+    const GridFaceAxis axis,
+    const double planeCoordinateMeters,
+    const AreaMoment2& moment) {
+    SceneFluidFaceRegionArea result;
+    result.regionId = regionId;
+    result.areaSquareMeters = moment.areaSquareMeters;
+    if (axis == GridFaceAxis::X) {
+        result.firstMomentMeters3 = {
+            planeCoordinateMeters * moment.areaSquareMeters,
+            moment.firstMomentUMeters3,
+            moment.firstMomentVMeters3,
+        };
+    } else if (axis == GridFaceAxis::Y) {
+        result.firstMomentMeters3 = {
+            moment.firstMomentVMeters3,
+            planeCoordinateMeters * moment.areaSquareMeters,
+            moment.firstMomentUMeters3,
+        };
+    } else {
+        result.firstMomentMeters3 = {
+            moment.firstMomentUMeters3,
+            moment.firstMomentVMeters3,
+            planeCoordinateMeters * moment.areaSquareMeters,
+        };
+    }
+    if (moment.areaSquareMeters > 0.0) {
+        result.centroidMeters = {
+            result.firstMomentMeters3.x / moment.areaSquareMeters,
+            result.firstMomentMeters3.y / moment.areaSquareMeters,
+            result.firstMomentMeters3.z / moment.areaSquareMeters,
+        };
+    }
+    return result;
+}
+
 FaceBounds faceBounds(const PeriodicCartesianGrid& grid,
                       const SceneFluidActiveFace& face) {
     const Vector3 lower = grid.lowerMeters();
@@ -203,7 +284,7 @@ double boundaryParameter(const Point2& point,
         "scene fluid boundary-chain endpoint is not on its face boundary");
 }
 
-double boundaryChainPositiveArea(
+AreaMoment2 boundaryChainPositiveAreaMoment(
     const SceneFluidActiveFace& face,
     const SceneFluidFaceChain& chain,
     const SceneFluidFaceChainSet& chains,
@@ -304,21 +385,17 @@ double boundaryChainPositiveArea(
             }
         }
     }
-    double twiceSignedArea = 0.0;
-    for (std::size_t index = 0; index < polygon.size(); ++index) {
-        const Point2& first = polygon[index];
-        const Point2& second = polygon[(index + 1) % polygon.size()];
-        twiceSignedArea += first.u * second.v - second.u * first.v;
-    }
-    const double positiveArea = 0.5 * twiceSignedArea;
+    const auto positiveMoment = polygonAreaMoment(polygon);
     const double fullArea = width * height;
-    if (!std::isfinite(positiveArea)
-        || !(positiveArea > 0.0)
-        || !(positiveArea < fullArea)) {
+    if (!std::isfinite(positiveMoment.areaSquareMeters)
+        || !std::isfinite(positiveMoment.firstMomentUMeters3)
+        || !std::isfinite(positiveMoment.firstMomentVMeters3)
+        || !(positiveMoment.areaSquareMeters > 0.0)
+        || !(positiveMoment.areaSquareMeters < fullArea)) {
         throw std::invalid_argument(
             "scene fluid boundary face-chain area is invalid");
     }
-    return positiveArea;
+    return positiveMoment;
 }
 
 struct ArrangementNode {
@@ -391,7 +468,7 @@ bool supportsRegionSeparatingArrangement(
     return true;
 }
 
-std::map<StableId, double> boundaryChainArrangementAreas(
+std::map<StableId, AreaMoment2> boundaryChainArrangementAreaMoments(
     const std::size_t activeFaceIndex,
     const SceneFluidActiveFace& face,
     const std::vector<std::size_t>& chainIndices,
@@ -658,7 +735,7 @@ std::map<StableId, double> boundaryChainArrangementAreas(
     }
 
     std::vector<bool> visited(halfEdges.size(), false);
-    std::map<StableId, double> areas;
+    std::map<StableId, AreaMoment2> areas;
     std::size_t exteriorCycleCount = 0;
     for (std::size_t start = 0;
          start < halfEdges.size(); ++start) {
@@ -703,20 +780,27 @@ std::map<StableId, double> boundaryChainArrangementAreas(
                     : position - 1];
             if (current == start) break;
         }
-        double twiceSignedArea = 0.0;
+        AreaMoment2 cycleMoment;
         for (const std::size_t halfEdgeIndex : cycle) {
             const auto& halfEdge = halfEdges[halfEdgeIndex];
             const Point2& first = nodes[halfEdge.fromNode].point;
             const Point2& second = nodes[halfEdge.toNode].point;
-            twiceSignedArea +=
+            const double cross =
                 first.u * second.v - second.u * first.v;
+            cycleMoment.areaSquareMeters += 0.5 * cross;
+            cycleMoment.firstMomentUMeters3 +=
+                (first.u + second.u) * cross / 6.0;
+            cycleMoment.firstMomentVMeters3 +=
+                (first.v + second.v) * cross / 6.0;
         }
-        const double signedArea = 0.5 * twiceSignedArea;
-        if (!std::isfinite(signedArea) || signedArea == 0.0) {
+        if (!std::isfinite(cycleMoment.areaSquareMeters)
+            || !std::isfinite(cycleMoment.firstMomentUMeters3)
+            || !std::isfinite(cycleMoment.firstMomentVMeters3)
+            || cycleMoment.areaSquareMeters == 0.0) {
             throw std::invalid_argument(
                 "scene fluid face arrangement cycle area is invalid");
         }
-        if (signedArea < 0.0) {
+        if (cycleMoment.areaSquareMeters < 0.0) {
             ++exteriorCycleCount;
             continue;
         }
@@ -724,20 +808,28 @@ std::map<StableId, double> boundaryChainArrangementAreas(
             throw std::invalid_argument(
                 "scene fluid face arrangement has an unlabeled interior");
         }
-        areas[regionId] += signedArea;
+        auto& regionMoment = areas[regionId];
+        regionMoment.areaSquareMeters += cycleMoment.areaSquareMeters;
+        regionMoment.firstMomentUMeters3 +=
+            cycleMoment.firstMomentUMeters3;
+        regionMoment.firstMomentVMeters3 +=
+            cycleMoment.firstMomentVMeters3;
     }
     if (exteriorCycleCount != 1 || areas.size() < 2) {
         throw std::invalid_argument(
             "scene fluid face arrangement does not form one bounded partition");
     }
     double assignedArea = 0.0;
-    for (const auto [regionId, area] : areas) {
+    for (const auto& [regionId, moment] : areas) {
         static_cast<void>(regionId);
-        if (!(area > 0.0) || !std::isfinite(area)) {
+        if (!(moment.areaSquareMeters > 0.0)
+            || !std::isfinite(moment.areaSquareMeters)
+            || !std::isfinite(moment.firstMomentUMeters3)
+            || !std::isfinite(moment.firstMomentVMeters3)) {
             throw std::invalid_argument(
                 "scene fluid face arrangement region area is invalid");
         }
-        assignedArea += area;
+        assignedArea += moment.areaSquareMeters;
     }
     const double fullArea = width * height;
     if (!std::isfinite(assignedArea)
@@ -799,6 +891,12 @@ std::uint64_t partitionFingerprint(
     for (const auto& item : value.regionAreas) {
         f.integer(item.regionId);
         f.real(item.areaSquareMeters);
+        f.real(item.firstMomentMeters3.x);
+        f.real(item.firstMomentMeters3.y);
+        f.real(item.firstMomentMeters3.z);
+        f.real(item.centroidMeters.x);
+        f.real(item.centroidMeters.y);
+        f.real(item.centroidMeters.z);
     }
     return f.value();
 }
@@ -985,22 +1083,37 @@ SceneFluidFacePartitionSet buildPartitions(
             partition.openChainReferenceCount = 1;
             result.openChainReferences.push_back(chainIndex);
             partition.faceAreaSquareMeters = faceArea(grid, face.axis);
-            const double positiveArea = boundaryChainPositiveArea(
+            const auto positiveMoment = boundaryChainPositiveAreaMoment(
                 face, chain, chains, graph, grid, settings, limits,
                 result.segmentPairTestCount);
-            std::map<StableId, double> areas;
-            areas.emplace(chain.positiveSideRegionId, positiveArea);
-            areas.emplace(
-                chain.negativeSideRegionId,
-                partition.faceAreaSquareMeters - positiveArea);
+            const auto fullMoment = rectangleAreaMoment(
+                faceBounds(grid, face));
+            const AreaMoment2 negativeMoment{
+                fullMoment.areaSquareMeters
+                    - positiveMoment.areaSquareMeters,
+                fullMoment.firstMomentUMeters3
+                    - positiveMoment.firstMomentUMeters3,
+                fullMoment.firstMomentVMeters3
+                    - positiveMoment.firstMomentVMeters3,
+            };
+            std::map<StableId, AreaMoment2> areas;
+            areas.emplace(chain.positiveSideRegionId, positiveMoment);
+            areas.emplace(chain.negativeSideRegionId, negativeMoment);
+            const double planeCoordinate =
+                facePlaneCoordinate(grid, face);
             partition.firstRegionArea = result.regionAreas.size();
-            for (const auto [region, area] : areas) {
-                if (!(area > 0.0) || !std::isfinite(area)) {
+            for (const auto& [region, moment] : areas) {
+                if (!(moment.areaSquareMeters > 0.0)
+                    || !std::isfinite(moment.areaSquareMeters)
+                    || !std::isfinite(moment.firstMomentUMeters3)
+                    || !std::isfinite(moment.firstMomentVMeters3)) {
                     throw std::invalid_argument(
                         "scene fluid boundary face region area is invalid");
                 }
-                result.regionAreas.push_back({region, area});
-                partition.assignedAreaSquareMeters += area;
+                result.regionAreas.push_back(makeRegionArea(
+                    region, face.axis, planeCoordinate, moment));
+                partition.assignedAreaSquareMeters +=
+                    moment.areaSquareMeters;
             }
             partition.regionAreaCount = result.regionAreas.size()
                 - partition.firstRegionArea;
@@ -1040,13 +1153,17 @@ SceneFluidFacePartitionSet buildPartitions(
                 result.openChainReferences.end(),
                 faceOpenChains.begin(), faceOpenChains.end());
             partition.faceAreaSquareMeters = faceArea(grid, face.axis);
-            const auto areas = boundaryChainArrangementAreas(
+            const auto areas = boundaryChainArrangementAreaMoments(
                 faceIndex, face, faceOpenChains, chains, graph, graphRange,
                 grid, settings, limits, result.segmentPairTestCount);
+            const double planeCoordinate =
+                facePlaneCoordinate(grid, face);
             partition.firstRegionArea = result.regionAreas.size();
-            for (const auto [region, area] : areas) {
-                result.regionAreas.push_back({region, area});
-                partition.assignedAreaSquareMeters += area;
+            for (const auto& [region, moment] : areas) {
+                result.regionAreas.push_back(makeRegionArea(
+                    region, face.axis, planeCoordinate, moment));
+                partition.assignedAreaSquareMeters +=
+                    moment.areaSquareMeters;
             }
             partition.regionAreaCount = result.regionAreas.size()
                 - partition.firstRegionArea;
@@ -1120,8 +1237,9 @@ SceneFluidFacePartitionSet buildPartitions(
                 partition.faceAreaSquareMeters = faceArea(grid, face.axis);
                 partition.assignedAreaSquareMeters =
                     partition.faceAreaSquareMeters;
-                result.regionAreas.push_back(
-                    {regionId, partition.faceAreaSquareMeters});
+                result.regionAreas.push_back(makeRegionArea(
+                    regionId, face.axis, facePlaneCoordinate(grid, face),
+                    rectangleAreaMoment(faceBounds(grid, face))));
                 result.partitions.push_back(partition);
                 continue;
             }
@@ -1154,21 +1272,43 @@ SceneFluidFacePartitionSet buildPartitions(
             result.openChainReferences.size();
         result.loopReferences.insert(result.loopReferences.end(),
                                      faceLoops.begin(), faceLoops.end());
-        std::map<StableId, double> areas;
+        std::map<StableId, AreaMoment2> areas;
         partition.faceAreaSquareMeters = faceArea(grid, face.axis);
-        areas[rootExterior] = partition.faceAreaSquareMeters;
+        areas[rootExterior] = rectangleAreaMoment(faceBounds(grid, face));
         for (const std::size_t loopIndex : faceLoops) {
             const auto& loop = loops.loops[loopIndex];
-            areas[loop.exteriorRegionId] -= loop.areaSquareMeters;
-            areas[loop.enclosedRegionId] += loop.areaSquareMeters;
+            const auto point = facePoint(face.axis, loop.centroidMeters);
+            const AreaMoment2 loopMoment{
+                loop.areaSquareMeters,
+                loop.areaSquareMeters * point.u,
+                loop.areaSquareMeters * point.v,
+            };
+            auto& exterior = areas[loop.exteriorRegionId];
+            exterior.areaSquareMeters -= loopMoment.areaSquareMeters;
+            exterior.firstMomentUMeters3 -=
+                loopMoment.firstMomentUMeters3;
+            exterior.firstMomentVMeters3 -=
+                loopMoment.firstMomentVMeters3;
+            auto& enclosed = areas[loop.enclosedRegionId];
+            enclosed.areaSquareMeters += loopMoment.areaSquareMeters;
+            enclosed.firstMomentUMeters3 +=
+                loopMoment.firstMomentUMeters3;
+            enclosed.firstMomentVMeters3 +=
+                loopMoment.firstMomentVMeters3;
         }
+        const double planeCoordinate = facePlaneCoordinate(grid, face);
         partition.firstRegionArea = result.regionAreas.size();
-        for (auto [region, area] : areas) {
-            if (area < -settings.areaClosureToleranceSquareMeters)
+        for (auto& [region, moment] : areas) {
+            if (moment.areaSquareMeters
+                < -settings.areaClosureToleranceSquareMeters) {
                 throw std::invalid_argument("scene fluid face region area is negative");
-            if (area < 0.0) area = 0.0;
-            result.regionAreas.push_back({region, area});
-            partition.assignedAreaSquareMeters += area;
+            }
+            if (moment.areaSquareMeters < 0.0) {
+                moment = {};
+            }
+            result.regionAreas.push_back(makeRegionArea(
+                region, face.axis, planeCoordinate, moment));
+            partition.assignedAreaSquareMeters += moment.areaSquareMeters;
         }
         partition.regionAreaCount = result.regionAreas.size()
             - partition.firstRegionArea;

@@ -10,7 +10,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureFaceLinkVersion = 7;
+inline constexpr std::uint32_t sceneFluidPressureFaceLinkVersion = 8;
 inline constexpr std::size_t invalidSceneFluidPressureFaceIndex =
     std::numeric_limits<std::size_t>::max();
 
@@ -104,6 +104,7 @@ struct SceneFluidPressureFaceLink {
     StableId openingId = invalidStableId;
     std::uint64_t openingPatchStableId = 0;
     double areaSquareMeters = 0.0;
+    fluid::Vector3 faceCentroidMeters;
     double centerDistanceMeters = 0.0;
     double geometryWeightMeters = 0.0;
     fluid::Vector3 unitNormalMinusToPlus;
@@ -158,7 +159,8 @@ struct SceneFluidEmbeddedOpeningOneRingSupport {
 };
 
 // Conservative pressure-face subset. Exact active-face partitions create one
-// same-region link per positive region area. On a face crossed transversely by
+// same-region link per positive region area, including the exact subface
+// centroid. On a face crossed transversely by
 // a virtual opening cap, the capped material-plus-opening partition supersedes
 // that material-only result. An untouched face is linked over its full area
 // only when the two adjacent sparse cells have one unambiguous common region.

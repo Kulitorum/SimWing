@@ -173,6 +173,55 @@ struct Fixture {
     }
 };
 
+void checkRegionMoments(
+    const SceneFluidCappedFacePartitionSet& partitions,
+    const SceneFluidCappedFacePartition& partition) {
+    Vec3 summedMoment;
+    for (std::size_t offset = 0;
+         offset < partition.regionAreaCount; ++offset) {
+        const auto& area = partitions.regionAreas[
+            partition.firstRegionArea + offset];
+        checkNear(area.firstMomentMeters3.x,
+                  area.areaSquareMeters * area.centroidMeters.x,
+                  3.0e-15,
+                  "capped partition x first moment matches centroid");
+        checkNear(area.firstMomentMeters3.y,
+                  area.areaSquareMeters * area.centroidMeters.y,
+                  3.0e-15,
+                  "capped partition y first moment matches centroid");
+        checkNear(area.firstMomentMeters3.z,
+                  area.areaSquareMeters * area.centroidMeters.z,
+                  3.0e-15,
+                  "capped partition z first moment matches centroid");
+        summedMoment.x += area.firstMomentMeters3.x;
+        summedMoment.y += area.firstMomentMeters3.y;
+        summedMoment.z += area.firstMomentMeters3.z;
+    }
+    const auto fluidGrid = grid();
+    const auto lower = fluidGrid.lowerMeters();
+    const auto spacing = fluidGrid.cellSpacingMeters();
+    const Vec3 center{
+        partition.axis == fluid::GridFaceAxis::X
+            ? lower.x + static_cast<double>(partition.i) * spacing.x
+            : lower.x + (static_cast<double>(partition.i) + 0.5) * spacing.x,
+        partition.axis == fluid::GridFaceAxis::Y
+            ? lower.y + static_cast<double>(partition.j) * spacing.y
+            : lower.y + (static_cast<double>(partition.j) + 0.5) * spacing.y,
+        partition.axis == fluid::GridFaceAxis::Z
+            ? lower.z + static_cast<double>(partition.k) * spacing.z
+            : lower.z + (static_cast<double>(partition.k) + 0.5) * spacing.z,
+    };
+    checkNear(summedMoment.x,
+              partition.faceAreaSquareMeters * center.x, 3.0e-15,
+              "capped partition x first moments close the face");
+    checkNear(summedMoment.y,
+              partition.faceAreaSquareMeters * center.y, 3.0e-15,
+              "capped partition y first moments close the face");
+    checkNear(summedMoment.z,
+              partition.faceAreaSquareMeters * center.z, 3.0e-15,
+              "capped partition z first moments close the face");
+}
+
 void testClosedOpeningSection(const fluid::GridFaceAxis axis) {
     Fixture fixture(axis);
     check(fixture.surface.ok() && fixture.structureAssembly.ok(),
@@ -230,6 +279,7 @@ void testClosedOpeningSection(const fluid::GridFaceAxis axis) {
               "capped partition closes assigned area");
     checkNear(partition.areaResidualSquareMeters, 0.0, 3.0e-15,
               "capped partition has zero face-area residual");
+    checkRegionMoments(first, partition);
     validateSceneFluidCappedFacePartitions(
         first, fixture.surface.definition, fixture.state, grid(),
         fixture.transfer, fixture.epoch, fixture.caps,

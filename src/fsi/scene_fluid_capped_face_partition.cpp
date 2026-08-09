@@ -141,6 +141,73 @@ struct FaceBounds {
     double maximumV = 0.0;
 };
 
+struct AreaMoment2 {
+    double areaSquareMeters = 0.0;
+    double firstMomentUMeters3 = 0.0;
+    double firstMomentVMeters3 = 0.0;
+};
+
+AreaMoment2 rectangleAreaMoment(const FaceBounds& bounds) {
+    const double area = (bounds.maximumU - bounds.minimumU)
+        * (bounds.maximumV - bounds.minimumV);
+    return {
+        area,
+        area * 0.5 * (bounds.minimumU + bounds.maximumU),
+        area * 0.5 * (bounds.minimumV + bounds.maximumV),
+    };
+}
+
+double facePlaneCoordinate(const fluid::PeriodicCartesianGrid& grid,
+                           const fluid::GridFaceAxis axis,
+                           const std::size_t i,
+                           const std::size_t j,
+                           const std::size_t k) {
+    const auto lower = grid.lowerMeters();
+    const auto spacing = grid.cellSpacingMeters();
+    if (axis == fluid::GridFaceAxis::X) {
+        return lower.x + static_cast<double>(i) * spacing.x;
+    }
+    if (axis == fluid::GridFaceAxis::Y) {
+        return lower.y + static_cast<double>(j) * spacing.y;
+    }
+    return lower.z + static_cast<double>(k) * spacing.z;
+}
+
+fluid::SceneFluidFaceRegionArea makeRegionArea(
+    const StableId regionId,
+    const fluid::GridFaceAxis axis,
+    const double planeCoordinateMeters,
+    const AreaMoment2& moment) {
+    fluid::SceneFluidFaceRegionArea result;
+    result.regionId = regionId;
+    result.areaSquareMeters = moment.areaSquareMeters;
+    if (axis == fluid::GridFaceAxis::X) {
+        result.firstMomentMeters3 = {
+            planeCoordinateMeters * moment.areaSquareMeters,
+            moment.firstMomentUMeters3,
+            moment.firstMomentVMeters3,
+        };
+    } else if (axis == fluid::GridFaceAxis::Y) {
+        result.firstMomentMeters3 = {
+            moment.firstMomentVMeters3,
+            planeCoordinateMeters * moment.areaSquareMeters,
+            moment.firstMomentUMeters3,
+        };
+    } else {
+        result.firstMomentMeters3 = {
+            moment.firstMomentUMeters3,
+            moment.firstMomentVMeters3,
+            planeCoordinateMeters * moment.areaSquareMeters,
+        };
+    }
+    result.centroidMeters = {
+        result.firstMomentMeters3.x / moment.areaSquareMeters,
+        result.firstMomentMeters3.y / moment.areaSquareMeters,
+        result.firstMomentMeters3.z / moment.areaSquareMeters,
+    };
+    return result;
+}
+
 FaceBounds faceBounds(const fluid::PeriodicCartesianGrid& grid,
                       const fluid::GridFaceAxis axis,
                       const std::size_t i,
@@ -358,6 +425,8 @@ struct ArrangementHalfEdge {
 
 struct ArrangementCycle {
     double signedAreaSquareMeters = 0.0;
+    double signedFirstMomentUMeters3 = 0.0;
+    double signedFirstMomentVMeters3 = 0.0;
     StableId regionId = invalidStableId;
     std::vector<std::size_t> edgeIndices;
     std::vector<Point2> polygon;
@@ -372,7 +441,7 @@ void consumePairTest(std::size_t& count,
     ++count;
 }
 
-std::map<StableId, double> arrangementAreas(
+std::map<StableId, AreaMoment2> arrangementAreaMoments(
     const FaceBounds& bounds,
     const std::vector<InputSegment>& segments,
     const SceneFluidCappedFacePartitionSettings& settings,
@@ -676,11 +745,18 @@ std::map<StableId, double> arrangementAreas(
             const auto& first = cycle.polygon[index];
             const auto& second = cycle.polygon[
                 (index + 1) % cycle.polygon.size()];
-            twiceSignedArea +=
+            const double cross =
                 first.u * second.v - second.u * first.v;
+            twiceSignedArea += cross;
+            cycle.signedFirstMomentUMeters3 +=
+                (first.u + second.u) * cross / 6.0;
+            cycle.signedFirstMomentVMeters3 +=
+                (first.v + second.v) * cross / 6.0;
         }
         cycle.signedAreaSquareMeters = 0.5 * twiceSignedArea;
         if (!std::isfinite(cycle.signedAreaSquareMeters)
+            || !std::isfinite(cycle.signedFirstMomentUMeters3)
+            || !std::isfinite(cycle.signedFirstMomentVMeters3)
             || cycle.signedAreaSquareMeters == 0.0) {
             throw ArrangementFailure(
                 SceneFluidCappedFaceStatus::InvalidArrangementTopology,
@@ -690,13 +766,18 @@ std::map<StableId, double> arrangementAreas(
         cycles.push_back(std::move(cycle));
     }
 
-    std::map<StableId, double> areas;
+    std::map<StableId, AreaMoment2> areas;
     std::vector<std::size_t> unlabeledPositiveCycles;
     std::size_t unlabeledNegativeCycleCount = 0;
     for (std::size_t index = 0; index < cycles.size(); ++index) {
         const auto& cycle = cycles[index];
         if (cycle.regionId != invalidStableId) {
-            areas[cycle.regionId] += cycle.signedAreaSquareMeters;
+            auto& moment = areas[cycle.regionId];
+            moment.areaSquareMeters += cycle.signedAreaSquareMeters;
+            moment.firstMomentUMeters3 +=
+                cycle.signedFirstMomentUMeters3;
+            moment.firstMomentVMeters3 +=
+                cycle.signedFirstMomentVMeters3;
         } else if (cycle.signedAreaSquareMeters > 0.0) {
             unlabeledPositiveCycles.push_back(index);
         } else {
@@ -756,16 +837,36 @@ std::map<StableId, double> arrangementAreas(
                 SceneFluidCappedFaceStatus::AmbiguousRegionOwnership,
                 "capped face partition has no root region");
         }
-        areas[rootRegionId] += faceArea;
+        const auto fullMoment = rectangleAreaMoment(bounds);
+        auto& rootMoment = areas[rootRegionId];
+        rootMoment.areaSquareMeters += fullMoment.areaSquareMeters;
+        rootMoment.firstMomentUMeters3 +=
+            fullMoment.firstMomentUMeters3;
+        rootMoment.firstMomentVMeters3 +=
+            fullMoment.firstMomentVMeters3;
     }
 
     double assignedArea = 0.0;
+    const double firstMomentToleranceMeters3 =
+        settings.areaClosureToleranceSquareMeters
+        * std::max({1.0, std::abs(bounds.minimumU),
+                    std::abs(bounds.maximumU),
+                    std::abs(bounds.minimumV),
+                    std::abs(bounds.maximumV)});
     for (auto iterator = areas.begin(); iterator != areas.end();) {
-        if (!(iterator->second > 0.0)
-            || !std::isfinite(iterator->second)) {
-            if (std::isfinite(iterator->second)
-                && std::abs(iterator->second)
-                    <= settings.areaClosureToleranceSquareMeters) {
+        if (!(iterator->second.areaSquareMeters > 0.0)
+            || !std::isfinite(iterator->second.areaSquareMeters)
+            || !std::isfinite(iterator->second.firstMomentUMeters3)
+            || !std::isfinite(iterator->second.firstMomentVMeters3)) {
+            if (std::isfinite(iterator->second.areaSquareMeters)
+                && std::isfinite(iterator->second.firstMomentUMeters3)
+                && std::isfinite(iterator->second.firstMomentVMeters3)
+                && std::abs(iterator->second.areaSquareMeters)
+                    <= settings.areaClosureToleranceSquareMeters
+                && std::abs(iterator->second.firstMomentUMeters3)
+                    <= firstMomentToleranceMeters3
+                && std::abs(iterator->second.firstMomentVMeters3)
+                    <= firstMomentToleranceMeters3) {
                 iterator = areas.erase(iterator);
                 continue;
             }
@@ -773,7 +874,7 @@ std::map<StableId, double> arrangementAreas(
                 SceneFluidCappedFaceStatus::AreaClosureFailure,
                 "capped face partition region area is invalid");
         }
-        assignedArea += iterator->second;
+        assignedArea += iterator->second.areaSquareMeters;
         ++iterator;
     }
     if (areas.size() < 2 || !std::isfinite(assignedArea)
@@ -988,6 +1089,12 @@ std::uint64_t partitionsFingerprint(
     for (const auto& area : partitions.regionAreas) {
         fingerprint.integer(area.regionId);
         fingerprint.real(area.areaSquareMeters);
+        fingerprint.real(area.firstMomentMeters3.x);
+        fingerprint.real(area.firstMomentMeters3.y);
+        fingerprint.real(area.firstMomentMeters3.z);
+        fingerprint.real(area.centroidMeters.x);
+        fingerprint.real(area.centroidMeters.y);
+        fingerprint.real(area.centroidMeters.z);
     }
     return fingerprint.value();
 }
@@ -1144,9 +1251,9 @@ SceneFluidCappedFacePartitionSet buildPartitions(
         }
         sourceSegmentCount = newSourceCount;
 
-        std::map<StableId, double> areas;
+        std::map<StableId, AreaMoment2> areas;
         try {
-            areas = arrangementAreas(
+            areas = arrangementAreaMoments(
                 faceBounds(grid, axis, i, j, k), segments,
                 settings, limits, result.segmentPairTestCount);
         } catch (const ArrangementFailure& failure) {
@@ -1227,9 +1334,13 @@ SceneFluidCappedFacePartitionSet buildPartitions(
         partition.faceAreaSquareMeters =
             (bounds.maximumU - bounds.minimumU)
             * (bounds.maximumV - bounds.minimumV);
-        for (const auto [regionId, area] : areas) {
-            result.regionAreas.push_back({regionId, area});
-            partition.assignedAreaSquareMeters += area;
+        const double planeCoordinate = facePlaneCoordinate(
+            grid, axis, i, j, k);
+        for (const auto& [regionId, moment] : areas) {
+            result.regionAreas.push_back(makeRegionArea(
+                regionId, axis, planeCoordinate, moment));
+            partition.assignedAreaSquareMeters +=
+                moment.areaSquareMeters;
         }
         partition.areaResidualSquareMeters =
             partition.assignedAreaSquareMeters

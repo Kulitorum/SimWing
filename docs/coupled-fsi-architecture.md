@@ -582,8 +582,9 @@ enclosed/exterior region identity with self-intersection and degenerate-area
 rejection. A bounded containment stage rejects touching loops, requires
 authored parent/child region continuity, and closes exact per-region areas on
 eligible faces. Simple directed open-chain arrangements whose leaves all reach
-the rectangular face boundary likewise close exact per-region areas and retain
-every source chain. A bounded half-edge traversal enumerates left faces from
+the rectangular face boundary likewise close exact per-region areas, global
+first moments, and centroids while retaining every source chain. A bounded
+half-edge traversal enumerates left faces from
 authored winding and rejects unstitched crossings or conflicting labels.
 Opening-ended chains, coplanar sheets, and boundary-touching loops remain
 unresolved.
@@ -640,7 +641,7 @@ area is never collapsed into a line, and grid-edge ambiguity remains explicit.
 A bounded planar half-edge arrangement now combines these crossings with
 directed material chains on every touched Cartesian face. Disconnected signed
 cycles are accounted explicitly; a supported arrangement publishes exact
-same-region areas, while an unsupported one remains a first-class unresolved
+same-region areas, first moments, and centroids, while an unsupported one remains a first-class unresolved
 face. All nine of the coarse real wing's cap-crossed faces now close. Exact
 coordinates shared by both endpoints of a clipped edge are preserved through
 later-axis clipping; this keeps earlier Cartesian-plane identity without a
@@ -687,7 +688,9 @@ cells, recovers analytic region first moments on original and translated
 grids, and closes every cell, region, component, and the full domain. A
 complementary immutable face-link
 owner now consumes the exact face partitions and connects only matching
-same-region pressure volumes. A resolved nested face retains its exact
+same-region pressure volumes. Every Cartesian link retains the exact centroid
+of its region subface; aperture complements derive theirs by subtracting exact
+opening first moments from the full face. A resolved nested face retains its exact
 exterior, annular-cell, and inner-cell areas as separate links; an untouched
 face receives one full-area link only when both adjacent sparse cells have one
 unambiguous common region. A transversely cap-crossed face instead consumes

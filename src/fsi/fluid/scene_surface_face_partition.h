@@ -8,7 +8,7 @@
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t sceneFluidFacePartitionVersion = 4;
+inline constexpr std::uint32_t sceneFluidFacePartitionVersion = 5;
 inline constexpr std::size_t noParentFaceLoop = static_cast<std::size_t>(-1);
 
 enum class SceneFluidFacePartitionKind : std::uint8_t {
@@ -36,8 +36,19 @@ struct SceneFluidFaceLoopContainment {
 struct SceneFluidFaceRegionArea {
     StableId regionId = invalidStableId;
     double areaSquareMeters = 0.0;
+    Vec3 firstMomentMeters3;
+    Vec3 centroidMeters;
 
-    bool operator==(const SceneFluidFaceRegionArea&) const = default;
+    bool operator==(const SceneFluidFaceRegionArea& other) const {
+        return regionId == other.regionId
+            && areaSquareMeters == other.areaSquareMeters
+            && firstMomentMeters3.x == other.firstMomentMeters3.x
+            && firstMomentMeters3.y == other.firstMomentMeters3.y
+            && firstMomentMeters3.z == other.firstMomentMeters3.z
+            && centroidMeters.x == other.centroidMeters.x
+            && centroidMeters.y == other.centroidMeters.y
+            && centroidMeters.z == other.centroidMeters.z;
+    }
 };
 
 struct SceneFluidFacePartition {
@@ -99,8 +110,9 @@ struct SceneFluidFacePartitionSet {
 // full-face area for that region.
 // Parent/child authored regions must form a continuous nesting chain.
 // Opening-ended chains, coplanar sheet area, boundary-touching closed loops, or
-// incomplete arrangements stay explicitly unresolved. This is a face
-// partition, not a cut-cell volume.
+// incomplete arrangements stay explicitly unresolved. Each positive region
+// area also retains its exact global first moment and Cartesian-face centroid.
+// This is a face partition, not a cut-cell volume.
 [[nodiscard]] SceneFluidFacePartitionSet buildSceneFluidFacePartitions(
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& state,

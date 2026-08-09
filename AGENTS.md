@@ -330,9 +330,10 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   before one crossing is published; face-owned aperture area is counted but
   never converted into a line, and grid-edge ambiguity remains explicit. The
   accepted pressure epoch owns this crossing product. A bounded planar
-  half-edge arrangement then combines those crossings with directed material
-  chains, including disconnected signed cycles, and publishes exact
-  same-region area plus a resolved-or-unresolved record for every touched
+   half-edge arrangement then combines those crossings with directed material
+   chains, including disconnected signed cycles, and publishes exact
+   same-region area, global first moment, and centroid plus a
+   resolved-or-unresolved record for every touched
   Cartesian face. Face-owned aperture area remains with its existing owner.
   Material-only face accounting omits same-region internal-sheet chains from
   pressure-region boundaries while retaining their audited count upstream. A
@@ -387,9 +388,9 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   preserves the exact cell-region centroid and cell/region/component ownership,
   derives a stable ID from the fixed-grid cell/region key, and selects a
   deterministic gauge control volume in each authored-opening component.
-- `simwing_scene_fluid_pressure_face_link`: binds those pressure unknowns
-  across Cartesian faces. Exact resolved partitions create one same-region
-  link per positive region area. Capped material-plus-opening partitions
+ - `simwing_scene_fluid_pressure_face_link`: binds those pressure unknowns
+   across Cartesian faces. Exact resolved partitions create one same-region
+   link per positive region area and retain its exact subface centroid. Capped material-plus-opening partitions
   supersede the material-only result on transversely crossed faces, while an
   unresolved capped arrangement retains its own status and publishes no link.
   Provably untouched faces link only when their adjacent sparse cells share
@@ -1098,14 +1099,15 @@ makes this a certified aerodynamic solver.
   area, and uses winding to identify the enclosed versus exterior authored
   region. Open chains stay unresolved and separate loop areas are not treated
   as a union or final face partition.
-- `src/fsi/fluid/scene_surface_face_partition.{h,cpp}` rejects touching or
-  intersecting loops, builds smallest-parent containment, requires authored
-  region continuity through nesting, and closes exact per-region area on faces
+ - `src/fsi/fluid/scene_surface_face_partition.{h,cpp}` rejects touching or
+   intersecting loops, builds smallest-parent containment, requires authored
+   region continuity through nesting, and closes exact per-region area and
+   global first moment on faces
   containing only interior closed loops. It also closes simple directed
   open-chain arrangements whose leaves reach the rectangular face boundary,
   retains every source chain, rejects unstitched crossings/conflicting region
-  winding, and enumerates exact positive-area faces through a bounded
-  half-edge traversal. Opening-ended chains, coplanar sheets,
+   winding, and enumerates exact positive-area faces and centroids through a
+   bounded half-edge traversal. Opening-ended chains, coplanar sheets,
   boundary-touching loops, and empty active faces remain explicitly unresolved.
 - `src/fsi/scene_fluid_quadrature.{h,cpp}` turns each unique positive-area
   owner into one stable-ID barycentric quadrature point, preserves authored

@@ -10,7 +10,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidCappedFacePartitionVersion = 3;
+inline constexpr std::uint32_t sceneFluidCappedFacePartitionVersion = 4;
 inline constexpr std::size_t invalidSceneFluidActiveFaceIndex =
     std::numeric_limits<std::size_t>::max();
 inline constexpr std::size_t invalidSceneFluidCappedFacePartitionIndex =
@@ -89,7 +89,8 @@ struct SceneFluidCappedFace {
 // `faces` contains exactly one deterministic record per touched face. Status
 // records why unresolved geometry was rejected; only Resolved has a valid
 // partition index. Unsupported coplanar material, unpaired endpoints,
-// unstitched crossings, or conflicting authored winding remain explicit.
+// unstitched crossings, or conflicting authored winding remain explicit. Each
+// resolved region area retains its exact global first moment and face centroid.
 struct SceneFluidCappedFacePartitionSet {
     std::uint32_t version = sceneFluidCappedFacePartitionVersion;
     std::uint64_t fingerprint = 0;

@@ -555,7 +555,8 @@ published; face-owned aperture area remains area, and grid-edge ownership is
 not guessed. A bounded planar half-edge arrangement combines these virtual-cap
 crossings with the material chains on each touched face. It supports
 disconnected signed cycles, publishes exact same-region areas when they close,
-and otherwise retains an explicit unresolved face record. The coarse real wing
+their global first moments and centroids, and otherwise retains an explicit
+unresolved face record. The coarse real wing
 closes all nine cap-crossed faces through this path. Exact coordinates already
 owned by an earlier clip plane survive later-axis clipping, so a mathematical
 face segment cannot disappear through one-ulp interpolation drift. Face-owned
@@ -585,7 +586,8 @@ gauge owner. The clipped-tetrahedron ledger also closes each cell's first
 moment and recovers analytic region moments under translated grids. Mixed cut
 cells and full interior cells close independently and exactly recover all
 region and domain volumes. A complementary immutable face topology now links
-those unknowns only through exact same-region Cartesian areas. Resolved nested
+those unknowns only through exact same-region Cartesian areas and their exact
+subface centroids. Resolved nested
 interfaces retain one link per region partition; untouched faces require one
 unambiguous common region. On a transversely cap-crossed face, the exact capped
 material-plus-opening partition supersedes the material-only result; an
