@@ -1,6 +1,7 @@
 #include "scene_fluid_mimetic_trace_system.h"
 #include "scene_fluid_mimetic_condensed_trace_system.h"
 #include "scene_fluid_mimetic_pressure_solve.h"
+#include "scene_fluid_mimetic_pressure_state.h"
 #include "scene_fluid_mimetic_trace_flow.h"
 #include "scene_fluid_mimetic_trace_solve.h"
 #include "scene_structure.h"
@@ -818,6 +819,72 @@ void testSourceDrivenTraceBalance() {
                      pressureFromPhysicalSources.fullTracePascals,
                      pressure.fullTracePascals) < 3.0e-12,
           "fingerprinted physical sources feed the same atomic pressure solution");
+    const auto acceptedState = captureSceneFluidMimeticPressureState(
+        shells, system, condensed, physicalSources,
+        pressureFromPhysicalSources);
+    const auto repeatedAcceptedState = captureSceneFluidMimeticPressureState(
+        shells, system, condensed, physicalSources,
+        pressureFromPhysicalSources);
+    bool exactAcceptedControls = acceptedState.controls.size()
+        == pressureFromPhysicalSources.evaluation.cellScalars.size();
+    for (std::size_t index = 0;
+         exactAcceptedControls && index < acceptedState.controls.size();
+         ++index) {
+        exactAcceptedControls = acceptedState.controls[index].pressurePascals
+            == pressureFromPhysicalSources.evaluation.cellScalars[index];
+    }
+    bool exactAcceptedTraces = acceptedState.traces.size()
+        == pressureFromPhysicalSources.reducedTracePascals.size();
+    for (std::size_t index = 0;
+         exactAcceptedTraces && index < acceptedState.traces.size(); ++index) {
+        exactAcceptedTraces = acceptedState.traces[index].pressurePascals
+            == pressureFromPhysicalSources.reducedTracePascals[index];
+    }
+    check(acceptedState == repeatedAcceptedState
+              && acceptedState.fingerprint != 0
+              && acceptedState.mimeticControlCellFingerprint
+                  == shells.fingerprint
+              && acceptedState.fullTraceSystemFingerprint
+                  == system.fingerprint
+              && acceptedState.condensedTraceSystemFingerprint
+                  == condensed.fingerprint
+              && acceptedState.pressureSourceFingerprint
+                  == physicalSources.fingerprint
+              && exactAcceptedControls && exactAcceptedTraces,
+          "accepted mimetic pressure state captures exact source-bound control and shared-trace pressures");
+    validateSceneFluidMimeticPressureState(
+        acceptedState, shells, system, condensed);
+    auto corruptAcceptedState = acceptedState;
+    corruptAcceptedState.traces.front().pressurePascals += 0.01;
+    expectInvalid(
+        [&] { validateSceneFluidMimeticPressureStateIntegrity(
+            corruptAcceptedState); },
+        "accepted mimetic pressure state rejects trace corruption");
+    expectInvalid(
+        [&] { static_cast<void>(captureSceneFluidMimeticPressureState(
+            shells, system, condensed, physicalSources, pressure)); },
+        "accepted mimetic pressure state rejects a solve without source provenance");
+    SceneFluidMimeticPressureStateLimits stateLimits;
+    stateLimits.maximumControlCells = acceptedState.controls.size() - 1;
+    expectLimited(
+        [&] { static_cast<void>(captureSceneFluidMimeticPressureState(
+            shells, system, condensed, physicalSources,
+            pressureFromPhysicalSources, stateLimits)); },
+        "accepted mimetic pressure state bounds control count");
+    stateLimits = {};
+    stateLimits.maximumReducedTraces = acceptedState.traces.size() - 1;
+    expectLimited(
+        [&] { static_cast<void>(captureSceneFluidMimeticPressureState(
+            shells, system, condensed, physicalSources,
+            pressureFromPhysicalSources, stateLimits)); },
+        "accepted mimetic pressure state bounds reduced trace count");
+    stateLimits = {};
+    stateLimits.maximumOwnedBytes = acceptedState.ownedStorageBytes - 1;
+    expectLimited(
+        [&] { static_cast<void>(captureSceneFluidMimeticPressureState(
+            shells, system, condensed, physicalSources,
+            pressureFromPhysicalSources, stateLimits)); },
+        "accepted mimetic pressure state bounds owned storage");
     validateSceneFluidMimeticPressureSources(physicalSources, shells);
 
     auto corruptPhysicalSources = physicalSources;

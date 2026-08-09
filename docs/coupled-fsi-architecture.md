@@ -1114,6 +1114,19 @@ The coarse real wing accepts a balanced `+0.02/-0.02` cell-source pair after
 maximum, with `5.05e-10` maximum local conservation residual. The transaction
 results remain bound to the full, condensed, and optional source fingerprints.
 
+`src/fsi/scene_fluid_mimetic_pressure_state.*` now supplies the accepted-state
+ownership boundary. It accepts only a source-bound successful atomic solve,
+rebuilds the full trace RHS, independently reconstructs every eliminated wall
+trace, and reevaluates all cell scalars and fluxes before requiring exact
+agreement with the published result. Shared gauges must already be exactly
+zero. Only then are stable control pressures and reduced shared-trace pressures
+copied into a bounded fingerprinted state carrying control, full-system,
+condensed-system, source, structure, and accepted-epoch provenance. Corruption,
+a raw-source solve, a foreign topology, or an unnormalized gauge cannot become
+persistent state. The 191,579-row real balanced-source solve crosses this
+capture boundary as well. Consecutive-epoch remapping of this immutable state
+remains the next lifecycle stage.
+
 `src/fsi/scene_fluid_mimetic_pressure_source.*` owns the physical-unit source
 conversion shared with the production projection convention. For each mimetic
 control it accepts predicted net-outward volume flow and optional moving-volume
@@ -1194,7 +1207,7 @@ runs on that reduced real system as well. It rolls back exactly after a
 deliberately truncated iteration, and a separate manufactured solve reaches
 `1e-5` relative RMS within 300 iterations before reconstructing the complete
 191,579-row operator below `2e-4` maximum residual. Further local or multilevel
-preconditioning, accepted warm-state lifecycle, and production integration
+preconditioning, consecutive-epoch warm-state remapping, and production integration
 remain open. The fixed MAC or transported wall-adjusted predictor plus accepted
 GCL volume-rate product now assemble a fully fingerprinted physical source.
 The atomic source-bound transaction additionally converges a balanced real

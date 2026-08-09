@@ -6,6 +6,7 @@
 #include "scene_fluid_mimetic_condensed_trace_system.h"
 #include "scene_fluid_mimetic_control_cell.h"
 #include "scene_fluid_mimetic_pressure_solve.h"
+#include "scene_fluid_mimetic_pressure_state.h"
 #include "scene_fluid_mimetic_trace_flow.h"
 #include "scene_fluid_mimetic_trace_solve.h"
 #include "scene_fluid_mimetic_trace_system.h"
@@ -706,6 +707,7 @@ void testRealDesignCapture(const std::filesystem::path &input,
     simwing::fsi::SceneFluidMimeticPressureSolveResult
         realSourcePressure;
     simwing::fsi::SceneFluidMimeticPressureSourceSet realPhysicalSources;
+    simwing::fsi::SceneFluidMimeticPressureState realPressureState;
     if (sourceReceiver < realPredictedContinuityRates.size()) {
         simwing::fsi::SceneFluidMimeticPressureSourceSettings
             realSourceSettings;
@@ -729,6 +731,11 @@ void testRealDesignCapture(const std::filesystem::path &input,
                 std::vector<double>(
                     condensedTraceSystem.traces.size(), 0.0),
                 realSourceSolveSettings);
+        realPressureState =
+            simwing::fsi::captureSceneFluidMimeticPressureState(
+                mimeticControlCells, mimeticTraceSystem,
+                condensedTraceSystem, realPhysicalSources,
+                realSourcePressure);
     }
     const bool mimeticAuditMatches =
         mimeticControlCells.readyControlCellCount
@@ -806,7 +813,18 @@ void testRealDesignCapture(const std::filesystem::path &input,
                 .reconstructedFullResidualMaximumPascalsMeters
             < 2.0e-4
         && realSourcePressure.diagnostics.maximumCellConservationResidual
-            < 1.0e-9;
+            < 1.0e-9
+        && realPressureState.fingerprint != 0
+        && realPressureState.fullTraceSystemFingerprint
+            == mimeticTraceSystem.fingerprint
+        && realPressureState.condensedTraceSystemFingerprint
+            == condensedTraceSystem.fingerprint
+        && realPressureState.pressureSourceFingerprint
+            == realPhysicalSources.fingerprint
+        && realPressureState.controls.size()
+            == mimeticControlCells.controlCells.size()
+        && realPressureState.traces.size()
+            == condensedTraceSystem.traces.size();
     if (!mimeticAuditMatches) {
         std::fprintf(
             stderr,
