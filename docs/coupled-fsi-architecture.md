@@ -735,16 +735,19 @@ triangular intake and three fixed mouth vertices. Two runs are byte-
 deterministic, its in-memory checkpoint reproduces the exact next frame, and
 the default 600-step/10-second headless run remains topology-stable. The
 mechanical apex drive is gone. A uniform correction maintains
-a prescribed `-0.85 m/s` periodic mean wind, the existing projected nonlinear
-SSPRK2 operator advances that bulk MAC field, and only the resulting scene
-pressure loads the free apex. The reference run reports about `1.12 Pa` peak
-pressure and `9.00 mm` maximum deformation. Frames expose the mean-flow pump
-force plus bulk-advection change and final divergence in place of actuator
-force. It is deliberately a visible bootstrap diagnostic, not aerodynamic
-truth. The bulk operator's two intermediate pressure projections have one
-velocity per Cartesian face and cannot retain distinct velocities on multiple
-cut-region links sharing a face. The final scene projection is sparse and
-region-aware, and its predictor remains fixed inside each strong solve.
+a prescribed `-0.85 m/s` periodic mean wind. The existing symmetric SSPRK2
+viscosity/projected-nonlinear-advection/viscosity operator advances that bulk
+MAC field on a private candidate, and only an accepted scene pressure solve
+commits the next predictor and loads the free apex. The reference run reports
+about `1.12 Pa` peak pressure and `9.01 mm` maximum deformation. Frames expose
+the mean-flow pump force plus bulk-flow change, final divergence, and viscous
+energy loss in place of actuator force. It is deliberately a visible bootstrap
+diagnostic, not aerodynamic truth. The bulk operator's two intermediate
+pressure projections have one velocity per Cartesian face and cannot retain
+distinct velocities on multiple cut-region links sharing a face; its viscosity
+is likewise periodic bulk viscosity, not a wall-conditioned cut-cell operator.
+The final scene projection is sparse and region-aware, and its predictor
+remains fixed inside each strong solve.
 Between accepted steps that predictor advances from the area-collapsed
 pressure-corrected link flow. Its
 bounded canonical checkpoint persists the complete accepted sparse pressure

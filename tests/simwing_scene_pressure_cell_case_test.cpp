@@ -74,7 +74,8 @@ void testVisibleStrongPressureCellAndReplay() {
     double peakPressureForce = 0.0;
     double peakMacSpeed = 0.0;
     double peakMacSubfaceDeviation = 0.0;
-    double peakBulkAdvectionChange = 0.0;
+    double peakBulkFlowChange = 0.0;
+    double peakBulkViscousLoss = 0.0;
     double peakFlowPumpForce = 0.0;
     std::uint64_t peakIterations = 0;
     for (std::size_t step = 0; step < 120; ++step) {
@@ -95,9 +96,13 @@ void testVisibleStrongPressureCellAndReplay() {
         peakMacSubfaceDeviation = std::max(
             peakMacSubfaceDeviation, diagnostics.macVelocity
                 .maximumSubfaceVelocityDeviationMetersPerSecond);
-        peakBulkAdvectionChange = std::max(
-            peakBulkAdvectionChange, diagnostics.bulkAdvection
+        peakBulkFlowChange = std::max(
+            peakBulkFlowChange, diagnostics.bulkFlow
                 .maximumVelocityChangeMetersPerSecond);
+        peakBulkViscousLoss = std::max(
+            peakBulkViscousLoss,
+            diagnostics.bulkFlow.firstHalfViscousEnergyLossJoules
+                + diagnostics.bulkFlow.secondHalfViscousEnergyLossJoules);
         peakFlowPumpForce = std::max(
             peakFlowPumpForce, std::abs(diagnostics.flowPumpForceNewtons));
         peakIterations = std::max(
@@ -114,12 +119,12 @@ void testVisibleStrongPressureCellAndReplay() {
                          .forceResidualNormNewtons < 1.0e-12
                   && diagnostics.coupling.pressureTransfer
                          .momentResidualNormNewtonMeters < 1.0e-12,
-              "scene pressure cell closes every pumped bulk-advection and strong pressure-feedback step");
-        check(diagnostics.bulkAdvection.accepted
-                  && diagnostics.bulkAdvection.finite
-                  && diagnostics.bulkAdvection.finalDivergenceL2PerSecond
+              "scene pressure cell closes every pumped bulk-flow and strong pressure-feedback step");
+        check(diagnostics.bulkFlow.accepted
+                  && diagnostics.bulkFlow.finite
+                  && diagnostics.bulkFlow.finalDivergenceL2PerSecond
                       < 1.0e-11,
-              "scene pressure cell bulk predictor remains projected and finite");
+              "scene pressure cell viscous bulk predictor remains projected and finite");
     }
 
     check(peakDisplacement > 1.0e-5
@@ -127,7 +132,8 @@ void testVisibleStrongPressureCellAndReplay() {
               && peakPressureForce > 1.0e-6
               && peakMacSpeed > 1.0e-6
               && peakMacSubfaceDeviation > 1.0e-8
-              && peakBulkAdvectionChange > 1.0e-8
+              && peakBulkFlowChange > 1.0e-8
+              && peakBulkViscousLoss > 0.0
               && peakFlowPumpForce > 1.0e-8
               && peakIterations >= 2,
           "visible cell develops sustained wind-driven motion, sparse pressure, conservative load, and an evolving bulk MAC predictor");
@@ -151,9 +157,11 @@ void testVisibleStrongPressureCellAndReplay() {
     const auto* macDeviation = scalarField(
         frame, "pressure_cell.mac_subface_deviation");
     const auto* bulkChange = scalarField(
-        frame, "pressure_cell.bulk_advection_change");
+        frame, "pressure_cell.bulk_flow_change");
     const auto* bulkDivergence = scalarField(
         frame, "pressure_cell.bulk_divergence");
+    const auto* bulkViscousLoss = scalarField(
+        frame, "pressure_cell.bulk_viscous_loss");
     const auto* nodalForce = vectorField(
         frame, "pressure_cell.nodal_pressure_force");
     const auto* totalForce = vectorField(
@@ -177,13 +185,15 @@ void testVisibleStrongPressureCellAndReplay() {
               && bulkChange != nullptr && bulkChange->values.size() == 1
               && bulkDivergence != nullptr
               && bulkDivergence->values.size() == 1
+              && bulkViscousLoss != nullptr
+              && bulkViscousLoss->values.size() == 1
               && nodalForce != nullptr
               && nodalForce->association
                   == viewer::FieldAssociation::Vertex
               && nodalForce->values.size() == frame.vertices.size()
               && totalForce != nullptr && totalForce->values.size() == 1
               && flowPump != nullptr && flowPump->values.size() == 1,
-          "scene pressure cell frame exposes deformation, pressure, pump forcing, bulk advection, MAC continuation, and iteration count");
+          "scene pressure cell frame exposes deformation, pressure, pump forcing, viscous bulk flow, MAC continuation, and iteration count");
 
     const auto checkpoint = first.checkpoint();
     const auto expected = first.advance();

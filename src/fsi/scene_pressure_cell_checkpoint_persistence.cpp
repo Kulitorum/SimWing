@@ -14,8 +14,8 @@ namespace simwing::fsi {
 namespace {
 
 constexpr std::array<std::uint8_t, 8> checkpointMagic{
-    'S', 'W', 'P', 'C', 'E', 'L', 'L', '3'};
-constexpr std::uint32_t checkpointStateVersion = 3;
+    'S', 'W', 'P', 'C', 'E', 'L', 'L', '4'};
+constexpr std::uint32_t checkpointStateVersion = 4;
 constexpr std::size_t checkpointEnvelopeBytes = 28;
 constexpr std::size_t solveComponentRecordBytes = 56;
 constexpr std::size_t controlVolumeRecordBytes = 72;

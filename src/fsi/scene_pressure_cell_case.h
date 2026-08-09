@@ -1,6 +1,6 @@
 #pragma once
 
-#include "fluid/projected_advection.h"
+#include "fluid/evolution.h"
 #include "scene_fluid_pressure_coupling.h"
 #include "structure_frame.h"
 #include "viewer_protocol.h"
@@ -10,15 +10,15 @@
 namespace simwing::fsi {
 
 inline constexpr char scenePressureCellCaseChecksum[] =
-    "sha256:simwing-scene-pressure-feedback-cell-v3";
+    "sha256:simwing-scene-pressure-feedback-cell-v4";
 inline constexpr char scenePressureCellCaseSolverId[] =
-    "simwing-fsi-scene-pressure-feedback-worker-v3";
-inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 3;
+    "simwing-fsi-scene-pressure-feedback-worker-v4";
+inline constexpr std::uint32_t scenePressureCellCheckpointVersion = 4;
 
 struct ScenePressureCellDiagnostics {
     SceneFluidPressureCouplingStepDiagnostics coupling;
     SceneFluidPressureMacVelocityCollapseDiagnostics macVelocity;
-    fluid::ProjectedMacAdvectionSspRk2Diagnostics bulkAdvection;
+    fluid::PeriodicFlowStrangSspRk2Diagnostics bulkFlow;
     double targetMeanWindMetersPerSecond = 0.0;
     double meanWindBeforePumpMetersPerSecond = 0.0;
     double flowPumpForceNewtons = 0.0;
@@ -36,11 +36,12 @@ struct ScenePressureCellCheckpoint {
 };
 
 // A visible analytic open cell driven by a prescribed periodic mean-flow
-// pump. The accepted collapsed MAC state receives one existing projected
-// nonlinear bulk-advection step before scene-v2 pressure is strongly coupled
-// back to the same XPBD Structure. Immersed-boundary convection remains an
-// approximation: cut-region pressure is exact for this subset, but the bulk
-// advection stages do not yet resolve distinct per-region subface velocities.
+// pump. The accepted collapsed MAC state receives one existing symmetric
+// viscosity/projected-nonlinear-advection/viscosity bulk step before scene-v2
+// pressure is strongly coupled back to the same XPBD Structure.
+// Immersed-boundary momentum remains an approximation: cut-region pressure is
+// exact for this subset, but the bulk stages do not yet resolve distinct
+// per-region subface velocities or wall-conditioned viscosity.
 class ScenePressureCellCase final {
 public:
     ScenePressureCellCase();

@@ -12,7 +12,7 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint16_t
-    scenePressureCellCheckpointProtocolVersion = 3;
+    scenePressureCellCheckpointProtocolVersion = 4;
 
 struct ScenePressureCellCheckpointPersistenceLimits {
     std::size_t maximumEncodedBytes = 256u * 1024u * 1024u;

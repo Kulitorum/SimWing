@@ -201,8 +201,8 @@ double maximumDisplacement(const Structure& structure) {
 bool finite(const ScenePressureCellDiagnostics& diagnostics) {
     return diagnostics.coupling.finite
         && diagnostics.macVelocity.finite
-        && diagnostics.bulkAdvection.finite
-        && diagnostics.bulkAdvection.accepted
+        && diagnostics.bulkFlow.finite
+        && diagnostics.bulkFlow.accepted
         && std::isfinite(diagnostics.targetMeanWindMetersPerSecond)
         && std::isfinite(diagnostics.meanWindBeforePumpMetersPerSecond)
         && std::isfinite(diagnostics.flowPumpForceNewtons)
@@ -233,22 +233,23 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
     const double meanWind = meanXVelocity(predictedVelocity_);
     const double pumpVelocityIncrement =
         targetMeanWindMetersPerSecond - meanWind;
-    for (double& value : predictedVelocity_.xFaces()) {
+    auto bulkVelocity = predictedVelocity_;
+    for (double& value : bulkVelocity.xFaces()) {
         value += pumpVelocityIncrement;
     }
     fluid::CellScalarField bulkPressure(coupling_.grid());
-    fluid::ProjectedMacAdvectionSspRk2Settings bulkSettings;
+    fluid::PeriodicFlowStrangSspRk2Settings bulkSettings;
     bulkSettings.densityKgPerCubicMeter = coupling_.settings()
         .pressureProjection.densityKgPerCubicMeter;
     bulkSettings.timeStepSeconds =
         coupling_.settings().structure.timeStepSeconds;
-    const auto bulk = fluid::advectVelocityProjectedSspRk2(
-        coupling_.grid(), predictedVelocity_, bulkPressure, bulkSettings);
+    const auto bulk = fluid::advancePeriodicFlowStrangSspRk2(
+        coupling_.grid(), bulkVelocity, bulkPressure, bulkSettings);
     if (!bulk.accepted) {
         throw std::runtime_error(
-            "scene pressure cell bulk advection rejected its collapsed MAC predictor");
+            "scene pressure cell bulk flow rejected its collapsed MAC predictor");
     }
-    const auto coupled = coupling_.advance(structure_, predictedVelocity_);
+    const auto coupled = coupling_.advance(structure_, bulkVelocity);
     if (!coupled.accepted) {
         throw std::runtime_error(
             "scene pressure cell exhausted its coupling iteration budget");
@@ -260,7 +261,7 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
     ScenePressureCellDiagnostics nextDiagnostics;
     nextDiagnostics.coupling = coupled;
     nextDiagnostics.macVelocity = correctedMac.diagnostics;
-    nextDiagnostics.bulkAdvection = bulk;
+    nextDiagnostics.bulkFlow = bulk;
     nextDiagnostics.targetMeanWindMetersPerSecond =
         targetMeanWindMetersPerSecond;
     nextDiagnostics.meanWindBeforePumpMetersPerSecond = meanWind;
@@ -390,15 +391,21 @@ viewer::DiagnosticFrame ScenePressureCellCase::advance() {
              .maximumSubfaceVelocityDeviationMetersPerSecond},
     });
     frame.scalarFields.push_back({
-        "pressure_cell.bulk_advection_change", "m/s",
+        "pressure_cell.bulk_flow_change", "m/s",
         viewer::FieldAssociation::Global,
-        {diagnostics_.bulkAdvection
+        {diagnostics_.bulkFlow
              .maximumVelocityChangeMetersPerSecond},
     });
     frame.scalarFields.push_back({
         "pressure_cell.bulk_divergence", "1/s",
         viewer::FieldAssociation::Global,
-        {diagnostics_.bulkAdvection.finalDivergenceL2PerSecond},
+        {diagnostics_.bulkFlow.finalDivergenceL2PerSecond},
+    });
+    frame.scalarFields.push_back({
+        "pressure_cell.bulk_viscous_loss", "J",
+        viewer::FieldAssociation::Global,
+        {diagnostics_.bulkFlow.firstHalfViscousEnergyLossJoules
+         + diagnostics_.bulkFlow.secondHalfViscousEnergyLossJoules},
     });
 
     std::vector<viewer::Vec3d> nodalPressureForces(

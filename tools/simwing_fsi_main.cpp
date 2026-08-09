@@ -114,7 +114,7 @@ void printUsage(FILE* stream) {
         "shared-node open XPBD fabric cell;\n"
         "'pressure-cell' strongly couples scene-v2 moving cut-volume pressure\n"
         "back to an open XPBD cell while a prescribed mean-flow pump and\n"
-        "projected nonlinear advection advance its bulk MAC predictor;\n"
+        "symmetric viscous/projected nonlinear flow advance its bulk MAC predictor;\n"
         "'piston' runs\n"
         "the face-resolved fluid -> transfer -> temporal coupling -> XPBD path;\n"
         "'strong-piston' strongly iterates that chain for a light added-mass plate;\n"
@@ -1591,7 +1591,8 @@ int main(int argc, char* argv[]) {
                         "[%.6g %.6g %.6g] N, max-pressure=%.6g Pa, "
                         "max-motion=%.6g m, coupling-iterations=%llu, "
                         "mac-speed=%.6g m/s, subface-spread=%.3g m/s, "
-                        "load-closure=%.3g N, checkpoint-writes=%llu, "
+                        "bulk-viscous-loss=%.3g J, load-closure=%.3g N, "
+                        "checkpoint-writes=%llu, "
                         "trace=%s\n",
                         static_cast<unsigned long long>(
                             checkpoint.acceptedStepCount),
@@ -1609,6 +1610,9 @@ int main(int argc, char* argv[]) {
                             .maximumAbsoluteVelocityMetersPerSecond,
                         coupled.macVelocity
                             .maximumSubfaceVelocityDeviationMetersPerSecond,
+                        coupled.bulkFlow.firstHalfViscousEnergyLossJoules
+                            + coupled.bulkFlow
+                                .secondHalfViscousEnergyLossJoules,
                         coupled.coupling.interfaceForceClosureNewtons,
                         static_cast<unsigned long long>(
                             checkpointWriteCount),
