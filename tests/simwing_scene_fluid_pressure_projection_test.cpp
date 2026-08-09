@@ -1,4 +1,6 @@
 #include "scene_fluid_pressure_projection.h"
+#include "scene_fluid_pressure_link_flow.h"
+#include "scene_fluid_pressure_epoch.h"
 
 #include <algorithm>
 #include <array>
@@ -158,6 +160,20 @@ fluid::PeriodicCartesianGrid grid() {
     return {{4, 4, 4}, {}, {4.0, 4.0, 4.0}};
 }
 
+SceneStructureAssembly structureAssembly(
+    const Scene& scene, const bool fixed, const bool fixedMouth) {
+    auto result = assembleSceneStructure(scene);
+    for (std::size_t index = 0;
+         index < result.definition.nodes.size(); ++index) {
+        if (fixed
+            || (fixedMouth
+                && result.mappings.nodeVertexIds[index] != StableId{10})) {
+            result.definition.nodes[index].fixed = true;
+        }
+    }
+    return result;
+}
+
 struct Fixture {
     Scene scene;
     SceneFluidSurfaceAssembly surface;
@@ -175,10 +191,13 @@ struct Fixture {
     SceneFluidPressureFaceLinkSet faceLinks;
     SceneFluidPressureOperator pressureOperator;
 
-    explicit Fixture(Scene source)
+    explicit Fixture(Scene source,
+                     const bool fixed = false,
+                     const bool fixedMouth = false)
         : scene(std::move(source)),
           surface(assembleSceneFluidSurface(scene)),
-          structureAssembly(assembleSceneStructure(scene)),
+          structureAssembly(::structureAssembly(
+              scene, fixed, fixedMouth)),
           structure(structureAssembly.definition),
           transfer(surface.definition,
                    structureAssembly.mappings,
@@ -463,6 +482,180 @@ void testZeroFlowAndRejectedAttempt() {
     validateSceneFluidPressureProjectionIntegrity(rejected);
 }
 
+void testLinkResolvedContinuation() {
+    Fixture fixture(openScene(), true);
+    fluid::MacVelocityField velocity(grid());
+    std::ranges::fill(velocity.xFaces(), 2.0);
+    const auto previousFlux = fixture.flux(velocity);
+    std::vector<double> previousWarm(
+        fixture.pressureOperator.rows.size(), 0.0);
+    const auto previousProjection = fixture.project(
+        velocity, previousFlux, previousWarm, strictSettings());
+
+    StructureStepSettings stepSettings;
+    stepSettings.timeStepSeconds = strictSettings().timeStepSeconds;
+    stepSettings.substeps = 1;
+    stepSettings.constraintIterations = 1;
+    stepSettings.gravityMetersPerSecondSquared = {};
+    stepSettings.velocityDampingPerSecond = 0.0;
+    check(fixture.structure.step(stepSettings).finite,
+          "link continuation current Structure state advances");
+    const auto currentState = captureSceneFluidSurfaceState(
+        fixture.surface.definition, fixture.structureAssembly.mappings,
+        fixture.structure);
+    const auto currentEpoch = buildSceneFluidPressureEpoch(
+        fixture.surface.definition, currentState, grid(), fixture.transfer,
+        fixture.connectivity);
+    const auto currentFlux = evaluateSceneFluidOpeningFlux(
+        fixture.surface.definition, currentState,
+        currentEpoch.openingCaps, currentEpoch.openingQuadrature,
+        currentEpoch.openingPatches, grid(), velocity);
+    const auto continuation = continueSceneFluidPressureLinkFlows(
+        grid(), fixture.faceLinks, fixture.openingPatches,
+        previousProjection, currentEpoch.pressureFaceLinks, currentFlux,
+        velocity);
+    const auto repeated = continueSceneFluidPressureLinkFlows(
+        grid(), fixture.faceLinks, fixture.openingPatches,
+        previousProjection, currentEpoch.pressureFaceLinks, currentFlux,
+        velocity);
+    check(continuation == repeated
+              && continuation.diagnostics.finite
+              && continuation.diagnostics.multiLinkFaceCount > 0
+              && continuation.diagnostics.openingLinkCount == 1
+              && continuation.diagnostics
+                     .maximumCarriedAbsoluteVelocityDeviationMetersPerSecond
+                  > 0.0
+              && continuation.diagnostics
+                     .maximumAbsoluteFaceFlowClosureCubicMetersPerSecond
+                  < 1.0e-15,
+          "link continuation deterministically preserves subface velocity with exact face-total closure");
+
+    std::vector<double> currentWarm(
+        currentEpoch.pressureOperator.rows.size(), 0.0);
+    const auto continuedProjection = projectSceneFluidPressureLinkFlows(
+        fixture.surface.definition, currentState, grid(), fixture.transfer,
+        currentEpoch.gridEpoch, currentEpoch.openingCaps,
+        currentEpoch.openingQuadrature, currentEpoch.openingPatches,
+        currentFlux, velocity, continuation, currentEpoch.cellVolumes,
+        fixture.connectivity, currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentEpoch.pressureOperator,
+        currentWarm, strictSettings());
+    const auto directProjection = projectSceneFluidPressureLinkFlows(
+        fixture.surface.definition, currentState, grid(), fixture.transfer,
+        currentEpoch.gridEpoch, currentEpoch.openingCaps,
+        currentEpoch.openingQuadrature, currentEpoch.openingPatches,
+        currentFlux, velocity, currentEpoch.cellVolumes,
+        fixture.connectivity, currentEpoch.pressureControlVolumes,
+        currentEpoch.pressureFaceLinks, currentEpoch.pressureOperator,
+        currentWarm, strictSettings());
+    bool exactPrediction = continuedProjection.diagnostics.accepted
+        && continuedProjection.linkFlowContinuationFingerprint
+            == continuation.fingerprint
+        && continuedProjection.links.size() == continuation.links.size();
+    for (std::size_t index = 0;
+         exactPrediction && index < continuation.links.size(); ++index) {
+        exactPrediction = continuedProjection.links[index]
+            .predictedRelativeVolumeFlowRateCubicMetersPerSecond
+            == continuation.links[index]
+                .predictedRelativeVolumeFlowRateCubicMetersPerSecond;
+    }
+    check(exactPrediction,
+          "pressure projection consumes the exact topology-bound continued link flows");
+    const auto maximumPressure = [](const SceneFluidPressureProjection& value) {
+        double result = 0.0;
+        for (const double pressure : value.pressurePascals) {
+            result = std::max(result, std::abs(pressure));
+        }
+        return result;
+    };
+    check(maximumPressure(directProjection) > 1.0e-6
+              && maximumPressure(continuedProjection)
+                  < 0.2 * maximumPressure(directProjection),
+          "static subface continuation cannot replace region-resolved momentum transport without strongly reducing steady pressure load");
+
+    auto corrupt = continuation;
+    corrupt.links.front()
+        .predictedRelativeVolumeFlowRateCubicMetersPerSecond += 0.01;
+    expectInvalid(
+        [&] {
+            validateSceneFluidPressureLinkFlowContinuationIntegrity(corrupt);
+        },
+        "link continuation integrity rejects predicted-flow corruption");
+
+    auto foreignVelocity = velocity;
+    foreignVelocity.xFaces().front() += 0.01;
+    expectInvalid(
+        [&] {
+            static_cast<void>(continueSceneFluidPressureLinkFlows(
+                grid(), fixture.faceLinks, fixture.openingPatches,
+                previousProjection, currentEpoch.pressureFaceLinks,
+                currentFlux, foreignVelocity));
+        },
+        "link continuation rejects a bulk field foreign to opening flux");
+
+    SceneFluidPressureLinkFlowContinuationLimits limits;
+    limits.maximumLinks = currentEpoch.pressureFaceLinks.links.size() - 1;
+    expectLimited(
+        [&] {
+            static_cast<void>(continueSceneFluidPressureLinkFlows(
+                grid(), fixture.faceLinks, fixture.openingPatches,
+                previousProjection, currentEpoch.pressureFaceLinks,
+                currentFlux, velocity, limits));
+        },
+        "link continuation bounds its output link count");
+}
+
+void testAreaChangingLinkContinuation() {
+    Fixture fixture(openScene(), false, true);
+    const auto velocity = manufacturedVelocity();
+    const auto previousFlux = fixture.flux(velocity);
+    std::vector<double> warm(
+        fixture.pressureOperator.rows.size(), 0.0);
+    const auto previousProjection = fixture.project(
+        velocity, previousFlux, warm, strictSettings());
+
+    const auto apex = std::ranges::find(
+        fixture.structureAssembly.mappings.nodeVertexIds, StableId{10});
+    check(apex != fixture.structureAssembly.mappings.nodeVertexIds.end(),
+          "area-changing link continuation finds its free apex");
+    if (apex == fixture.structureAssembly.mappings.nodeVertexIds.end()) {
+        return;
+    }
+    fixture.structure.addExternalForce(
+        static_cast<std::size_t>(
+            apex - fixture.structureAssembly.mappings.nodeVertexIds.begin()),
+        {-0.2, 0.0, 0.0});
+    StructureStepSettings stepSettings;
+    stepSettings.timeStepSeconds = strictSettings().timeStepSeconds;
+    stepSettings.substeps = 4;
+    stepSettings.constraintIterations = 10;
+    stepSettings.gravityMetersPerSecondSquared = {};
+    stepSettings.velocityDampingPerSecond = 0.0;
+    check(fixture.structure.step(stepSettings).finite,
+          "area-changing link continuation advances its free apex");
+    const auto currentState = captureSceneFluidSurfaceState(
+        fixture.surface.definition, fixture.structureAssembly.mappings,
+        fixture.structure);
+    const auto currentEpoch = buildSceneFluidPressureEpoch(
+        fixture.surface.definition, currentState, grid(), fixture.transfer,
+        fixture.connectivity);
+    const auto currentFlux = evaluateSceneFluidOpeningFlux(
+        fixture.surface.definition, currentState,
+        currentEpoch.openingCaps, currentEpoch.openingQuadrature,
+        currentEpoch.openingPatches, grid(), velocity);
+    const auto continuation = continueSceneFluidPressureLinkFlows(
+        grid(), fixture.faceLinks, fixture.openingPatches,
+        previousProjection, currentEpoch.pressureFaceLinks, currentFlux,
+        velocity);
+    check(continuation.diagnostics.finite
+              && continuation.diagnostics
+                     .maximumAreaRenormalizationMetersPerSecond > 0.0
+              && continuation.diagnostics
+                     .maximumAbsoluteFaceFlowClosureCubicMetersPerSecond
+                  < 1.0e-15,
+          "area-changing link continuation recenters carried deviations without changing face-total flow");
+}
+
 void testValidationAndLimits() {
     Fixture fixture(openScene());
     fluid::MacVelocityField velocity(grid());
@@ -513,6 +706,8 @@ int main() {
         testClosedLinkProjection();
         testFaceAlignedOpeningProjection();
         testZeroFlowAndRejectedAttempt();
+        testLinkResolvedContinuation();
+        testAreaChangingLinkContinuation();
         testValidationAndLimits();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

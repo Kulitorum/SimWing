@@ -368,6 +368,8 @@ add_library(simwing_scene_fluid_cell_volume STATIC
     src/fsi/scene_fluid_pressure_epoch.h
     src/fsi/scene_fluid_pressure_face_link.cpp
     src/fsi/scene_fluid_pressure_face_link.h
+    src/fsi/scene_fluid_pressure_link_flow.cpp
+    src/fsi/scene_fluid_pressure_link_flow.h
     src/fsi/scene_fluid_pressure_operator.cpp
     src/fsi/scene_fluid_pressure_operator.h
     src/fsi/scene_fluid_pressure_projection.cpp

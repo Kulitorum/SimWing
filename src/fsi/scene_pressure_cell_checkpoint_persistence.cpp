@@ -14,8 +14,8 @@ namespace simwing::fsi {
 namespace {
 
 constexpr std::array<std::uint8_t, 8> checkpointMagic{
-    'S', 'W', 'P', 'C', 'E', 'L', 'L', '4'};
-constexpr std::uint32_t checkpointStateVersion = 4;
+    'S', 'W', 'P', 'C', 'E', 'L', 'L', '5'};
+constexpr std::uint32_t checkpointStateVersion = 5;
 constexpr std::size_t checkpointEnvelopeBytes = 28;
 constexpr std::size_t solveComponentRecordBytes = 56;
 constexpr std::size_t controlVolumeRecordBytes = 72;
@@ -437,6 +437,7 @@ bool writeProjection(
         || !writer.u64(projection.pressureVolumeRateFingerprint)
         || !writer.u64(projection.openingFluxFingerprint)
         || !writer.u64(projection.velocityFingerprint)
+        || !writer.u64(projection.linkFlowContinuationFingerprint)
         || !writer.u64(projection.acceptedStepCount)
         || !writer.finiteDouble(projection.simulationTimeSeconds)
         || !writer.count(projection.cellCounts.x)
@@ -512,6 +513,7 @@ bool readProjection(
         || !reader.u64(projection.pressureVolumeRateFingerprint)
         || !reader.u64(projection.openingFluxFingerprint)
         || !reader.u64(projection.velocityFingerprint)
+        || !reader.u64(projection.linkFlowContinuationFingerprint)
         || !reader.u64(projection.acceptedStepCount)
         || !reader.finiteDouble(projection.simulationTimeSeconds)
         || !reader.count(

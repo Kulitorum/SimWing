@@ -499,7 +499,9 @@ void SceneFluidPressureCoupling::restore(
                 != restoredEpoch.pressureFaceLinks.fingerprint
             || checkpointValue.pressureProjection
                    ->pressureOperatorFingerprint
-                != restoredEpoch.pressureOperator.fingerprint) {
+                != restoredEpoch.pressureOperator.fingerprint
+            || checkpointValue.pressureProjection
+                   ->linkFlowContinuationFingerprint != 0) {
             throw std::invalid_argument(
                 "scene pressure coupling checkpoint projection is foreign");
         }
@@ -609,8 +611,7 @@ SceneFluidPressureCoupling::advance(
                 connectivity_, currentEpoch.pressureControlVolumes,
                 currentEpoch.pressureFaceLinks,
                 currentEpoch.pressureOperator, rates, warmPressure,
-                projectionSettings,
-                limits_.pressureProjection);
+                projectionSettings, limits_.pressureProjection);
             if (!projection.diagnostics.accepted) {
                 throw std::runtime_error(
                     "scene pressure coupling projection was not accepted");

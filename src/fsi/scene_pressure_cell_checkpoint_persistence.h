@@ -12,7 +12,7 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint16_t
-    scenePressureCellCheckpointProtocolVersion = 4;
+    scenePressureCellCheckpointProtocolVersion = 5;
 
 struct ScenePressureCellCheckpointPersistenceLimits {
     std::size_t maximumEncodedBytes = 256u * 1024u * 1024u;
@@ -49,7 +49,9 @@ struct ScenePressureCellCheckpointPersistenceError {
 // predictor is deterministically derived from that projection after restore;
 // the private per-step bulk pressure is transient and neither field is
 // duplicated in the envelope. An initial checkpoint reconstructs the
-// canonical prescribed wind.
+// canonical prescribed wind. Projection records include optional link-flow
+// continuation provenance, but this worker requires it to be zero until
+// region-resolved momentum transport owns that path.
 [[nodiscard]] bool serializeScenePressureCellCheckpoint(
     const ScenePressureCellCheckpoint& checkpoint,
     std::vector<std::uint8_t>& bytes,

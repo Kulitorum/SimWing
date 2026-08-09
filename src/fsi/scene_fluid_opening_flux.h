@@ -109,6 +109,12 @@ struct SceneFluidOpeningFluxSet {
     const fluid::MacVelocityField& velocityMetersPerSecond,
     const SceneFluidOpeningFluxLimits& limits = {});
 
+// Stable identity used by downstream immutable products that bind the same
+// complete MAC field as an accepted opening-flux ledger.
+[[nodiscard]] std::uint64_t sceneFluidOpeningFluxVelocityFingerprint(
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::MacVelocityField& velocityMetersPerSecond);
+
 // Lightweight immutable-product check for downstream adapters that already
 // received an accepted flux epoch and need to reject accidental mutation
 // without resampling its complete geometry and MAC field chain.

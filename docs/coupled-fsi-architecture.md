@@ -722,6 +722,17 @@ authored openings and reporting the maximum mixed-region subface velocity
 spread. The pressure-cell worker uses that derived field as the next accepted
 predictor. This collapse is pressure-correction continuation, not general
 cut-cell advection, viscosity, or a topology-rebasing CFD step. Its
+topology-stable inverse bookkeeping is now explicit as a separate link-flow
+continuation product. It restores previous opening-cap sweep, retains the
+absolute velocity deviation of every link from its Cartesian face mean,
+recentres those deviations under current link areas, reapplies current cap
+sweep, and closes the current bulk face total to roundoff. Pressure projection
+has a fingerprinted overload that consumes those exact relative link flows.
+This path is not used by the strong worker: in a static open-cell regression,
+reusing corrected subface flow without convecting it strongly reduces the next
+pressure solve, and repeated use drains the physical pressure load. That
+negative oracle makes region-resolved momentum transport—not static state
+carry—the required next owner. The
 first composite in-memory checkpoint stores Structure and the accepted sparse
 pressure projection. Restore uses a temporary Structure, rebuilds the entire
 pressure epoch, resamples the validated projection, and reconstructs the
@@ -755,7 +766,9 @@ projection beside the trusted nested Structure payload. Deterministic initial
 and accepted round trips, exact next-frame replay, CLI autosave/resume, and
 transactional corruption/foreign-file rejection are covered. Restore derives
 the exact bulk MAC continuation from that projection instead of duplicating it
-or the transient bulk pressure on the wire. A
+or the transient bulk pressure on the wire. `SWPCELL5` additionally persists
+the optional link-continuation provenance field in a projection, while this
+worker rejects a nonzero marker until it actually owns that transport. A
 canonical Qt-free structural
 worker now launches the viewer by default and
 publishes accepted steps through a bounded

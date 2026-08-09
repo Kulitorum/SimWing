@@ -618,6 +618,15 @@ including oriented intake-cap sweep. The visible pressure-cell canonical uses
 that field as its next predictor; general cut-cell momentum transport,
 region-resolved advection, wall-conditioned viscosity, and topology rebasing
 remain later work.
+A separate topology-bound link-flow continuation primitive now proves exactly
+what the collapse loses. It restores accepted opening-cap sweep, carries each
+link's absolute velocity deviation from its previous face mean, recentres those
+deviations under changed subface areas, and supplies an explicit per-link
+pressure predictor while preserving the new bulk MAC face total to roundoff.
+It is deliberately not enabled in the worker: a static carry has no
+region-resolved convective update and strongly drains the repeated pressure
+load. The regression records that failure mode so this bookkeeping adapter
+cannot be mistaken for the missing cut-region momentum equation.
 Its in-memory composite checkpoint retains Structure plus the accepted sparse
 pressure projection; restore rebuilds and validates the complete pressure
 epoch and conservative load before committing either owner. Initial and
@@ -643,12 +652,14 @@ diagnostic, not a general immersed-boundary CFD or wing-aerodynamics claim. A
 600-step headless run remains topology-stable for 10 simulated seconds and
 reports about `1.12 Pa` peak pressure, `9.01 mm` maximum deformation, and
 `0.926 m/s` maximum MAC speed.
-Its bounded `SWPCELL4` checkpoint stores the trusted Structure state and the
+Its bounded `SWPCELL5` checkpoint stores the trusted Structure state and the
 complete accepted sparse pressure projection. Initial and accepted files
 round-trip deterministically, reject foreign/corrupt input transactionally,
 resume through the normal worker checkpoint flags, and reconstruct the exact
 derived MAC continuation without duplicating either it or transient bulk
-pressure on the wire.
+pressure on the wire. Version 5 also records whether a pressure projection was
+formed from the explicit link-flow continuation; canonical worker checkpoints
+require that marker to remain zero until cut-region momentum transport owns it.
 Nonplanar or concave openings, surface
 junctions, periodic-boundary ambiguity, and general moving-boundary fluid
 equations still reject or remain open; the grid epoch itself continues to own

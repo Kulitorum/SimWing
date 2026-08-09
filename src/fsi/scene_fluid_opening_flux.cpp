@@ -638,6 +638,17 @@ bool sameGrid(const SceneFluidOpeningFluxSet& flux,
 
 } // namespace
 
+std::uint64_t sceneFluidOpeningFluxVelocityFingerprint(
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::MacVelocityField& velocityMetersPerSecond) {
+    if (!velocityMetersPerSecond.matches(grid)
+        || !fluid::isFinite(velocityMetersPerSecond)) {
+        throw std::invalid_argument(
+            "scene fluid opening-flux velocity fingerprint input is invalid");
+    }
+    return velocityFingerprint(grid, velocityMetersPerSecond);
+}
+
 SceneFluidOpeningFluxSet evaluateSceneFluidOpeningFlux(
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& state,
