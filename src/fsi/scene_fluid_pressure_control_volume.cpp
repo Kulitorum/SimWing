@@ -77,6 +77,12 @@ double tolerance(const SceneFluidCellVolumeSet& volumes,
         volumes.settings.relativeVolumeTolerance * std::abs(reference));
 }
 
+bool finite(const Vec3& value) {
+    return std::isfinite(value.x)
+        && std::isfinite(value.y)
+        && std::isfinite(value.z);
+}
+
 std::uint64_t controlVolumeStableId(const std::size_t cellIndex,
                                     const StableId regionId) {
     Fingerprint fingerprint;
@@ -204,6 +210,9 @@ std::uint64_t pressureVolumeFingerprint(
             control.componentIndex));
         fingerprint.real(control.volumeCubicMeters);
         fingerprint.real(control.volumeFraction);
+        fingerprint.real(control.centroidMeters.x);
+        fingerprint.real(control.centroidMeters.y);
+        fingerprint.real(control.centroidMeters.z);
         fingerprint.integer(static_cast<std::uint8_t>(
             control.belongsToGaugeRegion));
     }
@@ -326,7 +335,8 @@ SceneFluidPressureControlVolumeSet buildPressureVolumes(
             if (!regionIndex || *regionIndex >= connectivity.regions.size()
                 || !(source.volumeCubicMeters > 0.0)
                 || !std::isfinite(source.volumeCubicMeters)
-                || !std::isfinite(source.volumeFraction)) {
+                || !std::isfinite(source.volumeFraction)
+                || !finite(source.centroidMeters)) {
                 throw std::invalid_argument(
                     "scene fluid pressure-control-volume region source is invalid");
             }
@@ -344,6 +354,7 @@ SceneFluidPressureControlVolumeSet buildPressureVolumes(
             control.componentIndex = connectedRegion.componentIndex;
             control.volumeCubicMeters = source.volumeCubicMeters;
             control.volumeFraction = source.volumeFraction;
+            control.centroidMeters = source.centroidMeters;
             control.belongsToGaugeRegion =
                 source.regionId == component.gaugeRegionId;
             if (!stableIds.insert(control.stableId).second) {

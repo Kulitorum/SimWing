@@ -214,10 +214,19 @@ void testSparsePressureVolumesAndGauges() {
     check(mixedCellCount > 0 && fullInsideCellCount == 24,
           "pressure topology retains mixed and full interior control volumes");
     std::set<std::uint64_t> stableIds;
-    for (const auto& control : first.controlVolumes) {
+    for (std::size_t controlIndex = 0;
+         controlIndex < first.controlVolumes.size(); ++controlIndex) {
+        const auto& control = first.controlVolumes[controlIndex];
+        const auto& source = volumes.cellRegionVolumes[controlIndex];
         check(control.stableId != 0
                   && stableIds.insert(control.stableId).second,
               "pressure control-volume IDs are nonzero and unique");
+        checkNear(control.centroidMeters.x, source.centroidMeters.x, 0.0,
+                  "pressure control preserves source centroid x");
+        checkNear(control.centroidMeters.y, source.centroidMeters.y, 0.0,
+                  "pressure control preserves source centroid y");
+        checkNear(control.centroidMeters.z, source.centroidMeters.z, 0.0,
+                  "pressure control preserves source centroid z");
     }
     for (const auto& component : first.components) {
         const auto& gauge =
@@ -308,6 +317,14 @@ void testCorruptionAndLimits() {
             corrupt, fixture.surface.definition, volumes,
             fixture.connectivity); },
         "pressure-control-volume validation rejects nested corruption");
+
+    corrupt = accepted;
+    corrupt.controlVolumes.front().centroidMeters.z += 0.01;
+    expectInvalid(
+        [&] { validateSceneFluidPressureControlVolumes(
+            corrupt, fixture.surface.definition, volumes,
+            fixture.connectivity); },
+        "pressure-control-volume validation rejects centroid corruption");
 
     auto corruptSource = volumes;
     corruptSource.cellRegionVolumes.front().volumeCubicMeters += 0.01;

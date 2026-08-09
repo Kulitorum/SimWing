@@ -635,10 +635,13 @@ Opening source rates also cancel independently inside each component. A
 first immutable pressure-control-volume owner now creates one unknown for
 every positive sparse cell/region volume. Cell-major indices and hashed
 fixed-grid cell/region IDs preserve identity across accepted motion, while
-region and component membership provide exact volume weights and one
-deterministic gauge volume per component. The large-tetrahedron regression
-retains mixed cut cells and 24 full interior cells and closes every cell,
-region, component, and the full domain. A complementary immutable face-link
+exact clipped first moments provide cell-local pressure centroids and close
+independently in every Cartesian cell. Region and component membership provide
+exact volume weights and one deterministic gauge volume per component. The
+large-tetrahedron regression retains mixed cut cells and 24 full interior
+cells, recovers analytic region first moments on original and translated
+grids, and closes every cell, region, component, and the full domain. A
+complementary immutable face-link
 owner now consumes the exact face partitions and connects only matching
 same-region pressure volumes. A resolved nested face retains its exact
 exterior, annular-cell, and inner-cell areas as separate links; an untouched

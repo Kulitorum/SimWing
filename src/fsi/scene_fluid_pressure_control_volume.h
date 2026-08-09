@@ -9,7 +9,7 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t
-    sceneFluidPressureControlVolumeVersion = 1;
+    sceneFluidPressureControlVolumeVersion = 2;
 
 struct SceneFluidPressureControlVolumeLimits {
     std::size_t maximumCells = 10'000'000;
@@ -42,10 +42,25 @@ struct SceneFluidPressureControlVolume {
     std::size_t componentIndex = 0;
     double volumeCubicMeters = 0.0;
     double volumeFraction = 0.0;
+    Vec3 centroidMeters;
     bool belongsToGaugeRegion = false;
 
     bool operator==(
-        const SceneFluidPressureControlVolume&) const = default;
+        const SceneFluidPressureControlVolume& other) const {
+        return controlVolumeIndex == other.controlVolumeIndex
+            && stableId == other.stableId
+            && cellIndex == other.cellIndex
+            && regionIndex == other.regionIndex
+            && regionId == other.regionId
+            && kind == other.kind
+            && componentIndex == other.componentIndex
+            && volumeCubicMeters == other.volumeCubicMeters
+            && volumeFraction == other.volumeFraction
+            && centroidMeters.x == other.centroidMeters.x
+            && centroidMeters.y == other.centroidMeters.y
+            && centroidMeters.z == other.centroidMeters.z
+            && belongsToGaugeRegion == other.belongsToGaugeRegion;
+    }
 };
 
 struct SceneFluidPressureRegion {
@@ -75,6 +90,7 @@ struct SceneFluidPressureComponent {
 // Each positive sparse cell-region volume becomes one immutable pressure
 // unknown. Stable IDs derive from the Cartesian cell index and authored region
 // ID, so accepted motion preserves identity while that pair remains occupied.
+// Each pressure point preserves its exact source cell-region centroid.
 // Components and gauge regions come only from authored opening connectivity.
 // This stage owns no face conductance and performs no pressure solve.
 struct SceneFluidPressureControlVolumeSet {

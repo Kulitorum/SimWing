@@ -548,8 +548,10 @@ sealed cells with equal-and-opposite volume changes are rejected locally even
 though their global volume residual is zero. Applying these components to the
 grid now starts with an immutable pressure-control-volume topology: every
 positive sparse cell/region volume owns one pressure unknown, stable fixed-grid
-cell/region ID, volume weight, component, and deterministic gauge owner. Mixed
-cut cells and full interior cells close independently and exactly recover all
+cell/region ID, volume weight, exact centroid, component, and deterministic
+gauge owner. The clipped-tetrahedron ledger also closes each cell's first
+moment and recovers analytic region moments under translated grids. Mixed cut
+cells and full interior cells close independently and exactly recover all
 region and domain volumes. A complementary immutable face topology now links
 those unknowns only through exact same-region Cartesian areas. Resolved nested
 interfaces retain one link per region partition; untouched faces require one

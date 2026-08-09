@@ -383,25 +383,93 @@ void testFullInteriorCellClassification() {
               64.0 - insideVolume, 2.0e-11,
               "large tetrahedron leaves the analytic outside volume");
     std::size_t fullInsideCellCount = 0;
+    Vec3 insideFirstMoment;
+    Vec3 outsideFirstMoment;
     for (const auto& cell : volumes.cells) {
-        if (cell.regionVolumeCount != 1) {
-            continue;
+        Vec3 summedFirstMoment;
+        for (std::size_t offset = 0;
+             offset < cell.regionVolumeCount; ++offset) {
+            const auto& region = volumes.cellRegionVolumes[
+                cell.firstRegionVolume + offset];
+            summedFirstMoment.x += region.firstMomentMeters4.x;
+            summedFirstMoment.y += region.firstMomentMeters4.y;
+            summedFirstMoment.z += region.firstMomentMeters4.z;
+            Vec3& regionMoment = region.regionId == 2
+                ? insideFirstMoment : outsideFirstMoment;
+            regionMoment.x += region.firstMomentMeters4.x;
+            regionMoment.y += region.firstMomentMeters4.y;
+            regionMoment.z += region.firstMomentMeters4.z;
+            check(region.centroidMeters.x
+                          >= static_cast<double>(cell.cell.i) * 0.5
+                      && region.centroidMeters.x
+                          <= static_cast<double>(cell.cell.i + 1) * 0.5
+                      && region.centroidMeters.y
+                          >= static_cast<double>(cell.cell.j) * 0.5
+                      && region.centroidMeters.y
+                          <= static_cast<double>(cell.cell.j + 1) * 0.5
+                      && region.centroidMeters.z
+                          >= static_cast<double>(cell.cell.k) * 0.5
+                      && region.centroidMeters.z
+                          <= static_cast<double>(cell.cell.k + 1) * 0.5,
+                  "each sparse region centroid remains inside its owner cell");
+            checkNear(region.centroidMeters.x * region.volumeCubicMeters,
+                      region.firstMomentMeters4.x, 2.0e-13,
+                      "region centroid reconstructs its x first moment");
+            checkNear(region.centroidMeters.y * region.volumeCubicMeters,
+                      region.firstMomentMeters4.y, 2.0e-13,
+                      "region centroid reconstructs its y first moment");
+            checkNear(region.centroidMeters.z * region.volumeCubicMeters,
+                      region.firstMomentMeters4.z, 2.0e-13,
+                      "region centroid reconstructs its z first moment");
+            if (cell.regionVolumeCount == 1 && region.regionId == 2) {
+                ++fullInsideCellCount;
+                checkNear(region.volumeFraction, 1.0, 1.0e-12,
+                          "classified full interior cell has unit volume fraction");
+                const auto centre = fineGrid().cellCenterMeters(
+                    cell.cell.i, cell.cell.j, cell.cell.k);
+                checkNear(region.centroidMeters.x, centre.x, 2.0e-13,
+                          "full interior control owns the cell-centre x centroid");
+                checkNear(region.centroidMeters.y, centre.y, 2.0e-13,
+                          "full interior control owns the cell-centre y centroid");
+                checkNear(region.centroidMeters.z, centre.z, 2.0e-13,
+                          "full interior control owns the cell-centre z centroid");
+            }
         }
-        const auto& region =
-            volumes.cellRegionVolumes[cell.firstRegionVolume];
-        if (region.regionId == 2) {
-            ++fullInsideCellCount;
-            checkNear(region.volumeFraction, 1.0, 1.0e-12,
-                      "classified full interior cell has unit volume fraction");
-        }
+        checkNear(summedFirstMoment.x,
+                  cell.assignedFirstMomentMeters4.x, 2.0e-13,
+                  "published x moments sum to the cell ledger");
+        checkNear(summedFirstMoment.y,
+                  cell.assignedFirstMomentMeters4.y, 2.0e-13,
+                  "published y moments sum to the cell ledger");
+        checkNear(summedFirstMoment.z,
+                  cell.assignedFirstMomentMeters4.z, 2.0e-13,
+                  "published z moments sum to the cell ledger");
     }
+    constexpr Vec3 analyticCentroid{1.975, 1.9725, 1.975};
+    checkNear(insideFirstMoment.x, insideVolume * analyticCentroid.x,
+              2.0e-11,
+              "clipped cells recover the analytic interior x first moment");
+    checkNear(insideFirstMoment.y, insideVolume * analyticCentroid.y,
+              2.0e-11,
+              "clipped cells recover the analytic interior y first moment");
+    checkNear(insideFirstMoment.z, insideVolume * analyticCentroid.z,
+              2.0e-11,
+              "clipped cells recover the analytic interior z first moment");
+    checkNear(outsideFirstMoment.x + insideFirstMoment.x, 128.0, 3.0e-11,
+              "region x first moments close the Cartesian domain");
+    checkNear(outsideFirstMoment.y + insideFirstMoment.y, 128.0, 3.0e-11,
+              "region y first moments close the Cartesian domain");
+    checkNear(outsideFirstMoment.z + insideFirstMoment.z, 128.0, 3.0e-11,
+              "region z first moments close the Cartesian domain");
     check(fullInsideCellCount == 24
               && volumes.tetrahedronCellClipCount > 0
               && volumes.nonzeroTetrahedronCellClipCount > 0
               && volumes.nonzeroTetrahedronCellClipCount
                   <= volumes.tetrahedronCellClipCount
               && volumes.maximumTetrahedronVolumeResidualCubicMeters
-                  < 2.0e-12,
+                  < 2.0e-12
+              && volumes.maximumCellFirstMomentResidualMeters4
+                  < 2.0e-11,
           "signed tetrahedron clipping reaches full interior cells");
     validateSceneFluidCellVolumes(
         volumes, fixture.surface.definition, state, fineGrid(),
@@ -419,12 +487,28 @@ void testFullInteriorCellClassification() {
         translated.surface.definition, translatedState, translatedFineGrid(),
         translated.transfer, translatedEpoch);
     const auto translatedRegions = regionVolumes(translatedVolumes);
+    Vec3 translatedInsideFirstMoment;
+    for (const auto& region : translatedVolumes.cellRegionVolumes) {
+        if (region.regionId != 2) continue;
+        translatedInsideFirstMoment.x += region.firstMomentMeters4.x;
+        translatedInsideFirstMoment.y += region.firstMomentMeters4.y;
+        translatedInsideFirstMoment.z += region.firstMomentMeters4.z;
+    }
     checkNear(translatedRegions.at(2).summedCellVolumeCubicMeters,
               insideVolume, 3.0e-11,
               "signed clipping is invariant to a nonzero grid origin");
     checkNear(translatedRegions.at(1).summedCellVolumeCubicMeters,
               64.0 - insideVolume, 3.0e-11,
               "translated grid preserves the outside region volume");
+    checkNear(translatedInsideFirstMoment.x,
+              insideVolume * (analyticCentroid.x - 2.0), 3.0e-11,
+              "translated clipping preserves the analytic x first moment");
+    checkNear(translatedInsideFirstMoment.y,
+              insideVolume * (analyticCentroid.y - 3.0), 3.0e-11,
+              "translated clipping preserves the analytic y first moment");
+    checkNear(translatedInsideFirstMoment.z,
+              insideVolume * (analyticCentroid.z + 0.5), 3.0e-11,
+              "translated clipping preserves the analytic z first moment");
 }
 
 void testPlanarOpeningCapVolume() {
@@ -506,6 +590,14 @@ void testUnsupportedTopologyCorruptionAndLimits() {
             corrupt, fixture.surface.definition, state, grid(),
             fixture.transfer, epoch); },
         "cell-volume validation rejects nested payload corruption");
+
+    corrupt = accepted;
+    corrupt.cellRegionVolumes.front().centroidMeters.x += 0.01;
+    expectInvalid(
+        [&] { validateSceneFluidCellVolumes(
+            corrupt, fixture.surface.definition, state, grid(),
+            fixture.transfer, epoch); },
+        "cell-volume validation rejects centroid corruption");
 
     SceneFluidCellVolumeSettings invalidSettings;
     invalidSettings.absoluteVolumeToleranceCubicMeters = 0.0;

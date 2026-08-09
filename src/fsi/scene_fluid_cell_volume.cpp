@@ -49,6 +49,12 @@ struct Contribution {
     std::size_t regionIndex = 0;
     std::size_t ordinal = 0;
     double volumeCubicMeters = 0.0;
+    Vec3 firstMomentMeters4;
+};
+
+struct PolyhedronMeasure {
+    double volumeCubicMeters = 0.0;
+    Vec3 firstMomentMeters4;
 };
 
 bool checkedAdd(const std::size_t first,
@@ -76,6 +82,22 @@ Vec3 subtract(const Vec3& first, const Vec3& second) {
     return {first.x - second.x,
             first.y - second.y,
             first.z - second.z};
+}
+
+Vec3 add(const Vec3& first, const Vec3& second) {
+    return {first.x + second.x,
+            first.y + second.y,
+            first.z + second.z};
+}
+
+Vec3 scale(const Vec3& value, const double factor) {
+    return {value.x * factor, value.y * factor, value.z * factor};
+}
+
+bool finite(const Vec3& value) {
+    return std::isfinite(value.x)
+        && std::isfinite(value.y)
+        && std::isfinite(value.z);
 }
 
 Vec3 cross(const Vec3& first, const Vec3& second) {
@@ -137,8 +159,9 @@ void appendContribution(std::vector<Contribution>& contributions,
                         const SceneFluidCellVolumeLimits& limits,
                         const std::size_t cellIndex,
                         const std::size_t region,
-                        const double value) {
-    if (!std::isfinite(value)) {
+                        const double value,
+                        const Vec3& firstMoment) {
+    if (!std::isfinite(value) || !finite(firstMoment)) {
         throw std::invalid_argument(
             "scene fluid cell-volume contribution is non-finite");
     }
@@ -146,8 +169,8 @@ void appendContribution(std::vector<Contribution>& contributions,
         throw std::length_error(
             "scene fluid cell-volume contributions exceed their limit");
     }
-    contributions.push_back({
-        cellIndex, region, contributions.size(), value});
+    contributions.push_back({cellIndex, region, contributions.size(), value,
+                             firstMoment});
 }
 
 using Polygon = std::vector<Vec3>;
@@ -312,7 +335,7 @@ ConvexPolyhedron tetrahedron(const Vec3& origin,
     return result;
 }
 
-double polyhedronVolume(const ConvexPolyhedron& polyhedron) {
+PolyhedronMeasure polyhedronMeasure(const ConvexPolyhedron& polyhedron) {
     Vec3 centre;
     std::size_t pointCount = 0;
     for (const auto& face : polyhedron.faces) {
@@ -323,26 +346,37 @@ double polyhedronVolume(const ConvexPolyhedron& polyhedron) {
             ++pointCount;
         }
     }
-    if (pointCount == 0) return 0.0;
+    if (pointCount == 0) return {};
     const double inverseCount = 1.0 / static_cast<double>(pointCount);
     centre.x *= inverseCount;
     centre.y *= inverseCount;
     centre.z *= inverseCount;
-    double sixVolume = 0.0;
+    PolyhedronMeasure result;
+    double summedSixVolume = 0.0;
     for (const auto& face : polyhedron.faces) {
         for (std::size_t vertex = 1; vertex + 1 < face.size(); ++vertex) {
-            sixVolume += dot(
+            const double sixVolume = dot(
                 subtract(face[0], centre),
                 cross(subtract(face[vertex], centre),
                       subtract(face[vertex + 1], centre)));
+            const double volume = sixVolume / 6.0;
+            const Vec3 tetrahedronCentroid = scale(
+                add(add(centre, face[0]),
+                    add(face[vertex], face[vertex + 1])),
+                0.25);
+            summedSixVolume += sixVolume;
+            result.firstMomentMeters4 = add(
+                result.firstMomentMeters4,
+                scale(tetrahedronCentroid, volume));
         }
     }
-    const double volume = sixVolume / 6.0;
-    if (!std::isfinite(volume)) {
+    result.volumeCubicMeters = summedSixVolume / 6.0;
+    if (!std::isfinite(result.volumeCubicMeters)
+        || !finite(result.firstMomentMeters4)) {
         throw std::invalid_argument(
-            "scene fluid clipped tetrahedron volume is non-finite");
+            "scene fluid clipped tetrahedron measure is non-finite");
     }
-    return volume;
+    return result;
 }
 
 std::pair<std::size_t, std::size_t> cellRange(
@@ -440,6 +474,7 @@ std::uint64_t volumeFingerprint(const SceneFluidCellVolumeSet& volumes) {
              volumes.openingCapAreaSquareMeters,
              volumes.maximumTetrahedronVolumeResidualCubicMeters,
              volumes.maximumCellVolumeResidualCubicMeters,
+             volumes.maximumCellFirstMomentResidualMeters4,
              volumes.maximumRegionVolumeResidualCubicMeters}) {
         fingerprint.real(value);
     }
@@ -462,6 +497,15 @@ std::uint64_t volumeFingerprint(const SceneFluidCellVolumeSet& volumes) {
             cell.regionVolumeCount));
         fingerprint.real(cell.assignedVolumeCubicMeters);
         fingerprint.real(cell.volumeResidualCubicMeters);
+        for (const double value : {
+                 cell.assignedFirstMomentMeters4.x,
+                 cell.assignedFirstMomentMeters4.y,
+                 cell.assignedFirstMomentMeters4.z,
+                 cell.firstMomentResidualMeters4.x,
+                 cell.firstMomentResidualMeters4.y,
+                 cell.firstMomentResidualMeters4.z}) {
+            fingerprint.real(value);
+        }
     }
     fingerprint.integer(static_cast<std::uint64_t>(
         volumes.cellRegionVolumes.size()));
@@ -469,6 +513,15 @@ std::uint64_t volumeFingerprint(const SceneFluidCellVolumeSet& volumes) {
         fingerprint.integer(value.regionId);
         fingerprint.real(value.volumeCubicMeters);
         fingerprint.real(value.volumeFraction);
+        for (const double component : {
+                 value.firstMomentMeters4.x,
+                 value.firstMomentMeters4.y,
+                 value.firstMomentMeters4.z,
+                 value.centroidMeters.x,
+                 value.centroidMeters.y,
+                 value.centroidMeters.z}) {
+            fingerprint.real(component);
+        }
     }
     fingerprint.integer(static_cast<std::uint64_t>(
         volumes.regionVolumes.size()));
@@ -516,18 +569,27 @@ SceneFluidCellVolumeSet buildVolumes(
     result.openingCapCount = caps.caps.size();
     result.openingCapAreaSquareMeters = caps.totalAreaSquareMeters;
 
+    const auto counts = grid.cellCounts();
+    const auto lower = grid.lowerMeters();
+    const auto spacing = grid.cellSpacingMeters();
     std::vector<Contribution> contributions;
     contributions.reserve(std::min(
         limits.maximumContributionEvents, grid.cellCount()));
     for (std::size_t cell = 0; cell < grid.cellCount(); ++cell) {
+        const std::size_t i = cell % counts.x;
+        const std::size_t j = (cell / counts.x) % counts.y;
+        const std::size_t k = (cell / counts.x) / counts.y;
+        const Vec3 centre{
+            lower.x + (static_cast<double>(i) + 0.5) * spacing.x,
+            lower.y + (static_cast<double>(j) + 0.5) * spacing.y,
+            lower.z + (static_cast<double>(k) + 0.5) * spacing.z,
+        };
         appendContribution(
             contributions, limits, cell, outsideIndex,
-            result.cellVolumeCubicMeters);
+            result.cellVolumeCubicMeters,
+            scale(centre, result.cellVolumeCubicMeters));
     }
 
-    const auto counts = grid.cellCounts();
-    const auto lower = grid.lowerMeters();
-    const auto spacing = grid.cellSpacingMeters();
     const Vec3 origin{lower.x, lower.y, lower.z};
     const double clipVolumeTolerance = tolerance(
         settings, result.cellVolumeCubicMeters);
@@ -590,7 +652,10 @@ SceneFluidCellVolumeSet buildVolumes(
                     clipPolyhedron(clipped, 1, cellLowerY + spacing.y, false);
                     clipPolyhedron(clipped, 2, cellLowerZ, true);
                     clipPolyhedron(clipped, 2, cellLowerZ + spacing.z, false);
-                    double clippedVolume = polyhedronVolume(clipped);
+                    const PolyhedronMeasure clippedMeasure =
+                        polyhedronMeasure(clipped);
+                    double clippedVolume =
+                        clippedMeasure.volumeCubicMeters;
                     if (clippedVolume < -clipVolumeTolerance
                         || clippedVolume
                             > result.cellVolumeCubicMeters
@@ -605,13 +670,22 @@ SceneFluidCellVolumeSet buildVolumes(
                     ++result.nonzeroTetrahedronCellClipCount;
                     const double signedVolume = std::copysign(
                         clippedVolume, signedSixVolume);
+                    const double signedMeasureScale = std::copysign(
+                        clippedVolume
+                            / clippedMeasure.volumeCubicMeters,
+                        signedSixVolume);
+                    const Vec3 signedFirstMoment = scale(
+                        clippedMeasure.firstMomentMeters4,
+                        signedMeasureScale);
                     const std::size_t cell = grid.cellIndex(i, j, k);
                     appendContribution(
                         contributions, limits, cell,
-                        negativeRegion, signedVolume);
+                        negativeRegion, signedVolume,
+                        signedFirstMoment);
                     appendContribution(
                         contributions, limits, cell,
-                        positiveRegion, -signedVolume);
+                        positiveRegion, -signedVolume,
+                        scale(signedFirstMoment, -1.0));
                 }
             }
         }
@@ -669,6 +743,7 @@ SceneFluidCellVolumeSet buildVolumes(
                     const std::size_t region =
                         contributions[contributionIndex].regionIndex;
                     double volume = 0.0;
+                    Vec3 firstMoment;
                     while (contributionIndex < contributions.size()
                            && contributions[contributionIndex].cellIndex
                                == cellIndex
@@ -676,6 +751,10 @@ SceneFluidCellVolumeSet buildVolumes(
                                == region) {
                         volume += contributions[contributionIndex]
                                       .volumeCubicMeters;
+                        firstMoment = add(
+                            firstMoment,
+                            contributions[contributionIndex]
+                                .firstMomentMeters4);
                         ++contributionIndex;
                     }
                     if (!std::isfinite(volume) || volume < -cellTolerance) {
@@ -688,6 +767,46 @@ SceneFluidCellVolumeSet buildVolumes(
                     if (volume == 0.0) {
                         continue;
                     }
+                    if (!finite(firstMoment)) {
+                        throw std::invalid_argument(
+                            "scene fluid cell-region first moment is non-finite");
+                    }
+                    Vec3 centroid = scale(firstMoment, 1.0 / volume);
+                    const Vec3 cellLower{
+                        lower.x + static_cast<double>(i) * spacing.x,
+                        lower.y + static_cast<double>(j) * spacing.y,
+                        lower.z + static_cast<double>(k) * spacing.z,
+                    };
+                    const Vec3 cellUpper{
+                        cellLower.x + spacing.x,
+                        cellLower.y + spacing.y,
+                        cellLower.z + spacing.z,
+                    };
+                    const double coordinateScale = std::max({
+                        1.0,
+                        std::abs(cellLower.x), std::abs(cellLower.y),
+                        std::abs(cellLower.z), std::abs(cellUpper.x),
+                        std::abs(cellUpper.y), std::abs(cellUpper.z),
+                    });
+                    const double coordinateTolerance = 4096.0
+                        * std::numeric_limits<double>::epsilon()
+                        * coordinateScale;
+                    if (!finite(centroid)
+                        || centroid.x < cellLower.x - coordinateTolerance
+                        || centroid.x > cellUpper.x + coordinateTolerance
+                        || centroid.y < cellLower.y - coordinateTolerance
+                        || centroid.y > cellUpper.y + coordinateTolerance
+                        || centroid.z < cellLower.z - coordinateTolerance
+                        || centroid.z > cellUpper.z + coordinateTolerance) {
+                        throw std::invalid_argument(
+                            "scene fluid cell-region centroid is outside its cell");
+                    }
+                    centroid.x = std::clamp(
+                        centroid.x, cellLower.x, cellUpper.x);
+                    centroid.y = std::clamp(
+                        centroid.y, cellLower.y, cellUpper.y);
+                    centroid.z = std::clamp(
+                        centroid.z, cellLower.z, cellUpper.z);
                     if (result.cellRegionVolumes.size()
                         == limits.maximumCellRegionVolumes) {
                         throw std::length_error(
@@ -697,8 +816,12 @@ SceneFluidCellVolumeSet buildVolumes(
                         surface.regions[region].id,
                         volume,
                         volume / result.cellVolumeCubicMeters,
+                        firstMoment,
+                        centroid,
                     });
                     cell.assignedVolumeCubicMeters += volume;
+                    cell.assignedFirstMomentMeters4 = add(
+                        cell.assignedFirstMomentMeters4, firstMoment);
                     summedRegions[region] += volume;
                 }
                 cell.regionVolumeCount = result.cellRegionVolumes.size()
@@ -706,14 +829,35 @@ SceneFluidCellVolumeSet buildVolumes(
                 cell.volumeResidualCubicMeters =
                     cell.assignedVolumeCubicMeters
                     - result.cellVolumeCubicMeters;
+                const Vec3 cellCentroid{
+                    lower.x + (static_cast<double>(i) + 0.5) * spacing.x,
+                    lower.y + (static_cast<double>(j) + 0.5) * spacing.y,
+                    lower.z + (static_cast<double>(k) + 0.5) * spacing.z,
+                };
+                cell.firstMomentResidualMeters4 = subtract(
+                    cell.assignedFirstMomentMeters4,
+                    scale(cellCentroid, result.cellVolumeCubicMeters));
                 result.maximumCellVolumeResidualCubicMeters = std::max(
                     result.maximumCellVolumeResidualCubicMeters,
                     std::abs(cell.volumeResidualCubicMeters));
+                result.maximumCellFirstMomentResidualMeters4 = std::max(
+                    result.maximumCellFirstMomentResidualMeters4,
+                    length(cell.firstMomentResidualMeters4));
+                const double cellCoordinateScale = std::max({
+                    1.0, std::abs(cellCentroid.x),
+                    std::abs(cellCentroid.y),
+                    std::abs(cellCentroid.z),
+                });
+                const double cellMomentTolerance = 16.0
+                    * cellTolerance * cellCoordinateScale;
                 if (!std::isfinite(cell.volumeResidualCubicMeters)
                     || std::abs(cell.volumeResidualCubicMeters)
-                        > cellTolerance) {
+                        > cellTolerance
+                    || !finite(cell.firstMomentResidualMeters4)
+                    || length(cell.firstMomentResidualMeters4)
+                        > cellMomentTolerance) {
                     throw std::invalid_argument(
-                        "scene fluid cell-region volumes do not close the cell");
+                        "scene fluid cell-region measures do not close the cell");
                 }
                 result.cells.push_back(cell);
             }
