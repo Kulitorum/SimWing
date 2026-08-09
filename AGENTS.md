@@ -601,8 +601,14 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   region-2 control identity and algebraic residuals from `7.79e-10` to
   `3.84e-9` against the unchanged `1e-10` tolerance. This removes graph
   censoring at the two coarse levels and exposes a distinct fine-grid shadow
-  factorization blocker. It is not a convergence claim, and the area-weighted
-  multi-opening source is deliberately not the older graph-manufactured source.
+  factorization blocker. The failed controls are four-face cells of only
+  `3.19e-8` to `1.09e-7 m^3`; their consistency-geometry condition estimate is
+  essentially `1` and their Gram estimate is only `14`-`43`, but absolute
+  divergence-moment defects near `1.5e-16 m^3` become `1.5e-9`-`6.6e-9`
+  relative defects at that scale. This is geometric precision loss, not an
+  ill-conditioned inverse or permission to relax the algebraic tolerance. It
+  is not a convergence claim, and the area-weighted multi-opening source is
+  deliberately not the older graph-manufactured source.
 - `scene_fluid_mimetic_pressure_epoch.{h,cpp}` is the first atomic acceptance
   boundary over the isolated mimetic pressure path. Bootstrap allocates a
   bounded zero reduced field; the consecutive overload consumes the exact
@@ -847,9 +853,11 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   exact diagonal-plus-two-rank-three representation stores seven doubles per
   half-face and applies matrix-free; every closed coarse real-wing scene shell
   builds it without dense local storage. A linear-consistency rejection now
-  carries its measured residual and unchanged tolerance as a typed error; the
-  global trace builder adds the exact control/grid-cell/region identity before
-  propagating it to offline diagnostics. Its
+  carries its geometry scale, face-area range, closure/moment residuals,
+  condition estimates, stabilization scale, measured algebraic residual, and
+  unchanged tolerance as a typed error; the global trace builder adds the
+  exact control/grid-cell/region identity before propagating it to offline
+  diagnostics. Its
   `fluid/mimetic_wall_condensation.*` companion exactly eliminates selected
   zero-flux wall rows through the trace operator's diagonal-plus-seven-low-rank
   form, one equilibrated `7 x 7` Woodbury inverse, and linear face storage. It

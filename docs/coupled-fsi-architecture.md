@@ -1396,8 +1396,16 @@ Thus the earlier `4/8` and `6/8` coarse graph yields really were censoring the
 shadow placement spectrum. The fine level has a different blocker: five
 region-2 local cells exceed the unchanged `1e-10` algebraic-consistency
 tolerance, with residuals between `7.79e-10` and `3.84e-9`. Their samples stay
-in the product as typed failures. The fine conditional mean is consequently
-still not an unbiased phase average, and the three-level sequence is not a
+in the product as typed failures. Each failure also retains its geometry scale,
+face-area range, closure/moment residuals, condition estimates, and
+stabilization scale. All are four-face cells with volume `3.19e-8` to
+`1.09e-7 m^3`; their consistency-geometry condition estimate is essentially
+`1`, and their Gram estimate is only `14`-`43`. The approximately
+`1.5e-16`-`2.1e-16 m^3` absolute divergence-moment defect is therefore a
+`1.5e-9`-`6.6e-9` relative input error at the tiny-cell scale. This diagnoses
+geometric precision loss rather than an ill-conditioned factorization and
+does not justify relaxing the algebraic tolerance. The fine conditional mean
+is consequently still not an unbiased phase average, and the sequence is not a
 convergence result. Because one authored aperture can become several embedded
 traces, this audit's uniform area-weighted Neumann source also differs from the
 older graph-manufactured source on multi-opening placements. No production

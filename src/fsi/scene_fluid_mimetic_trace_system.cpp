@@ -466,8 +466,7 @@ SceneFluidMimeticTraceSystem buildSystem(
                 cell.stableId,
                 cell.cellIndex,
                 cell.regionId,
-                error.diagnostics().maximumAlgebraicConsistencyError,
-                error.diagnostics().algebraicConsistencyTolerance,
+                error.diagnostics(),
             });
         }
         if (!checkedAdd(result.localOperatorStorageBytes,

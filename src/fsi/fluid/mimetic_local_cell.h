@@ -42,6 +42,16 @@ struct MimeticLocalCellSettings {
 };
 
 struct MimeticLocalCellLinearConsistencyFailure {
+    std::size_t halfFaceCount = 0;
+    double volumeCubicMeters = 0.0;
+    double summedAreaSquareMeters = 0.0;
+    double minimumFaceAreaSquareMeters = 0.0;
+    double maximumFaceAreaSquareMeters = 0.0;
+    double maximumAreaClosureErrorSquareMeters = 0.0;
+    double maximumDivergenceTheoremErrorCubicMeters = 0.0;
+    double consistencyGeometryConditionEstimate = 0.0;
+    double consistencyGramConditionEstimate = 0.0;
+    double stabilizationScaleInverseCubicMeters = 0.0;
     double maximumAlgebraicConsistencyError = 0.0;
     double algebraicConsistencyTolerance = 0.0;
 
@@ -52,9 +62,8 @@ struct MimeticLocalCellLinearConsistencyFailure {
 class MimeticLocalCellLinearConsistencyError final
     : public std::invalid_argument {
 public:
-    MimeticLocalCellLinearConsistencyError(
-        double maximumAlgebraicConsistencyError,
-        double algebraicConsistencyTolerance);
+    explicit MimeticLocalCellLinearConsistencyError(
+        MimeticLocalCellLinearConsistencyFailure diagnostics);
 
     [[nodiscard]] const MimeticLocalCellLinearConsistencyFailure&
     diagnostics() const noexcept {

@@ -873,7 +873,13 @@ their normalized mean/CV values are `0.100660/0.01043` and
 mean/CV `0.420468/0.22404`: five region-2 local cells fail the declared
 linear-consistency test with residuals from `7.79e-10` to `3.84e-9` against
 the unchanged `1e-10` tolerance. Those failures are typed, fingerprinted
-records, not dropped samples. The experiment therefore removes graph
+records, not dropped samples. They are tiny four-face cells (`3.19e-8` to
+`1.09e-7 m^3`) whose consistency geometry is essentially condition `1` and
+whose Gram condition estimate is only `14`-`43`. Absolute divergence-moment
+defects near double roundoff (`1.5e-16` to `2.1e-16 m^3`) therefore become
+`1.5e-9`-`6.6e-9` relative defects at the cell scale. The blocker is geometric
+precision, not an ill-conditioned inverse, and the algebraic tolerance has not
+been relaxed. The experiment therefore removes graph
 censoring at the coarse levels but reveals a separate fine-grid mixed-hybrid
 factorization blocker. It still does not establish shadow convergence or
 authorize a live solver switch; the uniform area-weighted multi-opening source

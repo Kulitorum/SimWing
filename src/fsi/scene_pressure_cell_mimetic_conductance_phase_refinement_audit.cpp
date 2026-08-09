@@ -111,6 +111,37 @@ bool validPhaseComponent(const double value) {
         && (value != 0.0 || !std::signbit(value));
 }
 
+bool validLinearConsistencyFailure(
+    const fluid::MimeticLocalCellLinearConsistencyFailure& failure) {
+    return failure.halfFaceCount >= 4
+        && std::isfinite(failure.volumeCubicMeters)
+        && failure.volumeCubicMeters > 0.0
+        && std::isfinite(failure.summedAreaSquareMeters)
+        && failure.summedAreaSquareMeters > 0.0
+        && std::isfinite(failure.minimumFaceAreaSquareMeters)
+        && failure.minimumFaceAreaSquareMeters > 0.0
+        && std::isfinite(failure.maximumFaceAreaSquareMeters)
+        && failure.maximumFaceAreaSquareMeters
+            >= failure.minimumFaceAreaSquareMeters
+        && std::isfinite(failure.maximumAreaClosureErrorSquareMeters)
+        && failure.maximumAreaClosureErrorSquareMeters >= 0.0
+        && std::isfinite(
+            failure.maximumDivergenceTheoremErrorCubicMeters)
+        && failure.maximumDivergenceTheoremErrorCubicMeters >= 0.0
+        && std::isfinite(failure.consistencyGeometryConditionEstimate)
+        && failure.consistencyGeometryConditionEstimate > 0.0
+        && std::isfinite(failure.consistencyGramConditionEstimate)
+        && failure.consistencyGramConditionEstimate > 0.0
+        && std::isfinite(
+            failure.stabilizationScaleInverseCubicMeters)
+        && failure.stabilizationScaleInverseCubicMeters > 0.0
+        && std::isfinite(failure.maximumAlgebraicConsistencyError)
+        && std::isfinite(failure.algebraicConsistencyTolerance)
+        && failure.algebraicConsistencyTolerance >= 0.0
+        && failure.maximumAlgebraicConsistencyError
+            > failure.algebraicConsistencyTolerance;
+}
+
 void validatePhases(const std::span<const fluid::Vector3> phases) {
     for (std::size_t index = 0; index < phases.size(); ++index) {
         const auto phase = phases[index];
@@ -289,10 +320,30 @@ std::uint64_t productFingerprint(
                 fingerprint.integer(static_cast<std::uint64_t>(
                     rejection.gridCellIndex));
                 fingerprint.integer(rejection.regionId);
+                fingerprint.integer(static_cast<std::uint64_t>(
+                    rejection.localCell.halfFaceCount));
+                fingerprint.real(rejection.localCell.volumeCubicMeters);
                 fingerprint.real(
-                    rejection.maximumAlgebraicConsistencyError);
+                    rejection.localCell.summedAreaSquareMeters);
                 fingerprint.real(
-                    rejection.algebraicConsistencyTolerance);
+                    rejection.localCell.minimumFaceAreaSquareMeters);
+                fingerprint.real(
+                    rejection.localCell.maximumFaceAreaSquareMeters);
+                fingerprint.real(rejection.localCell
+                    .maximumAreaClosureErrorSquareMeters);
+                fingerprint.real(rejection.localCell
+                    .maximumDivergenceTheoremErrorCubicMeters);
+                fingerprint.real(rejection.localCell
+                    .consistencyGeometryConditionEstimate);
+                fingerprint.real(rejection.localCell
+                    .consistencyGramConditionEstimate);
+                fingerprint.real(rejection.localCell
+                    .stabilizationScaleInverseCubicMeters);
+                fingerprint.real(
+                    rejection.localCell
+                        .maximumAlgebraicConsistencyError);
+                fingerprint.real(
+                    rejection.localCell.algebraicConsistencyTolerance);
             }
             fingerprint.integer(sample.conductanceAudit.has_value()
                 ? sample.conductanceAudit->fingerprint : 0ULL);
@@ -700,13 +751,8 @@ void validateScenePressureCellMimeticConductancePhaseRefinementAuditIntegrity(
                         >= sample.controlVolumeCount
                     || rejection.controlCellStableId == 0
                     || rejection.regionId == invalidStableId
-                    || !std::isfinite(
-                        rejection.maximumAlgebraicConsistencyError)
-                    || !std::isfinite(
-                        rejection.algebraicConsistencyTolerance)
-                    || rejection.algebraicConsistencyTolerance < 0.0
-                    || !(rejection.maximumAlgebraicConsistencyError
-                        > rejection.algebraicConsistencyTolerance)) {
+                    || !validLinearConsistencyFailure(
+                        rejection.localCell)) {
                     throw std::invalid_argument(
                         "scene pressure-cell mimetic conductance rejection is invalid");
                 }

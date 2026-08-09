@@ -12,7 +12,7 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t
-    scenePressureCellMimeticConductancePhaseRefinementAuditVersion = 1;
+    scenePressureCellMimeticConductancePhaseRefinementAuditVersion = 2;
 
 struct ScenePressureCellMimeticConductancePhaseRefinementAuditSettings {
     SceneFluidMimeticRegionConductanceAuditSettings conductance;

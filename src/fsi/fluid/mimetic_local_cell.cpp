@@ -6,19 +6,16 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 namespace simwing::fsi::fluid {
 
 MimeticLocalCellLinearConsistencyError::
     MimeticLocalCellLinearConsistencyError(
-        const double maximumAlgebraicConsistencyError,
-        const double algebraicConsistencyTolerance)
+        MimeticLocalCellLinearConsistencyFailure diagnostics)
     : std::invalid_argument(
         "mimetic local-cell factorization failed linear consistency"),
-      diagnostics_{
-          maximumAlgebraicConsistencyError,
-          algebraicConsistencyTolerance,
-      } {}
+      diagnostics_(std::move(diagnostics)) {}
 
 namespace {
 
@@ -165,6 +162,18 @@ double bilinear3(const std::array<double, 3>& first,
             result += first[row] * matrix[row * 3 + column]
                 * second[column];
         }
+    }
+    return result;
+}
+
+double infinityNorm(const Matrix3& matrix) {
+    double result = 0.0;
+    for (std::size_t row = 0; row < 3; ++row) {
+        double rowSum = 0.0;
+        for (std::size_t column = 0; column < 3; ++column) {
+            rowSum += std::abs(matrix[row * 3 + column]);
+        }
+        result = std::max(result, rowSum);
     }
     return result;
 }
@@ -424,6 +433,11 @@ MimeticLocalCellOperator buildMimeticLocalCellOperator(
     const Matrix3 inverseConsistencyGram = symmetricInverse(
         consistencyTransposeConsistency,
         "rank-deficient mimetic local-cell consistency rows");
+    const double consistencyGeometryConditionEstimate =
+        infinityNorm(symmetricGeometry) * infinityNorm(inverseGeometry);
+    const double consistencyGramConditionEstimate =
+        infinityNorm(consistencyTransposeConsistency)
+        * infinityNorm(inverseConsistencyGram);
 
     double consistentTrace = 0.0;
     for (const auto& normal : normalRows) {
@@ -475,9 +489,23 @@ MimeticLocalCellOperator buildMimeticLocalCellOperator(
     }
     if (maximumAlgebraicConsistencyError
         > settings.algebraicConsistencyTolerance) {
-        throw MimeticLocalCellLinearConsistencyError(
+        const auto [minimumArea, maximumArea] = std::minmax_element(
+            result.faceAreasSquareMeters.begin(),
+            result.faceAreasSquareMeters.end());
+        throw MimeticLocalCellLinearConsistencyError({
+            count,
+            geometry.volumeCubicMeters,
+            summedArea,
+            *minimumArea,
+            *maximumArea,
+            maximumAreaClosureError,
+            maximumDivergenceTheoremError,
+            consistencyGeometryConditionEstimate,
+            consistencyGramConditionEstimate,
+            stabilizationScale,
             maximumAlgebraicConsistencyError,
-            settings.algebraicConsistencyTolerance);
+            settings.algebraicConsistencyTolerance,
+        });
     }
     result.maximumAlgebraicConsistencyError =
         maximumAlgebraicConsistencyError;

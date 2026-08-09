@@ -37,8 +37,7 @@ struct SceneFluidMimeticTraceLocalCellLinearConsistencyFailure {
     std::uint64_t controlCellStableId = 0;
     std::size_t gridCellIndex = 0;
     StableId regionId = invalidStableId;
-    double maximumAlgebraicConsistencyError = 0.0;
-    double algebraicConsistencyTolerance = 0.0;
+    fluid::MimeticLocalCellLinearConsistencyFailure localCell;
 
     bool operator==(
         const SceneFluidMimeticTraceLocalCellLinearConsistencyFailure&) const =

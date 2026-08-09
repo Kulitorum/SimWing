@@ -1532,16 +1532,38 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
             if (sample.localCellLinearConsistencyRejection.has_value()) {
                 const auto& rejection =
                     *sample.localCellLinearConsistencyRejection;
+                const double relativeDivergenceDefect =
+                    rejection.localCell
+                        .maximumDivergenceTheoremErrorCubicMeters
+                    / rejection.localCell.volumeCubicMeters;
                 check(rejection.controlCellStableId
                               == expectedRejectedStableIds[phaseIndex]
                           && rejection.regionId == 2
+                          && rejection.localCell.halfFaceCount == 4
+                          && rejection.localCell.volumeCubicMeters
+                              < 1.1e-7
+                          && rejection.localCell
+                                 .minimumFaceAreaSquareMeters > 7.0e-6
+                          && rejection.localCell
+                                 .maximumFaceAreaSquareMeters < 2.8e-4
+                          && rejection.localCell
+                                 .consistencyGeometryConditionEstimate
+                              < 1.00000001
+                          && rejection.localCell
+                                 .consistencyGramConditionEstimate < 44.0
+                          && relativeDivergenceDefect > 1.0e-9
                           && std::abs(
-                              rejection.maximumAlgebraicConsistencyError
+                              rejection.localCell
+                                  .maximumAlgebraicConsistencyError
                               - expectedRejectedErrors[phaseIndex])
                               < 1.0e-18
-                          && rejection.algebraicConsistencyTolerance
+                          && rejection.localCell
+                                 .maximumAlgebraicConsistencyError
+                              < relativeDivergenceDefect
+                          && rejection.localCell
+                                 .algebraicConsistencyTolerance
                               == 1.0e-10,
-                      "uncensored mimetic rejection binds the exact failing control and consistency residual");
+                      "uncensored mimetic rejection isolates a well-conditioned tiny-cell geometric moment defect");
             }
         }
     }
@@ -1557,7 +1579,7 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
     auto corrupt = audit;
     corrupt.levels[2].samples[1]
         .localCellLinearConsistencyRejection
-        ->maximumAlgebraicConsistencyError += 1.0e-10;
+        ->localCell.maximumAlgebraicConsistencyError += 1.0e-10;
     bool rejected = false;
     try {
         fsi::validateScenePressureCellMimeticConductancePhaseRefinementAuditIntegrity(

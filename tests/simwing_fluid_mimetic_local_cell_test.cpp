@@ -631,7 +631,15 @@ void testRejectedGeometryAndCorruption() {
             tetrahedron(), exactConsistency));
     } catch (const MimeticLocalCellLinearConsistencyError& error) {
         typedConsistencyRejection =
-            error.diagnostics().maximumAlgebraicConsistencyError > 0.0
+            error.diagnostics().halfFaceCount == 4
+            && error.diagnostics().volumeCubicMeters > 0.0
+            && error.diagnostics().minimumFaceAreaSquareMeters > 0.0
+            && error.diagnostics().maximumFaceAreaSquareMeters
+                >= error.diagnostics().minimumFaceAreaSquareMeters
+            && error.diagnostics().consistencyGeometryConditionEstimate
+                >= 1.0
+            && error.diagnostics().consistencyGramConditionEstimate >= 1.0
+            && error.diagnostics().maximumAlgebraicConsistencyError > 0.0
             && error.diagnostics().algebraicConsistencyTolerance == 0.0;
     }
     check(typedConsistencyRejection,
