@@ -4,6 +4,7 @@
 #include "scene_fluid_cell_volume.h"
 #include "scene_fluid_capped_face_partition.h"
 #include "scene_fluid_mimetic_control_cell.h"
+#include "scene_fluid_mimetic_trace_solve.h"
 #include "scene_fluid_mimetic_trace_system.h"
 #include "scene_fluid_opening_cap.h"
 #include "scene_fluid_opening_face_crossing.h"
@@ -504,6 +505,43 @@ void testRealDesignCapture(const std::filesystem::path &input,
         maximumConstantTraceAction = std::max(
             maximumConstantTraceAction, std::abs(value));
     }
+    std::vector<double> manufacturedTraceValues(
+        mimeticTraceSystem.traces.size(), 0.0);
+    for (const auto& trace : mimeticTraceSystem.traces) {
+        manufacturedTraceValues[trace.traceIndex] = std::sin(
+            0.001 * static_cast<double>(trace.traceIndex + 1));
+    }
+    std::vector<double> manufacturedGaugeValues(
+        mimeticTraceSystem.componentCount, 0.0);
+    for (std::size_t component = 0;
+         component < mimeticTraceSystem.componentCount; ++component) {
+        manufacturedGaugeValues[component] = manufacturedTraceValues[
+            mimeticTraceSystem.componentGaugeTraceIndices[component]];
+    }
+    for (const auto& trace : mimeticTraceSystem.traces) {
+        manufacturedTraceValues[trace.traceIndex] -=
+            manufacturedGaugeValues[trace.componentIndex];
+    }
+    for (const std::size_t gauge :
+         mimeticTraceSystem.componentGaugeTraceIndices) {
+        manufacturedTraceValues[gauge] = 0.0;
+    }
+    const auto manufacturedTraceRightHandSide =
+        simwing::fsi::applySceneFluidMimeticTraceOperator(
+            mimeticTraceSystem, manufacturedTraceValues);
+    std::vector<double> truncatedTraceWarmStart(
+        mimeticTraceSystem.traces.size(), 0.0);
+    const auto originalTruncatedTraceWarmStart = truncatedTraceWarmStart;
+    simwing::fsi::SceneFluidMimeticTraceSolveSettings traceSolveSettings;
+    traceSolveSettings.absoluteResidualTolerancePascalsMeters = 1.0e-30;
+    traceSolveSettings.relativeResidualTolerance = 0.0;
+    traceSolveSettings
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    traceSolveSettings.maximumIterations = 1;
+    const auto traceSolveDiagnostics =
+        simwing::fsi::solveSceneFluidMimeticTraceSystem(
+            mimeticTraceSystem, manufacturedTraceRightHandSide,
+            truncatedTraceWarmStart, traceSolveSettings);
     const bool mimeticAuditMatches =
         mimeticControlCells.readyControlCellCount
             == mimeticControlCells.controlCells.size()
@@ -525,11 +563,18 @@ void testRealDesignCapture(const std::filesystem::path &input,
             == mimeticTraceSystem.incidences.size()
         && mimeticTraceSystem.localOperatorStorageBytes
             == 7 * mimeticControlCells.halfFaces.size() * sizeof(double)
-        && maximumConstantTraceAction < 1.0e-9;
+        && maximumConstantTraceAction < 1.0e-9
+        && traceSolveDiagnostics.compatible
+        && !traceSolveDiagnostics.converged
+        && traceSolveDiagnostics.finite
+        && traceSolveDiagnostics.iterationCount == 1
+        && traceSolveDiagnostics.finalResidualL2PascalsMeters
+            < traceSolveDiagnostics.initialResidualL2PascalsMeters
+        && truncatedTraceWarmStart == originalTruncatedTraceWarmStart;
     if (!mimeticAuditMatches) {
         std::fprintf(
             stderr,
-            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu classified=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu traces=%zu compact-bytes=%zu max-null=%.17g max-area=%.17g max-moment=%.17g\n",
+            "real mimetic shell audit: ready=%zu/%zu incomplete=%zu nonclosing=%zu unresolved-faces=%zu [active=%zu ambiguous=%zu classified=%zu opening=%zu capped=%zu] omitted-wall-sides=%zu missing-opening-sides=%zu opening-halves=%zu max-halves/control=%zu traces=%zu compact-bytes=%zu max-null=%.17g solve-compatible=%d solve-converged=%d solve-finite=%d solve-iterations=%zu solve-compatibility=%.17g solve-initial=%.17g solve-final=%.17g solve-final-max=%.17g max-area=%.17g max-moment=%.17g\n",
             mimeticControlCells.readyControlCellCount,
             mimeticControlCells.controlCells.size(),
             mimeticControlCells.incompleteTopologyControlCellCount,
@@ -547,6 +592,15 @@ void testRealDesignCapture(const std::filesystem::path &input,
             mimeticTraceSystem.traces.size(),
             mimeticTraceSystem.localOperatorStorageBytes,
             maximumConstantTraceAction,
+            traceSolveDiagnostics.compatible ? 1 : 0,
+            traceSolveDiagnostics.converged ? 1 : 0,
+            traceSolveDiagnostics.finite ? 1 : 0,
+            traceSolveDiagnostics.iterationCount,
+            traceSolveDiagnostics
+                .maximumAbsoluteComponentCompatibilityPascalsMeters,
+            traceSolveDiagnostics.initialResidualL2PascalsMeters,
+            traceSolveDiagnostics.finalResidualL2PascalsMeters,
+            traceSolveDiagnostics.finalResidualMaximumPascalsMeters,
             mimeticControlCells.maximumAreaClosureErrorSquareMeters,
             mimeticControlCells.maximumDivergenceTheoremErrorCubicMeters);
         for (const auto& cell : mimeticControlCells.controlCells) {

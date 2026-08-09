@@ -1,4 +1,5 @@
 #include "scene_fluid_mimetic_trace_system.h"
+#include "scene_fluid_mimetic_trace_solve.h"
 #include "scene_structure.h"
 
 #include <algorithm>
@@ -236,6 +237,40 @@ double dot(const std::vector<double>& first,
     return result;
 }
 
+SceneFluidMimeticTraceSolveSettings strictSolveSettings() {
+    SceneFluidMimeticTraceSolveSettings settings;
+    settings.absoluteResidualTolerancePascalsMeters = 1.0e-12;
+    settings.relativeResidualTolerance = 1.0e-13;
+    settings.absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-11;
+    settings.maximumIterations = 4000;
+    return settings;
+}
+
+void normalizeTraceGauges(const SceneFluidMimeticTraceSystem& system,
+                          std::vector<double>& values) {
+    std::vector<double> gauges(system.componentCount, 0.0);
+    for (std::size_t component = 0;
+         component < system.componentCount; ++component) {
+        gauges[component] = values[
+            system.componentGaugeTraceIndices[component]];
+    }
+    for (const auto& trace : system.traces) {
+        values[trace.traceIndex] -= gauges[trace.componentIndex];
+    }
+    for (const std::size_t gauge : system.componentGaugeTraceIndices) {
+        values[gauge] = 0.0;
+    }
+}
+
+double maximumError(const std::vector<double>& first,
+                    const std::vector<double>& second) {
+    double result = 0.0;
+    for (std::size_t index = 0; index < first.size(); ++index) {
+        result = std::max(result, std::abs(first[index] - second[index]));
+    }
+    return result;
+}
+
 void testNestedAssemblyAndMatrixFreeAction() {
     Fixture fixture(nestedScene());
     const auto shells = fixture.shells();
@@ -371,6 +406,167 @@ void testRejectedTwoPointOpeningStillBuildsHybridTrace() {
           "hybrid aperture trace has two owners and positive local scaling");
 }
 
+void testGaugeFixedJacobiPcgRecovery() {
+    Fixture fixture(nestedScene());
+    const auto shells = fixture.shells();
+    const auto system = buildSceneFluidMimeticTraceSystem(shells);
+    std::vector<double> expected(system.traces.size(), 0.0);
+    for (std::size_t trace = 0; trace < expected.size(); ++trace) {
+        const double sample = static_cast<double>(trace + 1);
+        expected[trace] = 0.7 * std::sin(0.17 * sample)
+            + 0.2 * std::cos(0.31 * sample) + 0.003 * sample;
+    }
+    normalizeTraceGauges(system, expected);
+    const auto rightHandSide = applySceneFluidMimeticTraceOperator(
+        system, expected);
+    std::vector<double> firstTrace(expected.size(), 0.0);
+    std::vector<double> secondTrace(expected.size(), 0.0);
+    const auto settings = strictSolveSettings();
+    const auto first = solveSceneFluidMimeticTraceSystem(
+        system, rightHandSide, firstTrace, settings);
+    const auto second = solveSceneFluidMimeticTraceSystem(
+        system, rightHandSide, secondTrace, settings);
+    check(first == second
+              && firstTrace == secondTrace
+              && first.compatible && first.converged && first.finite
+              && first.iterationCount > 0
+              && first.componentCount == system.componentCount,
+          "gauge-fixed Jacobi-PCG converges deterministically in every component");
+    check(maximumError(firstTrace, expected) < 3.0e-9,
+          "mimetic trace solve recovers the manufactured gauge-fixed field");
+    check(first.finalResidualL2PascalsMeters < 2.0e-11
+              && first.finalResidualMaximumPascalsMeters < 2.0e-10,
+          "mimetic trace solve closes its explicitly recomputed full residual");
+    for (const auto& component : first.components) {
+        checkNear(component.rightHandSideSumPascalsMeters,
+                  0.0, 2.0e-11,
+                  "manufactured trace RHS satisfies component compatibility");
+        check(component.traceGaugeAfterPascals == 0.0
+                  && firstTrace[component.gaugeTraceIndex] == 0.0,
+              "mimetic trace solve commits exact component gauges");
+    }
+}
+
+void testSourceDrivenTraceBalance() {
+    Fixture fixture(nestedScene());
+    const auto shells = fixture.shells();
+    const auto system = buildSceneFluidMimeticTraceSystem(shells);
+    std::vector<double> sources(system.localOperators.size(), 0.0);
+    std::size_t receiver = 1;
+    while (receiver < shells.controlCells.size()
+           && shells.controlCells[receiver].componentIndex
+               != shells.controlCells[0].componentIndex) {
+        ++receiver;
+    }
+    check(receiver < sources.size(),
+          "source-driven solve fixture has two controls in one component");
+    if (receiver < sources.size()) {
+        sources[0] = 0.2;
+        sources[receiver] = -0.2;
+    }
+    const auto rightHandSide =
+        buildSceneFluidMimeticTraceRightHandSide(system, sources);
+    std::vector<double> traces(system.traces.size(), 0.0);
+    const auto diagnostics = solveSceneFluidMimeticTraceSystem(
+        system, rightHandSide, traces, strictSolveSettings());
+    const auto balance = evaluateSceneFluidMimeticTraceSystem(
+        system, traces, sources);
+    check(diagnostics.compatible && diagnostics.converged
+              && diagnostics.finite
+              && balance.maximumTraceFluxImbalance < 2.0e-10
+              && balance.maximumCellConservationResidual < 2.0e-13,
+          "source-driven trace solve closes local conservation and every hybrid trace");
+}
+
+void testTraceSolveRollbackAndValidation() {
+    Fixture fixture(nestedScene());
+    const auto system = buildSceneFluidMimeticTraceSystem(
+        fixture.shells());
+    std::vector<double> expected(system.traces.size(), 0.0);
+    for (std::size_t trace = 0; trace < expected.size(); ++trace) {
+        expected[trace] = std::sin(
+            0.23 * static_cast<double>(trace + 1));
+    }
+    const auto compatible = applySceneFluidMimeticTraceOperator(
+        system, expected);
+
+    auto incompatible = compatible;
+    incompatible.front() += 1.0e-4;
+    std::vector<double> traces(system.traces.size(), 3.5);
+    const auto originalTraces = traces;
+    const auto incompatibleDiagnostics =
+        solveSceneFluidMimeticTraceSystem(
+            system, incompatible, traces, strictSolveSettings());
+    check(!incompatibleDiagnostics.compatible
+              && !incompatibleDiagnostics.converged
+              && incompatibleDiagnostics.finite
+              && incompatibleDiagnostics
+                    .maximumAbsoluteComponentCompatibilityPascalsMeters
+                    > 9.0e-5
+              && traces == originalTraces,
+          "incompatible trace RHS is reported without warm-state mutation");
+
+    auto truncatedSettings = strictSolveSettings();
+    truncatedSettings.absoluteResidualTolerancePascalsMeters = 1.0e-30;
+    truncatedSettings.relativeResidualTolerance = 0.0;
+    truncatedSettings.maximumIterations = 1;
+    const auto truncated = solveSceneFluidMimeticTraceSystem(
+        system, compatible, traces, truncatedSettings);
+    check(truncated.compatible && !truncated.converged
+              && truncated.finite && truncated.iterationCount == 1
+              && traces == originalTraces,
+          "truncated trace solve rolls its warm start back exactly");
+
+    auto corrected = compatible;
+    corrected.front() += 1.0e-13;
+    auto correctedTraces = originalTraces;
+    const auto correctedDiagnostics = solveSceneFluidMimeticTraceSystem(
+        system, corrected, correctedTraces, strictSolveSettings());
+    check(correctedDiagnostics.compatible
+              && correctedDiagnostics.converged
+              && correctedDiagnostics
+                    .maximumAbsoluteComponentCompatibilityPascalsMeters
+                    > 0.0,
+          "trace solve removes only an admitted component roundoff defect");
+
+    auto invalidSettings = strictSolveSettings();
+    invalidSettings.relativeResidualTolerance = -1.0;
+    expectInvalid(
+        [&] { static_cast<void>(solveSceneFluidMimeticTraceSystem(
+            system, compatible, traces, invalidSettings)); },
+        "trace solve rejects invalid residual settings");
+    expectInvalid(
+        [&] { static_cast<void>(solveSceneFluidMimeticTraceSystem(
+            system,
+            std::span<const double>(compatible).first(
+                compatible.size() - 1),
+            traces, strictSolveSettings())); },
+        "trace solve rejects a short right-hand side");
+    auto nonFiniteTraces = originalTraces;
+    nonFiniteTraces.front() =
+        std::numeric_limits<double>::quiet_NaN();
+    expectInvalid(
+        [&] { static_cast<void>(solveSceneFluidMimeticTraceSystem(
+            system, compatible, nonFiniteTraces,
+            strictSolveSettings())); },
+        "trace solve rejects a non-finite warm start");
+
+    std::vector<double> overflowingWarmStart(
+        system.traces.size(), std::numeric_limits<double>::max());
+    for (const std::size_t gauge : system.componentGaugeTraceIndices) {
+        overflowingWarmStart[gauge] =
+            -std::numeric_limits<double>::max();
+    }
+    const auto originalOverflowingWarmStart = overflowingWarmStart;
+    const auto overflowDiagnostics = solveSceneFluidMimeticTraceSystem(
+        system, compatible, overflowingWarmStart, strictSolveSettings());
+    check(overflowDiagnostics.compatible
+              && !overflowDiagnostics.converged
+              && !overflowDiagnostics.finite
+              && overflowingWarmStart == originalOverflowingWarmStart,
+          "non-finite trace-solve arithmetic preserves the warm start exactly");
+}
+
 void testLimitsCorruptionAndInputValidation() {
     Fixture fixture(nestedScene());
     const auto shells = fixture.shells();
@@ -450,6 +646,9 @@ int main() {
     try {
         testNestedAssemblyAndMatrixFreeAction();
         testRejectedTwoPointOpeningStillBuildsHybridTrace();
+        testGaugeFixedJacobiPcgRecovery();
+        testSourceDrivenTraceBalance();
+        testTraceSolveRollbackAndValidation();
         testLimitsCorruptionAndInputValidation();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

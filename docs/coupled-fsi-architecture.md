@@ -1052,6 +1052,17 @@ component whose controls are disconnected through shared traces rejects rather
 than retaining more null modes than its one authored gauge. No global matrix is
 stored.
 
+`src/fsi/scene_fluid_mimetic_trace_solve.*` supplies the first bounded reduced
+solve without changing the production pressure path. It fixes each retained
+trace gauge exactly, admits only a declared component-sum roundoff defect,
+closes that defect deterministically, and applies Jacobi-preconditioned
+conjugate gradients using the stored condensed diagonal. Candidate traces stay
+private until an explicitly recomputed full residual converges. Incompatible
+sources, non-finite arithmetic, or iteration exhaustion leave the caller's
+warm start bit-for-bit unchanged. Manufactured multi-component fields recover
+their gauge-normalized solution, and compatible cell sources close local
+conservation plus all shared and material-wall trace equations.
+
 The first immutable scene adapter now assembles each sparse cell/region's
 unwrapped half-face shell from exact Cartesian region subfaces, cell- and
 face-owned material quadrature, and embedded or face-aligned opening-cap
@@ -1080,7 +1091,11 @@ matrix cost without paying it: every coarse real-wing shell builds the compact
 linear-storage local factorization. The global coarse audit contains 191,579
 trace unknowns and 13,132,336 bytes of compact local factor data, and its full
 component-constant matrix-free action is roundoff-null. A bounded gauge-fixed
-iterative solve and production integration remain open; the current graph
+Jacobi-PCG step now runs across the complete real system, reduces its residual,
+and rolls back exactly when deliberately truncated. Jacobi alone is not yet a
+practical full-wing preconditioner: exact material-wall trace condensation or
+a stronger local/multilevel preconditioner remains open, as do physical
+right-hand-side assembly and production integration. The current graph
 operator and all worker arithmetic are unchanged.
 Scene assembly adds per-sheet bending and preserves the junction graph.
 It now orients one pilot's line forest toward its harness
