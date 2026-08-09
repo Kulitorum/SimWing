@@ -931,11 +931,19 @@ makes this a certified aerodynamic solver.
 - `src/model/nurbs_model.{h,cpp}` can export scene-v2 directly from analytical
   captures without reading `lep-sim.json`. It preserves authored open intakes,
   exact triangulated rib/crossport faces, internal sheets, and the segmented
-  suspension graph. Physical fabric/line/pilot settings are mandatory and no
-  engine CLI writes this scene yet because the design format has no authoritative
-  source for them. Its present local intrinsic charts are not manufacturing
-  flat-pattern UVs, and it does not yet author paired seam chains or the new
-  nonplanar opening-cap tessellation.
+  suspension graph. Open intakes now carry deterministic nonplanar
+  boundary-vertex cap disks. Their spanwise lips reuse the coarse skin grid;
+  their side chains reuse the actual OCCT rib-triangulation boundary, with a
+  maximum 0.25 mm sub-mesh canonicalization when a captured lip corner falls
+  between rib mesh samples; larger disagreement rejects export. The
+  real-design regression verifies cap orientation, exact fabric boundary-edge
+  reuse, and live Structure motion for every opening vertex. Physical
+  fabric/line/pilot settings are mandatory and no engine CLI writes this scene
+  yet because the design format has no authoritative source for them. Its
+  present local intrinsic charts are not manufacturing flat-pattern UVs, and
+  it does not yet author paired seam chains. General three-region skin/rib
+  surface junctions still prevent the fluid cap owner from consuming the
+  complete real wing as one ordinary two-sided manifold.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
   loads/state, trusted constraint/membrane/bending assembly, explicit optional
   fabric self-contact, rigid-pilot suspension, diagnostics, and composite

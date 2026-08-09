@@ -919,10 +919,17 @@ cleanly. A second process persists that terminal state; its restored Ready
 response exposes the same absolute step/time, the repeated advance returns the
 same numerical failure, and the completed continuation trace remains empty.
 The exact-model capture now exports validated scene-v2.2 skins, authored open
-intakes, triangulated holed ribs, internal sheets, explicit suspension
-junctions, and the uncollapsed line graph when supplied explicit physical
-material and pilot settings. Scene assembly adds per-sheet bending and preserves
-the junction graph. It now orients one pilot's line forest toward its harness
+intakes with deterministic nonplanar boundary-vertex cap disks, triangulated
+holed ribs, internal sheets, explicit suspension junctions, and the uncollapsed
+line graph when supplied explicit physical material and pilot settings. Intake
+spanwise lips reuse skin vertices and their side chains follow actual rib-mesh
+boundary edges; bounded lip canonicalization removes otherwise motionless
+opening-only vertices. The real 3.28 regression verifies oriented nondegenerate
+cap facets and captures every opening vertex through the live Structure-to-fluid
+surface adapter. General three-region skin/rib mouth junctions remain outside
+the ordinary two-sided cap owner, so it does not yet consume the complete wing
+cap set. Scene assembly adds per-sheet bending and preserves the junction graph.
+It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy
 because scene-v2 has no authoritative contact material yet. `softwing_core`
 provides complementary transactional checkpoints for complete SoftBody/contact
@@ -937,9 +944,8 @@ semantically revalidates every committed diagnostic ledger. The
 real 3.28 regression now reaches an accepted coupled
 structural step and replayable diagnostic trace with synthetic physical export
 settings. Manufacturing flat-pattern UVs, exact authored line-attachment
-vertices, authored paired seams and stitch mechanics, authored nonplanar
-opening-cap tessellation, live bidirectional control, an authoritative settings
-source/engine CLI, and general cut-cell
+vertices, authored paired seams and stitch mechanics, live bidirectional
+control, an authoritative settings source/engine CLI, and general cut-cell
 moving interfaces, nonplanar topology events, curved or changing grid-side
 correspondence, AMR, and full CFD evolution kernels remain open work.
 Phase 2 has started with a dependency-free uniform periodic MAC-grid

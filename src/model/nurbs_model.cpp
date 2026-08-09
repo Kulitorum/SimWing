@@ -96,6 +96,10 @@ constexpr double millimetresPerCentimetre = 10.0;
 constexpr double pointToleranceMillimetres = 0.005;
 constexpr double maximumSourceDeviationMillimetres = 0.01;
 constexpr double maximumLegacyAgreementMillimetres = 0.00001;
+// The coarse scene mesh welds each panel edge onto the independently captured
+// rib station. Keep that explicit canonicalization well below the rib mesher's
+// 1 mm deflection; larger disagreement indicates incompatible captures.
+constexpr double maximumSceneRibWeldDeviationMillimetres = 0.25;
 // A curve whose points all stay this close to the symmetry plane is on the
 // wing centre; its mirror copy would coincide with it.
 constexpr double symmetryPlaneToleranceMillimetres = 0.5;
@@ -430,6 +434,101 @@ struct QuantizedSemanticSegmentHash
         return result;
     }
 };
+
+struct ParametricOpeningVertex
+{
+    simwing::fsi::StableId id = simwing::fsi::invalidStableId;
+    double u = 0.0;
+    double v = 0.0;
+};
+
+std::vector<std::array<simwing::fsi::StableId, 3>>
+triangulateParametricOpeningBoundary(
+    const std::vector<ParametricOpeningVertex> &boundary)
+{
+    using simwing::fsi::StableId;
+    if (boundary.size() < 3) {
+        return {};
+    }
+    std::set<StableId> uniqueIds;
+    for (const ParametricOpeningVertex &vertex : boundary) {
+        if (vertex.id == simwing::fsi::invalidStableId
+            || !uniqueIds.insert(vertex.id).second) {
+            return {};
+        }
+    }
+
+    const auto turn = [&boundary](std::size_t first,
+                                  std::size_t second,
+                                  std::size_t third) {
+        const auto &a = boundary[first];
+        const auto &b = boundary[second];
+        const auto &c = boundary[third];
+        return (b.u - a.u) * (c.v - b.v)
+            - (b.v - a.v) * (c.u - b.u);
+    };
+    const auto insideTriangle = [&turn](std::size_t point,
+                                        std::size_t first,
+                                        std::size_t second,
+                                        std::size_t third) {
+        return turn(first, second, point) >= 0
+            && turn(second, third, point) >= 0
+            && turn(third, first, point) >= 0;
+    };
+
+    std::vector<std::size_t> active(boundary.size());
+    for (std::size_t index = 0; index < active.size(); ++index) {
+        active[index] = index;
+    }
+    std::vector<std::array<StableId, 3>> triangles;
+    triangles.reserve(boundary.size() - 2);
+    while (active.size() > 3) {
+        bool clipped = false;
+        for (std::size_t activeIndex = 0;
+             activeIndex < active.size(); ++activeIndex) {
+            const std::size_t previous = active[
+                (activeIndex + active.size() - 1) % active.size()];
+            const std::size_t current = active[activeIndex];
+            const std::size_t next = active[
+                (activeIndex + 1) % active.size()];
+            if (turn(previous, current, next) <= 0) {
+                continue;
+            }
+            bool containsVertex = false;
+            for (const std::size_t candidate : active) {
+                if (candidate == previous || candidate == current
+                    || candidate == next) {
+                    continue;
+                }
+                if (insideTriangle(
+                        candidate, previous, current, next)) {
+                    containsVertex = true;
+                    break;
+                }
+            }
+            if (containsVertex) {
+                continue;
+            }
+            triangles.push_back({boundary[previous].id,
+                                 boundary[current].id,
+                                 boundary[next].id});
+            active.erase(active.begin()
+                         + static_cast<std::ptrdiff_t>(activeIndex));
+            clipped = true;
+            break;
+        }
+        if (!clipped) {
+            return {};
+        }
+    }
+    if (turn(active[0], active[1], active[2]) <= 0) {
+        return {};
+    }
+    triangles.push_back({boundary[active[0]].id,
+                         boundary[active[1]].id,
+                         boundary[active[2]].id});
+    return triangles;
+}
 
 QuantizedPoint quantize(const gp_Pnt &point)
 {
@@ -1235,6 +1334,16 @@ private:
                 source.panelIndex - 1,
                 pointIndex,
                 47);
+        // The circular expression below contains a large-radius subtraction
+        // for lightly shaped stations. Its mathematical endpoints are these
+        // captured rib points, so preserve them exactly: simulation skin,
+        // rib, seam, and opening topology must share one vertex identity.
+        if (spanParameter <= 0.0) {
+            return start;
+        }
+        if (spanParameter >= 1.0) {
+            return end;
+        }
         const gp_Vec spanVector(start, end);
         const double spanLength = spanVector.Magnitude();
         if (spanLength <= Precision::Confusion()) {
@@ -3882,7 +3991,25 @@ public:
             }
         };
 
+        struct PendingIntake
+        {
+            StableId id = invalidStableId;
+            StableId cellRegionId = invalidStableId;
+            int firstRibIndex = 0;
+            int lastRibIndex = 0;
+            std::vector<StableId> frontLipVertexIds;
+            std::vector<StableId> backLipVertexIds;
+        };
+        struct RibOuterBoundary
+        {
+            int ribIndex = 0;
+            std::vector<StableId> vertexIds;
+            std::vector<gp_Pnt> points;
+        };
         std::size_t openingOrdinal = 0;
+        std::vector<PendingIntake> pendingIntakes;
+        std::vector<RibOuterBoundary> ribOuterBoundaries;
+        double maximumRibWeldDeviationMillimetres = 0.0;
         for (const SimRegionCapture &capture : simRegions_) {
             for (const bool mirror : {false, true}) {
                 if (mirror && capture.selfMirrored()) {
@@ -3900,32 +4027,72 @@ public:
                     }
                     grid.push_back(placed);
                 }
+                bool ribWeldValid = true;
+                for (std::size_t row = 0; row < grid.size(); ++row) {
+                    const auto canonicalRibPoint =
+                        [&](int ribIndex) -> std::optional<gp_Pnt> {
+                        const auto rib = capturedRibs_.find(ribIndex);
+                        const int station = capture.stations[row];
+                        if (rib == capturedRibs_.end()
+                            || station < 1
+                            || static_cast<std::size_t>(station)
+                                > rib->second.spatialPoints.size()) {
+                            return std::nullopt;
+                        }
+                        return place(
+                            rib->second.spatialPoints[
+                                static_cast<std::size_t>(station - 1)],
+                            mirror);
+                    };
+                    const auto first = canonicalRibPoint(
+                        capture.panelIndex);
+                    const auto last = canonicalRibPoint(
+                        capture.panelIndex - 1);
+                    if (!first || !last) {
+                        addError(
+                            "Captured scene skin boundary has no corresponding rib station");
+                        ribWeldValid = false;
+                        break;
+                    }
+                    for (const auto &[column, point] :
+                         {std::pair{0, *first},
+                          std::pair{simSpanColumnCount - 1, *last}}) {
+                        const double deviation =
+                            grid[row][column].Distance(point);
+                        maximumRibWeldDeviationMillimetres = std::max(
+                            maximumRibWeldDeviationMillimetres, deviation);
+                        if (deviation
+                            > maximumSceneRibWeldDeviationMillimetres) {
+                            addError(
+                                "Captured scene skin and rib stations disagree beyond the weld tolerance");
+                            ribWeldValid = false;
+                            break;
+                        }
+                        grid[row][column] = point;
+                    }
+                    if (!ribWeldValid) {
+                        break;
+                    }
+                }
+                if (!ribWeldValid) {
+                    continue;
+                }
                 if (!capture.authoredSurface) {
-                    std::vector<StableId> loop;
+                    PendingIntake intake;
+                    intake.id = stableId(5, openingOrdinal++);
+                    intake.cellRegionId = cellRegion;
+                    intake.firstRibIndex = capture.panelIndex;
+                    intake.lastRibIndex = capture.panelIndex - 1;
+                    intake.frontLipVertexIds.reserve(simSpanColumnCount);
+                    intake.backLipVertexIds.reserve(simSpanColumnCount);
                     for (int column = 0; column < simSpanColumnCount;
                          ++column) {
-                        loop.push_back(vertexId(grid.front()[column]));
+                        intake.frontLipVertexIds.push_back(
+                            vertexId(grid.front()[column]));
+                        intake.backLipVertexIds.push_back(
+                            vertexId(grid.back()[column]));
                     }
-                    for (std::size_t row = 1; row < grid.size(); ++row) {
-                        loop.push_back(vertexId(grid[row].back()));
-                    }
-                    for (int column = simSpanColumnCount - 2;
-                         column >= 0;
-                         --column) {
-                        loop.push_back(vertexId(grid.back()[column]));
-                    }
-                    for (std::size_t row = grid.size() - 1; row > 1;
-                         --row) {
-                        loop.push_back(vertexId(grid[row - 1].front()));
-                    }
-                    loop.erase(std::unique(loop.begin(), loop.end()),
-                               loop.end());
-                    scene.openings.push_back(
-                        {stableId(5, openingOrdinal++),
-                         std::move(loop),
-                         outsideRegionId,
-                         cellRegion,
-                         OpeningRole::Intake});
+                    pendingIntakes.push_back(std::move(intake));
                     continue;
                 }
 
@@ -3979,6 +4146,13 @@ public:
                     }
                 }
             }
+        }
+        if (maximumRibWeldDeviationMillimetres
+            > pointToleranceMillimetres) {
+            std::ostringstream warning;
+            warning << "Scene skin boundaries were canonicalized to captured rib stations by up to "
+                    << maximumRibWeldDeviationMillimetres << " mm";
+            result.warnings.push_back(warning.str());
         }
 
         // Build the same exact planar, holed rib faces used by the CAD
@@ -4068,6 +4242,56 @@ public:
             }
             sides = {distances.front().second, distances.back().second};
             return sides;
+        };
+        const auto meshedWireBoundary =
+            [&](const TopoDS_Wire &wire,
+                const occ::handle<Poly_Triangulation> &triangulation,
+                const TopLoc_Location &location,
+                const std::string &description)
+                -> std::optional<RibOuterBoundary> {
+            RibOuterBoundary boundary;
+            for (BRepTools_WireExplorer edgeExplorer(wire);
+                 edgeExplorer.More(); edgeExplorer.Next()) {
+                const TopoDS_Edge edge = edgeExplorer.Current();
+                const occ::handle<Poly_PolygonOnTriangulation> polygon =
+                    BRep_Tool::PolygonOnTriangulation(
+                        edge, triangulation, location);
+                if (polygon.IsNull() || polygon->NbNodes() < 2) {
+                    addError("Could not recover a meshed " + description);
+                    return std::nullopt;
+                }
+                const bool reversed = edge.Orientation() == TopAbs_REVERSED;
+                for (int point = 1; point <= polygon->NbNodes(); ++point) {
+                    const int polygonIndex = reversed
+                        ? polygon->NbNodes() - point + 1 : point;
+                    const int node = polygon->Node(polygonIndex);
+                    const gp_Pnt position =
+                        triangulation->Node(node).Transformed(
+                            location.Transformation());
+                    const StableId id = vertexId(position);
+                    if (!boundary.vertexIds.empty()
+                        && boundary.vertexIds.back() == id) {
+                        continue;
+                    }
+                    boundary.vertexIds.push_back(id);
+                    boundary.points.push_back(position);
+                }
+            }
+            if (boundary.vertexIds.size() >= 2
+                && boundary.vertexIds.front()
+                    == boundary.vertexIds.back()) {
+                boundary.vertexIds.pop_back();
+                boundary.points.pop_back();
+            }
+            const std::set<StableId> unique(
+                boundary.vertexIds.begin(), boundary.vertexIds.end());
+            if (boundary.vertexIds.size() < 3
+                || unique.size() != boundary.vertexIds.size()) {
+                addError("A meshed " + description
+                         + " does not form a unique closed loop");
+                return std::nullopt;
+            }
+            return boundary;
         };
 
         for (const auto &[ribIndex, segments] : ribSegments) {
@@ -4240,6 +4464,16 @@ public:
                 }
 
                 const TopoDS_Wire faceOuter = BRepTools::OuterWire(face);
+                const auto outerBoundary = meshedWireBoundary(
+                    faceOuter, triangulation, location,
+                    "outer boundary in " + label);
+                if (!outerBoundary) {
+                    continue;
+                }
+                RibOuterBoundary taggedOuterBoundary = *outerBoundary;
+                taggedOuterBoundary.ribIndex = ribIndex;
+                ribOuterBoundaries.push_back(
+                    std::move(taggedOuterBoundary));
                 for (TopExp_Explorer explorer(face, TopAbs_WIRE);
                      explorer.More(); explorer.Next()) {
                     const TopoDS_Wire wire =
@@ -4247,51 +4481,273 @@ public:
                     if (wire.IsSame(faceOuter)) {
                         continue;
                     }
-                    std::vector<StableId> loop;
-                    for (BRepTools_WireExplorer edgeExplorer(wire);
-                         edgeExplorer.More(); edgeExplorer.Next()) {
-                        const TopoDS_Edge edge = edgeExplorer.Current();
-                        const occ::handle<Poly_PolygonOnTriangulation>
-                            polygon = BRep_Tool::PolygonOnTriangulation(
-                                edge, triangulation, location);
-                        if (polygon.IsNull() || polygon->NbNodes() < 2) {
-                            addError("Could not recover a meshed crossport boundary in "
-                                     + label);
-                            loop.clear();
-                            break;
-                        }
-                        const bool reversed =
-                            edge.Orientation() == TopAbs_REVERSED;
-                        for (int point = 1; point <= polygon->NbNodes();
-                             ++point) {
-                            const int polygonIndex = reversed
-                                ? polygon->NbNodes() - point + 1 : point;
-                            const int node = polygon->Node(polygonIndex);
-                            const StableId id = vertexId(
-                                triangulation->Node(node).Transformed(
-                                    location.Transformation()));
-                            if (loop.empty() || loop.back() != id) {
-                                loop.push_back(id);
-                            }
-                        }
-                    }
-                    if (loop.size() >= 2 && loop.front() == loop.back()) {
-                        loop.pop_back();
-                    }
-                    std::set<StableId> unique(loop.begin(), loop.end());
-                    if (loop.size() < 3 || unique.size() != loop.size()) {
-                        addError("A crossport in " + label
-                                 + " does not form a unique closed loop");
+                    auto crossport = meshedWireBoundary(
+                        wire, triangulation, location,
+                        "crossport boundary in " + label);
+                    if (!crossport) {
                         continue;
                     }
                     scene.openings.push_back(
                         {stableId(5, openingOrdinal++),
-                         std::move(loop),
+                         std::move(crossport->vertexIds),
                          faceSides.first,
                          faceSides.second,
                          OpeningRole::Crossport});
                 }
             }
+        }
+
+        const auto ribBoundaryPath =
+            [&ribOuterBoundaries](StableId start,
+                                  StableId end,
+                                  int ribIndex)
+                -> std::optional<RibOuterBoundary> {
+            std::optional<std::pair<double, RibOuterBoundary>> best;
+            for (const RibOuterBoundary &loop : ribOuterBoundaries) {
+                if (loop.ribIndex != ribIndex) {
+                    continue;
+                }
+                const auto startIterator = std::find(
+                    loop.vertexIds.begin(), loop.vertexIds.end(), start);
+                const auto endIterator = std::find(
+                    loop.vertexIds.begin(), loop.vertexIds.end(), end);
+                if (startIterator == loop.vertexIds.end()
+                    || endIterator == loop.vertexIds.end()) {
+                    continue;
+                }
+                const std::size_t startIndex = static_cast<std::size_t>(
+                    startIterator - loop.vertexIds.begin());
+                const std::size_t endIndex = static_cast<std::size_t>(
+                    endIterator - loop.vertexIds.begin());
+                for (const int direction : {1, -1}) {
+                    RibOuterBoundary candidate;
+                    std::size_t index = startIndex;
+                    double length = 0.0;
+                    candidate.vertexIds.push_back(loop.vertexIds[index]);
+                    candidate.points.push_back(loop.points[index]);
+                    while (index != endIndex) {
+                        const std::size_t next = direction > 0
+                            ? (index + 1) % loop.vertexIds.size()
+                            : (index + loop.vertexIds.size() - 1)
+                                  % loop.vertexIds.size();
+                        length += loop.points[index].Distance(
+                            loop.points[next]);
+                        index = next;
+                        candidate.vertexIds.push_back(
+                            loop.vertexIds[index]);
+                        candidate.points.push_back(loop.points[index]);
+                    }
+                    const bool preferred = !best
+                        || length < best->first
+                        || (length == best->first
+                            && candidate.vertexIds
+                                < best->second.vertexIds);
+                    if (preferred) {
+                        best = std::pair{
+                            length, std::move(candidate)};
+                    }
+                }
+            }
+            if (!best) {
+                return std::nullopt;
+            }
+            return std::move(best->second);
+        };
+        std::map<StableId, StableId> ribBoundaryAliases;
+        std::set<StableId> retiredVertexIds;
+        double maximumRibMeshSnapDeviationMillimetres = 0.0;
+        const auto canonicalRibBoundaryVertex =
+            [&](StableId id, int ribIndex) -> std::optional<StableId> {
+            const auto alias = ribBoundaryAliases.find(id);
+            if (alias != ribBoundaryAliases.end()) {
+                return alias->second;
+            }
+            for (const RibOuterBoundary &boundary : ribOuterBoundaries) {
+                if (boundary.ribIndex == ribIndex
+                    && std::find(boundary.vertexIds.begin(),
+                              boundary.vertexIds.end(), id)
+                    != boundary.vertexIds.end()) {
+                    ribBoundaryAliases.emplace(id, id);
+                    return id;
+                }
+            }
+            const auto vertex = std::find_if(
+                scene.vertices.begin(), scene.vertices.end(),
+                [id](const Vertex &candidate) {
+                    return candidate.id == id;
+                });
+            if (vertex == scene.vertices.end()) {
+                return std::nullopt;
+            }
+            const gp_Pnt point(vertex->positionMeters.x * 1000.0,
+                               vertex->positionMeters.y * 1000.0,
+                               vertex->positionMeters.z * 1000.0);
+
+            StableId replacement = invalidStableId;
+            double bestDistance = std::numeric_limits<double>::max();
+            for (const RibOuterBoundary &boundary : ribOuterBoundaries) {
+                if (boundary.ribIndex != ribIndex) {
+                    continue;
+                }
+                for (std::size_t index = 0;
+                     index < boundary.vertexIds.size(); ++index) {
+                    const double distance =
+                        point.Distance(boundary.points[index]);
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        replacement = boundary.vertexIds[index];
+                    }
+                }
+            }
+            if (replacement == invalidStableId
+                || bestDistance
+                    > maximumSceneRibWeldDeviationMillimetres) {
+                return std::nullopt;
+            }
+            maximumRibMeshSnapDeviationMillimetres = std::max(
+                maximumRibMeshSnapDeviationMillimetres, bestDistance);
+            for (const Triangle &triangle : scene.triangles) {
+                if (std::find(triangle.vertexIds.begin(),
+                              triangle.vertexIds.end(), id)
+                        != triangle.vertexIds.end()
+                    && std::find(triangle.vertexIds.begin(),
+                                 triangle.vertexIds.end(), replacement)
+                        != triangle.vertexIds.end()) {
+                    return std::nullopt;
+                }
+            }
+            for (Triangle &triangle : scene.triangles) {
+                if (std::find(triangle.vertexIds.begin(),
+                              triangle.vertexIds.end(), id)
+                    == triangle.vertexIds.end()) {
+                    continue;
+                }
+                std::replace(triangle.vertexIds.begin(),
+                             triangle.vertexIds.end(), id, replacement);
+            }
+            for (Opening &opening : scene.openings) {
+                std::replace(opening.orderedVertexIds.begin(),
+                             opening.orderedVertexIds.end(), id,
+                             replacement);
+                for (auto &triangle : opening.capTriangleVertexIds) {
+                    std::replace(triangle.begin(), triangle.end(), id,
+                                 replacement);
+                }
+            }
+            vertexIds[quantize(point)] = replacement;
+            retiredVertexIds.insert(id);
+            ribBoundaryAliases.emplace(id, replacement);
+            return replacement;
+        };
+
+        // A fluid intake must follow actual Structure-owned fabric edges.
+        // The two spanwise lips already come from the skin grid. Complete
+        // their loops with the shorter exact rib-mesh paths between the same
+        // captured lip corners, then author one deterministic virtual disk in
+        // the capture's rectangular parameter chart. The disk is fluid
+        // topology only; none of its triangles enters the fabric Structure.
+        for (PendingIntake &intake : pendingIntakes) {
+            bool boundaryOwned = true;
+            for (const auto &[id, ribIndex] : {
+                     std::pair{&intake.frontLipVertexIds.front(),
+                               intake.firstRibIndex},
+                     std::pair{&intake.frontLipVertexIds.back(),
+                               intake.lastRibIndex},
+                     std::pair{&intake.backLipVertexIds.front(),
+                               intake.firstRibIndex},
+                     std::pair{&intake.backLipVertexIds.back(),
+                               intake.lastRibIndex}}) {
+                const auto canonical =
+                    canonicalRibBoundaryVertex(*id, ribIndex);
+                boundaryOwned = canonical.has_value() && boundaryOwned;
+                if (canonical) {
+                    *id = *canonical;
+                }
+            }
+            if (!boundaryOwned) {
+                addError(
+                    "Captured intake lip corner could not be canonicalized to its rib-mesh boundary");
+                continue;
+            }
+            const auto rightRib = ribBoundaryPath(
+                intake.frontLipVertexIds.back(),
+                intake.backLipVertexIds.back(),
+                intake.lastRibIndex);
+            const auto leftRib = ribBoundaryPath(
+                intake.backLipVertexIds.front(),
+                intake.frontLipVertexIds.front(),
+                intake.firstRibIndex);
+            if (!rightRib || !leftRib) {
+                addError(
+                    "Captured intake lip corners do not share exact rib-mesh boundary paths");
+                continue;
+            }
+
+            std::vector<ParametricOpeningVertex> boundary;
+            boundary.reserve(
+                intake.frontLipVertexIds.size()
+                + rightRib->vertexIds.size()
+                + intake.backLipVertexIds.size()
+                + leftRib->vertexIds.size() - 4);
+            const auto fraction = [](std::size_t index,
+                                     std::size_t count) {
+                return static_cast<double>(index)
+                    / static_cast<double>(count - 1);
+            };
+            for (std::size_t index = 0;
+                 index < intake.frontLipVertexIds.size(); ++index) {
+                boundary.push_back({
+                    intake.frontLipVertexIds[index],
+                    fraction(index, intake.frontLipVertexIds.size()),
+                    0.0});
+            }
+            for (std::size_t index = 1;
+                 index < rightRib->vertexIds.size(); ++index) {
+                boundary.push_back({
+                    rightRib->vertexIds[index], 1.0,
+                    fraction(index, rightRib->vertexIds.size())});
+            }
+            for (std::size_t index =
+                     intake.backLipVertexIds.size() - 1;
+                 index-- > 0;) {
+                boundary.push_back({
+                    intake.backLipVertexIds[index],
+                    fraction(index, intake.backLipVertexIds.size()),
+                    1.0});
+            }
+            for (std::size_t index = 1;
+                 index + 1 < leftRib->vertexIds.size(); ++index) {
+                boundary.push_back({
+                    leftRib->vertexIds[index], 0.0,
+                    1.0 - fraction(index, leftRib->vertexIds.size())});
+            }
+
+            std::vector<StableId> loop;
+            loop.reserve(boundary.size());
+            for (const ParametricOpeningVertex &vertex : boundary) {
+                loop.push_back(vertex.id);
+            }
+            auto capTriangles =
+                triangulateParametricOpeningBoundary(boundary);
+            if (capTriangles.size() + 2 != loop.size()) {
+                addError(
+                    "Captured intake boundary could not be triangulated as an oriented disk");
+                continue;
+            }
+            scene.openings.push_back({
+                intake.id,
+                std::move(loop),
+                outsideRegionId,
+                intake.cellRegionId,
+                OpeningRole::Intake,
+                std::move(capTriangles)});
+        }
+        if (maximumRibMeshSnapDeviationMillimetres
+            > pointToleranceMillimetres) {
+            std::ostringstream warning;
+            warning << "Intake lip corners were canonicalized to the rib mesh by up to "
+                    << maximumRibMeshSnapDeviationMillimetres << " mm";
+            result.warnings.push_back(warning.str());
         }
 
         // Internal diagonal and mini-rib sheets do not divide the connected
@@ -4660,6 +5116,12 @@ public:
                  line.start.Distance(line.end) * 0.001,
                  line.brake ? SuspensionLineRole::Brake
                             : SuspensionLineRole::Suspension});
+        }
+
+        if (!retiredVertexIds.empty()) {
+            std::erase_if(scene.vertices, [&](const Vertex &vertex) {
+                return retiredVertexIds.contains(vertex.id);
+            });
         }
 
         if (!result.errors.empty()) {

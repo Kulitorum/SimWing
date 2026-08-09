@@ -1,6 +1,7 @@
 #include "engine_paths.h"
 #include "input_migration.h"
 #include "nurbs_model.h"
+#include "scene_fluid_surface.h"
 #include "scene_structure.h"
 #include "structure_frame.h"
 #include "viewer_protocol.h"
@@ -193,6 +194,91 @@ void testRealDesignCapture(const std::filesystem::path &input,
           "real export zipper-triangulates captured mini-ribs");
     check(!result.scene.openings.empty(),
           "real export contains authored intake and crossport openings");
+    const std::size_t intakeCount = std::count_if(
+        result.scene.openings.begin(), result.scene.openings.end(),
+        [](const auto &opening) {
+            return opening.role == simwing::fsi::OpeningRole::Intake;
+        });
+    const bool intakesHaveBoundaryDisks = std::ranges::all_of(
+        result.scene.openings, [](const auto &opening) {
+            return opening.role != simwing::fsi::OpeningRole::Intake
+                || (opening.orderedVertexIds.size() >= 3
+                    && opening.capTriangleVertexIds.size() + 2
+                        == opening.orderedVertexIds.size());
+        });
+    check(intakeCount > 0 && intakesHaveBoundaryDisks,
+          "real intakes carry explicit boundary-vertex cap disks");
+    const auto vertexPosition = [&result](simwing::fsi::StableId id) {
+        const auto vertex = std::find_if(
+            result.scene.vertices.begin(), result.scene.vertices.end(),
+            [id](const auto &candidate) { return candidate.id == id; });
+        return vertex->positionMeters;
+    };
+    const auto subtract = [](const auto &first, const auto &second) {
+        return simwing::fsi::Vec3{
+            first.x - second.x,
+            first.y - second.y,
+            first.z - second.z};
+    };
+    const auto cross = [](const auto &first, const auto &second) {
+        return simwing::fsi::Vec3{
+            first.y * second.z - first.z * second.y,
+            first.z * second.x - first.x * second.z,
+            first.x * second.y - first.y * second.x};
+    };
+    const auto dot = [](const auto &first, const auto &second) {
+        return first.x * second.x + first.y * second.y
+            + first.z * second.z;
+    };
+    bool intakeCapsAreOriented = true;
+    bool hasNonPlanarIntake = false;
+    for (const auto &opening : result.scene.openings) {
+        if (opening.role != simwing::fsi::OpeningRole::Intake) {
+            continue;
+        }
+        simwing::fsi::Vec3 newell;
+        for (std::size_t index = 0;
+             index < opening.orderedVertexIds.size(); ++index) {
+            const auto current = vertexPosition(
+                opening.orderedVertexIds[index]);
+            const auto next = vertexPosition(
+                opening.orderedVertexIds[
+                    (index + 1) % opening.orderedVertexIds.size()]);
+            newell.x += (current.y - next.y) * (current.z + next.z);
+            newell.y += (current.z - next.z) * (current.x + next.x);
+            newell.z += (current.x - next.x) * (current.y + next.y);
+        }
+        const double normalLength =
+            std::hypot(newell.x, newell.y, newell.z);
+        intakeCapsAreOriented = intakeCapsAreOriented
+            && normalLength > 0.0;
+        if (!(normalLength > 0.0)) {
+            continue;
+        }
+        const simwing::fsi::Vec3 normal{
+            newell.x / normalLength,
+            newell.y / normalLength,
+            newell.z / normalLength};
+        const auto planePoint = vertexPosition(
+            opening.orderedVertexIds.front());
+        for (const auto id : opening.orderedVertexIds) {
+            hasNonPlanarIntake = hasNonPlanarIntake
+                || std::abs(dot(
+                       subtract(vertexPosition(id), planePoint), normal))
+                    > 1.0e-10;
+        }
+        for (const auto &triangle : opening.capTriangleVertexIds) {
+            const auto first = vertexPosition(triangle[0]);
+            const auto second = vertexPosition(triangle[1]);
+            const auto third = vertexPosition(triangle[2]);
+            const auto areaVector = cross(
+                subtract(second, first), subtract(third, first));
+            intakeCapsAreOriented = intakeCapsAreOriented
+                && dot(areaVector, normal) > 1.0e-18;
+        }
+    }
+    check(intakeCapsAreOriented && hasNonPlanarIntake,
+          "real intake disks are nonplanar, nondegenerate, and consistently oriented");
     std::set<std::pair<simwing::fsi::StableId, simwing::fsi::StableId>>
         triangleEdges;
     for (const auto &triangle : result.scene.triangles) {
@@ -206,11 +292,8 @@ void testRealDesignCapture(const std::filesystem::path &input,
             triangleEdges.insert(edge);
         }
     }
-    const bool crossportsUseMeshEdges = std::ranges::all_of(
+    const bool openingsUseMeshEdges = std::ranges::all_of(
         result.scene.openings, [&](const auto &opening) {
-            if (opening.role != simwing::fsi::OpeningRole::Crossport) {
-                return true;
-            }
             for (std::size_t index = 0;
                  index < opening.orderedVertexIds.size(); ++index) {
                 auto edge = std::pair{
@@ -226,8 +309,8 @@ void testRealDesignCapture(const std::filesystem::path &input,
             }
             return true;
         });
-    check(crossportsUseMeshEdges,
-          "real crossport loops reuse exact rib-triangulation boundary edges");
+    check(openingsUseMeshEdges,
+          "real intake and crossport loops reuse exact fabric-mesh boundary edges");
     check(result.scene.suspensionLines.size() == 190,
           "real export preserves every captured suspension segment");
     check(attachmentCount(simwing::fsi::AttachmentKind::PilotHarness) == 2,
@@ -300,6 +383,26 @@ void testRealDesignCapture(const std::filesystem::path &input,
           "real assembly retains all suspension segments and both harness roots");
 
     simwing::fsi::Structure structure(assembly.definition);
+    const simwing::fsi::SceneFluidSurfaceAssembly fluidSurface =
+        simwing::fsi::assembleSceneFluidSurface(result.scene);
+    if (!fluidSurface.ok()) {
+        for (const auto &diagnostic : fluidSurface.diagnostics) {
+            std::fprintf(stderr, "fluid surface: %s\n",
+                         diagnostic.message.c_str());
+        }
+    }
+    check(fluidSurface.ok(),
+          "real scene assembles through the fluid-surface boundary");
+    if (!fluidSurface.ok()) {
+        return;
+    }
+    const simwing::fsi::SceneFluidSurfaceState fluidState =
+        simwing::fsi::captureSceneFluidSurfaceState(
+            fluidSurface.definition, assembly.mappings, structure);
+    check(fluidState.vertices.size()
+              == fluidSurface.definition.vertices.size()
+              && fluidState.fingerprint != 0,
+          "every real opening vertex has live Structure-owned fluid motion");
     const simwing::viewer::StructureFrameMapping mapping =
         simwing::viewer::makeStructureFrameMapping(
             result.scene, assembly, structure);

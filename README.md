@@ -742,8 +742,13 @@ Nonplanar openings without authored cap triangles, self-intersecting or folded
 caps, opening-only interior construction vertices, surface junctions,
 periodic-boundary ambiguity, and general moving-boundary fluid equations still
 reject or remain open; the grid epoch itself continues to own geometry and
-transfer only. The analytical model exporter does not yet populate the new
-nonplanar cap tessellation.
+transfer only. The analytical model exporter now supplies deterministic
+boundary-vertex cap disks for its nonplanar intakes. It reuses the actual skin
+lip and rib-mesh boundary vertices, so every exported opening vertex reaches
+the live Structure-to-fluid surface state. The full real wing still reaches
+three-region skin/rib junctions that the current ordinary two-sided cap owner
+deliberately rejects; exporting the disks does not claim that junction work is
+finished.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

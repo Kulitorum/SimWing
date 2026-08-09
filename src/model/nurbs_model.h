@@ -122,9 +122,11 @@ struct SimWingSceneExportResult
     std::vector<std::string> warnings;
 };
 
-// Builds scene-v2 directly from the captured analytical geometry. It never
-// reads or interprets lep-sim.json. Failure is transactional: scene is empty
-// and errors are sorted deterministically.
+// Builds scene-v2 directly from the captured analytical geometry. Open
+// intakes carry deterministic boundary-vertex cap disks whose side chains
+// reuse the triangulated rib boundary, so every opening vertex has Structure
+// motion. It never reads or interprets lep-sim.json. Failure is transactional:
+// scene is empty and errors are sorted deterministically.
 SimWingSceneExportResult buildSimWingScene(
     const SimWingSceneExportSettings &settings);
 SimWingSceneExportResult writeSimWingScene(
