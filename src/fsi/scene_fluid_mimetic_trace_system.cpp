@@ -6,8 +6,17 @@
 #include <map>
 #include <stdexcept>
 #include <type_traits>
+#include <utility>
 
 namespace simwing::fsi {
+
+SceneFluidMimeticTraceLocalCellLinearConsistencyError::
+    SceneFluidMimeticTraceLocalCellLinearConsistencyError(
+        SceneFluidMimeticTraceLocalCellLinearConsistencyFailure diagnostics)
+    : std::invalid_argument(
+        "scene fluid mimetic trace local cell failed linear consistency"),
+      diagnostics_(std::move(diagnostics)) {}
+
 namespace {
 
 constexpr std::uint64_t fnvOffsetBasis = 14695981039346656037ULL;
@@ -446,8 +455,21 @@ SceneFluidMimeticTraceSystem buildSystem(
                 halfFace.outwardUnitNormal,
             });
         }
-        auto local = fluid::buildMimeticLocalCellOperator(
-            geometry, settings.localCell);
+        fluid::MimeticLocalCellOperator local;
+        try {
+            local = fluid::buildMimeticLocalCellOperator(
+                geometry, settings.localCell);
+        } catch (
+            const fluid::MimeticLocalCellLinearConsistencyError& error) {
+            throw SceneFluidMimeticTraceLocalCellLinearConsistencyError({
+                cell.controlCellIndex,
+                cell.stableId,
+                cell.cellIndex,
+                cell.regionId,
+                error.diagnostics().maximumAlgebraicConsistencyError,
+                error.diagnostics().algebraicConsistencyTolerance,
+            });
+        }
         if (!checkedAdd(result.localOperatorStorageBytes,
                         local.ownedStorageBytes,
                         result.localOperatorStorageBytes)

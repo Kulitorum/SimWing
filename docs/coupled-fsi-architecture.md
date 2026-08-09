@@ -442,6 +442,7 @@ src/fsi/
     scene_pressure_cell_operator_phase_refinement_audit.* phase/refinement matrix
     scene_pressure_cell_operator_refinement_audit.* skew-intake grid spectrum
     scene_fluid_mimetic_region_conductance_audit.* graph-free terminal response
+    scene_pressure_cell_mimetic_conductance_phase_refinement_audit.* uncensored shadow matrix
     scene_pressure_cell_checkpoint_persistence.* bounded canonical restart
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
@@ -1376,8 +1377,31 @@ result is `0.0700820848335194 m`, only `3.6e-14 m` from the earlier shadow
 response driven by the graph-manufactured source; the embedded two-point
 fixture gives `0.0608388978079532 m`. These are deterministic compatibility
 oracles for the diagnostic, not Dirichlet data, a continuum truth claim, or a
-new live pressure/load owner. The next product must apply this primitive to
-all eight phases at every refinement without first requiring graph assembly.
+new live pressure/load owner.
+
+`src/fsi/scene_pressure_cell_mimetic_conductance_phase_refinement_audit.*`
+applies that primitive without ever constructing the graph pressure operator.
+The bounded immutable product retains every requested placement, not just a
+successful response, and distinguishes accepted nested terminal solves from a
+typed local-cell linear-consistency rejection carrying the exact control,
+region, residual, and tolerance.
+
+| Grid | Shadow terminal solves | Normalized range | Conditional mean / CV |
+|---|---:|---:|---:|
+| `2^3` | `8 / 8` | `0.099348` - `0.101965` | `0.100660 / 0.01043` |
+| `4^3` | `8 / 8` | `0.129253` - `0.408781` | `0.240930 / 0.39050` |
+| `8^3` | `3 / 8` | `0.293734` - `0.519407` | `0.420468 / 0.22404` |
+
+Thus the earlier `4/8` and `6/8` coarse graph yields really were censoring the
+shadow placement spectrum. The fine level has a different blocker: five
+region-2 local cells exceed the unchanged `1e-10` algebraic-consistency
+tolerance, with residuals between `7.79e-10` and `3.84e-9`. Their samples stay
+in the product as typed failures. The fine conditional mean is consequently
+still not an unbiased phase average, and the three-level sequence is not a
+convergence result. Because one authored aperture can become several embedded
+traces, this audit's uniform area-weighted Neumann source also differs from the
+older graph-manufactured source on multi-opening placements. No production
+pressure or load arithmetic changes.
 
 The experiment is exposed as `simwing-fsi --case pressure-cell
 --mimetic-pressure-audit` and reports control/trace counts plus iteration and

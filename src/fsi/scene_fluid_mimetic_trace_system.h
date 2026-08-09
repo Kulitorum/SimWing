@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace simwing::fsi {
@@ -29,6 +30,35 @@ struct SceneFluidMimeticTraceSystemLimits {
     std::size_t maximumLocalOperatorBytes =
         4096ULL * 1024ULL * 1024ULL;
     std::size_t maximumOwnedBytes = 8192ULL * 1024ULL * 1024ULL;
+};
+
+struct SceneFluidMimeticTraceLocalCellLinearConsistencyFailure {
+    std::size_t controlCellIndex = 0;
+    std::uint64_t controlCellStableId = 0;
+    std::size_t gridCellIndex = 0;
+    StableId regionId = invalidStableId;
+    double maximumAlgebraicConsistencyError = 0.0;
+    double algebraicConsistencyTolerance = 0.0;
+
+    bool operator==(
+        const SceneFluidMimeticTraceLocalCellLinearConsistencyFailure&) const =
+        default;
+};
+
+class SceneFluidMimeticTraceLocalCellLinearConsistencyError final
+    : public std::invalid_argument {
+public:
+    explicit SceneFluidMimeticTraceLocalCellLinearConsistencyError(
+        SceneFluidMimeticTraceLocalCellLinearConsistencyFailure diagnostics);
+
+    [[nodiscard]]
+    const SceneFluidMimeticTraceLocalCellLinearConsistencyFailure&
+    diagnostics() const noexcept {
+        return diagnostics_;
+    }
+
+private:
+    SceneFluidMimeticTraceLocalCellLinearConsistencyFailure diagnostics_;
 };
 
 struct SceneFluidMimeticTrace {

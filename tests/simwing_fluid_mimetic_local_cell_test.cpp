@@ -623,6 +623,20 @@ void testRejectedGeometryAndCorruption() {
             buildMimeticLocalCellOperator(nonFinite)); },
         "local mimetic assembly rejects non-finite geometry");
 
+    MimeticLocalCellSettings exactConsistency;
+    exactConsistency.algebraicConsistencyTolerance = 0.0;
+    bool typedConsistencyRejection = false;
+    try {
+        static_cast<void>(buildMimeticLocalCellOperator(
+            tetrahedron(), exactConsistency));
+    } catch (const MimeticLocalCellLinearConsistencyError& error) {
+        typedConsistencyRejection =
+            error.diagnostics().maximumAlgebraicConsistencyError > 0.0
+            && error.diagnostics().algebraicConsistencyTolerance == 0.0;
+    }
+    check(typedConsistencyRejection,
+          "local mimetic assembly reports typed linear-consistency diagnostics");
+
     MimeticLocalCellSettings limits;
     limits.maximumHalfFaces = 5;
     expectLimited(

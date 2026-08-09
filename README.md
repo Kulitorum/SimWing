@@ -866,9 +866,18 @@ by aperture area. The direct condensed solve reports conductance from
 gauge-invariant source work. It gives `0.0700820848335194 m` on the
 face-aligned case, within `3.6e-14 m` of the earlier graph-manufactured shadow
 measurement, and `0.0608388978079532 m` on the embedded two-point fixture.
-This removes the graph operator from source manufacture; applying the
-primitive across every phase/refinement sample is still required before any
-shadow convergence assessment.
+The resulting graph-independent matrix now retains all 24 requested
+phase/refinement attempts. At `2^3` and `4^3`, all `8/8` shadow phases solve;
+their normalized mean/CV values are `0.100660/0.01043` and
+`0.240930/0.39050`. The `8^3` level accepts only `3/8`, with conditional
+mean/CV `0.420468/0.22404`: five region-2 local cells fail the declared
+linear-consistency test with residuals from `7.79e-10` to `3.84e-9` against
+the unchanged `1e-10` tolerance. Those failures are typed, fingerprinted
+records, not dropped samples. The experiment therefore removes graph
+censoring at the coarse levels but reveals a separate fine-grid mixed-hybrid
+factorization blocker. It still does not establish shadow convergence or
+authorize a live solver switch; the uniform area-weighted multi-opening source
+also differs intentionally from the earlier graph-manufactured source.
 Its checkpoint also stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and

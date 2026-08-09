@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 namespace simwing::fsi::fluid {
@@ -38,6 +39,30 @@ struct MimeticLocalCellSettings {
     std::size_t maximumOperatorBytes = 256ULL * 1024ULL * 1024ULL;
 
     bool operator==(const MimeticLocalCellSettings&) const = default;
+};
+
+struct MimeticLocalCellLinearConsistencyFailure {
+    double maximumAlgebraicConsistencyError = 0.0;
+    double algebraicConsistencyTolerance = 0.0;
+
+    bool operator==(
+        const MimeticLocalCellLinearConsistencyFailure&) const = default;
+};
+
+class MimeticLocalCellLinearConsistencyError final
+    : public std::invalid_argument {
+public:
+    MimeticLocalCellLinearConsistencyError(
+        double maximumAlgebraicConsistencyError,
+        double algebraicConsistencyTolerance);
+
+    [[nodiscard]] const MimeticLocalCellLinearConsistencyFailure&
+    diagnostics() const noexcept {
+        return diagnostics_;
+    }
+
+private:
+    MimeticLocalCellLinearConsistencyFailure diagnostics_;
 };
 
 // One isotropic mixed-hybrid mimetic cell. W is retained in its exact compact

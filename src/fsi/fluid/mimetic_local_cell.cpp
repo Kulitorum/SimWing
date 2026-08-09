@@ -8,6 +8,18 @@
 #include <stdexcept>
 
 namespace simwing::fsi::fluid {
+
+MimeticLocalCellLinearConsistencyError::
+    MimeticLocalCellLinearConsistencyError(
+        const double maximumAlgebraicConsistencyError,
+        const double algebraicConsistencyTolerance)
+    : std::invalid_argument(
+        "mimetic local-cell factorization failed linear consistency"),
+      diagnostics_{
+          maximumAlgebraicConsistencyError,
+          algebraicConsistencyTolerance,
+      } {}
+
 namespace {
 
 using Matrix3 = std::array<double, 9>;
@@ -463,8 +475,9 @@ MimeticLocalCellOperator buildMimeticLocalCellOperator(
     }
     if (maximumAlgebraicConsistencyError
         > settings.algebraicConsistencyTolerance) {
-        throw std::invalid_argument(
-            "mimetic local-cell factorization failed linear consistency");
+        throw MimeticLocalCellLinearConsistencyError(
+            maximumAlgebraicConsistencyError,
+            settings.algebraicConsistencyTolerance);
     }
     result.maximumAlgebraicConsistencyError =
         maximumAlgebraicConsistencyError;

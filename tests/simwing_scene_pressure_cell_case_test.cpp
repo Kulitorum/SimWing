@@ -3,6 +3,7 @@
 #include "scene_pressure_cell_operator_phase_audit.h"
 #include "scene_pressure_cell_operator_phase_refinement_audit.h"
 #include "scene_pressure_cell_operator_refinement_audit.h"
+#include "scene_pressure_cell_mimetic_conductance_phase_refinement_audit.h"
 #include "scene_fluid_mimetic_region_conductance_audit.h"
 #include "scene_fluid_pressure_operator_response_audit.h"
 #include "viewer_protocol.h"
@@ -1402,6 +1403,198 @@ void testRestOperatorPhaseRefinementAudit() {
           "phase-refinement audit enforces its byte limit before assembly");
 }
 
+void testUncensoredMimeticConductancePhaseRefinementAudit() {
+    const std::vector<fsi::fluid::GridCellCounts> resolutions{
+        {2, 2, 2}, {4, 4, 4}, {8, 8, 8},
+    };
+    const auto& phases = pressureCellGridPhases();
+    fsi::ScenePressureCellMimeticConductancePhaseRefinementAuditSettings
+        settings;
+    settings.conductance.solve =
+        pressureCellResponseAuditSettings().shadowSolve;
+    const auto audit =
+        fsi::auditScenePressureCellMimeticConductancePhaseRefinement(
+            resolutions, phases, settings);
+    const auto repeated =
+        fsi::auditScenePressureCellMimeticConductancePhaseRefinement(
+            resolutions, phases, settings);
+    fsi::validateScenePressureCellMimeticConductancePhaseRefinementAuditIntegrity(
+        audit);
+    check(audit == repeated
+              && audit.levels.size() == resolutions.size()
+              && audit.gridPhaseFractions == phases
+              && audit.structureDefinitionFingerprint != 0
+              && audit.ownedStorageBytes > 0,
+          "uncensored mimetic phase-refinement audit is deterministic and self-contained");
+    constexpr std::size_t expectedAccepted[]{8, 8, 3};
+    constexpr std::size_t expectedRejected[]{0, 0, 5};
+    constexpr double expectedMinimum[]{
+        0.099347529340182233,
+        0.12925278175547833,
+        0.29373390290350698,
+    };
+    constexpr double expectedMaximum[]{
+        0.10196547254330983,
+        0.40878148469498415,
+        0.51940722905690273,
+    };
+    constexpr double expectedMean[]{
+        0.10066047211053836,
+        0.24092951956528541,
+        0.42046751949159716,
+    };
+    constexpr double expectedVariation[]{
+        0.010428734257931546,
+        0.39050354377040281,
+        0.22404498547265214,
+    };
+    constexpr double expectedNormalized[][8]{
+        {
+            0.10196547254330983, 0.099933389492765257,
+            0.10149376949036774, 0.10186734872292291,
+            0.099443375352812405, 0.099834026726442912,
+            0.10139886521550355, 0.099347529340182233,
+        },
+        {
+            0.35825481434599926, 0.40878148469498415,
+            0.18244616118685508, 0.24123026839868564,
+            0.20221810122985509, 0.26800858093282864,
+            0.12925278175547833, 0.13724396397759706,
+        },
+        {
+            0.51940722905690273, 0.0, 0.0,
+            0.44826142651438178, 0.0,
+            0.29373390290350698, 0.0, 0.0,
+        },
+    };
+    constexpr std::size_t expectedOpeningCounts[][8]{
+        {1, 1, 1, 1, 1, 1, 1, 1},
+        {1, 1, 2, 2, 2, 2, 4, 4},
+        {4, 6, 4, 6, 6, 8, 7, 9},
+    };
+    constexpr std::uint64_t expectedRejectedStableIds[]{
+        0, 15321899359288843709ULL, 3062994334634612679ULL, 0,
+        15321899359288843709ULL, 0, 3062994334634612679ULL,
+        16979272999180401526ULL,
+    };
+    constexpr double expectedRejectedErrors[]{
+        0.0, 9.7740585235680896e-10, 3.0656033683795769e-09, 0.0,
+        9.7731155193019999e-10, 0.0, 3.8444743777343859e-09,
+        7.7877051876035697e-10,
+    };
+    for (std::size_t levelIndex = 0;
+         levelIndex < audit.levels.size(); ++levelIndex) {
+        const auto& level = audit.levels[levelIndex];
+        check(level.samples.size() == phases.size()
+                  && level.acceptedSampleCount
+                      == expectedAccepted[levelIndex]
+                  && level.rejectedLocalCellLinearConsistencySampleCount
+                      == expectedRejected[levelIndex]
+                  && std::abs(
+                      level.minimumNormalizedConductance
+                      - expectedMinimum[levelIndex]) < 1.0e-12
+                  && std::abs(
+                      level.maximumNormalizedConductance
+                      - expectedMaximum[levelIndex]) < 1.0e-12
+                  && std::abs(
+                      level.meanNormalizedConductance
+                      - expectedMean[levelIndex]) < 1.0e-12
+                  && std::abs(
+                      level.normalizedConductanceCoefficientOfVariation
+                      - expectedVariation[levelIndex]) < 1.0e-12,
+              "uncensored mimetic audit locks each phase population and conditional spectrum");
+        for (std::size_t phaseIndex = 0;
+             phaseIndex < level.samples.size(); ++phaseIndex) {
+            const auto& sample = level.samples[phaseIndex];
+            check(sample.openingTraceCount
+                          == expectedOpeningCounts[levelIndex][phaseIndex]
+                      && std::abs(
+                          sample.normalizedConductance
+                          - expectedNormalized[levelIndex][phaseIndex])
+                          < 1.0e-12,
+                  "uncensored mimetic audit retains each area-weighted phase response");
+            if (levelIndex != 2
+                || expectedRejectedStableIds[phaseIndex] == 0) {
+                check(sample.status
+                              == fsi::ScenePressureCellMimeticConductancePhaseSampleStatus::Accepted
+                          && sample.conductanceAudit.has_value()
+                          && !sample.localCellLinearConsistencyRejection
+                                  .has_value(),
+                      "uncensored mimetic audit publishes every accepted terminal solve");
+                continue;
+            }
+            check(sample.status
+                          == fsi::ScenePressureCellMimeticConductancePhaseSampleStatus::RejectedLocalCellLinearConsistency
+                      && !sample.conductanceAudit.has_value()
+                      && sample.localCellLinearConsistencyRejection
+                             .has_value(),
+                  "uncensored mimetic audit retains typed fine-grid factorization rejection");
+            if (sample.localCellLinearConsistencyRejection.has_value()) {
+                const auto& rejection =
+                    *sample.localCellLinearConsistencyRejection;
+                check(rejection.controlCellStableId
+                              == expectedRejectedStableIds[phaseIndex]
+                          && rejection.regionId == 2
+                          && std::abs(
+                              rejection.maximumAlgebraicConsistencyError
+                              - expectedRejectedErrors[phaseIndex])
+                              < 1.0e-18
+                          && rejection.algebraicConsistencyTolerance
+                              == 1.0e-10,
+                      "uncensored mimetic rejection binds the exact failing control and consistency residual");
+            }
+        }
+    }
+    check(audit.levels[0].acceptedSampleCount == phases.size()
+              && audit.levels[1].acceptedSampleCount == phases.size()
+              && audit.levels[2].acceptedSampleCount == 3
+              && audit.levels[0].meanNormalizedConductance
+                  < audit.levels[1].meanNormalizedConductance
+              && audit.levels[1].meanNormalizedConductance
+                  < audit.levels[2].meanNormalizedConductance,
+          "graph-independent source removes coarse graph censoring while exposing fine shadow factorization loss");
+
+    auto corrupt = audit;
+    corrupt.levels[2].samples[1]
+        .localCellLinearConsistencyRejection
+        ->maximumAlgebraicConsistencyError += 1.0e-10;
+    bool rejected = false;
+    try {
+        fsi::validateScenePressureCellMimeticConductancePhaseRefinementAuditIntegrity(
+            corrupt);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected,
+          "uncensored mimetic audit rejects typed failure corruption");
+
+    fsi::ScenePressureCellMimeticConductancePhaseRefinementAuditLimits
+        limited;
+    limited.maximumAggregateSamples = 23;
+    rejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditScenePressureCellMimeticConductancePhaseRefinement(
+                resolutions, phases, settings, limited));
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected,
+          "uncensored mimetic audit enforces its aggregate sample limit before assembly");
+    limited = {};
+    limited.maximumOwnedBytes = 0;
+    rejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditScenePressureCellMimeticConductancePhaseRefinement(
+                resolutions, phases, settings, limited));
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected,
+          "uncensored mimetic audit enforces its aggregate byte limit before assembly");
+}
+
 void testPersistentMimeticPressureAuditRestart() {
     fsi::ScenePressureCellCase initial(true);
     const auto initialCheckpoint = initial.checkpoint();
@@ -1525,6 +1718,7 @@ int main() {
         testRestOperatorRefinementAudit();
         testRestOperatorPhaseAudit();
         testRestOperatorPhaseRefinementAudit();
+        testUncensoredMimeticConductancePhaseRefinementAudit();
         testPersistentMimeticPressureAuditRestart();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
