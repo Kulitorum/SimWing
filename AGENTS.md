@@ -490,6 +490,15 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   gauge shifts, and corruption-detecting fingerprints. A moving analytic case
   exercises a real control/trace appearance and feeds the result directly to
   the atomic solve. It is not yet wired into the production worker.
+- `scene_fluid_mimetic_pressure_sampling.{h,cpp}` is the accepted-state load
+  adapter. Every material quadrature side resolves through the exact
+  cell/region pressure-control row shared by the mimetic topology and state.
+  The two authored sides must belong to one pressure component before their
+  gauge-safe difference is published. The bounded fingerprinted sample set
+  then reuses the existing conservative pressure quadrature and Structure-load
+  transfer without another force path. Analytic and coarse real-wing tests
+  require exact one-sided values plus force/moment closure; production worker
+  selection is still unchanged.
 - `scene_fluid_mimetic_pressure_source.{h,cpp}` is the immutable physical-unit
   bridge from per-control predicted net-outward flow plus optional `dV/dt` to
   the integrated source `-(rho/dt)*(dV/dt + net_outward)` in `Pa*m`. It is
@@ -1825,10 +1834,13 @@ moving-volume change, projected opening transport, and physical cut reaction
 consistent, while rejecting incomplete or internally inconsistent wrappers.
 Mimetic pressure-state or consecutive-epoch warm-remap changes require both
 `simwing_scene_fluid_mimetic_trace_system` and
-`simwing_scene_fluid_pressure_volume_rate`; preserve source-bound accepted
+`simwing_scene_fluid_pressure_volume_rate`; accepted-state surface sampling
+also requires `simwing_model_scene_real_export`. Preserve source-bound accepted
 capture, stable control/trace retention, same-region appearance donors,
 new-trace endpoint initialization, trace retirement, exact current gauges,
-bounded fingerprinted storage, and direct atomic-solve consumption.
+bounded fingerprinted storage, direct atomic-solve consumption, exact
+cell/region side sampling, shared-component gauge safety, and conservative
+force/moment transfer.
 
 | Change area | Minimum relevant checks |
 |---|---|

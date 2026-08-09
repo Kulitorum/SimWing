@@ -1143,6 +1143,20 @@ separate from accepted state. A moving analytic epoch with one appeared
 control exercises the new-trace path and feeds the warm result directly to the
 atomic solver. Production worker selection remains unchanged.
 
+`src/fsi/scene_fluid_mimetic_pressure_sampling.*` crosses the accepted-state
+boundary into the existing conservative load path. Each material quadrature
+side resolves to its exact cell/region pressure-control row, whose stable
+identity and index must agree across the pressure-volume, mimetic-control, and
+accepted-state products. Two sheet sides may form a physical pressure jump
+only when they share one pressure component; independently gauged absolute
+values reject. The bounded fingerprinted output retains both one-sided values,
+their exact difference, all source topology/state provenance, and the complete
+quadrature binding. It then calls the unchanged pressure-traction quadrature,
+so there is no new force path. The moving analytic fixture closes conservative
+force and moment transfer, and the coarse real-wing accepted state now samples
+every material quadrature point through the same boundary. The production
+worker still selects the graph pressure operator.
+
 `src/fsi/scene_fluid_mimetic_pressure_source.*` owns the physical-unit source
 conversion shared with the production projection convention. For each mimetic
 control it accepts predicted net-outward volume flow and optional moving-volume

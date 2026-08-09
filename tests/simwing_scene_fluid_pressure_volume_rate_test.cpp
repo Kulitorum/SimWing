@@ -1,5 +1,6 @@
 #include "scene_fluid_pressure_epoch.h"
 #include "scene_fluid_pressure_sampling.h"
+#include "scene_fluid_mimetic_pressure_sampling.h"
 #include "scene_fluid_mimetic_pressure_warm_start.h"
 #include "scene_fluid_region_rebase.h"
 #include "scene_fluid_region_wall.h"
@@ -605,6 +606,91 @@ void testAppearedControlRegionRebase() {
             previousMimeticControls, previousMimeticFull,
             previousMimeticCondensed, previousMimeticSources,
             previousMimeticPressure);
+    const auto previousMimeticSamples =
+        sampleSceneFluidMimeticPressure(
+            previousEpoch.gridEpoch.quadrature,
+            previousEpoch.pressureControlVolumes,
+            previousMimeticControls, previousMimeticFull,
+            previousMimeticCondensed, previousMimeticState);
+    const auto repeatedPreviousMimeticSamples =
+        sampleSceneFluidMimeticPressure(
+            previousEpoch.gridEpoch.quadrature,
+            previousEpoch.pressureControlVolumes,
+            previousMimeticControls, previousMimeticFull,
+            previousMimeticCondensed, previousMimeticState);
+    bool exactMimeticSamples = previousMimeticSamples.bindings.size()
+        == previousEpoch.gridEpoch.quadrature.points.size();
+    for (const auto& binding : previousMimeticSamples.bindings) {
+        const auto& pressure = previousMimeticSamples.pressures[
+            binding.sampleIndex];
+        exactMimeticSamples = exactMimeticSamples
+            && pressure.negativeSidePressurePascals
+                == previousMimeticState.controls[
+                    binding.negativeSideControlVolumeIndex]
+                      .pressurePascals
+            && pressure.positiveSidePressurePascals
+                == previousMimeticState.controls[
+                    binding.positiveSideControlVolumeIndex]
+                      .pressurePascals
+            && binding.pressureDifferencePascals
+                == pressure.negativeSidePressurePascals
+                    - pressure.positiveSidePressurePascals;
+    }
+    check(previousMimeticSamples
+                  == repeatedPreviousMimeticSamples
+              && previousMimeticSamples.fingerprint != 0
+              && previousMimeticSamples.pressureStateFingerprint
+                  == previousMimeticState.fingerprint
+              && previousMimeticSamples.mimeticControlCellFingerprint
+                  == previousMimeticControls.fingerprint
+              && exactMimeticSamples,
+          "accepted mimetic control pressures sample both material sides with exact gauge-safe differences");
+    const auto previousMimeticTransfer =
+        evaluateSceneFluidMimeticPressureQuadrature(
+            fixture.surface.definition, previousState, fixture.transfer,
+            previousEpoch.gridEpoch.quadrature,
+            previousMimeticSamples);
+    check(previousMimeticTransfer.diagnostics().finite
+              && previousMimeticTransfer.diagnostics()
+                     .forceResidualNormNewtons < 1.0e-12
+              && previousMimeticTransfer.diagnostics()
+                     .momentResidualNormNewtonMeters < 1.0e-12,
+          "accepted mimetic pressure uses the conservative Structure traction path");
+    validateSceneFluidMimeticPressureSamples(
+        previousMimeticSamples,
+        previousEpoch.gridEpoch.quadrature,
+        previousEpoch.pressureControlVolumes,
+        previousMimeticControls, previousMimeticFull,
+        previousMimeticCondensed, previousMimeticState);
+    auto corruptPreviousMimeticSamples = previousMimeticSamples;
+    corruptPreviousMimeticSamples.bindings.front()
+        .pressureDifferencePascals += 0.01;
+    expectInvalid(
+        [&] { validateSceneFluidMimeticPressureSampleIntegrity(
+            corruptPreviousMimeticSamples); },
+        "mimetic pressure sampling rejects nested ledger corruption");
+    SceneFluidPressureSamplingLimits mimeticSamplingLimits;
+    mimeticSamplingLimits.maximumSamples =
+        previousMimeticSamples.bindings.size() - 1;
+    expectLimited(
+        [&] { static_cast<void>(sampleSceneFluidMimeticPressure(
+            previousEpoch.gridEpoch.quadrature,
+            previousEpoch.pressureControlVolumes,
+            previousMimeticControls, previousMimeticFull,
+            previousMimeticCondensed, previousMimeticState,
+            mimeticSamplingLimits)); },
+        "mimetic pressure sampling bounds sample count");
+    mimeticSamplingLimits = {};
+    mimeticSamplingLimits.maximumSamplingBytes =
+        previousMimeticSamples.ownedStorageBytes - 1;
+    expectLimited(
+        [&] { static_cast<void>(sampleSceneFluidMimeticPressure(
+            previousEpoch.gridEpoch.quadrature,
+            previousEpoch.pressureControlVolumes,
+            previousMimeticControls, previousMimeticFull,
+            previousMimeticCondensed, previousMimeticState,
+            mimeticSamplingLimits)); },
+        "mimetic pressure sampling bounds owned storage");
     fluid::MacVelocityField velocity(grid());
     std::ranges::fill(velocity.yFaces(), 0.4);
     std::ranges::fill(velocity.zFaces(), -0.2);
