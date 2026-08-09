@@ -89,6 +89,7 @@ std::size_t ownedStorageBytes(const SceneFluidPressureEpoch& epoch) {
     addVectorBytes(epoch.openingCaps.triangles, result);
     addOwnedBytes(epoch.openingQuadrature.ownedStorageBytes, result);
     addOwnedBytes(epoch.openingPatches.ownedStorageBytes, result);
+    addOwnedBytes(epoch.openingFaceCrossings.ownedStorageBytes, result);
     addVectorBytes(epoch.cellVolumes.cells, result);
     addVectorBytes(epoch.cellVolumes.cellRegionVolumes, result);
     addVectorBytes(epoch.cellVolumes.regionVolumes, result);
@@ -121,6 +122,7 @@ std::uint64_t epochFingerprint(const SceneFluidPressureEpoch& epoch) {
     fingerprint.integer(epoch.openingCaps.fingerprint);
     fingerprint.integer(epoch.openingQuadrature.fingerprint);
     fingerprint.integer(epoch.openingPatches.fingerprint);
+    fingerprint.integer(epoch.openingFaceCrossings.fingerprint);
     fingerprint.integer(epoch.cellVolumes.fingerprint);
     fingerprint.integer(epoch.pressureControlVolumes.fingerprint);
     fingerprint.integer(epoch.pressureFaceLinks.fingerprint);
@@ -195,6 +197,9 @@ SceneFluidPressureEpoch buildSceneFluidPressureEpoch(
     result.openingPatches = buildSceneFluidOpeningGridPatches(
         surface, state, result.openingCaps, result.openingQuadrature, grid,
         settings.openingPatches, limits.openingPatches);
+    result.openingFaceCrossings = buildSceneFluidOpeningFaceCrossings(
+        surface, state, result.openingCaps, result.openingQuadrature,
+        result.openingPatches, grid, limits.openingFaceCrossings);
     result.cellVolumes = buildSceneFluidCellVolumes(
         surface, state, grid, transfer, result.gridEpoch,
         settings.cellVolumes, limits.cellVolumes);
@@ -241,6 +246,9 @@ void validateSceneFluidPressureEpoch(
     validateSceneFluidOpeningGridPatches(
         epoch.openingPatches, surface, state, epoch.openingCaps,
         epoch.openingQuadrature, grid);
+    validateSceneFluidOpeningFaceCrossings(
+        epoch.openingFaceCrossings, surface, state, epoch.openingCaps,
+        epoch.openingQuadrature, epoch.openingPatches, grid);
     validateSceneFluidCellVolumes(
         epoch.cellVolumes, surface, state, grid, transfer,
         epoch.gridEpoch);

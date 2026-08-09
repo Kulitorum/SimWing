@@ -958,6 +958,9 @@ void testComposedPressureEpoch() {
               && first.gridEpoch.fingerprint != 0
               && first.openingCaps.caps.size() == 1
               && first.openingPatches.patches.size() == 1
+              && first.openingFaceCrossings.fingerprint != 0
+              && first.openingFaceCrossings.crossings.empty()
+              && first.openingFaceCrossings.faceOwnedPatchCount == 1
               && first.cellVolumes.cellRegionVolumes.size()
                   == first.pressureControlVolumes.controlVolumes.size()
               && first.pressureFaceLinks.unresolvedActiveFaceCount == 0

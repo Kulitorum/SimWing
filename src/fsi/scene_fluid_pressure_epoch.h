@@ -1,5 +1,6 @@
 #pragma once
 
+#include "scene_fluid_opening_face_crossing.h"
 #include "scene_fluid_pressure_operator.h"
 
 #include <cstddef>
@@ -7,7 +8,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureEpochVersion = 1;
+inline constexpr std::uint32_t sceneFluidPressureEpochVersion = 2;
 
 struct SceneFluidPressureEpochSettings {
     SceneFluidGridEpochSettings gridEpoch;
@@ -23,6 +24,7 @@ struct SceneFluidPressureEpochLimits {
     SceneFluidCellVolumeLimits cellVolumes;
     SceneFluidOpeningQuadratureLimits openingQuadrature;
     SceneFluidOpeningGridPatchLimits openingPatches;
+    SceneFluidOpeningFaceCrossingLimits openingFaceCrossings;
     SceneFluidPressureControlVolumeLimits pressureControlVolumes;
     SceneFluidPressureFaceLinkLimits faceLinks;
     SceneFluidPressureOperatorLimits pressureOperator;
@@ -34,8 +36,9 @@ struct SceneFluidPressureEpochLimits {
 
 // One immutable, fully resolved pressure geometry/operator epoch for an
 // accepted Structure surface state. It composes the grid epoch, authored
-// opening topology, exact opening grid patches, sparse cell/region volumes,
-// pressure unknowns, conservative face links, and the ungauged graph
+// opening topology, exact opening grid patches and transverse cap crossings,
+// sparse cell/region volumes, pressure unknowns, conservative face links, and
+// the ungauged graph
 // Laplacian. It samples no velocity, solves no pressure, and applies no load.
 struct SceneFluidPressureEpoch {
     std::uint32_t version = sceneFluidPressureEpochVersion;
@@ -54,6 +57,7 @@ struct SceneFluidPressureEpoch {
     SceneFluidOpeningCapSet openingCaps;
     SceneFluidOpeningQuadratureSet openingQuadrature;
     SceneFluidOpeningGridPatchSet openingPatches;
+    SceneFluidOpeningFaceCrossingSet openingFaceCrossings;
     SceneFluidCellVolumeSet cellVolumes;
     SceneFluidPressureControlVolumeSet pressureControlVolumes;
     SceneFluidPressureFaceLinkSet pressureFaceLinks;

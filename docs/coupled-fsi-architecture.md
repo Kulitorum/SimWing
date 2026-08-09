@@ -624,7 +624,12 @@ exact barycentric triangle/box primitive to a bounded opening-patch owner.
 Positive cap area is retained once per cell, or deduplicated from paired
 coincident cell clips into one canonical non-periodic grid face. A square mouth
 closes area and sweep both while grid-aligned and after accepted off-face
-motion; periodic-boundary image ambiguity rejects. A read-only flux epoch now
+motion; periodic-boundary image ambiguity rejects. Cell-owned cap polygons
+also pair exact positive-length boundary segments from both adjacent cells
+into stable, winding-directed transverse face crossings. Face-owned aperture
+area is never collapsed into a line, and grid-edge ambiguity remains explicit.
+The accepted pressure epoch retains these crossings for the later capped
+material-plus-opening face partition. A read-only flux epoch now
 binds the entire MAC field. Face owners use the exact normal degree of freedom;
 cell owners use bounded degree-three quadrature of periodic staggered
 interpolation. It retains signed fluid flow, cap sweep, and relative flow per

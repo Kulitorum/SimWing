@@ -3,6 +3,7 @@
 #include "nurbs_model.h"
 #include "scene_fluid_cell_volume.h"
 #include "scene_fluid_opening_cap.h"
+#include "scene_fluid_opening_face_crossing.h"
 #include "scene_fluid_pressure_control_volume.h"
 #include "scene_fluid_pressure_face_link.h"
 #include "scene_fluid_surface.h"
@@ -450,6 +451,11 @@ void testRealDesignCapture(const std::filesystem::path &input,
         simwing::fsi::buildSceneFluidOpeningGridPatches(
             fluidSurface.definition, fluidState, openingCaps,
             openingQuadrature, fluidGrid);
+    const simwing::fsi::SceneFluidOpeningFaceCrossingSet
+        openingFaceCrossings =
+            simwing::fsi::buildSceneFluidOpeningFaceCrossings(
+                fluidSurface.definition, fluidState, openingCaps,
+                openingQuadrature, openingPatches, fluidGrid);
     const simwing::fsi::SceneFluidRegionConnectivity fluidConnectivity =
         simwing::fsi::buildSceneFluidRegionConnectivity(
             fluidSurface.definition);
@@ -487,6 +493,11 @@ void testRealDesignCapture(const std::filesystem::path &input,
               && !pressureVolumes.controlVolumes.empty()
               && openingPatches.patches.size()
                   >= openingQuadrature.points.size()
+              && !openingFaceCrossings.crossings.empty()
+              && openingFaceCrossings.candidateSegmentCount
+                  == 2 * openingFaceCrossings.crossings.size()
+              && openingFaceCrossings.unpairedContactSegmentCount == 0
+              && openingFaceCrossings.crossingLengthMeters > 0.0
               && std::abs(openingPatches.totalAreaSquareMeters
                           - openingCaps.totalAreaSquareMeters)
                   < 1.0e-10

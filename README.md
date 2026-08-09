@@ -543,7 +543,13 @@ geometric ledger. The exact barycentric
 triangle/box clipper is shared with material geometry and partitions each cap
 into bounded positive-area grid patches. Off-face pieces have unique cell
 owners; paired grid-plane copies become one canonical non-periodic face owner,
-and their polygon, area, accepted velocity, and sweep remain explicit. A
+and their polygon, area, accepted velocity, and sweep remain explicit.
+Cell-owned polygons now also expose exact positive-length cap intersections
+with internal Cartesian faces. Independently clipped segments from both
+adjacent cells must agree before one stable, winding-directed crossing is
+published; face-owned aperture area remains area, and grid-edge ownership is
+not guessed. These virtual-cap crossings are retained by the pressure epoch as
+the missing topology needed to close opening-ended material face chains. A
 read-only flux epoch binds the complete MAC field, reads exact resolved face
 flow or deterministic off-face staggered quadrature, and reports signed fluid
 flow, cap sweep, and relative volume flow. It also maps every intake or
@@ -626,7 +632,8 @@ its scene-derived pressure. Uniform pressure-gauge warm starts give identical
 samples and loads, while a sealed inside/outside pair with independent gauges
 rejects rather than inventing an arbitrary pressure jump.
 A versioned pressure epoch now composes the entire accepted geometry side of
-that solve atomically: grid remap, opening caps and patches, sparse region
+that solve atomically: grid remap, opening caps, patches, and transverse face
+crossings, sparse region
 volumes, pressure controls, conservative links, and the ungauged operator all
 share one Structure-state identity and an aggregate storage bound. Downstream
 macro-step code can no longer accidentally mix those products across accepted
