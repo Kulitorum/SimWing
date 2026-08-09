@@ -849,6 +849,15 @@ ranges from `2.5575` to `13.9854` with population coefficient of variation
 coefficient `0.34030`. The shadow result is less placement-sensitive in this
 small coarse ensemble, but it remains an offline comparator rather than the
 live pressure owner or a demonstrated continuum oracle.
+Repeating that same eight-phase set at `2^3`, `4^3`, and `8^3` exposes a more
+fundamental limit: only `4/8`, `6/8`, and `2/8` placements, respectively,
+assemble complete paired products. On those surviving subsets the normalized
+graph means are `3.9025`, `6.2525`, and `4.5187`, while shadow means rise from
+`0.10168` through `0.26909` to `0.45753`. The shadow sequence is suggestive,
+but not a convergence claim—the graph ownership gate censors six of eight
+fine-grid phases before a paired response can be recorded. The next offline
+step is therefore a graph-independent shadow phase spectrum, not a live solver
+switch or a repair that silently seals unresolved intake patches.
 Its checkpoint also stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and

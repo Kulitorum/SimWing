@@ -439,6 +439,7 @@ src/fsi/
     scene_pressure_cell_geometry.* shared visible/refinement tetrahedra
     scene_pressure_cell_case.* visible open-cell pressure-feedback canonical
     scene_pressure_cell_operator_phase_audit.h fixed-grid placement spectrum
+    scene_pressure_cell_operator_phase_refinement_audit.* phase/refinement matrix
     scene_pressure_cell_operator_refinement_audit.* skew-intake grid spectrum
     scene_pressure_cell_checkpoint_persistence.* bounded canonical restart
     transfer.*              conservative traction/motion exchange
@@ -1336,6 +1337,28 @@ variable as the shadow coefficient in this deliberately small ensemble. This
 strengthens the grid-placement diagnosis and quantifies topology yield; it is
 not a statistical convergence study, does not repair unresolved ownership,
 and does not promote the shadow operator into live coupling.
+
+`src/fsi/scene_pressure_cell_operator_phase_refinement_audit.*` repeats the
+same ordered eight phases at every strictly increasing isotropic resolution
+and owns each complete nested phase product under resolution, aggregate-sample,
+grid-cell, response, and byte limits. Its topology fraction is derived from
+the typed nested statuses and revalidated rather than accepted as telemetry.
+
+| Grid | Complete paired phases | Conditional graph mean / CV | Conditional shadow mean / CV |
+|---|---:|---:|---:|
+| `2^3` | `4 / 8` | `3.90249 / 0.28334` | `0.101681 / 0.00236` |
+| `4^3` | `6 / 8` | `6.25249 / 0.77175` | `0.269088 / 0.34030` |
+| `8^3` | `2 / 8` | `4.51872 / 0.01615` | `0.457532 / 0.10045` |
+
+Every rejection still has complete Cartesian face assignment and only typed
+unresolved embedded-opening patches. The non-monotone `50% -> 75% -> 25%`
+topology yield is itself a blocker. In particular, the small fine-grid graph
+CV is based on only two surviving placements and must not be interpreted as
+improved robustness. The conditional shadow mean is monotone, but the paired
+audit currently builds the graph before the response comparison, so graph
+failure censors the shadow sample. An independent shadow-only phase spectrum
+is required before assessing convergence; unresolved graph phases remain
+explicit and are never converted into sealed walls.
 
 The experiment is exposed as `simwing-fsi --case pressure-cell
 --mimetic-pressure-audit` and reports control/trace counts plus iteration and

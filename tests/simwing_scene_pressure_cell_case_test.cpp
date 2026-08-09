@@ -1,6 +1,7 @@
 #include "scene_pressure_cell_case.h"
 #include "scene_pressure_cell_checkpoint_persistence.h"
 #include "scene_pressure_cell_operator_phase_audit.h"
+#include "scene_pressure_cell_operator_phase_refinement_audit.h"
 #include "scene_pressure_cell_operator_refinement_audit.h"
 #include "scene_fluid_pressure_operator_response_audit.h"
 #include "viewer_protocol.h"
@@ -23,6 +24,34 @@ void check(const bool condition, const char* message) {
         std::fprintf(stderr, "FAIL: %s\n", message);
         ++failures;
     }
+}
+
+fsi::SceneFluidPressureOperatorResponseAuditSettings
+pressureCellResponseAuditSettings() {
+    fsi::SceneFluidPressureOperatorResponseAuditSettings settings;
+    settings.graphSolve.absoluteResidualTolerancePascalsMeters = 1.0e-10;
+    settings.graphSolve.relativeResidualTolerance = 1.0e-11;
+    settings.graphSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    settings.shadowSolve.absoluteResidualTolerancePascalsMeters = 1.0e-10;
+    settings.shadowSolve.relativeResidualTolerance = 1.0e-11;
+    settings.shadowSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    return settings;
+}
+
+const std::vector<fsi::fluid::Vector3>& pressureCellGridPhases() {
+    static const std::vector<fsi::fluid::Vector3> phases{
+        {0.0, 0.0, 0.0},
+        {-0.5, 0.0, 0.0},
+        {0.0, -0.5, 0.0},
+        {0.0, 0.0, -0.5},
+        {-0.5, -0.5, 0.0},
+        {-0.5, 0.0, -0.5},
+        {0.0, -0.5, -0.5},
+        {-0.5, -0.5, -0.5},
+    };
+    return phases;
 }
 
 double norm(const fsi::StructureVector3& value) {
@@ -841,16 +870,7 @@ void testManufacturedPressureOperatorResponses() {
 
 void testRestOperatorRefinementAudit() {
     fsi::ScenePressureCellOperatorRefinementAuditSettings settings;
-    settings.response.graphSolve
-        .absoluteResidualTolerancePascalsMeters = 1.0e-10;
-    settings.response.graphSolve.relativeResidualTolerance = 1.0e-11;
-    settings.response.graphSolve
-        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
-    settings.response.shadowSolve
-        .absoluteResidualTolerancePascalsMeters = 1.0e-10;
-    settings.response.shadowSolve.relativeResidualTolerance = 1.0e-11;
-    settings.response.shadowSolve
-        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    settings.response = pressureCellResponseAuditSettings();
     const std::vector<fsi::fluid::GridCellCounts> resolutions{
         {2, 2, 2}, {4, 4, 4}, {8, 8, 8},
     };
@@ -954,27 +974,9 @@ void testRestOperatorRefinementAudit() {
 }
 
 void testRestOperatorPhaseAudit() {
-    const std::vector<fsi::fluid::Vector3> phases{
-        {0.0, 0.0, 0.0},
-        {-0.5, 0.0, 0.0},
-        {0.0, -0.5, 0.0},
-        {0.0, 0.0, -0.5},
-        {-0.5, -0.5, 0.0},
-        {-0.5, 0.0, -0.5},
-        {0.0, -0.5, -0.5},
-        {-0.5, -0.5, -0.5},
-    };
+    const auto& phases = pressureCellGridPhases();
     fsi::ScenePressureCellOperatorPhaseAuditSettings phaseSettings;
-    phaseSettings.response.graphSolve
-        .absoluteResidualTolerancePascalsMeters = 1.0e-10;
-    phaseSettings.response.graphSolve.relativeResidualTolerance = 1.0e-11;
-    phaseSettings.response.graphSolve
-        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
-    phaseSettings.response.shadowSolve
-        .absoluteResidualTolerancePascalsMeters = 1.0e-10;
-    phaseSettings.response.shadowSolve.relativeResidualTolerance = 1.0e-11;
-    phaseSettings.response.shadowSolve
-        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    phaseSettings.response = pressureCellResponseAuditSettings();
     const auto phaseAudit =
         fsi::auditScenePressureCellOperatorGridPhases(
             phases, phaseSettings);
@@ -1133,6 +1135,188 @@ void testRestOperatorPhaseAudit() {
     }
     check(rejected,
           "phase audit enforces its sample limit before assembly");
+
+}
+
+void testRestOperatorPhaseRefinementAudit() {
+    const std::vector<fsi::fluid::GridCellCounts> resolutions{
+        {2, 2, 2}, {4, 4, 4}, {8, 8, 8},
+    };
+    const auto& phases = pressureCellGridPhases();
+    fsi::ScenePressureCellOperatorPhaseRefinementAuditSettings settings;
+    settings.response = pressureCellResponseAuditSettings();
+    const auto audit =
+        fsi::auditScenePressureCellOperatorPhaseRefinement(
+            resolutions, phases, settings);
+    const auto repeated =
+        fsi::auditScenePressureCellOperatorPhaseRefinement(
+            resolutions, phases, settings);
+    fsi::validateScenePressureCellOperatorPhaseRefinementAuditIntegrity(
+        audit);
+    check(audit == repeated
+              && audit.levels.size() == resolutions.size()
+              && audit.gridPhaseFractions == phases
+              && audit.structureDefinitionFingerprint != 0
+              && audit.ownedStorageBytes > 0,
+          "phase-refinement audit is deterministic and owns every nested phase spectrum");
+
+    constexpr std::size_t expectedAccepted[] = {4, 6, 2};
+    constexpr std::size_t expectedRejected[] = {4, 2, 6};
+    constexpr double expectedTopologyFraction[] = {0.5, 0.75, 0.25};
+    constexpr double expectedGraphMinimum[] = {
+        2.7504856987378798,
+        2.5574976589654592,
+        4.4457453998104262,
+    };
+    constexpr double expectedGraphMaximum[] = {
+        5.1709987460683449,
+        13.985353433666207,
+        4.5916922290114295,
+    };
+    constexpr double expectedGraphMean[] = {
+        3.9024884705941725,
+        6.2524874416504694,
+        4.5187188144109278,
+    };
+    constexpr double expectedGraphVariation[] = {
+        0.28333875171817424,
+        0.77175443562108292,
+        0.016149138195494173,
+    };
+    constexpr double expectedShadowMinimum[] = {
+        0.10139886521551159,
+        0.13695429534604528,
+        0.41157189435124092,
+    };
+    constexpr double expectedShadowMaximum[] = {
+        0.10196547254329238,
+        0.40878148469499564,
+        0.50349308450193431,
+    };
+    constexpr double expectedShadowMean[] = {
+        0.10168136399302657,
+        0.2690883993497567,
+        0.45753248942658764,
+    };
+    constexpr double expectedShadowVariation[] = {
+        0.0023598291157185796,
+        0.34030273798624311,
+        0.10045318340769153,
+    };
+    for (std::size_t index = 0; index < audit.levels.size(); ++index) {
+        const auto& level = audit.levels[index];
+        const auto& statistics = level.phaseAudit.statistics;
+        check(statistics.acceptedSampleCount == expectedAccepted[index]
+                  && statistics
+                      .rejectedIncompleteFaceOwnershipSampleCount
+                      == expectedRejected[index]
+                  && level.acceptedTopologyFraction
+                      == expectedTopologyFraction[index]
+                  && std::abs(
+                      statistics.minimumNormalizedGraphConductance
+                      - expectedGraphMinimum[index]) < 1.0e-9
+                  && std::abs(
+                      statistics.maximumNormalizedGraphConductance
+                      - expectedGraphMaximum[index]) < 1.0e-9
+                  && std::abs(
+                      statistics.meanNormalizedGraphConductance
+                      - expectedGraphMean[index]) < 1.0e-9
+                  && std::abs(
+                      statistics.graphCoefficientOfVariation
+                      - expectedGraphVariation[index]) < 1.0e-9
+                  && std::abs(
+                      statistics.minimumNormalizedShadowConductance
+                      - expectedShadowMinimum[index]) < 1.0e-9
+                  && std::abs(
+                      statistics.maximumNormalizedShadowConductance
+                      - expectedShadowMaximum[index]) < 1.0e-9
+                  && std::abs(
+                      statistics.meanNormalizedShadowConductance
+                      - expectedShadowMean[index]) < 1.0e-9
+                  && std::abs(
+                      statistics.shadowCoefficientOfVariation
+                      - expectedShadowVariation[index]) < 1.0e-9,
+              "phase-refinement audit locks topology yield and conductance distributions");
+        for (const auto& sample : level.phaseAudit.samples) {
+            if (!sample.faceOwnershipRejection.has_value()) {
+                continue;
+            }
+            const auto& rejection = *sample.faceOwnershipRejection;
+            check(rejection.resolvedFullFaceCount
+                          + rejection.resolvedPartitionFaceCount
+                          + rejection.resolvedOpeningFaceCount
+                      == rejection.faceCount
+                      && rejection.unresolvedActiveFaceCount == 0
+                      && rejection.unresolvedCappedFaceCount == 0
+                      && rejection.unresolvedAmbiguousFaceCount == 0
+                      && rejection.unresolvedOpeningFaceCount == 0
+                      && rejection.unresolvedEmbeddedOpeningPatchCount > 0,
+                  "phase-refinement rejection isolates embedded intake ownership");
+        }
+    }
+    check(audit.levels[0].phaseAudit.statistics
+                  .meanNormalizedShadowConductance
+                  < audit.levels[1].phaseAudit.statistics
+                      .meanNormalizedShadowConductance
+              && audit.levels[1].phaseAudit.statistics
+                  .meanNormalizedShadowConductance
+                  < audit.levels[2].phaseAudit.statistics
+                      .meanNormalizedShadowConductance
+              && audit.levels[0].acceptedTopologyFraction
+                  > audit.levels[2].acceptedTopologyFraction,
+          "phase-refinement audit exposes a monotone shadow mean but deteriorating fine-grid topology yield");
+
+    auto corrupt = audit;
+    corrupt.levels[1].acceptedTopologyFraction += 0.01;
+    bool rejected = false;
+    try {
+        fsi::validateScenePressureCellOperatorPhaseRefinementAuditIntegrity(
+            corrupt);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected,
+          "phase-refinement audit rejects derived topology-yield corruption");
+
+    const std::vector<fsi::fluid::GridCellCounts> unordered{
+        {4, 4, 4}, {2, 2, 2},
+    };
+    rejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditScenePressureCellOperatorPhaseRefinement(
+                unordered, phases, settings));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected,
+          "phase-refinement audit rejects non-increasing resolutions before assembly");
+
+    fsi::ScenePressureCellOperatorPhaseRefinementAuditLimits limited;
+    limited.maximumAggregatePhaseSamples = 23;
+    rejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditScenePressureCellOperatorPhaseRefinement(
+                resolutions, phases, settings, limited));
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected,
+          "phase-refinement audit enforces its aggregate sample limit before assembly");
+
+    limited = {};
+    limited.maximumOwnedBytes = 0;
+    rejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditScenePressureCellOperatorPhaseRefinement(
+                resolutions, phases, settings, limited));
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected,
+          "phase-refinement audit enforces its byte limit before assembly");
 }
 
 void testPersistentMimeticPressureAuditRestart() {
@@ -1257,6 +1441,7 @@ int main() {
         testManufacturedPressureOperatorResponses();
         testRestOperatorRefinementAudit();
         testRestOperatorPhaseAudit();
+        testRestOperatorPhaseRefinementAudit();
         testPersistentMimeticPressureAuditRestart();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
