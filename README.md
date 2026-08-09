@@ -513,13 +513,16 @@ the aggregate owned payload has an additional byte ceiling. A focused moving
 regression crosses a fabric triangle through a MAC plane, preserves authored
 region/material/sheet identity, and retains force/moment closure. A first
 `simwing_scene_fluid_cell_volume` subset now reconstructs deterministic sparse
-per-cell region volumes for closed, consistently wound two-sided manifolds
-whose active MAC faces have complete loop partitions. It closes every cell and
-also compares summed cell volumes with an independent whole-surface divergence
-volume, so an enclosed full cell cannot silently become Outside. Authored open
-intakes, coplanar/grid-edge ambiguity, unresolved face topology, boundary
-contact, and general moving-boundary fluid equations still reject or remain
-open; the grid epoch itself continues to own geometry and transfer only.
+per-cell region volumes for closed, consistently wound two-sided manifolds.
+Each oriented interface triangle forms a signed tetrahedron against the grid
+origin; deterministic convex clipping distributes that chain across exact
+cells, including cells wholly inside a region and cases whose face-local chains
+remain open at tile boundaries. Every tetrahedron closes across its clipped
+cells, every cell closes across its regions, and the global sum is compared with
+an independent whole-surface divergence volume. Authored open intakes,
+non-manifold or inconsistent topology, periodic-boundary ambiguity, and general
+moving-boundary fluid equations still reject or remain open; the grid epoch
+itself continues to own geometry and transfer only.
 Export still requires explicit physical material/pilot settings;
 manufacturing-pattern UVs, exact authored attachment vertices, structural seam
 assembly, curved or transversely deforming grid-to-surface correspondence,

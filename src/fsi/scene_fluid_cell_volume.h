@@ -8,7 +8,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidCellVolumeVersion = 1;
+inline constexpr std::uint32_t sceneFluidCellVolumeVersion = 2;
 
 struct SceneFluidCellVolumeSettings {
     double absoluteVolumeToleranceCubicMeters = 1.0e-12;
@@ -20,6 +20,7 @@ struct SceneFluidCellVolumeSettings {
 struct SceneFluidCellVolumeLimits {
     std::size_t maximumCells = 10'000'000;
     std::size_t maximumContributionEvents = 100'000'000;
+    std::size_t maximumTetrahedronCellClips = 100'000'000;
     std::size_t maximumCellRegionVolumes = 50'000'000;
     std::size_t maximumVolumeBytes = 1024ULL * 1024ULL * 1024ULL;
 };
@@ -54,11 +55,12 @@ struct SceneFluidRegionVolume {
 
 // First bounded cut-cell volume subset. All interface components must be
 // closed, consistently wound two-sided triangle manifolds; the scene must have
-// one Outside root, no authored opening, no coplanar face-owned area, and no
-// unresolved active MAC face. Sparse positive region volumes are published for
-// every cell. Whole-surface divergence volume must equal their sum, preventing
-// an enclosed full cell from being silently labelled as Outside. General open
-// intakes, junctions, boundary contact, and unresolved face topology reject.
+// one Outside root and no authored opening. Sparse positive region volumes are
+// published for every cell. Each oriented interface triangle defines one
+// signed tetrahedron against the grid origin; exact convex clipping distributes
+// that chain into intersected cells, including cells wholly inside a region.
+// Whole-surface divergence volume must equal the cell sum. General open
+// intakes, junctions, boundary contact, and non-manifold topology reject.
 struct SceneFluidCellVolumeSet {
     std::uint32_t version = sceneFluidCellVolumeVersion;
     std::uint64_t fingerprint = 0;
@@ -74,6 +76,9 @@ struct SceneFluidCellVolumeSet {
     SceneFluidCellVolumeSettings settings;
     StableId outsideRegionId = invalidStableId;
     double cellVolumeCubicMeters = 0.0;
+    std::size_t tetrahedronCellClipCount = 0;
+    std::size_t nonzeroTetrahedronCellClipCount = 0;
+    double maximumTetrahedronVolumeResidualCubicMeters = 0.0;
     double maximumCellVolumeResidualCubicMeters = 0.0;
     double maximumRegionVolumeResidualCubicMeters = 0.0;
     std::vector<SceneFluidCellVolume> cells;

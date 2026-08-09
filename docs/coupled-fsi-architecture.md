@@ -413,7 +413,7 @@ src/fsi/
     scene_fluid_quadrature.* unique owned area to stable transfer quadrature
     scene_fluid_pressure_traction.* one-sided pressure to normal traction
     scene_fluid_grid_epoch.* accepted full geometry/quadrature remap
-    scene_fluid_cell_volume.* closed-manifold sparse region volumes
+    scene_fluid_cell_volume.* signed-chain sparse region volumes
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
     coupled_state.*         composite rollback and bounded macro-step retries
@@ -564,14 +564,16 @@ chained fingerprint, individual stage limits, and an aggregate owned-payload
 byte bound. Validation rejects nested corruption or any foreign surface step.
 The moving regression translates an accepted fabric triangle across a MAC
 plane and verifies remapped physical IDs, area, force, and moment. A first
-closed-manifold volume owner consumes that epoch: clipped material patches and
-resolved per-region MAC-face areas close sparse region volumes in every cell,
-then a separate whole-surface divergence calculation verifies the global
-region totals. Nested analytic tetrahedra and a rigid accepted remap are exact
-regressions. Authored openings, non-manifold or inconsistent winding,
-coplanar/grid-edge ambiguity, and unresolved active faces reject explicitly;
-general open-intake reconstruction and moving-boundary fluid equations remain
-open. A canonical Qt-free
+closed-manifold volume owner consumes that epoch. Every oriented interface
+triangle forms a signed tetrahedron against the grid origin; bounded convex
+clipping distributes its chain into exact cells, including wholly interior
+cells and surfaces whose face-local contours cross tile boundaries. A separate
+whole-surface divergence calculation verifies the global region totals. Nested
+analytic tetrahedra, a rigid accepted remap, and a large cavity with 24 full
+interior cells are regressions. Authored openings, non-manifold or inconsistent
+winding, and periodic-boundary ambiguity reject explicitly; general open-intake
+reconstruction and moving-boundary fluid equations remain open. A canonical
+Qt-free
 structural worker now
 launches the viewer by default and publishes accepted steps through a bounded
 growing-trace follower; it is a pipeline harness, not a fluid or flight model.

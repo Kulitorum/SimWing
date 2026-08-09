@@ -1,6 +1,7 @@
 #include "scene_fluid_cell_volume.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <limits>
@@ -8,6 +9,7 @@
 #include <stdexcept>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 
 namespace simwing::fsi {
 namespace {
@@ -171,42 +173,6 @@ void validateClosedManifold(
     }
 }
 
-void validateResolvedSubset(const SceneFluidGridEpoch& epoch) {
-    if (!epoch.ownership.facePatches.empty()
-        || epoch.crossings.unpairedContactSegmentCount != 0
-        || epoch.facePartitions.unresolvedActiveFaceCount != 0
-        || epoch.facePartitions.partitions.size()
-            != epoch.faceTopology.activeFaces.size()) {
-        throw std::invalid_argument(
-            "scene fluid cell volumes require fully resolved transverse face partitions");
-    }
-    std::vector<bool> resolved(epoch.faceTopology.activeFaces.size(), false);
-    for (const auto& partition : epoch.facePartitions.partitions) {
-        if (partition.activeFaceIndex >= resolved.size()
-            || resolved[partition.activeFaceIndex]) {
-            throw std::invalid_argument(
-                "scene fluid cell-volume face partition ownership is invalid");
-        }
-        resolved[partition.activeFaceIndex] = true;
-    }
-    if (!std::ranges::all_of(resolved, [](const bool value) {
-            return value;
-        })) {
-        throw std::invalid_argument(
-            "scene fluid cell-volume face partitions are incomplete");
-    }
-}
-
-std::size_t regionIndex(const SceneFluidSurfaceDefinition& surface,
-                        const StableId id) {
-    const auto index = surface.mappings.regionIndex(id);
-    if (!index) {
-        throw std::invalid_argument(
-            "scene fluid cell-volume face references an unknown region");
-    }
-    return *index;
-}
-
 void appendContribution(std::vector<Contribution>& contributions,
                         const SceneFluidCellVolumeLimits& limits,
                         const std::size_t cellIndex,
@@ -224,54 +190,218 @@ void appendContribution(std::vector<Contribution>& contributions,
         cellIndex, region, contributions.size(), value});
 }
 
-std::vector<const fluid::SceneFluidFacePartition*>
-partitionByActiveFace(const SceneFluidGridEpoch& epoch) {
-    std::vector<const fluid::SceneFluidFacePartition*> result(
-        epoch.faceTopology.activeFaces.size(), nullptr);
-    for (const auto& partition : epoch.facePartitions.partitions) {
-        result[partition.activeFaceIndex] = &partition;
+using Polygon = std::vector<Vec3>;
+
+struct ConvexPolyhedron {
+    std::vector<Polygon> faces;
+};
+
+double coordinate(const Vec3& point, const std::size_t axis) {
+    if (axis == 0) return point.x;
+    if (axis == 1) return point.y;
+    return point.z;
+}
+
+void setCoordinate(Vec3& point,
+                   const std::size_t axis,
+                   const double value) {
+    if (axis == 0) point.x = value;
+    else if (axis == 1) point.y = value;
+    else point.z = value;
+}
+
+bool pointsNear(const Vec3& first, const Vec3& second) {
+    const double scale = std::max({
+        1.0,
+        std::abs(first.x), std::abs(first.y), std::abs(first.z),
+        std::abs(second.x), std::abs(second.y), std::abs(second.z),
+    });
+    const double bound = 256.0
+        * std::numeric_limits<double>::epsilon() * scale;
+    return length(subtract(first, second)) <= bound;
+}
+
+Vec3 planeIntersection(const Vec3& first,
+                       const Vec3& second,
+                       const std::size_t axis,
+                       const double plane) {
+    const double firstCoordinate = coordinate(first, axis);
+    const double denominator = coordinate(second, axis) - firstCoordinate;
+    if (!std::isfinite(denominator) || denominator == 0.0) {
+        throw std::invalid_argument(
+            "scene fluid tetrahedron clipping edge is parallel to its crossing plane");
+    }
+    const double parameter = (plane - firstCoordinate) / denominator;
+    Vec3 result{
+        first.x + parameter * (second.x - first.x),
+        first.y + parameter * (second.y - first.y),
+        first.z + parameter * (second.z - first.z),
+    };
+    setCoordinate(result, axis, plane);
+    if (!std::isfinite(result.x) || !std::isfinite(result.y)
+        || !std::isfinite(result.z)) {
+        throw std::invalid_argument(
+            "scene fluid tetrahedron clipping intersection is non-finite");
     }
     return result;
 }
 
-double faceCoordinate(const fluid::SceneFluidActiveFace& face,
-                      const fluid::PeriodicCartesianGrid& grid) {
-    const auto lower = grid.lowerMeters();
-    const auto spacing = grid.cellSpacingMeters();
-    if (face.axis == fluid::GridFaceAxis::X) {
-        return lower.x + static_cast<double>(face.i) * spacing.x;
+void appendDistinct(Polygon& polygon, const Vec3& point) {
+    if (polygon.empty() || !pointsNear(polygon.back(), point)) {
+        polygon.push_back(point);
     }
-    if (face.axis == fluid::GridFaceAxis::Y) {
-        return lower.y + static_cast<double>(face.j) * spacing.y;
-    }
-    return lower.z + static_cast<double>(face.k) * spacing.z;
 }
 
-double faceArea(const fluid::GridFaceAxis axis,
-                const fluid::PeriodicCartesianGrid& grid) {
-    const auto spacing = grid.cellSpacingMeters();
-    if (axis == fluid::GridFaceAxis::X) {
-        return spacing.y * spacing.z;
-    }
-    if (axis == fluid::GridFaceAxis::Y) {
-        return spacing.z * spacing.x;
-    }
-    return spacing.x * spacing.y;
+Vec3 planeNormal(const std::size_t axis, const bool keepGreater) {
+    Vec3 result;
+    setCoordinate(result, axis, keepGreater ? -1.0 : 1.0);
+    return result;
 }
 
-std::pair<std::size_t, std::size_t> adjacentCells(
-    const fluid::SceneFluidActiveFace& face,
-    const fluid::PeriodicCartesianGrid& grid) {
-    if (face.axis == fluid::GridFaceAxis::X) {
-        return {grid.cellIndex(face.i - 1, face.j, face.k),
-                grid.cellIndex(face.i, face.j, face.k)};
+Vec3 faceBasisU(const std::size_t axis) {
+    if (axis == 0) return {0.0, 1.0, 0.0};
+    if (axis == 1) return {0.0, 0.0, 1.0};
+    return {1.0, 0.0, 0.0};
+}
+
+void clipPolyhedron(ConvexPolyhedron& polyhedron,
+                    const std::size_t axis,
+                    const double plane,
+                    const bool keepGreater) {
+    std::vector<Polygon> clippedFaces;
+    clippedFaces.reserve(polyhedron.faces.size() + 1);
+    Polygon capPoints;
+    const auto inside = [&](const Vec3& point) {
+        return keepGreater
+            ? coordinate(point, axis) >= plane
+            : coordinate(point, axis) <= plane;
+    };
+    for (const auto& face : polyhedron.faces) {
+        Polygon clipped;
+        clipped.reserve(face.size() + 1);
+        for (std::size_t index = 0; index < face.size(); ++index) {
+            const Vec3& first = face[index];
+            const Vec3& second = face[(index + 1) % face.size()];
+            const bool firstInside = inside(first);
+            const bool secondInside = inside(second);
+            if (firstInside) appendDistinct(clipped, first);
+            if (firstInside != secondInside) {
+                const Vec3 intersection = planeIntersection(
+                    first, second, axis, plane);
+                appendDistinct(clipped, intersection);
+                bool duplicate = false;
+                for (const auto& existing : capPoints) {
+                    duplicate = duplicate || pointsNear(existing, intersection);
+                }
+                if (!duplicate) capPoints.push_back(intersection);
+            }
+        }
+        if (clipped.size() > 1
+            && pointsNear(clipped.front(), clipped.back())) {
+            clipped.pop_back();
+        }
+        if (clipped.size() >= 3) clippedFaces.push_back(std::move(clipped));
     }
-    if (face.axis == fluid::GridFaceAxis::Y) {
-        return {grid.cellIndex(face.i, face.j - 1, face.k),
-                grid.cellIndex(face.i, face.j, face.k)};
+    if (capPoints.size() >= 3) {
+        Vec3 centre;
+        for (const auto& point : capPoints) {
+            centre.x += point.x;
+            centre.y += point.y;
+            centre.z += point.z;
+        }
+        const double inverseCount = 1.0
+            / static_cast<double>(capPoints.size());
+        centre.x *= inverseCount;
+        centre.y *= inverseCount;
+        centre.z *= inverseCount;
+        const Vec3 normal = planeNormal(axis, keepGreater);
+        const Vec3 basisU = faceBasisU(axis);
+        const Vec3 basisV = cross(normal, basisU);
+        std::ranges::sort(
+            capPoints,
+            [&](const Vec3& first, const Vec3& second) {
+                const Vec3 firstRelative = subtract(first, centre);
+                const Vec3 secondRelative = subtract(second, centre);
+                const double firstAngle = std::atan2(
+                    dot(firstRelative, basisV), dot(firstRelative, basisU));
+                const double secondAngle = std::atan2(
+                    dot(secondRelative, basisV), dot(secondRelative, basisU));
+                if (firstAngle != secondAngle) return firstAngle < secondAngle;
+                return std::tie(first.x, first.y, first.z)
+                    < std::tie(second.x, second.y, second.z);
+            });
+        clippedFaces.push_back(std::move(capPoints));
     }
-    return {grid.cellIndex(face.i, face.j, face.k - 1),
-            grid.cellIndex(face.i, face.j, face.k)};
+    polyhedron.faces = std::move(clippedFaces);
+}
+
+ConvexPolyhedron tetrahedron(const Vec3& origin,
+                             const Vec3& first,
+                             Vec3 second,
+                             Vec3 third,
+                             const double signedSixVolume) {
+    if (signedSixVolume < 0.0) std::swap(second, third);
+    const std::array<Vec3, 4> vertices{{origin, first, second, third}};
+    ConvexPolyhedron result;
+    result.faces = {
+        {vertices[0], vertices[2], vertices[1]},
+        {vertices[0], vertices[1], vertices[3]},
+        {vertices[0], vertices[3], vertices[2]},
+        {vertices[1], vertices[2], vertices[3]},
+    };
+    return result;
+}
+
+double polyhedronVolume(const ConvexPolyhedron& polyhedron) {
+    Vec3 centre;
+    std::size_t pointCount = 0;
+    for (const auto& face : polyhedron.faces) {
+        for (const auto& point : face) {
+            centre.x += point.x;
+            centre.y += point.y;
+            centre.z += point.z;
+            ++pointCount;
+        }
+    }
+    if (pointCount == 0) return 0.0;
+    const double inverseCount = 1.0 / static_cast<double>(pointCount);
+    centre.x *= inverseCount;
+    centre.y *= inverseCount;
+    centre.z *= inverseCount;
+    double sixVolume = 0.0;
+    for (const auto& face : polyhedron.faces) {
+        for (std::size_t vertex = 1; vertex + 1 < face.size(); ++vertex) {
+            sixVolume += dot(
+                subtract(face[0], centre),
+                cross(subtract(face[vertex], centre),
+                      subtract(face[vertex + 1], centre)));
+        }
+    }
+    const double volume = sixVolume / 6.0;
+    if (!std::isfinite(volume)) {
+        throw std::invalid_argument(
+            "scene fluid clipped tetrahedron volume is non-finite");
+    }
+    return volume;
+}
+
+std::pair<std::size_t, std::size_t> cellRange(
+    const double minimum,
+    const double maximum,
+    const double gridLower,
+    const double spacing,
+    const std::size_t count) {
+    const auto index = [&](const double coordinateValue) {
+        const double scaled = (coordinateValue - gridLower) / spacing;
+        if (!std::isfinite(scaled)) {
+            throw std::invalid_argument(
+                "scene fluid tetrahedron cell range is non-finite");
+        }
+        if (scaled <= 0.0) return std::size_t{0};
+        if (scaled >= static_cast<double>(count)) return count - 1;
+        return static_cast<std::size_t>(std::floor(scaled));
+    };
+    return {index(minimum), index(maximum)};
 }
 
 std::vector<double> wholeSurfaceVolumes(
@@ -325,11 +455,16 @@ std::uint64_t volumeFingerprint(const SceneFluidCellVolumeSet& volumes) {
              volumes.settings.absoluteVolumeToleranceCubicMeters,
              volumes.settings.relativeVolumeTolerance,
              volumes.cellVolumeCubicMeters,
+             volumes.maximumTetrahedronVolumeResidualCubicMeters,
              volumes.maximumCellVolumeResidualCubicMeters,
              volumes.maximumRegionVolumeResidualCubicMeters}) {
         fingerprint.real(value);
     }
     fingerprint.integer(volumes.outsideRegionId);
+    fingerprint.integer(static_cast<std::uint64_t>(
+        volumes.tetrahedronCellClipCount));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        volumes.nonzeroTetrahedronCellClipCount));
     fingerprint.integer(static_cast<std::uint64_t>(volumes.cells.size()));
     for (const auto& cell : volumes.cells) {
         fingerprint.integer(static_cast<std::uint64_t>(cell.cellIndex));
@@ -370,7 +505,6 @@ SceneFluidCellVolumeSet buildVolumes(
     const SceneFluidCellVolumeLimits& limits) {
     validateSettings(settings);
     validateClosedManifold(surface);
-    validateResolvedSubset(epoch);
     const std::size_t outsideIndex = outsideRegionIndex(surface);
     if (grid.cellCount() > limits.maximumCells
         || grid.cellCount() > limits.maximumCellRegionVolumes) {
@@ -402,55 +536,103 @@ SceneFluidCellVolumeSet buildVolumes(
             result.cellVolumeCubicMeters);
     }
 
-    for (const auto& owned : epoch.ownership.cellPatches) {
-        const auto& patch = epoch.patches.patches[owned.sourcePatchIndex];
-        const auto& triangle = surface.triangles[patch.triangleIndex];
+    const auto counts = grid.cellCounts();
+    const auto lower = grid.lowerMeters();
+    const auto spacing = grid.cellSpacingMeters();
+    const Vec3 origin{lower.x, lower.y, lower.z};
+    const double clipVolumeTolerance = tolerance(
+        settings, result.cellVolumeCubicMeters);
+    // A closed oriented surface is the signed sum of tetrahedra from any fixed
+    // reference point. Clipping each tetrahedron distributes that same chain
+    // cell-by-cell without requiring face-local contours to close in one tile.
+    for (const auto& triangle : surface.triangles) {
         const auto& first =
             state.vertices[triangle.vertexIndices[0]].positionMeters;
         const auto& second =
             state.vertices[triangle.vertexIndices[1]].positionMeters;
         const auto& third =
             state.vertices[triangle.vertexIndices[2]].positionMeters;
-        const Vec3 normal = cross(
-            subtract(second, first), subtract(third, first));
-        const double magnitude = length(normal);
-        if (!std::isfinite(magnitude) || !(magnitude > 0.0)) {
+        const double signedSixVolume = dot(
+            subtract(first, origin),
+            cross(subtract(second, origin), subtract(third, origin)));
+        if (!std::isfinite(signedSixVolume)) {
             throw std::invalid_argument(
-                "scene fluid cell-volume triangle normal is invalid");
+                "scene fluid signed tetrahedron volume is non-finite");
         }
-        const double contribution = dot(patch.centroidMeters, normal)
-            * patch.areaSquareMeters / (3.0 * magnitude);
-        appendContribution(
-            contributions, limits, patch.cellIndex,
-            triangle.negativeSideRegionIndex, contribution);
-        appendContribution(
-            contributions, limits, patch.cellIndex,
-            triangle.positiveSideRegionIndex, -contribution);
-    }
-
-    const auto partitions = partitionByActiveFace(epoch);
-    for (std::size_t faceIndex = 0;
-         faceIndex < epoch.faceTopology.activeFaces.size(); ++faceIndex) {
-        const auto& face = epoch.faceTopology.activeFaces[faceIndex];
-        const auto& partition = *partitions[faceIndex];
-        const auto [lowerCell, upperCell] = adjacentCells(face, grid);
-        const double coefficient = faceCoordinate(face, grid) / 3.0;
-        const double fullArea = faceArea(face.axis, grid);
-        for (const auto [cell, sign] : {
-                 std::pair{lowerCell, 1.0},
-                 std::pair{upperCell, -1.0}}) {
-            appendContribution(
-                contributions, limits, cell, outsideIndex,
-                -sign * coefficient * fullArea);
-            for (std::size_t offset = 0;
-                 offset < partition.regionAreaCount; ++offset) {
-                const auto& area = epoch.facePartitions.regionAreas[
-                    partition.firstRegionArea + offset];
-                appendContribution(
-                    contributions, limits, cell,
-                    regionIndex(surface, area.regionId),
-                    sign * coefficient * area.areaSquareMeters);
+        if (signedSixVolume == 0.0) continue;
+        const double minimumX = std::min({origin.x, first.x, second.x, third.x});
+        const double maximumX = std::max({origin.x, first.x, second.x, third.x});
+        const double minimumY = std::min({origin.y, first.y, second.y, third.y});
+        const double maximumY = std::max({origin.y, first.y, second.y, third.y});
+        const double minimumZ = std::min({origin.z, first.z, second.z, third.z});
+        const double maximumZ = std::max({origin.z, first.z, second.z, third.z});
+        const auto [firstI, lastI] = cellRange(
+            minimumX, maximumX, lower.x, spacing.x, counts.x);
+        const auto [firstJ, lastJ] = cellRange(
+            minimumY, maximumY, lower.y, spacing.y, counts.y);
+        const auto [firstK, lastK] = cellRange(
+            minimumZ, maximumZ, lower.z, spacing.z, counts.z);
+        const ConvexPolyhedron source = tetrahedron(
+            origin, first, second, third, signedSixVolume);
+        double summedClippedVolume = 0.0;
+        for (std::size_t k = firstK; k <= lastK; ++k) {
+            for (std::size_t j = firstJ; j <= lastJ; ++j) {
+                for (std::size_t i = firstI; i <= lastI; ++i) {
+                    if (result.tetrahedronCellClipCount
+                        == limits.maximumTetrahedronCellClips) {
+                        throw std::length_error(
+                            "scene fluid tetrahedron/cell clips exceed their limit");
+                    }
+                    ++result.tetrahedronCellClipCount;
+                    ConvexPolyhedron clipped = source;
+                    const double cellLowerX = lower.x
+                        + static_cast<double>(i) * spacing.x;
+                    const double cellLowerY = lower.y
+                        + static_cast<double>(j) * spacing.y;
+                    const double cellLowerZ = lower.z
+                        + static_cast<double>(k) * spacing.z;
+                    clipPolyhedron(clipped, 0, cellLowerX, true);
+                    clipPolyhedron(clipped, 0, cellLowerX + spacing.x, false);
+                    clipPolyhedron(clipped, 1, cellLowerY, true);
+                    clipPolyhedron(clipped, 1, cellLowerY + spacing.y, false);
+                    clipPolyhedron(clipped, 2, cellLowerZ, true);
+                    clipPolyhedron(clipped, 2, cellLowerZ + spacing.z, false);
+                    double clippedVolume = polyhedronVolume(clipped);
+                    if (clippedVolume < -clipVolumeTolerance
+                        || clippedVolume
+                            > result.cellVolumeCubicMeters
+                                + clipVolumeTolerance) {
+                        throw std::invalid_argument(
+                            "scene fluid clipped tetrahedron volume is outside its cell");
+                    }
+                    if (clippedVolume <= 0.0) continue;
+                    clippedVolume = std::min(
+                        clippedVolume, result.cellVolumeCubicMeters);
+                    summedClippedVolume += clippedVolume;
+                    ++result.nonzeroTetrahedronCellClipCount;
+                    const double signedVolume = std::copysign(
+                        clippedVolume, signedSixVolume);
+                    const std::size_t cell = grid.cellIndex(i, j, k);
+                    appendContribution(
+                        contributions, limits, cell,
+                        triangle.negativeSideRegionIndex, signedVolume);
+                    appendContribution(
+                        contributions, limits, cell,
+                        triangle.positiveSideRegionIndex, -signedVolume);
+                }
             }
+        }
+        const double tetrahedronVolume = std::abs(signedSixVolume) / 6.0;
+        const double tetrahedronResidual =
+            summedClippedVolume - tetrahedronVolume;
+        result.maximumTetrahedronVolumeResidualCubicMeters = std::max(
+            result.maximumTetrahedronVolumeResidualCubicMeters,
+            std::abs(tetrahedronResidual));
+        if (!std::isfinite(tetrahedronResidual)
+            || std::abs(tetrahedronResidual)
+                > tolerance(settings, tetrahedronVolume)) {
+            throw std::invalid_argument(
+                "scene fluid clipped cells do not close their signed tetrahedron");
         }
     }
 
@@ -467,7 +649,6 @@ SceneFluidCellVolumeSet buildVolumes(
     std::vector<double> summedRegions(surface.regions.size(), 0.0);
     result.cells.reserve(grid.cellCount());
     std::size_t contributionIndex = 0;
-    const auto counts = grid.cellCounts();
     for (std::size_t k = 0; k < counts.z; ++k) {
         for (std::size_t j = 0; j < counts.y; ++j) {
             for (std::size_t i = 0; i < counts.x; ++i) {
@@ -539,7 +720,6 @@ SceneFluidCellVolumeSet buildVolumes(
 
     const auto whole = wholeSurfaceVolumes(
         surface, state, outsideIndex, grid);
-    const auto lower = grid.lowerMeters();
     const auto upper = grid.upperMeters();
     const double domainVolume = (upper.x - lower.x)
         * (upper.y - lower.y) * (upper.z - lower.z);
@@ -635,6 +815,7 @@ void validateSceneFluidCellVolumes(
             "scene fluid cell-volume identity is invalid");
     }
     const SceneFluidCellVolumeLimits unlimited{
+        std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),
         std::numeric_limits<std::size_t>::max(),

@@ -56,22 +56,13 @@ void expectLimited(Callback&& callback, const char* message) {
     check(rejected, message);
 }
 
-void addTetra(Scene& scene,
-              const StableId vertexBase,
-              const StableId triangleBase,
-              const StableId insideRegion,
-              const StableId outsideRegion,
-              const double leftX,
-              const double rightX,
-              const double yRadius,
-              const double zRadius,
-              const StableId sheet) {
-    const std::array<Vec3, 4> positions{{
-        {leftX, 1.5, 1.45},
-        {rightX, 1.5 - yRadius, 1.45 - zRadius},
-        {rightX, 1.5 + yRadius, 1.45 - zRadius},
-        {rightX, 1.5, 1.45 + zRadius},
-    }};
+void addTetraPositions(Scene& scene,
+                       const StableId vertexBase,
+                       const StableId triangleBase,
+                       const StableId insideRegion,
+                       const StableId outsideRegion,
+                       const StableId sheet,
+                       const std::array<Vec3, 4>& positions) {
     scene.vertices.insert(scene.vertices.end(), {
         {vertexBase + 0, positions[0]},
         {vertexBase + 1, positions[1]},
@@ -125,6 +116,24 @@ void addTetra(Scene& scene,
     });
 }
 
+void addTetra(Scene& scene,
+              const StableId vertexBase,
+              const StableId triangleBase,
+              const StableId insideRegion,
+              const StableId outsideRegion,
+              const double leftX,
+              const double rightX,
+              const double yRadius,
+              const double zRadius,
+              const StableId sheet) {
+    addTetraPositions(
+        scene, vertexBase, triangleBase, insideRegion, outsideRegion, sheet,
+        {{{leftX, 1.5, 1.45},
+          {rightX, 1.5 - yRadius, 1.45 - zRadius},
+          {rightX, 1.5 + yRadius, 1.45 - zRadius},
+          {rightX, 1.5, 1.45 + zRadius}}});
+}
+
 Scene nestedScene() {
     Scene scene;
     scene.metadata.designChecksum = "sha256:scene-fluid-cell-volume";
@@ -140,6 +149,39 @@ Scene nestedScene() {
     };
     addTetra(scene, 10, 500, 2, 1, 1.2, 2.8, 0.3, 0.3, 900);
     addTetra(scene, 20, 600, 3, 2, 1.6, 2.4, 0.1, 0.1, 901);
+    return scene;
+}
+
+Scene largeClosedScene() {
+    Scene scene;
+    scene.metadata.designChecksum = "sha256:scene-fluid-full-cell-volume";
+    scene.metadata.exporterVersion = "scene-fluid-cell-volume-test/2";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "large-cell"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900.0, 650.0, 220.0, 0.015,
+         0.041, 0.02, 0.0125, 2.5e-12},
+    };
+    addTetraPositions(
+        scene, 10, 500, 2, 1, 900,
+        {{{0.11, 0.18, 0.27},
+          {3.83, 0.31, 3.57},
+          {3.69, 3.77, 0.22},
+          {0.27, 3.63, 3.84}}});
+    return scene;
+}
+
+Scene translatedLargeClosedScene() {
+    Scene scene = largeClosedScene();
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-translated-full-cell-volume";
+    for (auto& vertex : scene.vertices) {
+        vertex.positionMeters.x -= 2.0;
+        vertex.positionMeters.y -= 3.0;
+        vertex.positionMeters.z += 0.5;
+    }
     return scene;
 }
 
@@ -177,6 +219,14 @@ Scene openScene() {
 
 PeriodicCartesianGrid grid() {
     return {{4, 4, 4}, {}, {4.0, 4.0, 4.0}};
+}
+
+PeriodicCartesianGrid fineGrid() {
+    return {{8, 8, 8}, {}, {4.0, 4.0, 4.0}};
+}
+
+PeriodicCartesianGrid translatedFineGrid() {
+    return {{8, 8, 8}, {-2.0, -3.0, 0.5}, {2.0, 1.0, 4.5}};
 }
 
 struct Fixture {
@@ -225,6 +275,7 @@ void testNestedAnalyticVolumesAndAcceptedMotion() {
               && first.version == sceneFluidCellVolumeVersion
               && first.fingerprint != 0
               && first.cells.size() == grid().cellCount()
+              && first.maximumTetrahedronVolumeResidualCubicMeters < 1.0e-12
               && first.maximumCellVolumeResidualCubicMeters < 1.0e-12
               && first.maximumRegionVolumeResidualCubicMeters < 1.0e-12,
           "nested cell volumes are deterministic and close every cell and region");
@@ -295,6 +346,74 @@ void testNestedAnalyticVolumesAndAcceptedMotion() {
     }
 }
 
+void testFullInteriorCellClassification() {
+    Fixture fixture(largeClosedScene());
+    check(fixture.surface.ok() && fixture.structureAssembly.ok(),
+          "large closed volume fixture assembles");
+    const auto state = captureSceneFluidSurfaceState(
+        fixture.surface.definition,
+        fixture.structureAssembly.mappings,
+        fixture.structure);
+    const auto epoch = buildSceneFluidGridEpoch(
+        fixture.surface.definition, state, fineGrid(), fixture.transfer);
+    check(epoch.facePartitions.unresolvedActiveFaceCount > 0,
+          "large tetrahedron exercises boundary-crossing open face chains");
+    const auto volumes = buildSceneFluidCellVolumes(
+        fixture.surface.definition, state, fineGrid(), fixture.transfer,
+        epoch);
+    const auto regions = regionVolumes(volumes);
+    constexpr double insideVolume = 85.518598 / 6.0;
+    checkNear(regions.at(2).summedCellVolumeCubicMeters,
+              insideVolume, 2.0e-11,
+              "large tetrahedron recovers analytic volume across full cells");
+    checkNear(regions.at(1).summedCellVolumeCubicMeters,
+              64.0 - insideVolume, 2.0e-11,
+              "large tetrahedron leaves the analytic outside volume");
+    std::size_t fullInsideCellCount = 0;
+    for (const auto& cell : volumes.cells) {
+        if (cell.regionVolumeCount != 1) {
+            continue;
+        }
+        const auto& region =
+            volumes.cellRegionVolumes[cell.firstRegionVolume];
+        if (region.regionId == 2) {
+            ++fullInsideCellCount;
+            checkNear(region.volumeFraction, 1.0, 1.0e-12,
+                      "classified full interior cell has unit volume fraction");
+        }
+    }
+    check(fullInsideCellCount == 24
+              && volumes.tetrahedronCellClipCount > 0
+              && volumes.nonzeroTetrahedronCellClipCount > 0
+              && volumes.nonzeroTetrahedronCellClipCount
+                  <= volumes.tetrahedronCellClipCount
+              && volumes.maximumTetrahedronVolumeResidualCubicMeters
+                  < 2.0e-12,
+          "signed tetrahedron clipping reaches full interior cells");
+    validateSceneFluidCellVolumes(
+        volumes, fixture.surface.definition, state, fineGrid(),
+        fixture.transfer, epoch);
+
+    Fixture translated(translatedLargeClosedScene());
+    const auto translatedState = captureSceneFluidSurfaceState(
+        translated.surface.definition,
+        translated.structureAssembly.mappings,
+        translated.structure);
+    const auto translatedEpoch = buildSceneFluidGridEpoch(
+        translated.surface.definition, translatedState, translatedFineGrid(),
+        translated.transfer);
+    const auto translatedVolumes = buildSceneFluidCellVolumes(
+        translated.surface.definition, translatedState, translatedFineGrid(),
+        translated.transfer, translatedEpoch);
+    const auto translatedRegions = regionVolumes(translatedVolumes);
+    checkNear(translatedRegions.at(2).summedCellVolumeCubicMeters,
+              insideVolume, 3.0e-11,
+              "signed clipping is invariant to a nonzero grid origin");
+    checkNear(translatedRegions.at(1).summedCellVolumeCubicMeters,
+              64.0 - insideVolume, 3.0e-11,
+              "translated grid preserves the outside region volume");
+}
+
 void testUnsupportedTopologyCorruptionAndLimits() {
     Fixture open(openScene());
     check(open.surface.ok() && open.structureAssembly.ok(),
@@ -356,6 +475,13 @@ void testUnsupportedTopologyCorruptionAndLimits() {
         "cell-volume construction rejects zero closure authority");
 
     SceneFluidCellVolumeLimits limits;
+    limits.maximumTetrahedronCellClips = 0;
+    expectLimited(
+        [&] { static_cast<void>(buildSceneFluidCellVolumes(
+            fixture.surface.definition, state, grid(), fixture.transfer,
+            epoch, {}, limits)); },
+        "cell-volume tetrahedron clipping work is bounded");
+    limits = {};
     limits.maximumContributionEvents = grid().cellCount() - 1;
     expectLimited(
         [&] { static_cast<void>(buildSceneFluidCellVolumes(
@@ -386,6 +512,7 @@ void testUnsupportedTopologyCorruptionAndLimits() {
 int main() {
     try {
         testNestedAnalyticVolumesAndAcceptedMotion();
+        testFullInteriorCellClassification();
         testUnsupportedTopologyCorruptionAndLimits();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
