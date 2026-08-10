@@ -14,7 +14,7 @@ namespace simwing::fsi {
 inline constexpr std::uint32_t
     sceneFluidRegionalPressureSamplingVersion = 2;
 inline constexpr std::uint32_t
-    sceneFluidRegionalPressureLoadApplicationVersion = 1;
+    sceneFluidRegionalPressureLoadApplicationVersion = 2;
 
 struct SceneFluidRegionalPressureSamplingLimits {
     std::size_t maximumSamples = 20'000'000;
@@ -67,8 +67,8 @@ struct SceneFluidRegionalPressureTileCoverage {
 // The sampled one-sided total pressures deliberately retain the regional
 // correction gauge chosen by the accepted pressure state. Capture and
 // evaluation are read-only. The separate explicit transactional application
-// below remains available only to sealed samples and rejects opening-aware
-// samples before mutation. None of these operations advances either solver or
+// below accepts either sealed or opening-aware samples only after this complete
+// conservative closure. None of these operations advances either solver or
 // selects production pressure ownership.
 struct SceneFluidRegionalPressureSampleSet {
     std::uint32_t version =

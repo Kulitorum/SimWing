@@ -1112,10 +1112,6 @@ applySceneFluidRegionalAcceptedPressureLoads(
     const SceneFluidRegionalPressureLoadApplicationLimits& limits) {
     validateApplicationLimits(limits);
     validateSceneFluidRegionalPressureSampleIntegrity(samples);
-    if (samples.openingAware) {
-        throw std::invalid_argument(
-            "scene fluid regional opening-pressure loads are read-only");
-    }
     const std::size_t nodeLoadCount = transfer.nodes().size();
     const std::size_t structureNodeCount = target.definition().nodes.size();
     if (nodeLoadCount == 0 || structureNodeCount == 0

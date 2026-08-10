@@ -2038,12 +2038,11 @@ makes this a certified aerodynamic solver.
   equal scene sheet IDs; every patch must match one tile's side regions,
   current plane, normal, and material velocity. Sealed coverage closes full
   wall area; opening coverage closes retained-solid area and keeps fully open
-  zero-sample tiles explicit. Evaluation is immutable. Opening-aware samples
-  are rejected by the application entry point before mutation. Sealed explicit
-  load application is epoch- and kinematics-bound, preserves existing pending
-  loads, publishes a per-node receipt, and restores the complete Structure
-  checkpoint on failure. It does not step Structure or select worker pressure
-  ownership.
+  zero-sample tiles explicit. Evaluation is immutable. Explicit sealed or
+  opening-aware load application is epoch- and kinematics-bound, preserves
+  existing pending loads, publishes a per-node receipt, and restores the
+  complete Structure checkpoint on failure. It does not step Structure or
+  select worker pressure ownership.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2759,13 +2758,15 @@ allocation. Cover static separate `-280/+280 N` sheet resultants, rigid moving
 power, nested corruption, incomplete coverage, reversed winding, and foreign
 accepted state. Also cover deterministic opening endpoint binding, removal of
 all quadrature over a fully open authored surface, foreign extra fabric, and
-opening fingerprint corruption. Evaluation must not mutate Structure. Explicit
-application must reject opening-aware samples before mutation. Sealed
-application must bind the exact Structure epoch/kinematics, prevalidate all
-resulting node loads and limits, preserve unrelated pending loads, change no
-committed state, and restore the full checkpoint after any failure. Cover
-static/moving application, pre-existing load preservation, receipt corruption, stale epoch,
-and node/Structure/owned/working limits. Neither path enables a worker.
+opening fingerprint corruption. Cover a genuinely partial tile with authored
+opening centroid, exact retained-solid first moment, and conservative nodal
+transfer. Evaluation must not mutate Structure. Explicit sealed or opening-
+aware application must bind the exact Structure epoch/kinematics, prevalidate
+all resulting node loads and limits, preserve unrelated pending loads, change
+no committed state, and restore the full checkpoint after any failure. Cover
+static/moving/opening application, pre-existing load preservation, receipt
+corruption, stale epoch, and node/Structure/owned/working limits. Neither path
+enables a worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

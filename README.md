@@ -511,9 +511,11 @@ tile's retained-solid area as the authoritative coverage target, so a fully
 open tile remains visible with zero quadrature samples while no traction is
 invented across the aperture. A four-tile removed-surface oracle leaves only
 the opposite `4 m2` sheet and closes its force, moment, and power exactly to the
-outer solid ledger. Read-only conservative evaluation is enabled; the explicit
-Structure-application entry point rejects opening-aware samples before any
-mutation until that coupling boundary is designed separately.
+outer solid ledger. A separate exact-centroid oracle removes half of one tile,
+samples the remaining `7.5 m2`, and closes the retained resultant and origin
+moment through conservative nodal transfer. Read-only evaluation remains
+available, and the explicit transactional Structure application now accepts
+either sealed or opening-aware samples after the same complete closure.
 An explicit opt-in application wrapper can now add those evaluated nodal forces
 to Structure's pending loads. It first binds the exact accepted epoch and nodal
 kinematics, precomputes every resulting load, preserves unrelated pending

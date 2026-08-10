@@ -2591,7 +2591,9 @@ canonical two-plane scene covers all eight tiles, transfers the separate
 `-280/+280 N` resultants through the existing barycentric node topology, and
 under rigid translation reproduces accepted sheet work as quadrature power. A
 separate fully removed four-tile surface oracle covers only the remaining
-`4 m2` sheet and proves that no aperture traction is sampled.
+`4 m2` sheet and proves that no aperture traction is sampled. An exact-centroid
+partial oracle removes `0.5 m2` from one tile, samples the other `7.5 m2`, and
+closes retained force and origin moment through conservative nodal transfer.
 Evaluation returns an immutable `ConservativeTransferResult`; it deliberately
 does not call `addLoadsTo`, advance XPBD, persist the regional state, or change
 worker pressure ownership. A separate explicit application wrapper now binds
@@ -2601,10 +2603,11 @@ pressure-plus-prior pending load under independent node/storage bounds, applies
 through the existing transfer, and validates that only the pending-load vector
 changed. Its immutable receipt retains each prior/applied/resulting node force
 and aggregate closure; any exception or failed postcondition restores the
-complete checkpoint. That mutation boundary remains sealed-only: opening-aware
-samples reject before mutation while read-only conservative evaluation is
-available. This is a tested mutation boundary, not a structural
-advance, pressure refresh, checkpoint format, or worker integration.
+complete checkpoint. The same transaction now accepts opening-aware samples
+only after their retained area, force, moment, and power have closed to the
+atomic opening-load endpoint; an opening-specific preallocation-limit oracle
+proves rejection before mutation. This is a tested mutation boundary, not a
+structural advance, pressure refresh, checkpoint format, or worker integration.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

@@ -254,7 +254,7 @@ struct OpeningRegionalEndpoint {
     PlanarPressureRegionFragmentOpeningSurfaceLoadLedger openingSurfaceLoads;
     PlanarPressureRegionFragmentOpeningLoadState loadState;
 
-    OpeningRegionalEndpoint() {
+    explicit OpeningRegionalEndpoint(const bool fullyOpenFirstSurface = true) {
         constexpr double durationSeconds = 0.01;
         sweep = makePlanarPressureRegionSweepLedger(
             geometry, layers, layers, durationSeconds);
@@ -272,9 +272,13 @@ struct OpeningRegionalEndpoint {
                 || link.surfaceStableId != 10) {
                 continue;
             }
+            if (!fullyOpenFirstSurface
+                && (link.j != 0 || link.k != 0)) {
+                continue;
+            }
             const std::uint64_t patchId =
                 100 + openingDefinitions.size();
-            openingDefinitions.push_back({
+            PlanarPressureRegionFragmentOpeningPatchDefinition definition{
                 patchId,
                 1000,
                 link.surfaceStableId,
@@ -284,13 +288,22 @@ struct OpeningRegionalEndpoint {
                 link.k,
                 link.minusRegionStableId,
                 link.plusRegionStableId,
-                link.areaSquareMeters,
-            });
+                fullyOpenFirstSurface
+                    ? link.areaSquareMeters
+                    : 0.5 * link.areaSquareMeters,
+            };
+            if (!fullyOpenFirstSurface) {
+                definition.authoredWrappedCentroidMeters =
+                    Vector3{-0.8, -0.75, -0.5};
+            }
+            openingDefinitions.push_back(definition);
             resistanceDefinitions.push_back({patchId, {0.0, 0.0}});
         }
-        if (openingDefinitions.size() != 4) {
+        const std::size_t expectedDefinitionCount =
+            fullyOpenFirstSurface ? 4 : 1;
+        if (openingDefinitions.size() != expectedDefinitionCount) {
             throw std::runtime_error(
-                "opening regional fixture did not find four wall tiles");
+                "opening regional fixture found the wrong wall-tile count");
         }
         openings = buildPlanarPressureRegionFragmentOpenings(
             geometry, sweep, fragments, topology, openingDefinitions);
@@ -419,6 +432,66 @@ Scene openingPressureScene() {
         [](const Vertex& vertex) { return vertex.id < 200; });
     scene.metadata.designChecksum =
         "sha256:regional-opening-pressure-sampling";
+    return scene;
+}
+
+Scene partialOpeningPressureScene() {
+    auto scene = pressureScene();
+    std::erase_if(
+        scene.triangles,
+        [](const Triangle& triangle) { return triangle.sheetId == 10; });
+    std::erase_if(
+        scene.vertices,
+        [](const Vertex& vertex) { return vertex.id < 200; });
+    const std::vector<Vertex> retainedVertices{
+        {100, {-0.8, -0.5, -1.0}},
+        {101, {-0.8, 0.0, -1.0}},
+        {102, {-0.8, 0.0, 0.0}},
+        {103, {-0.8, -0.5, 0.0}},
+        {104, {-0.8, -1.0, 0.0}},
+        {105, {-0.8, 0.0, 1.0}},
+        {106, {-0.8, -1.0, 1.0}},
+        {107, {-0.8, 1.0, -1.0}},
+        {108, {-0.8, 1.0, 0.0}},
+        {109, {-0.8, 1.0, 1.0}},
+    };
+    scene.vertices.insert(
+        scene.vertices.begin(),
+        retainedVertices.begin(), retainedVertices.end());
+    const auto materialPoint = [](const double y, const double z) {
+        return Vec2{y + 1.0, z + 1.0};
+    };
+    const auto addRectangle = [&](const StableId firstTriangleId,
+                                  const std::array<StableId, 4>& vertices,
+                                  const double lowerY,
+                                  const double upperY,
+                                  const double lowerZ,
+                                  const double upperZ) {
+        scene.triangles.push_back({
+            firstTriangleId,
+            {vertices[0], vertices[1], vertices[2]},
+            {{materialPoint(lowerY, lowerZ),
+              materialPoint(upperY, lowerZ),
+              materialPoint(upperY, upperZ)}},
+            1, 2, 300, 10, SurfaceRole::Skin,
+        });
+        scene.triangles.push_back({
+            firstTriangleId + 1,
+            {vertices[0], vertices[2], vertices[3]},
+            {{materialPoint(lowerY, lowerZ),
+              materialPoint(upperY, upperZ),
+              materialPoint(lowerY, upperZ)}},
+            1, 2, 300, 10, SurfaceRole::Skin,
+        });
+    };
+    addRectangle(1000, {100, 101, 102, 103}, -0.5, 0.0, -1.0, 0.0);
+    addRectangle(1010, {104, 102, 105, 106}, -1.0, 0.0, 0.0, 1.0);
+    addRectangle(1020, {101, 107, 108, 102}, 0.0, 1.0, -1.0, 0.0);
+    addRectangle(1030, {102, 108, 109, 105}, 0.0, 1.0, 0.0, 1.0);
+    std::ranges::sort(
+        scene.triangles, {}, &Triangle::id);
+    scene.metadata.designChecksum =
+        "sha256:regional-partial-opening-pressure-sampling";
     return scene;
 }
 
@@ -594,7 +667,7 @@ void testStaticSamplingAndTransfer() {
           "regional sampling: evaluation does not mutate Structure loads");
 }
 
-void testOpeningAwareReadOnlySampling() {
+void testOpeningAwareSamplingAndApplication() {
     const OpeningRegionalEndpoint endpoint;
     SceneFixture fixture(openingPressureScene(), false);
     check(fixture.surface.ok() && fixture.structureAssembly.ok(),
@@ -673,18 +746,21 @@ void testOpeningAwareReadOnlySampling() {
               endpoint.loadState.solidPressureForceOnSheetNewtons.x,
               4.0e-13,
               "regional opening sampling: read-only transfer retains solid force");
-    const auto pendingBefore =
-        fixture.structure.diagnostics().pendingExternalForceNewtons;
-    expectRejected(
-        [&] {
-            static_cast<void>(applySceneFluidRegionalAcceptedPressureLoads(
-                fixture.surface.definition, fixture.state, fixture.transfer,
-                fixture.quadrature, samples, fixture.structure));
-        },
-        "regional opening sampling: Structure application remains disabled");
+    const auto application = applySceneFluidRegionalAcceptedPressureLoads(
+        fixture.surface.definition, fixture.state, fixture.transfer,
+        fixture.quadrature, samples, fixture.structure);
+    check(application.applied
+              && application.sourceSamplingFingerprint
+                  == samples.fingerprint
+              && application.appliedPressureForceNewtons
+                  == samples.sampledPressureForceOnSheetNewtons
+              && application.applicationResidualNewtons
+                  == StructureVector3{},
+          "regional opening sampling: transactional application retains the solid load");
     check(fixture.structure.diagnostics().pendingExternalForceNewtons
-              == pendingBefore,
-          "regional opening sampling: rejected application preserves Structure");
+              == samples.sampledPressureForceOnSheetNewtons,
+          "regional opening sampling: Structure receives no aperture traction");
+    validateSceneFluidRegionalPressureLoadApplicationIntegrity(application);
 
     auto corrupt = samples;
     corrupt.regionalOpeningLoadStateFingerprint ^= 1U;
@@ -700,6 +776,130 @@ void testOpeningAwareReadOnlySampling() {
     expectRejected(
         [&] { static_cast<void>(sample(endpoint, foreignFullSheet)); },
         "regional opening sampling: traction over removed aperture area rejects");
+}
+
+void testPartialOpeningSamplingAndApplication() {
+    const OpeningRegionalEndpoint endpoint(false);
+    SceneFixture fixture(partialOpeningPressureScene(), false);
+    check(fixture.surface.ok() && fixture.structureAssembly.ok(),
+          "regional partial opening: retained fabric assembles");
+    const auto touchedLoad = std::ranges::find(
+        endpoint.openingSurfaceLoads.tiles, true,
+        &PlanarPressureRegionFragmentOpeningSurfaceLoadTile::
+            touchedByOpening);
+    check(touchedLoad != endpoint.openingSurfaceLoads.tiles.end()
+              && touchedLoad->hasExactSubtileCentroids
+              && touchedLoad->openingAreaSquareMeters == 0.5
+              && touchedLoad->solidAreaSquareMeters == 0.5,
+          "regional partial opening: atomic endpoint retains exact half-tile geometry");
+    if (touchedLoad == endpoint.openingSurfaceLoads.tiles.end()) return;
+
+    const auto samples = sample(endpoint, fixture);
+    const auto repeated = sample(endpoint, fixture);
+    check(samples == repeated && samples.openingAware
+              && samples.regionalOpeningLoadStateFingerprint
+                  == endpoint.loadState.fingerprint
+              && samples.sampledAreaSquareMeters == 7.5,
+          "regional partial opening: sampling is deterministic and source-bound");
+    const auto touchedCoverage = std::ranges::find(
+        samples.tiles, touchedLoad->sourceFaceLinkStableId,
+        &SceneFluidRegionalPressureTileCoverage::
+            sourceFaceLinkStableId);
+    check(touchedCoverage != samples.tiles.end()
+              && touchedCoverage->sourceAreaSquareMeters == 0.5
+              && touchedCoverage->sampledAreaSquareMeters == 0.5
+              && touchedCoverage->sampleCount > 0
+              && touchedCoverage->areaResidualSquareMeters == 0.0,
+          "regional partial opening: quadrature covers the retained half tile exactly");
+    checkNear(
+        samples.sampledPressureForceOnSheetNewtons.x,
+        endpoint.loadState.solidPressureForceOnSheetNewtons.x,
+        5.0e-13,
+        "regional partial opening: retained force closes to the atomic endpoint");
+    check(std::max({
+              std::abs(samples.sourceForceResidualNewtons.x),
+              std::abs(samples.sourceForceResidualNewtons.y),
+              std::abs(samples.sourceForceResidualNewtons.z),
+              std::abs(samples.sourceMomentResidualNewtonMeters.x),
+              std::abs(samples.sourceMomentResidualNewtonMeters.y),
+              std::abs(samples.sourceMomentResidualNewtonMeters.z),
+              std::abs(samples.sourcePowerResidualWatts)}) < 5.0e-13,
+          "regional partial opening: exact retained wrench and power close");
+    validateSceneFluidRegionalOpeningPressureSamples(
+        samples, endpoint.loadState, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, fixture.surface.definition,
+        fixture.state, fixture.quadrature);
+
+    const auto transferResult =
+        evaluateSceneFluidRegionalAcceptedPressureQuadrature(
+            fixture.surface.definition, fixture.state, fixture.transfer,
+            fixture.quadrature, samples);
+    checkNear(
+        transferResult.diagnostics().surfaceAreaSquareMeters,
+        endpoint.loadState.solidAreaSquareMeters, 3.0e-13,
+        "regional partial opening: conservative transfer retains exact solid area");
+    checkNear(
+        transferResult.diagnostics().integratedSurfaceMomentNewtonMeters.z,
+        endpoint.loadState.solidPressureMomentOnSheetNewtonMeters.z,
+        5.0e-13,
+        "regional partial opening: conservative transfer retains exact solid moment");
+    check(fixture.structure.diagnostics().pendingExternalForceNewtons
+              == StructureVector3{},
+          "regional partial opening: read-only transfer does not mutate Structure");
+    const auto beforeApplication = fixture.structure.checkpoint();
+    SceneFluidRegionalPressureLoadApplicationLimits applicationLimits;
+    applicationLimits.maximumNodeLoads = fixture.transfer.nodes().size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(applySceneFluidRegionalAcceptedPressureLoads(
+                fixture.surface.definition, fixture.state, fixture.transfer,
+                fixture.quadrature, samples, fixture.structure, {},
+                applicationLimits));
+        },
+        "regional partial opening: application limit rejects before mutation");
+    check(samePublicCheckpoint(
+              fixture.structure.checkpoint(), beforeApplication),
+          "regional partial opening: rejected application preserves the full checkpoint");
+    const auto application = applySceneFluidRegionalAcceptedPressureLoads(
+        fixture.surface.definition, fixture.state, fixture.transfer,
+        fixture.quadrature, samples, fixture.structure);
+    check(application.applied
+              && application.applicationResidualNewtons
+                  == StructureVector3{},
+          "regional partial opening: transactional application closes the retained load");
+    for (const auto& component : {
+             std::pair{application.appliedPressureForceNewtons.x,
+                       samples.sampledPressureForceOnSheetNewtons.x},
+             std::pair{application.appliedPressureForceNewtons.y,
+                       samples.sampledPressureForceOnSheetNewtons.y},
+             std::pair{application.appliedPressureForceNewtons.z,
+                       samples.sampledPressureForceOnSheetNewtons.z},
+             std::pair{application.resultingPendingForceNewtons.x,
+                       samples.sampledPressureForceOnSheetNewtons.x},
+             std::pair{application.resultingPendingForceNewtons.y,
+                       samples.sampledPressureForceOnSheetNewtons.y},
+             std::pair{application.resultingPendingForceNewtons.z,
+                       samples.sampledPressureForceOnSheetNewtons.z},
+             std::pair{
+                 fixture.structure.diagnostics()
+                     .pendingExternalForceNewtons.x,
+                 samples.sampledPressureForceOnSheetNewtons.x},
+             std::pair{
+                 fixture.structure.diagnostics()
+                     .pendingExternalForceNewtons.y,
+                 samples.sampledPressureForceOnSheetNewtons.y},
+             std::pair{
+                 fixture.structure.diagnostics()
+                     .pendingExternalForceNewtons.z,
+                 samples.sampledPressureForceOnSheetNewtons.z}}) {
+        checkNear(
+            component.first, component.second, 8.0e-13,
+            "regional partial opening: Structure receives the retained resultant");
+    }
+    validateSceneFluidRegionalPressureLoadApplicationIntegrity(application);
 }
 
 void testMovingSamplingAndPower() {
@@ -984,7 +1184,8 @@ void testRejectionAndLimits() {
 int main() {
     try {
         testStaticSamplingAndTransfer();
-        testOpeningAwareReadOnlySampling();
+        testOpeningAwareSamplingAndApplication();
+        testPartialOpeningSamplingAndApplication();
         testMovingSamplingAndPower();
         testTransactionalLoadApplication();
         testMovingLoadApplication();
