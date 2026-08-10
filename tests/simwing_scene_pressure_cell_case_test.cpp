@@ -1438,17 +1438,17 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
     constexpr double expectedMaximum[]{
         0.10196547254313142,
         0.408781484694966,
-        0.88867102845048396,
+        0.88867102845759738,
     };
     constexpr double expectedMean[]{
         0.10066047211051987,
-        0.2409295195653165,
-        0.52124824069640685,
+        0.24092951956532438,
+        0.52124824069717568,
     };
     constexpr double expectedVariation[]{
         0.010428734257699697,
-        0.39050354377024277,
-        0.38827709459071985,
+        0.39050354377024471,
+        0.38827709459290677,
     };
     constexpr double expectedNormalized[][8]{
         {
@@ -1460,14 +1460,14 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
         {
             0.35825481434598105, 0.408781484694966,
             0.18244616118707896, 0.24123026839889594,
-            0.20221810122979983, 0.26800858093272534,
-            0.12925278175548274, 0.13724396397760208,
+            0.20221810122979983, 0.26800858093279595,
+            0.12925278175548274, 0.13724396397759467,
         },
         {
             0.51940722905705417, 0.35090782886457544,
-            0.88867102845048396, 0.44826142651391082,
+            0.88867102845759738, 0.44826142651391082,
             0.44945862708767215, 0.29373390290273943,
-            0.81684064038034176, 0.40270524231447685,
+            0.81684064037937898, 0.40270524231447685,
         },
     };
     constexpr std::size_t expectedOpeningCounts[][8]{
@@ -1557,6 +1557,58 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
                   translatedSample.normalizedConductance
                   - originSample.normalizedConductance) < 5.0e-11,
           "graph-independent shadow response is invariant under a distant common coordinate translation");
+
+    const std::array<fsi::fluid::GridCellCounts, 1>
+        fineResolution{{{16, 16, 16}}};
+    const auto fineAudit =
+        fsi::auditScenePressureCellMimeticConductancePhaseRefinement(
+            fineResolution, phases, settings);
+    fsi::validateScenePressureCellMimeticConductancePhaseRefinementAuditIntegrity(
+        fineAudit);
+    const auto& fineLevel = fineAudit.levels.front();
+    constexpr std::size_t fineOpeningCounts[]{
+        15, 13, 14, 11, 11, 10, 11, 9,
+    };
+    constexpr double fineNormalized[]{
+        0.62454444526833486,
+        0.9992120361521708,
+        0.69710200382794307,
+        0.78394637046749738,
+        1.00214013973588,
+        1.141234407607552,
+        0.845443837466477,
+        1.1269364948078211,
+    };
+    check(fineLevel.samples.size() == phases.size()
+              && fineLevel.acceptedSampleCount == phases.size()
+              && fineLevel.rejectedLocalCellLinearConsistencySampleCount == 0
+              && std::abs(fineLevel.minimumNormalizedConductance
+                          - 0.62454444526833486) < 1.0e-12
+              && std::abs(fineLevel.maximumNormalizedConductance
+                          - 1.141234407607552) < 1.0e-12
+              && std::abs(fineLevel.meanNormalizedConductance
+                          - 0.90256996691670954) < 1.0e-12
+              && std::abs(
+                  fineLevel.normalizedConductanceCoefficientOfVariation
+                  - 0.20104176667262066) < 1.0e-12,
+          "16-cubed mimetic audit retains the complete phase spectrum");
+    for (std::size_t phaseIndex = 0;
+         phaseIndex < fineLevel.samples.size(); ++phaseIndex) {
+        const auto& sample = fineLevel.samples[phaseIndex];
+        check(sample.status
+                      == fsi::ScenePressureCellMimeticConductancePhaseSampleStatus::Accepted
+                  && sample.conductanceAudit.has_value()
+                  && !sample.localCellLinearConsistencyRejection.has_value()
+                  && sample.openingTraceCount
+                      == fineOpeningCounts[phaseIndex]
+                  && std::abs(sample.normalizedConductance
+                              - fineNormalized[phaseIndex]) < 1.0e-12,
+              "16-cubed mimetic audit locks each uncensored phase response");
+    }
+    check(fineLevel.normalizedConductanceCoefficientOfVariation
+                  < 0.55 * audit.levels[2]
+                      .normalizedConductanceCoefficientOfVariation,
+          "uncensored phase sensitivity contracts materially from 8 to 16 cubed");
 
     auto corrupt = audit;
     corrupt.levels[2].samples[1].normalizedConductance += 1.0e-6;

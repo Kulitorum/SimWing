@@ -103,6 +103,37 @@ Scene boundarySplitScene(
     return scene;
 }
 
+Scene thinBoundarySplitScene() {
+    Scene scene;
+    scene.metadata.designChecksum =
+        "sha256:scene-face-thin-boundary-split";
+    scene.metadata.exporterVersion = "scene-face-partition-test/5";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "cell"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900, 650, 220, 0.015, 0.041, 0.02,
+         0.0125, 2.5e-12},
+    };
+    constexpr double splitY = 3.0 - 1.0e-8;
+    scene.vertices = {
+        {10, {1.2, splitY, 0.8}},
+        {11, {2.8, splitY, 0.8}},
+        {12, {2.8, splitY, 2.2}},
+        {13, {1.2, splitY, 2.2}},
+    };
+    scene.triangles = {
+        {500, {10, 11, 12},
+         {{{0.0, 0.0}, {1.6, 0.0}, {1.6, 1.4}}},
+         1, 2, 100, 900, SurfaceRole::Skin},
+        {501, {10, 12, 13},
+         {{{0.0, 0.0}, {1.6, 1.4}, {0.0, 1.4}}},
+         1, 2, 100, 900, SurfaceRole::Skin},
+    };
+    return scene;
+}
+
 Scene boundaryJunctionScene(
     const GridFaceAxis axis = GridFaceAxis::X) {
     Scene scene;
@@ -411,6 +442,34 @@ void testBoundaryOpenChainPartition() {
         checkRegionMoments(
             rotatedPartitions, *rotatedFound,
             rotated.topology.activeFaces[rotatedFound->activeFaceIndex]);
+    }
+
+    Pipeline thin(thinBoundarySplitScene());
+    const auto thinPartitions = partitions(thin);
+    const auto thinFound = std::ranges::find(
+        thinPartitions.partitions,
+        SceneFluidFacePartitionKind::BoundaryOpenChain,
+        &SceneFluidFacePartition::kind);
+    check(thinFound != thinPartitions.partitions.end()
+              && thinFound->regionAreaCount == 2,
+          "face partition: thin complementary boundary region resolves");
+    if (thinFound != thinPartitions.partitions.end()
+        && thinFound->regionAreaCount == 2) {
+        const auto firstArea = thinPartitions.regionAreas.begin()
+            + static_cast<std::ptrdiff_t>(thinFound->firstRegionArea);
+        const auto lastArea = firstArea
+            + static_cast<std::ptrdiff_t>(thinFound->regionAreaCount);
+        const auto thinArea = std::ranges::min_element(
+            firstArea, lastArea, {},
+            &SceneFluidFaceRegionArea::areaSquareMeters);
+        checkNear(thinArea->areaSquareMeters, 1.0e-8, 5.0e-15,
+                  "face partition: thin complement retains its area");
+        checkNear(thinArea->centroidMeters.x, 2.0, 5.0e-15,
+                  "face partition: thin complement stays on its face plane");
+        checkNear(thinArea->centroidMeters.y, 3.0 - 5.0e-9, 5.0e-15,
+                  "face partition: thin complement uses polygon-local centroid evidence");
+        checkNear(thinArea->centroidMeters.z, 1.5, 5.0e-15,
+                  "face partition: thin complement keeps its spanwise centroid");
     }
 
     SceneFluidFacePartitionLimits limits;

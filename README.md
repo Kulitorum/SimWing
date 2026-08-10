@@ -866,16 +866,26 @@ by aperture area. The direct condensed solve reports conductance from
 gauge-invariant source work. It gives `0.0700820848335194 m` on the
 face-aligned case, within `3.6e-14 m` of the earlier graph-manufactured shadow
 measurement, and `0.0608388978079475 m` on the embedded two-point fixture.
-The resulting graph-independent matrix now retains and solves all 24 requested
+The resulting graph-independent matrix now retains and solves all 32 requested
 phase/refinement attempts. The normalized mean/CV values at `2^3`, `4^3`, and
 `8^3` are `0.100660/0.01043`, `0.240930/0.39050`, and
-`0.521248/0.38828`; the fine range is `0.293734`-`0.888671`. The five former
+`0.521248/0.38828`; at `16^3` they are `0.902570/0.20104`, with range
+`0.624544`-`1.141234`. The five former `8^3`
 fine-grid failures were not ill-conditioned inversions. Tiny Cartesian
 subfaces were measured with absolute-coordinate shoelace moments, and
 triangle/grid-edge vertices inherited whichever sequential clipping path
 created them. Face-local moment charts plus canonical authored-triangle/two-
 grid-plane nodes remove that precision loss without fitting closure or
-relaxing the unchanged `1e-10` algebraic tolerance. The live 600-step trace
+relaxing the unchanged `1e-10` algebraic tolerance. At `16^3`, tiny
+full-minus-positive boundary complements additionally take their centroid
+from an independently integrated reverse polygon when the subtraction error
+exceeds a fixed coordinate-ULP envelope. The resulting four-face/two-wall
+sliver closes its divergence moment to `2.14e-21 m^3`; if its normal `7 x 7`
+wall auxiliary core is numerically singular, a bounded direct principal-block
+fallback retains the exact Schur metric without persistent dense storage. All
+eight phases then solve, and phase CV contracts by about 48% from `8^3` to
+`16^3`. This single interval is useful evidence, not a convergence claim. The
+live 600-step trace
 and audited checkpoint remain byte-identical. The complete phase matrix still
 does not establish shadow convergence or authorize a live solver switch; the
 uniform area-weighted multi-opening source also differs intentionally from the
@@ -884,7 +894,7 @@ A separate origin-invariance oracle moves that same `8^3`, phase
 `[0,-0.5,0]` sample and its grid together by `[256,-512,1024] m`. All 524
 controls, full/reduced traces, and four opening traces retain their topology;
 the intake area changes by only `5.93e-14 m^2` and normalized conductance by
-`1.27e-11`. Adjacent-cell crossings now compare geometric position plus
+`5.59e-12`. Adjacent-cell crossings now compare geometric position plus
 barycentric zero/nonzero provenance, canonical face nodes admit only a fixed
 coordinate-ULP envelope, and capped arrangements switch to a local chart when
 that envelope exceeds their declared minimum tolerance. The ordinary-origin

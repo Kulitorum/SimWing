@@ -13,6 +13,7 @@ namespace {
 
 constexpr std::uint64_t fnvOffsetBasis = 14695981039346656037ULL;
 constexpr std::uint64_t fnvPrime = 1099511628211ULL;
+constexpr std::size_t maximumDirectWallFallbackFaces = 8;
 
 class Fingerprint final {
 public:
@@ -232,10 +233,129 @@ std::vector<double> applyFullLocalTraceOperator(
     return result;
 }
 
+std::vector<std::size_t> wallFaceIndices(
+    const MimeticWallCondensation& condensation) {
+    std::vector<std::size_t> result;
+    result.reserve(condensation.wallHalfFaceCount);
+    for (std::size_t face = 0;
+         face < condensation.halfFaceCount; ++face) {
+        if (condensation.wallMask[face] != 0) result.push_back(face);
+    }
+    return result;
+}
+
+std::vector<double> directWallBlockInverse(
+    const MimeticWallCondensation& condensation,
+    const MimeticLocalCellOperator& localOperator) {
+    const auto walls = wallFaceIndices(condensation);
+    const std::size_t count = walls.size();
+    if (count == 0 || count > maximumDirectWallFallbackFaces) {
+        throw std::invalid_argument(
+            "mimetic wall-condensation wall block is singular");
+    }
+    std::vector<double> matrix(count * count, 0.0);
+    std::vector<double> basis(condensation.halfFaceCount, 0.0);
+    for (std::size_t column = 0; column < count; ++column) {
+        basis[walls[column]] = 1.0;
+        const auto action = applyFullLocalTraceOperator(
+            localOperator, basis);
+        basis[walls[column]] = 0.0;
+        for (std::size_t row = 0; row < count; ++row) {
+            matrix[row * count + column] = action[walls[row]];
+        }
+    }
+    for (std::size_t row = 0; row < count; ++row) {
+        for (std::size_t column = row + 1;
+             column < count; ++column) {
+            const double symmetric = 0.5
+                * (matrix[row * count + column]
+                   + matrix[column * count + row]);
+            matrix[row * count + column] = symmetric;
+            matrix[column * count + row] = symmetric;
+        }
+    }
+    std::array<double,
+               maximumDirectWallFallbackFaces
+                   * maximumDirectWallFallbackFaces> padded{};
+    for (std::size_t row = 0; row < count; ++row) {
+        for (std::size_t column = 0; column < count; ++column) {
+            padded[row * maximumDirectWallFallbackFaces + column] =
+                matrix[row * count + column];
+        }
+    }
+    for (std::size_t diagonal = count;
+         diagonal < maximumDirectWallFallbackFaces; ++diagonal) {
+        padded[diagonal * maximumDirectWallFallbackFaces + diagonal] = 1.0;
+    }
+    const auto paddedInverse =
+        invertEquilibrated<maximumDirectWallFallbackFaces>(
+            padded,
+            "mimetic wall-condensation wall block is singular");
+    std::vector<double> result(count * count, 0.0);
+    for (std::size_t row = 0; row < count; ++row) {
+        for (std::size_t column = 0; column < count; ++column) {
+            result[row * count + column] = paddedInverse[
+                row * maximumDirectWallFallbackFaces + column];
+        }
+    }
+    return result;
+}
+
+bool usesDirectWallFallback(
+    const MimeticWallCondensation& condensation) {
+    return condensation.wallHalfFaceCount != 0
+        && std::ranges::all_of(
+            condensation.inverseWoodburyCore,
+            [](const double value) { return value == 0.0; });
+}
+
+void populateDirectWallSchurMetric(
+    MimeticWallCondensation& condensation,
+    const MimeticLocalCellOperator& localOperator,
+    const std::vector<double>& inverseWallBlock) {
+    const auto walls = wallFaceIndices(condensation);
+    const std::size_t count = walls.size();
+    std::vector<std::array<double, 7>> rows;
+    rows.reserve(count);
+    for (const std::size_t face : walls) {
+        rows.push_back(lowRankRow(localOperator, condensation, face));
+    }
+    for (std::size_t first = 0; first < 7; ++first) {
+        for (std::size_t second = 0; second < 7; ++second) {
+            CompensatedSum value;
+            for (std::size_t row = 0; row < count; ++row) {
+                for (std::size_t column = 0; column < count; ++column) {
+                    value.add(rows[row][first]
+                              * inverseWallBlock[row * count + column]
+                              * rows[column][second]);
+                }
+            }
+            condensation.wallSchurMetric[first * 7 + second] =
+                value.value();
+        }
+    }
+}
+
 std::vector<double> solveWallBlock(
     const MimeticWallCondensation& condensation,
     const MimeticLocalCellOperator& localOperator,
     const std::span<const double> rightHandSide) {
+    if (usesDirectWallFallback(condensation)) {
+        const auto walls = wallFaceIndices(condensation);
+        const auto inverse = directWallBlockInverse(
+            condensation, localOperator);
+        std::vector<double> result(condensation.halfFaceCount, 0.0);
+        for (std::size_t row = 0; row < walls.size(); ++row) {
+            CompensatedSum value;
+            for (std::size_t column = 0;
+                 column < walls.size(); ++column) {
+                value.add(inverse[row * walls.size() + column]
+                          * rightHandSide[walls[column]]);
+            }
+            result[walls[row]] = value.value();
+        }
+        return result;
+    }
     std::array<CompensatedSum, 7> transposeScaledRightHandSide;
     for (std::size_t face = 0;
          face < condensation.halfFaceCount; ++face) {
@@ -389,29 +509,40 @@ MimeticWallCondensation buildMimeticWallCondensation(
             }
         }
         woodburyCore[6 * 7 + 6] -= result.conservationDenominator;
-        result.inverseWoodburyCore = invertEquilibrated<7>(
-            woodburyCore,
-            "mimetic wall-condensation wall block is singular");
+        bool directWallFallback = false;
+        try {
+            result.inverseWoodburyCore = invertEquilibrated<7>(
+                woodburyCore,
+                "mimetic wall-condensation wall block is singular");
+        } catch (const std::invalid_argument&) {
+            const auto inverseWallBlock = directWallBlockInverse(
+                result, localOperator);
+            populateDirectWallSchurMetric(
+                result, localOperator, inverseWallBlock);
+            directWallFallback = true;
+        }
 
-        std::array<double, 49> gramInverseCore{};
-        for (std::size_t row = 0; row < 7; ++row) {
-            for (std::size_t column = 0; column < 7; ++column) {
-                for (std::size_t middle = 0; middle < 7; ++middle) {
-                    gramInverseCore[row * 7 + column] +=
-                        gram[row * 7 + middle]
-                        * result.inverseWoodburyCore[
-                            middle * 7 + column];
+        if (!directWallFallback) {
+            std::array<double, 49> gramInverseCore{};
+            for (std::size_t row = 0; row < 7; ++row) {
+                for (std::size_t column = 0; column < 7; ++column) {
+                    for (std::size_t middle = 0; middle < 7; ++middle) {
+                        gramInverseCore[row * 7 + column] +=
+                            gram[row * 7 + middle]
+                            * result.inverseWoodburyCore[
+                                middle * 7 + column];
+                    }
                 }
             }
-        }
-        for (std::size_t row = 0; row < 7; ++row) {
-            for (std::size_t column = 0; column < 7; ++column) {
-                double value = gram[row * 7 + column];
-                for (std::size_t middle = 0; middle < 7; ++middle) {
-                    value -= gramInverseCore[row * 7 + middle]
-                        * gram[middle * 7 + column];
+            for (std::size_t row = 0; row < 7; ++row) {
+                for (std::size_t column = 0; column < 7; ++column) {
+                    double value = gram[row * 7 + column];
+                    for (std::size_t middle = 0; middle < 7; ++middle) {
+                        value -= gramInverseCore[row * 7 + middle]
+                            * gram[middle * 7 + column];
+                    }
+                    result.wallSchurMetric[row * 7 + column] = value;
                 }
-                result.wallSchurMetric[row * 7 + column] = value;
             }
         }
     }

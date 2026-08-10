@@ -160,6 +160,35 @@ MimeticLocalCellGeometry tetrahedron() {
     return result;
 }
 
+MimeticLocalCellGeometry refinementSliverTetrahedron() {
+    MimeticLocalCellGeometry result;
+    result.volumeCubicMeters = 4.3528837263897574e-10;
+    result.centroidMeters = {
+        1.8742365269461077,
+        1.6251551094890513,
+        1.3229893292386605,
+    };
+    result.halfFaces = {
+        {2.1047473077046019e-6,
+         {1.8739820359281436, 1.625, 1.323131757719674},
+         {-0.0, -1.0, -0.0}},
+        {4.2760681312481452e-7,
+         {1.875, 1.6252068126520682, 1.3229658122383738},
+         {1.0, 0.0, 0.0}},
+        {9.7279178828647638e-7,
+         {1.8739820359281438, 1.6252068126520682,
+          1.3227001396418356},
+         {-0.18540120411175132, 0.13114283778281025,
+          -0.97387265574724102}},
+        {2.206323684897109e-6,
+         {1.8739820359281438, 1.6252068126520682,
+          1.3231596073547585},
+         {-0.11206426596223712, 0.89613896888568934,
+          0.42939090435038157}},
+    };
+    return result;
+}
+
 double scalarAt(const double constant,
                 const Vector3 gradient,
                 const Vector3 position) {
@@ -546,6 +575,76 @@ void testExactMaterialWallCondensation() {
     }
 }
 
+void testSliverMaterialWallCondensationFallback() {
+    const auto localOperator = buildMimeticLocalCellOperator(
+        refinementSliverTetrahedron());
+    const std::vector<std::uint8_t> wallMask{0, 0, 1, 1};
+    const auto condensation = buildMimeticWallCondensation(
+        localOperator, wallMask);
+    check(std::ranges::all_of(
+              condensation.inverseWoodburyCore,
+              [](const double value) { return value == 0.0; })
+              && condensation.wallHalfFaceCount == 2
+              && condensation.activeHalfFaceCount == 2,
+          "sliver wall condensation selects the bounded direct fallback");
+
+    const auto fullMatrix = denseTraceMatrix(localOperator);
+    const std::vector<std::size_t> active{0, 1};
+    const std::vector<std::size_t> walls{2, 3};
+    const std::vector<double> activeValues{0.7, -0.25, 0.0, 0.0};
+    std::vector<double> wallMatrix(4, 0.0);
+    std::vector<double> wallCoupling(2, 0.0);
+    for (std::size_t row = 0; row < walls.size(); ++row) {
+        for (std::size_t column = 0;
+             column < walls.size(); ++column) {
+            wallMatrix[row * walls.size() + column] = fullMatrix[
+                walls[row] * 4 + walls[column]];
+        }
+        for (const std::size_t activeFace : active) {
+            wallCoupling[row] += fullMatrix[
+                walls[row] * 4 + activeFace]
+                * activeValues[activeFace];
+        }
+    }
+    const auto wallSolution = solveDense(wallMatrix, wallCoupling);
+    auto denseValues = activeValues;
+    for (std::size_t wall = 0; wall < walls.size(); ++wall) {
+        denseValues[walls[wall]] = -wallSolution[wall];
+    }
+    const auto denseOracle = multiplyDense(fullMatrix, denseValues);
+    const auto condensed = applyMimeticWallCondensedTraceOperator(
+        condensation, localOperator, activeValues);
+    for (const std::size_t face : active) {
+        checkNear(condensed[face], denseOracle[face], 2.0e-11,
+                  "direct sliver wall Schur action matches the dense oracle");
+    }
+
+    const std::vector<double> manufactured{1.2, -0.4, 0.7, 2.1};
+    const auto fullRightHandSide = multiplyDense(
+        fullMatrix, manufactured);
+    auto manufacturedActive = manufactured;
+    manufacturedActive[2] = 0.0;
+    manufacturedActive[3] = 0.0;
+    const auto condensedRightHandSide =
+        condenseMimeticWallTraceRightHandSide(
+            condensation, localOperator, fullRightHandSide);
+    const auto manufacturedAction =
+        applyMimeticWallCondensedTraceOperator(
+            condensation, localOperator, manufacturedActive);
+    for (const std::size_t face : active) {
+        checkNear(condensedRightHandSide[face],
+                  manufacturedAction[face], 3.0e-11,
+                  "direct sliver wall RHS matches its Schur action");
+    }
+    const auto reconstructed = reconstructMimeticWallTraces(
+        condensation, localOperator, fullRightHandSide,
+        manufacturedActive);
+    for (std::size_t face = 0; face < reconstructed.size(); ++face) {
+        checkNear(reconstructed[face], manufactured[face], 3.0e-11,
+                  "direct sliver wall solve reconstructs the dense field");
+    }
+}
+
 void testWallCondensationRejection() {
     const auto localOperator = buildMimeticLocalCellOperator(
         cuboid({}, {2.0, 4.0, 6.0}));
@@ -685,6 +784,7 @@ int main() {
         testCartesianEquivalence();
         testTetrahedralConsistencyAndBalance();
         testExactMaterialWallCondensation();
+        testSliverMaterialWallCondensationFallback();
         testWallCondensationRejection();
         testRejectedGeometryAndCorruption();
     } catch (const std::exception& exception) {

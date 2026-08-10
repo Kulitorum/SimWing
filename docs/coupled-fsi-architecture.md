@@ -1054,16 +1054,21 @@ K = blockdiag((N^T R)^-1, -gamma (R^T R)^-1, -1/d).
 ```
 
 The wall principal block is positive definite whenever at least one active
-trace remains. Its inverse therefore uses one equilibrated `7 x 7` Woodbury
-core and linear wall-face work; no dense wall matrix is stored. The kernel
+trace remains. Its inverse normally uses one equilibrated `7 x 7` Woodbury
+core and linear wall-face work. When that auxiliary core is numerically
+singular but a wall block of at most eight faces is independently invertible,
+the kernel reconstructs the bounded principal block, retains its exact
+seven-mode Schur metric, and rebuilds the small solve from the immutable local
+operator on demand; no dense wall matrix is stored. The kernel
 publishes the exact active Schur action and diagonal, condenses a full local
 right-hand side, and reconstructs the eliminated wall traces. With
 `Q = U_w^T H_ww^-1 U_w`, repeated action is fused directly as
 `D_a + U_a (K - K Q K) U_a^T`; it no longer evaluates two full local balances
 and a wall solve. Independent dense tetrahedral oracles verify all four
 operations, the active constant null mode, the no-wall identity path, bounds,
-and fingerprinted corruption rejection. An all-wall cell rejects because its
-constant mode requires a global gauge rather than an invertible wall block.
+and fingerprinted corruption rejection. A four-face refinement sliver with
+two walls is the direct-fallback regression. An all-wall cell rejects because
+its constant mode requires a global gauge rather than an invertible wall block.
 
 `src/fsi/scene_fluid_mimetic_condensed_trace_system.*` composes those local
 Schur products into one immutable global field containing only shared
@@ -1391,6 +1396,7 @@ region, residual, and tolerance.
 | `2^3` | `8 / 8` | `0.099348` - `0.101965` | `0.100660 / 0.01043` |
 | `4^3` | `8 / 8` | `0.129253` - `0.408781` | `0.240930 / 0.39050` |
 | `8^3` | `8 / 8` | `0.293734` - `0.888671` | `0.521248 / 0.38828` |
+| `16^3` | `8 / 8` | `0.624544` - `1.141234` | `0.902570 / 0.20104` |
 
 Thus the earlier `4/8` and `6/8` coarse graph yields really were censoring the
 shadow placement spectrum. The five former fine-grid rejections diagnosed a
@@ -1401,8 +1407,18 @@ The face partitioners now integrate each polygon in a face-local chart and
 translate only the published centroid/first moment; the face graph
 canonicalizes a grid-edge node from the authored triangle plane and its two
 exact Cartesian planes. All `8/8` fine phases now satisfy the unchanged
-`1e-10` algebraic-consistency tolerance, without closure fitting. The sequence
-is still not a convergence result. Because one authored aperture can become
+`1e-10` algebraic-consistency tolerance, without closure fitting. Extending
+the same uncensored ensemble to `16^3` exposed two still smaller open-chain
+complements. Their closure area remains the exact full-minus-positive
+difference, but their centroids now use the independently integrated reverse
+boundary polygon whenever subtraction loses more than a fixed coordinate-ULP
+envelope. This reduced the representative sliver's divergence-moment defect
+from `6.80e-19` to `2.14e-21 m^3`. Its valid four-face operator then exposed a
+numerically singular low-rank wall auxiliary core; the bounded direct wall
+fallback above accepts it without changing the normal Woodbury path. All
+`8/8` phases now solve at `16^3`, and phase CV contracts from `0.38828` to
+`0.20104`. One refinement interval is useful continuum evidence but is still
+not a convergence result. Because one authored aperture can become
 several embedded traces, this audit's uniform area-weighted Neumann source
 also differs from the older graph-manufactured source on multi-opening
 placements. The live 600-step trace and audited checkpoint remain
@@ -1413,7 +1429,7 @@ scene and periodic grid, making coordinate-origin sensitivity observable
 without changing relative geometry. Translating the `8^3`, phase
 `[0,-0.5,0]` sample by `[256,-512,1024] m` preserves all 524 controls,
 full/reduced trace counts, and four opening traces. Its intake-area delta is
-`5.93e-14 m^2` and its normalized-conductance delta is `1.27e-11`. This
+`5.93e-14 m^2` and its normalized-conductance delta is `5.59e-12`. This
 required geometric pairing to compare redundant clipped barycentrics by
 zero/nonzero provenance, canonical face-node checks to include a fixed ULP
 envelope, and capped arrangements to enter a local chart only when the

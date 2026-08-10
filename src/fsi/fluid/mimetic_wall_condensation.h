@@ -23,10 +23,14 @@ struct MimeticWallCondensationSettings {
 // Exact local Schur data for eliminating prescribed-zero-flux material-wall
 // trace equations from one already condensed cell-scalar operator. The local
 // trace matrix is diagonal plus seven signed low-rank modes, so the wall block
-// inverse retains only one equilibrated 7x7 Woodbury inverse plus linear face
-// data. Active traces remain in their original local indices. A cell with no
-// walls is the exact identity case; an all-wall cell rejects because its local
-// constant mode needs a global gauge rather than a wall Schur inverse.
+// inverse normally retains only one equilibrated 7x7 Woodbury inverse plus
+// linear face data. If that auxiliary inverse is numerically singular but a
+// bounded wall principal block of at most eight faces remains invertible, its
+// exact Schur metric is retained instead and later wall solves reconstruct the
+// small block from the immutable local operator. Active traces remain in their
+// original local indices. A cell with no walls is the exact identity case; an
+// all-wall cell rejects because its local constant mode needs a global gauge
+// rather than a wall Schur inverse.
 struct MimeticWallCondensation {
     std::uint32_t version = mimeticWallCondensationVersion;
     std::uint64_t fingerprint = 0;

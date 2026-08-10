@@ -147,7 +147,35 @@ struct AreaMoment2 {
     double areaSquareMeters = 0.0;
     double firstMomentUMeters3 = 0.0;
     double firstMomentVMeters3 = 0.0;
+    // A small boundary polygon can be physically independent of the opposite
+    // face corner. Retain its centroid in the polygon-local chart when the
+    // algebraically equivalent lower-corner reconstruction loses more than a
+    // fixed coordinate-roundoff envelope.
+    double centroidUOverrideMeters = 0.0;
+    double centroidVOverrideMeters = 0.0;
+    bool useCentroidUOverride = false;
+    bool useCentroidVOverride = false;
 };
+
+struct BoundaryChainAreaMoments {
+    AreaMoment2 positive;
+    AreaMoment2 negativePolygonEvidence;
+};
+
+double coordinateRoundoffTolerance(const FaceBounds& bounds,
+                                    const Point2& reference) {
+    const double coordinateScale = std::max({
+        1.0,
+        std::abs(bounds.minimumU),
+        std::abs(bounds.maximumU),
+        std::abs(bounds.minimumV),
+        std::abs(bounds.maximumV),
+        std::abs(reference.u),
+        std::abs(reference.v),
+    });
+    return 64.0 * std::numeric_limits<double>::epsilon()
+        * coordinateScale;
+}
 
 AreaMoment2 polygonAreaMoment(const std::vector<Point2>& polygon,
                              const FaceBounds& bounds) {
@@ -172,10 +200,35 @@ AreaMoment2 polygonAreaMoment(const std::vector<Point2>& polygon,
         result.firstMomentVMeters3 +=
             (localFirst.v + localSecond.v) * cross / 6.0;
     }
+    const double localFirstMomentU = result.firstMomentUMeters3;
+    const double localFirstMomentV = result.firstMomentVMeters3;
     result.firstMomentUMeters3 += result.areaSquareMeters
         * (momentReference.u - bounds.minimumU);
     result.firstMomentVMeters3 += result.areaSquareMeters
         * (momentReference.v - bounds.minimumV);
+    if (std::isfinite(result.areaSquareMeters)
+        && result.areaSquareMeters != 0.0) {
+        const double directCentroidU = momentReference.u
+            + localFirstMomentU / result.areaSquareMeters;
+        const double directCentroidV = momentReference.v
+            + localFirstMomentV / result.areaSquareMeters;
+        const double lowerCornerCentroidU = bounds.minimumU
+            + result.firstMomentUMeters3 / result.areaSquareMeters;
+        const double lowerCornerCentroidV = bounds.minimumV
+            + result.firstMomentVMeters3 / result.areaSquareMeters;
+        const double roundoffTolerance = coordinateRoundoffTolerance(
+            bounds, momentReference);
+        result.centroidUOverrideMeters = directCentroidU;
+        result.centroidVOverrideMeters = directCentroidV;
+        result.useCentroidUOverride = std::isfinite(directCentroidU)
+            && std::isfinite(lowerCornerCentroidU)
+            && std::abs(directCentroidU - lowerCornerCentroidU)
+                > roundoffTolerance;
+        result.useCentroidVOverride = std::isfinite(directCentroidV)
+            && std::isfinite(lowerCornerCentroidV)
+            && std::abs(directCentroidV - lowerCornerCentroidV)
+                > roundoffTolerance;
+    }
     return result;
 }
 
@@ -213,10 +266,14 @@ SceneFluidFaceRegionArea makeRegionArea(
     result.regionId = regionId;
     result.areaSquareMeters = moment.areaSquareMeters;
     if (moment.areaSquareMeters > 0.0) {
-        const double centroidU = bounds.minimumU
-            + moment.firstMomentUMeters3 / moment.areaSquareMeters;
-        const double centroidV = bounds.minimumV
-            + moment.firstMomentVMeters3 / moment.areaSquareMeters;
+        const double centroidU = moment.useCentroidUOverride
+            ? moment.centroidUOverrideMeters
+            : bounds.minimumU
+                + moment.firstMomentUMeters3 / moment.areaSquareMeters;
+        const double centroidV = moment.useCentroidVOverride
+            ? moment.centroidVOverrideMeters
+            : bounds.minimumV
+                + moment.firstMomentVMeters3 / moment.areaSquareMeters;
         if (axis == GridFaceAxis::X) {
             result.centroidMeters = {
                 planeCoordinateMeters, centroidU, centroidV};
@@ -298,7 +355,7 @@ double boundaryParameter(const Point2& point,
         "scene fluid boundary-chain endpoint is not on its face boundary");
 }
 
-AreaMoment2 boundaryChainPositiveAreaMoment(
+BoundaryChainAreaMoments boundaryChainAreaMoments(
     const SceneFluidActiveFace& face,
     const SceneFluidFaceChain& chain,
     const SceneFluidFaceChainSet& chains,
@@ -409,7 +466,46 @@ AreaMoment2 boundaryChainPositiveAreaMoment(
         throw std::invalid_argument(
             "scene fluid boundary face-chain area is invalid");
     }
-    return positiveMoment;
+    std::vector<Point2> negativePolygon;
+    negativePolygon.reserve(chain.nodeReferenceCount + 4);
+    for (std::size_t offset = chain.nodeReferenceCount;
+         offset > 0; --offset) {
+        negativePolygon.push_back(facePoint(
+            face.axis, graph.nodes[chains.nodeReferences[
+                chain.firstNodeReference + offset - 1]].positionMeters));
+    }
+    const double negativeStartParameter = boundaryParameter(
+        negativePolygon.front(), bounds,
+        settings.geometryToleranceMeters);
+    const double negativeEndParameter = boundaryParameter(
+        negativePolygon.back(), bounds,
+        settings.geometryToleranceMeters);
+    double negativeTargetParameter = negativeStartParameter;
+    if (negativeTargetParameter <= negativeEndParameter
+        + settings.geometryToleranceMeters) {
+        negativeTargetParameter += perimeter;
+    }
+    traversedCorners.clear();
+    for (const auto& [baseParameter, point] : corners) {
+        double parameter = baseParameter;
+        while (parameter <= negativeEndParameter
+               + settings.geometryToleranceMeters) {
+            parameter += perimeter;
+        }
+        if (parameter < negativeTargetParameter
+            - settings.geometryToleranceMeters) {
+            traversedCorners.emplace_back(parameter, point);
+        }
+    }
+    std::ranges::sort(traversedCorners, {},
+                      &std::pair<double, Point2>::first);
+    for (const auto& [parameter, point] : traversedCorners) {
+        static_cast<void>(parameter);
+        negativePolygon.push_back(point);
+    }
+    const auto negativePolygonEvidence = polygonAreaMoment(
+        negativePolygon, bounds);
+    return {positiveMoment, negativePolygonEvidence};
 }
 
 struct ArrangementNode {
@@ -1112,11 +1208,12 @@ SceneFluidFacePartitionSet buildPartitions(
             result.openChainReferences.push_back(chainIndex);
             partition.faceAreaSquareMeters = faceArea(grid, face.axis);
             const FaceBounds bounds = faceBounds(grid, face);
-            const auto positiveMoment = boundaryChainPositiveAreaMoment(
+            const auto boundaryMoments = boundaryChainAreaMoments(
                 face, chain, chains, graph, grid, settings, limits,
                 result.segmentPairTestCount);
+            const auto& positiveMoment = boundaryMoments.positive;
             const auto fullMoment = rectangleAreaMoment(bounds);
-            const AreaMoment2 negativeMoment{
+            AreaMoment2 negativeMoment{
                 fullMoment.areaSquareMeters
                     - positiveMoment.areaSquareMeters,
                 fullMoment.firstMomentUMeters3
@@ -1124,6 +1221,48 @@ SceneFluidFacePartitionSet buildPartitions(
                 fullMoment.firstMomentVMeters3
                     - positiveMoment.firstMomentVMeters3,
             };
+            const auto& negativeEvidence =
+                boundaryMoments.negativePolygonEvidence;
+            const double legacyNegativeCentroidU = bounds.minimumU
+                + negativeMoment.firstMomentUMeters3
+                    / negativeMoment.areaSquareMeters;
+            const double legacyNegativeCentroidV = bounds.minimumV
+                + negativeMoment.firstMomentVMeters3
+                    / negativeMoment.areaSquareMeters;
+            const Point2 negativeCentroid{
+                negativeEvidence.centroidUOverrideMeters,
+                negativeEvidence.centroidVOverrideMeters,
+            };
+            const double negativeRoundoffTolerance =
+                coordinateRoundoffTolerance(bounds, negativeCentroid);
+            negativeMoment.centroidUOverrideMeters = negativeCentroid.u;
+            negativeMoment.centroidVOverrideMeters = negativeCentroid.v;
+            const double evidenceAreaTolerance =
+                settings.areaClosureToleranceSquareMeters
+                + 64.0 * std::numeric_limits<double>::epsilon()
+                    * fullMoment.areaSquareMeters;
+            const bool usableNegativeEvidence =
+                std::isfinite(negativeEvidence.areaSquareMeters)
+                && negativeEvidence.areaSquareMeters > 0.0
+                && negativeEvidence.areaSquareMeters
+                    < fullMoment.areaSquareMeters
+                && std::isfinite(
+                    negativeEvidence.firstMomentUMeters3)
+                && std::isfinite(
+                    negativeEvidence.firstMomentVMeters3)
+                && std::abs(negativeMoment.areaSquareMeters
+                            - negativeEvidence.areaSquareMeters)
+                    <= evidenceAreaTolerance;
+            negativeMoment.useCentroidUOverride = usableNegativeEvidence
+                && std::isfinite(legacyNegativeCentroidU)
+                && std::isfinite(negativeCentroid.u)
+                && std::abs(legacyNegativeCentroidU - negativeCentroid.u)
+                    > negativeRoundoffTolerance;
+            negativeMoment.useCentroidVOverride = usableNegativeEvidence
+                && std::isfinite(legacyNegativeCentroidV)
+                && std::isfinite(negativeCentroid.v)
+                && std::abs(legacyNegativeCentroidV - negativeCentroid.v)
+                    > negativeRoundoffTolerance;
             std::map<StableId, AreaMoment2> areas;
             areas.emplace(chain.positiveSideRegionId, positiveMoment);
             areas.emplace(chain.negativeSideRegionId, negativeMoment);
