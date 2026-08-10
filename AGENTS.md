@@ -1878,6 +1878,12 @@ makes this a certified aerodynamic solver.
   derived intervals, stable-ID chain order, sorted region/global ledgers,
   tolerance flags, and storage accounting. It is an offline screen and never
   advances or applies fluid state.
+- `src/fsi/fluid/planar_region_opening_flow.{h,cpp}` consumes the same sweep
+  plus explicit oriented analytic opening links. It requires independent
+  connected-component source balance and solves a bounded gauge-fixed
+  area-weighted graph Laplacian for the minimum-norm compatible flow. Sealed
+  breathing remains infeasible; the output is fingerprinted, source-bound,
+  and never becomes a pressure, velocity, or scene-aperture state.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2176,6 +2182,17 @@ diagnostic; never interpret its least-squares interval velocity as a production
 regional projection. Require deterministic nonzero fingerprints, and mutate
 primitive/derived interval fields, surface identity, region order, aggregates,
 finiteness, tolerance policy, and validator limits to prove deep rejection.
+
+For `planar_region_opening_flow.*`, require sealed rigid motion to remain
+feasible with zero flow and sealed breathing to fail per connected component
+even when the global volume change cancels. One oriented opening must close the
+canonical pocket with the correct sign; reversing it reverses flow. Parallel
+openings split by area at equal normal velocity, a serial three-region graph
+balances its intermediate region, and X/Y/Z follow physical swept volume.
+Reject foreign/same-region/duplicate/zero-area openings, corrupted immutable
+outputs, invalid settings, and interval/region/opening/owned-byte/dense-byte/
+factorization-work limit violations. Do not treat this analytic graph oracle as
+scene-v2 opening geometry or production fluid state.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

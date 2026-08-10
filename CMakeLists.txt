@@ -558,6 +558,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/planar_region_sweep.h
     src/fsi/fluid/planar_region_flux.cpp
     src/fsi/fluid/planar_region_flux.h
+    src/fsi/fluid/planar_region_opening_flow.cpp
+    src/fsi/fluid/planar_region_opening_flow.h
     src/fsi/fluid/planar_cut_surface.cpp
     src/fsi/fluid/planar_cut_surface.h
     src/fsi/fluid/porous_interface.cpp

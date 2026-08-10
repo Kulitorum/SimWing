@@ -1,5 +1,6 @@
 #include "fluid/planar_pressure_jump.h"
 #include "fluid/planar_region_flux.h"
+#include "fluid/planar_region_opening_flow.h"
 #include "fluid/planar_region_sweep.h"
 #include "fluid/projection.h"
 
@@ -137,6 +138,15 @@ const PlanarPressureRegionFluxSummary* findFluxRegion(
             return region.regionStableId == regionStableId;
         });
     return found == compatibility.regions.end() ? nullptr : &*found;
+}
+
+const PlanarPressureRegionOpeningBalance* findOpeningRegion(
+    const PlanarPressureRegionOpeningFlowAllocation& allocation,
+    const std::uint64_t regionStableId) {
+    const auto found = std::ranges::find(
+        allocation.regions, regionStableId,
+        &PlanarPressureRegionOpeningBalance::regionStableId);
+    return found == allocation.regions.end() ? nullptr : &*found;
 }
 
 void testCanonicalAssemblyAndSameFacePocket() {
@@ -952,6 +962,370 @@ void testRegionalFluxAllAxesAndRejection() {
         "regional flux validation enforces its byte limit");
 }
 
+void testRegionalOpeningFlowFeasibility() {
+    const auto geometry = grid();
+    const auto previous = pocketLayers();
+    auto current = previous;
+    current[0].physicalPlaneCoordinateMeters -= 0.1;
+    current[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, previous, current, 0.5);
+
+    const std::vector<PlanarPressureRegionOpeningDefinition> noOpenings;
+    const auto sealed = solvePlanarPressureRegionOpeningFlow(
+        sweep, noOpenings);
+    check(sealed.version == planarPressureRegionOpeningFlowVersion
+              && sealed.fingerprint != 0
+              && sealed.openings.empty()
+              && sealed.regions.size() == 2
+              && sealed.components.size() == 2
+              && sealed.failedComponentCount == 2
+              && sealed.failedRegionCount == 2
+              && !sealed.allComponentsFeasible
+              && !sealed.allRegionsWithinTolerance,
+          "regional opening flow keeps a sealed breathing pocket infeasible");
+    checkNear(sealed.globalGeometryVolumeChangeCubicMeters,
+              0.0, 4.0e-15,
+              "sealed breathing opening flow retains global volume closure");
+    checkNear(sealed.globalContinuityResidualCubicMeters,
+              0.0, 4.0e-15,
+              "sealed breathing reports global cancellation separately from local failure");
+
+    const auto rigidLayers = translatePlanarPressureJumpLayers(
+        geometry, previous, 0.5).layers;
+    const auto rigid = solvePlanarPressureRegionOpeningFlow(
+        makePlanarPressureRegionSweepLedger(
+            geometry, previous, rigidLayers, 1.0),
+        noOpenings);
+    check(rigid.failedComponentCount == 0
+              && rigid.failedRegionCount == 0
+              && rigid.allComponentsFeasible
+              && rigid.allRegionsWithinTolerance,
+          "regional opening flow accepts sealed rigid translation");
+
+    const std::vector<PlanarPressureRegionOpeningDefinition> oneOpening{
+        {700, 1, 2, 0.5},
+    };
+    const auto supplied = solvePlanarPressureRegionOpeningFlow(
+        sweep, oneOpening);
+    check(supplied.openings.size() == 1
+              && supplied.components.size() == 1
+              && supplied.failedComponentCount == 0
+              && supplied.failedRegionCount == 0
+              && supplied.allComponentsFeasible
+              && supplied.allRegionsWithinTolerance,
+          "regional opening flow closes breathing through an authored opening");
+    checkNear(
+        supplied.openings[0]
+            .relativeVolumeFlowRateCubicMetersPerSecond,
+        1.6, 8.0e-15,
+        "regional opening flow points from exterior into the growing pocket");
+    checkNear(supplied.openings[0]
+                  .relativeNormalVelocityMetersPerSecond,
+              3.2, 1.6e-14,
+              "regional opening flow divides volume flow by authored area");
+    const auto* exterior = findOpeningRegion(supplied, 1);
+    const auto* pocket = findOpeningRegion(supplied, 2);
+    check(exterior != nullptr && pocket != nullptr,
+          "regional opening flow retains both regional balances");
+    if (exterior != nullptr && pocket != nullptr) {
+        checkNear(
+            exterior->solvedOutwardRelativeFlowRateCubicMetersPerSecond,
+            1.6, 8.0e-15,
+            "regional opening flow leaves the shrinking exterior region");
+        checkNear(
+            pocket->solvedOutwardRelativeFlowRateCubicMetersPerSecond,
+            -1.6, 8.0e-15,
+            "regional opening flow enters the growing pocket region");
+        checkNear(exterior->continuityResidualCubicMeters,
+                  0.0, 4.0e-15,
+                  "regional opening flow closes exterior continuity");
+        checkNear(pocket->continuityResidualCubicMeters,
+                  0.0, 4.0e-15,
+                  "regional opening flow closes pocket continuity");
+    }
+
+    const std::vector<PlanarPressureRegionOpeningDefinition> reverseOpening{
+        {700, 2, 1, 0.5},
+    };
+    const auto reversed = solvePlanarPressureRegionOpeningFlow(
+        sweep, reverseOpening);
+    checkNear(
+        reversed.openings[0]
+            .relativeVolumeFlowRateCubicMetersPerSecond,
+        -1.6, 8.0e-15,
+        "regional opening flow changes sign under authored orientation reversal");
+    check(reversed.allComponentsFeasible
+              && reversed.allRegionsWithinTolerance,
+          "orientation reversal preserves regional opening feasibility");
+
+    const std::vector<PlanarPressureRegionOpeningDefinition> parallel{
+        {701, 1, 2, 0.375},
+        {700, 1, 2, 0.125},
+    };
+    const auto distributed = solvePlanarPressureRegionOpeningFlow(
+        sweep, parallel);
+    const std::vector<PlanarPressureRegionOpeningDefinition> sortedParallel{
+        parallel[1], parallel[0],
+    };
+    const auto repeated = solvePlanarPressureRegionOpeningFlow(
+        sweep, sortedParallel);
+    check(distributed == repeated
+              && distributed.fingerprint == repeated.fingerprint
+              && distributed.openings[0].openingStableId == 700
+              && distributed.openings[1].openingStableId == 701,
+          "regional opening flow canonicalizes authored opening order");
+    checkNear(
+        distributed.openings[0]
+            .relativeVolumeFlowRateCubicMetersPerSecond,
+        0.4, 4.0e-15,
+        "regional opening flow assigns the small aperture by area");
+    checkNear(
+        distributed.openings[1]
+            .relativeVolumeFlowRateCubicMetersPerSecond,
+        1.2, 8.0e-15,
+        "regional opening flow assigns the large aperture by area");
+    checkNear(
+        distributed.openings[0]
+            .relativeNormalVelocityMetersPerSecond,
+        3.2, 1.6e-14,
+        "parallel regional openings share one minimum-norm normal velocity");
+    checkNear(
+        distributed.openings[1]
+            .relativeNormalVelocityMetersPerSecond,
+        3.2, 1.6e-14,
+        "parallel regional opening velocity is area independent");
+
+    const std::vector<PlanarPressureJumpLayerDefinition> threeRegions{
+        {30, 1, 2,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 0, 0},
+         -1.8, 30.0},
+        {40, 2, 3,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 1, 0},
+         -0.8, 20.0},
+        {50, 3, 1,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 2, 0},
+         0.2, -50.0},
+    };
+    auto movedThreeRegions = threeRegions;
+    movedThreeRegions[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto threeRegionSweep = makePlanarPressureRegionSweepLedger(
+        geometry, threeRegions, movedThreeRegions, 0.5);
+    const std::vector<PlanarPressureRegionOpeningDefinition> serialOpenings{
+        {800, 3, 1, 0.25},
+        {810, 1, 2, 0.5},
+    };
+    const auto serial = solvePlanarPressureRegionOpeningFlow(
+        threeRegionSweep, serialOpenings);
+    check(serial.regions.size() == 3
+              && serial.components.size() == 1
+              && serial.allComponentsFeasible
+              && serial.allRegionsWithinTolerance,
+          "regional opening flow solves a three-region serial graph");
+    checkNear(
+        serial.openings[0]
+            .relativeVolumeFlowRateCubicMetersPerSecond,
+        0.8, 8.0e-15,
+        "serial regional opening carries flow from the shrinking region");
+    checkNear(
+        serial.openings[1]
+            .relativeVolumeFlowRateCubicMetersPerSecond,
+        0.8, 8.0e-15,
+        "serial regional opening carries flow into the growing region");
+    const auto* intermediate = findOpeningRegion(serial, 1);
+    check(intermediate != nullptr,
+          "serial regional opening graph retains its intermediate region");
+    if (intermediate != nullptr) {
+        checkNear(
+            intermediate
+                ->solvedOutwardRelativeFlowRateCubicMetersPerSecond,
+            0.0, 8.0e-15,
+            "serial regional opening graph balances its intermediate region");
+    }
+}
+
+void testRegionalOpeningFlowAllAxesAndRejection() {
+    const auto geometry = grid();
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> previous{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        auto current = previous;
+        current[0].physicalPlaneCoordinateMeters -= 0.1;
+        current[1].physicalPlaneCoordinateMeters += 0.1;
+        const auto allocation = solvePlanarPressureRegionOpeningFlow(
+            makePlanarPressureRegionSweepLedger(
+                geometry, previous, current, 0.5),
+            std::vector<PlanarPressureRegionOpeningDefinition>{
+                {700, 1, 2, 0.5},
+            });
+        const double expectedFlow = axis == GridFaceAxis::X ? 1.6 : 3.2;
+        check(allocation.allComponentsFeasible
+                  && allocation.allRegionsWithinTolerance,
+              "regional opening flow closes breathing on every axis");
+        checkNear(
+            allocation.openings[0]
+                .relativeVolumeFlowRateCubicMetersPerSecond,
+            expectedFlow, 1.6e-14,
+            "regional opening flow follows physical swept volume on every axis");
+    }
+
+    const auto previous = pocketLayers();
+    auto current = previous;
+    current[0].physicalPlaneCoordinateMeters -= 0.1;
+    current[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, previous, current, 0.5);
+    const std::vector<PlanarPressureRegionOpeningDefinition> openings{
+        {700, 1, 2, 0.5},
+    };
+    const auto valid = solvePlanarPressureRegionOpeningFlow(
+        sweep, openings);
+    validatePlanarPressureRegionOpeningFlow(valid, sweep, openings);
+
+    auto corrupt = valid;
+    corrupt.fingerprint = 0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionOpeningFlow(
+            corrupt, sweep, openings); },
+        "regional opening-flow validation rejects fingerprint corruption");
+    corrupt = valid;
+    corrupt.openings[0]
+        .relativeVolumeFlowRateCubicMetersPerSecond += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionOpeningFlow(
+            corrupt, sweep, openings); },
+        "regional opening-flow validation rejects flow corruption");
+    corrupt = valid;
+    corrupt.regions[0].continuityResidualCubicMeters += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionOpeningFlow(
+            corrupt, sweep, openings); },
+        "regional opening-flow validation rejects region corruption");
+    corrupt = valid;
+    corrupt.components[0].feasible = false;
+    expectRejected(
+        [&] { validatePlanarPressureRegionOpeningFlow(
+            corrupt, sweep, openings); },
+        "regional opening-flow validation rejects component corruption");
+
+    expectRejected(
+        [&] { static_cast<void>(
+            solvePlanarPressureRegionOpeningFlow(
+                sweep,
+                std::vector<PlanarPressureRegionOpeningDefinition>{
+                    {700, 1, 99, 0.5},
+                })); },
+        "regional opening flow rejects a foreign region");
+    expectRejected(
+        [&] { static_cast<void>(
+            solvePlanarPressureRegionOpeningFlow(
+                sweep,
+                std::vector<PlanarPressureRegionOpeningDefinition>{
+                    {700, 1, 1, 0.5},
+                })); },
+        "regional opening flow rejects a same-region opening");
+    expectRejected(
+        [&] { static_cast<void>(
+            solvePlanarPressureRegionOpeningFlow(
+                sweep,
+                std::vector<PlanarPressureRegionOpeningDefinition>{
+                    {700, 1, 2, 0.25},
+                    {700, 1, 2, 0.25},
+                })); },
+        "regional opening flow rejects a duplicate opening identity");
+    expectRejected(
+        [&] { static_cast<void>(
+            solvePlanarPressureRegionOpeningFlow(
+                sweep,
+                std::vector<PlanarPressureRegionOpeningDefinition>{
+                    {700, 1, 2, 0.0},
+                })); },
+        "regional opening flow rejects a zero opening area");
+
+    auto invalidSettings = PlanarPressureRegionOpeningFlowSettings{};
+    invalidSettings.relativeCholeskyPivotTolerance = 0.0;
+    expectRejected(
+        [&] { static_cast<void>(
+            solvePlanarPressureRegionOpeningFlow(
+                sweep, openings, invalidSettings)); },
+        "regional opening flow rejects an invalid pivot policy");
+    auto limits = PlanarPressureRegionOpeningFlowLimits{};
+    limits.maximumIntervals = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            solvePlanarPressureRegionOpeningFlow(
+                sweep, openings, {}, limits)); },
+        "regional opening flow enforces its interval limit");
+    limits = {};
+    limits.maximumRegions = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            solvePlanarPressureRegionOpeningFlow(
+                sweep, openings, {}, limits)); },
+        "regional opening flow enforces its region limit");
+    limits = {};
+    limits.maximumOpenings = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            solvePlanarPressureRegionOpeningFlow(
+                sweep,
+                std::vector<PlanarPressureRegionOpeningDefinition>{
+                    {700, 1, 2, 0.25},
+                    {701, 1, 2, 0.25},
+                }, {}, limits)); },
+        "regional opening flow enforces its opening limit");
+    limits = {};
+    limits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            solvePlanarPressureRegionOpeningFlow(
+                sweep, openings, {}, limits)); },
+        "regional opening flow enforces its owned byte limit");
+    limits = {};
+    limits.maximumFactorizationBytes = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            solvePlanarPressureRegionOpeningFlow(
+                sweep, openings, {}, limits)); },
+        "regional opening flow enforces its factorization byte limit");
+
+    const std::vector<PlanarPressureJumpLayerDefinition> threeRegions{
+        {30, 1, 2,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 0, 0},
+         -1.8, 30.0},
+        {40, 2, 3,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 1, 0},
+         -0.8, 20.0},
+        {50, 3, 1,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 2, 0},
+         0.2, -50.0},
+    };
+    auto movedThreeRegions = threeRegions;
+    movedThreeRegions[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto threeRegionSweep = makePlanarPressureRegionSweepLedger(
+        geometry, threeRegions, movedThreeRegions, 0.5);
+    const std::vector<PlanarPressureRegionOpeningDefinition> serialOpenings{
+        {800, 3, 1, 0.25},
+        {810, 1, 2, 0.5},
+    };
+    limits = {};
+    limits.maximumFactorizationWork = 7;
+    expectRejected(
+        [&] { static_cast<void>(
+            solvePlanarPressureRegionOpeningFlow(
+                threeRegionSweep, serialOpenings, {}, limits)); },
+        "regional opening flow enforces its factorization work limit");
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -1095,6 +1469,8 @@ int main() {
     testRegionalSweepAllAxesAndRejection();
     testRegionalFluxCompatibility();
     testRegionalFluxAllAxesAndRejection();
+    testRegionalOpeningFlowFeasibility();
+    testRegionalOpeningFlowAllAxesAndRejection();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {

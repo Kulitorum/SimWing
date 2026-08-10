@@ -202,6 +202,14 @@ The screen is published as a nonzero semantic-fingerprinted artifact. Its
 validator reconstructs every interval result, stable-ID chain, sorted region
 summary, aggregate, tolerance flag, and storage ledger before accepting a
 copy, so diagnostics cannot be silently reused after mutation.
+A bounded planar opening-flow oracle now provides the compatible counterpart.
+It treats authored openings as an oriented region graph and solves the minimum
+area-weighted relative flow needed by the regional volume changes. The sealed
+breathing pocket remains locally infeasible despite global cancellation; one
+`0.5 m²` exterior-to-pocket opening carries `1.6 m³/s` at `3.2 m/s`, parallel
+openings split by area, and a serial three-region graph balances its
+intermediate region. This is an offline feasibility result, not an embedded
+opening discretization, pressure solve, or fluid-state update.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

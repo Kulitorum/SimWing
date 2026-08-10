@@ -492,6 +492,7 @@ src/fsi/
         planar_pressure_jump.* closed moving multi-layer pressure chains
         planar_region_sweep.* bounded two-epoch regional geometry/GCL
         planar_region_flux.* minimum impermeability/relative-flux screen
+        planar_region_opening_flow.* bounded opening-graph feasibility oracle
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
         porous_topology.*   compatibility API over planar face topology
@@ -2166,6 +2167,20 @@ tolerance policy, then rebuilds stable-ID chain continuity, sorted regional
 summaries, global aggregates, flags, and owned-storage accounting. Mutated or
 foreign diagnostic payloads therefore reject transactionally; this hardens an
 offline measurement and does not promote it into accepted fluid state.
+`planar_region_opening_flow.*` then asks the complementary topology question:
+whether explicit oriented openings can carry the relative flow required by the
+same moving regional volumes without attributing it to fabric. Each connected
+opening component must balance independently. Compatible components solve a
+gauge-fixed area-weighted graph Laplacian, minimizing `sum(flow^2 / area)`;
+parallel openings therefore share one normal velocity. The closed breathing
+pocket reports two incompatible sealed components even though its global
+volume change cancels. A `0.5 m^2` exterior-to-pocket opening instead carries
+`1.6 m^3/s` at `3.2 m/s`, and a three-region serial graph closes its zero-net
+intermediate region. Orientation, all-axis swept-volume scaling, deterministic
+opening-ID ordering, dense-factorization work/storage bounds, semantic
+fingerprinting, and source-bound reconstruction are explicit. These analytic
+opening links are not yet scene-v2 aperture geometry, a subcell velocity basis,
+or permission to wire the result into production pressure arithmetic.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
