@@ -2319,6 +2319,20 @@ wall close separate exterior/pocket contributions and aggregate to
 but preserves global uniform-flow momentum and energy. The bounded,
 fingerprinted state still has no wall prescription, projection certificate,
 pressure-work ledger, transport update, or production ownership.
+`planar_region_fragment_projection_energy.*` independently certifies a static
+regional pressure correction against that inertia state. Every shared degree
+must change by `dt/rho * (p_minus-p_plus)/distance`; its diagonal momentum
+change must equal `dt * area * (p_minus-p_plus)`, and the midpoint impulse work
+must equal its kinetic-energy change. Component and global sums repeat those
+closures, while all 16 one-sided fabric traces remain exact zero. The pressure
+correction also retains a roundoff-zero volume-weighted component gauge, and
+the after-state closes fragment continuity below `3e-14 m3/s` on X/Y/Z. In the
+canonical pure-gradient oracle, projection reduces kinetic energy to below
+`1e-26 J` with work-energy residual below `3e-18 J`; a nonzero tangential null
+field is unchanged bit-for-bit. This bounded, fingerprinted audit covers only
+the correction potential on static geometry. It neither adds the authored
+fabric pressure jump nor claims moving-volume work, wall kinematics, momentum
+transport, or production integration.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
