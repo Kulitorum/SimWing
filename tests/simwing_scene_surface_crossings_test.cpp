@@ -252,6 +252,40 @@ void testTransverseCrossing() {
         pipeline.ownership);
 }
 
+void testTranslatedTransverseCrossing() {
+    const Vec3 translation{256.0, -512.0, 1024.0};
+    Scene scene = transverseScene();
+    for (auto& vertex : scene.vertices) {
+        vertex.positionMeters.x += translation.x;
+        vertex.positionMeters.y += translation.y;
+        vertex.positionMeters.z += translation.z;
+    }
+    const PeriodicCartesianGrid translatedGrid(
+        {4, 4, 4},
+        {translation.x, translation.y, translation.z},
+        {translation.x + 4.0,
+         translation.y + 4.0,
+         translation.z + 4.0});
+    Pipeline pipeline(std::move(scene), translatedGrid);
+    const auto result = crossings(pipeline);
+    check(result.candidateSegmentCount == 2
+              && result.unpairedContactSegmentCount == 0
+              && result.crossings.size() == 1,
+          "scene face crossings: distant common translation preserves adjacent pairing");
+    if (result.crossings.size() == 1) {
+        const auto& crossing = result.crossings.front();
+        check(crossing.axis == GridFaceAxis::X
+                  && crossing.i == 2 && crossing.j == 1
+                  && crossing.k == 1,
+              "scene face crossings: distant translation preserves face identity");
+        checkNear(crossing.lengthMeters, std::sqrt(0.18), 2.0e-10,
+                  "scene face crossings: distant translation preserves length");
+        checkNear(crossing.midpointMeters.y - translation.y, 1.35,
+                  2.0e-10,
+                  "scene face crossings: distant translation preserves local midpoint");
+    }
+}
+
 void testWindingAndContactClassification() {
     Pipeline reversed(transverseScene(true));
     const auto reversedCrossings = crossings(reversed);
@@ -328,6 +362,7 @@ void testLimitsAndTransactionalValidation() {
 
 int main() {
     testTransverseCrossing();
+    testTranslatedTransverseCrossing();
     testCanonicalAdjacentPlaneCoordinate();
     testWindingAndContactClassification();
     testLimitsAndTransactionalValidation();

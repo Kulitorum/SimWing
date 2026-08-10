@@ -9,9 +9,11 @@
 #include "viewer_protocol.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <exception>
+#include <limits>
 #include <ranges>
 #include <vector>
 
@@ -1521,6 +1523,41 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
                   < audit.levels[2].meanNormalizedConductance,
           "graph-independent source exposes the complete phase spectrum across refinement");
 
+    auto translatedSettings = settings;
+    translatedSettings.geometryTranslationMeters = {
+        256.0, -512.0, 1024.0};
+    const std::array<fsi::fluid::GridCellCounts, 1>
+        translatedResolution{{{8, 8, 8}}};
+    const std::array<fsi::fluid::Vector3, 1> translatedPhase{{
+        phases[2],
+    }};
+    const auto translated =
+        fsi::auditScenePressureCellMimeticConductancePhaseRefinement(
+            translatedResolution, translatedPhase, translatedSettings);
+    fsi::validateScenePressureCellMimeticConductancePhaseRefinementAuditIntegrity(
+        translated);
+    const auto& originSample = audit.levels[2].samples[2];
+    const auto& translatedSample = translated.levels[0].samples[0];
+    check(translated.structureDefinitionFingerprint
+                  != audit.structureDefinitionFingerprint
+              && translatedSample.status
+                  == fsi::ScenePressureCellMimeticConductancePhaseSampleStatus::Accepted
+              && translatedSample.openingTraceCount
+                  == originSample.openingTraceCount
+              && translatedSample.controlVolumeCount
+                  == originSample.controlVolumeCount
+              && translatedSample.fullTraceCount
+                  == originSample.fullTraceCount
+              && translatedSample.reducedTraceCount
+                  == originSample.reducedTraceCount
+              && std::abs(
+                  translatedSample.intakeAreaSquareMeters
+                  - originSample.intakeAreaSquareMeters) < 1.0e-12
+              && std::abs(
+                  translatedSample.normalizedConductance
+                  - originSample.normalizedConductance) < 5.0e-11,
+          "graph-independent shadow response is invariant under a distant common coordinate translation");
+
     auto corrupt = audit;
     corrupt.levels[2].samples[1].normalizedConductance += 1.0e-6;
     bool rejected = false;
@@ -1558,6 +1595,20 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
     }
     check(rejected,
           "uncensored mimetic audit enforces its aggregate byte limit before assembly");
+
+    auto invalidSettings = settings;
+    invalidSettings.geometryTranslationMeters.x =
+        std::numeric_limits<double>::infinity();
+    rejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditScenePressureCellMimeticConductancePhaseRefinement(
+                translatedResolution, translatedPhase, invalidSettings));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected,
+          "uncensored mimetic audit rejects a non-finite diagnostic translation");
 }
 
 void testPersistentMimeticPressureAuditRestart() {

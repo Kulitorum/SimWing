@@ -441,20 +441,45 @@ void consumePairTest(std::size_t& count,
 }
 
 std::map<StableId, AreaMoment2> arrangementAreaMoments(
-    const FaceBounds& bounds,
-    const std::vector<InputSegment>& segments,
-    const SceneFluidCappedFacePartitionSettings& settings,
+    const FaceBounds& sourceBounds,
+    const std::vector<InputSegment>& sourceSegments,
+    const SceneFluidCappedFacePartitionSettings& sourceSettings,
     const SceneFluidCappedFacePartitionLimits& limits,
     std::size_t& pairTestCount) {
-    const double width = bounds.maximumU - bounds.minimumU;
-    const double height = bounds.maximumV - bounds.minimumV;
+    const double width = sourceBounds.maximumU - sourceBounds.minimumU;
+    const double height = sourceBounds.maximumV - sourceBounds.minimumV;
     const double perimeter = 2.0 * (width + height);
     const double faceArea = width * height;
     if (!(width > 0.0) || !(height > 0.0)
-        || !std::isfinite(faceArea) || segments.empty()) {
+        || !std::isfinite(faceArea) || sourceSegments.empty()) {
         throw ArrangementFailure(
             SceneFluidCappedFaceStatus::InvalidSourceGeometry,
             "capped face partition has invalid bounds or no segments");
+    }
+    auto settings = sourceSettings;
+    const double coordinateScale = std::max({
+        1.0,
+        std::abs(sourceBounds.minimumU),
+        std::abs(sourceBounds.maximumU),
+        std::abs(sourceBounds.minimumV),
+        std::abs(sourceBounds.maximumV),
+    });
+    const double coordinateRoundoffTolerance = 64.0
+        * std::numeric_limits<double>::epsilon() * coordinateScale;
+    settings.geometryToleranceMeters = std::max(
+        settings.geometryToleranceMeters,
+        coordinateRoundoffTolerance);
+    FaceBounds bounds = sourceBounds;
+    std::vector<InputSegment> segments = sourceSegments;
+    if (coordinateRoundoffTolerance
+        > sourceSettings.geometryToleranceMeters) {
+        bounds = {0.0, width, 0.0, height};
+        for (auto& segment : segments) {
+            segment.first.u -= sourceBounds.minimumU;
+            segment.second.u -= sourceBounds.minimumU;
+            segment.first.v -= sourceBounds.minimumV;
+            segment.second.v -= sourceBounds.minimumV;
+        }
     }
 
     std::vector<ArrangementNode> nodes;

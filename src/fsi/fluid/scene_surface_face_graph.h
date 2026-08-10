@@ -26,6 +26,9 @@ enum SceneFluidFaceBoundary : std::uint8_t {
 };
 
 struct SceneFluidFaceGraphSettings {
+    // Minimum geometric tolerance. Canonical-versus-clipped consistency also
+    // admits a fixed coordinate-ULP envelope so translating an unchanged
+    // scene does not create a user-scale geometry tolerance.
     double endpointToleranceMeters = 1.0e-12;
     double barycentricZeroTolerance = 1.0e-12;
 

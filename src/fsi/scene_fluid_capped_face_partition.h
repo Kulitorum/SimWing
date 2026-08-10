@@ -17,6 +17,9 @@ inline constexpr std::size_t invalidSceneFluidCappedFacePartitionIndex =
     std::numeric_limits<std::size_t>::max();
 
 struct SceneFluidCappedFacePartitionSettings {
+    // Minimum arrangement tolerance. When a distant coordinate origin makes
+    // the fixed machine-roundoff envelope larger, topology is evaluated in a
+    // face-local chart with that envelope; this is not user geometry fitting.
     double geometryToleranceMeters = 1.0e-12;
     double areaClosureToleranceSquareMeters = 1.0e-12;
 
@@ -88,8 +91,10 @@ struct SceneFluidCappedFace {
 // remain excluded because pressure links already own their cross-region area.
 // `faces` contains exactly one deterministic record per touched face. Status
 // records why unresolved geometry was rejected; only Resolved has a valid
-// partition index. Unsupported coplanar material, unpaired endpoints,
-// unstitched crossings, or conflicting authored winding remain explicit. Each
+// partition index. Arrangement topology and moments use a face-local chart
+// when coordinate roundoff requires it. Unsupported coplanar material,
+// unpaired endpoints, unstitched crossings, or conflicting authored winding
+// remain explicit. Each
 // resolved region area retains its exact global first moment and face centroid.
 struct SceneFluidCappedFacePartitionSet {
     std::uint32_t version = sceneFluidCappedFacePartitionVersion;

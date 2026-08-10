@@ -12,9 +12,13 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t
-    scenePressureCellMimeticConductancePhaseRefinementAuditVersion = 2;
+    scenePressureCellMimeticConductancePhaseRefinementAuditVersion = 3;
 
 struct ScenePressureCellMimeticConductancePhaseRefinementAuditSettings {
+    // Translates both the canonical diagnostic scene and its periodic grid.
+    // This leaves their relative geometry unchanged and exists solely to
+    // expose coordinate-origin sensitivity in the offline audit.
+    fluid::Vector3 geometryTranslationMeters;
     SceneFluidMimeticRegionConductanceAuditSettings conductance;
 
     bool operator==(
@@ -83,7 +87,9 @@ struct ScenePressureCellMimeticConductanceRefinementLevel {
 // builds the pressure face ledger but never constructs or applies the graph
 // pressure operator. The mixed-hybrid terminal audit therefore remains
 // observable when embedded graph opening ownership is incomplete. This is an
-// offline immutable evidence product and never changes worker arithmetic.
+// offline immutable evidence product and never changes worker arithmetic. A
+// settings-owned common scene/grid translation supplies a coordinate-origin
+// invariance oracle without changing relative geometry.
 struct ScenePressureCellMimeticConductancePhaseRefinementAudit {
     std::uint32_t version =
         scenePressureCellMimeticConductancePhaseRefinementAuditVersion;

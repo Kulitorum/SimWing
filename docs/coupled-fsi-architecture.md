@@ -1408,6 +1408,19 @@ also differs from the older graph-manufactured source on multi-opening
 placements. The live 600-step trace and audited checkpoint remain
 byte-identical, so no production pressure or load arithmetic changes.
 
+The same product now owns an optional common translation of its canonical
+scene and periodic grid, making coordinate-origin sensitivity observable
+without changing relative geometry. Translating the `8^3`, phase
+`[0,-0.5,0]` sample by `[256,-512,1024] m` preserves all 524 controls,
+full/reduced trace counts, and four opening traces. Its intake-area delta is
+`5.93e-14 m^2` and its normalized-conductance delta is `1.27e-11`. This
+required geometric pairing to compare redundant clipped barycentrics by
+zero/nonzero provenance, canonical face-node checks to include a fixed ULP
+envelope, and capped arrangements to enter a local chart only when the
+coordinate roundoff envelope exceeds their declared minimum tolerance.
+Non-finite translations reject before geometry assembly. The normal-origin
+worker arithmetic and its two production hashes remain byte-identical.
+
 The experiment is exposed as `simwing-fsi --case pressure-cell
 --mimetic-pressure-audit` and reports control/trace counts plus iteration and
 predictor mode separately from the established worker summary. The flag is

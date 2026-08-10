@@ -184,6 +184,16 @@ bool near(const double first, const double second, const double tolerance) {
     return std::abs(first - second) <= tolerance;
 }
 
+double coordinateConsistencyTolerance(
+    const double first,
+    const double second,
+    const double minimumToleranceMeters) {
+    return std::max(
+        minimumToleranceMeters,
+        256.0 * std::numeric_limits<double>::epsilon()
+            * std::max({1.0, std::abs(first), std::abs(second)}));
+}
+
 std::uint8_t faceBoundaryMask(
     const Vec3& position,
     const FaceRectangle& rectangle,
@@ -191,19 +201,41 @@ std::uint8_t faceBoundaryMask(
     std::uint8_t result = FaceBoundaryNone;
     const double u = coordinate(position, rectangle.uAxis);
     const double v = coordinate(position, rectangle.vAxis);
-    if (near(u, rectangle.uLower, tolerance)) {
+    if (near(u, rectangle.uLower,
+             coordinateConsistencyTolerance(
+                 u, rectangle.uLower, tolerance))) {
         result |= FaceBoundaryUMinus;
     }
-    if (near(u, rectangle.uUpper, tolerance)) {
+    if (near(u, rectangle.uUpper,
+             coordinateConsistencyTolerance(
+                 u, rectangle.uUpper, tolerance))) {
         result |= FaceBoundaryUPlus;
     }
-    if (near(v, rectangle.vLower, tolerance)) {
+    if (near(v, rectangle.vLower,
+             coordinateConsistencyTolerance(
+                 v, rectangle.vLower, tolerance))) {
         result |= FaceBoundaryVMinus;
     }
-    if (near(v, rectangle.vUpper, tolerance)) {
+    if (near(v, rectangle.vUpper,
+             coordinateConsistencyTolerance(
+                 v, rectangle.vUpper, tolerance))) {
         result |= FaceBoundaryVPlus;
     }
     return result;
+}
+
+double endpointConsistencyTolerance(const Vec3& first,
+                                    const Vec3& second,
+                                    const double minimumToleranceMeters) {
+    const double coordinateScale = std::max({
+        1.0,
+        std::abs(first.x), std::abs(first.y), std::abs(first.z),
+        std::abs(second.x), std::abs(second.y), std::abs(second.z),
+    });
+    return std::max(
+        minimumToleranceMeters,
+        512.0 * std::numeric_limits<double>::epsilon()
+            * coordinateScale);
 }
 
 Vec3 canonicalGridEdgePoint(
@@ -275,7 +307,8 @@ Vec3 canonicalGridEdgePoint(
     }
     if (!std::isfinite(result.x) || !std::isfinite(result.y)
         || !std::isfinite(result.z)
-        || distance(result, supplied) > tolerance) {
+        || distance(result, supplied)
+            > endpointConsistencyTolerance(result, supplied, tolerance)) {
         throw std::invalid_argument(
             "scene fluid face-graph canonical grid-edge endpoint is inconsistent");
     }
@@ -375,7 +408,9 @@ EndpointNode endpointNode(
         const StableId vertexId = surface.vertices[vertexIndex].id;
         const Vec3 canonical = state.vertices[vertexIndex].positionMeters;
         if (distance(canonical, endpoint.positionMeters)
-            > settings.endpointToleranceMeters) {
+            > endpointConsistencyTolerance(
+                canonical, endpoint.positionMeters,
+                settings.endpointToleranceMeters)) {
             throw std::invalid_argument(
                 "scene fluid face-graph vertex endpoint is inconsistent");
         }
@@ -428,7 +463,9 @@ EndpointNode endpointNode(
             first, second, std::clamp(parameter, 0.0, 1.0));
         setCoordinate(canonical, faceAxis, plane);
         if (distance(canonical, endpoint.positionMeters)
-            > settings.endpointToleranceMeters) {
+            > endpointConsistencyTolerance(
+                canonical, endpoint.positionMeters,
+                settings.endpointToleranceMeters)) {
             throw std::invalid_argument(
                 "scene fluid face-graph edge endpoint is inconsistent");
         }

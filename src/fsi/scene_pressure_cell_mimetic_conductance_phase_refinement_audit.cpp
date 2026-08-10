@@ -111,6 +111,34 @@ bool validPhaseComponent(const double value) {
         && (value != 0.0 || !std::signbit(value));
 }
 
+bool finite(const fluid::Vector3 value) {
+    return std::isfinite(value.x) && std::isfinite(value.y)
+        && std::isfinite(value.z);
+}
+
+Scene translatedRefinementScene(const fluid::Vector3 translation) {
+    Scene scene = makeScenePressureCellRefinementGeometry();
+    if (translation == fluid::Vector3{}) {
+        return scene;
+    }
+    for (auto& vertex : scene.vertices) {
+        vertex.positionMeters.x += translation.x;
+        vertex.positionMeters.y += translation.y;
+        vertex.positionMeters.z += translation.z;
+    }
+    return scene;
+}
+
+fluid::Vector3 translatedGridLower(const fluid::Vector3 translation,
+                                   const fluid::Vector3 phase,
+                                   const double spacing) {
+    return {
+        translation.x + phase.x * spacing,
+        translation.y + phase.y * spacing,
+        translation.z + phase.z * spacing,
+    };
+}
+
 bool validLinearConsistencyFailure(
     const fluid::MimeticLocalCellLinearConsistencyFailure& failure) {
     return failure.halfFaceCount >= 4
@@ -165,7 +193,8 @@ void validateSettings(
         settings) {
     const auto& conductance = settings.conductance;
     const auto& solve = conductance.solve;
-    if (!std::isfinite(
+    if (!finite(settings.geometryTranslationMeters)
+        || !std::isfinite(
             conductance.terminalIntegratedTransferPascalsMeters)
         || !(conductance.terminalIntegratedTransferPascalsMeters > 0.0)
         || !std::isfinite(
@@ -232,6 +261,9 @@ void fingerprintSettings(
     const ScenePressureCellMimeticConductancePhaseRefinementAuditSettings&
         settings) {
     const auto& conductance = settings.conductance;
+    fingerprint.real(settings.geometryTranslationMeters.x);
+    fingerprint.real(settings.geometryTranslationMeters.y);
+    fingerprint.real(settings.geometryTranslationMeters.z);
     fingerprint.real(
         conductance.terminalIntegratedTransferPascalsMeters);
     fingerprint.real(
@@ -418,7 +450,8 @@ ScenePressureCellMimeticConductancePhaseSample buildSample(
         settings,
     const ScenePressureCellMimeticConductancePhaseRefinementAuditLimits&
         limits) {
-    const Scene scene = makeScenePressureCellRefinementGeometry();
+    const Scene scene = translatedRefinementScene(
+        settings.geometryTranslationMeters);
     const auto surface = assembleSceneFluidSurface(scene);
     const auto assembly = makeScenePressureCellAssembly(scene);
     Structure structure(assembly.definition);
@@ -427,9 +460,8 @@ ScenePressureCellMimeticConductancePhaseSample buildSample(
     const auto state = captureSceneFluidSurfaceState(
         surface.definition, assembly.mappings, structure);
     const double spacing = 4.0 / static_cast<double>(counts.x);
-    const fluid::Vector3 lower{
-        phase.x * spacing, phase.y * spacing, phase.z * spacing,
-    };
+    const fluid::Vector3 lower = translatedGridLower(
+        settings.geometryTranslationMeters, phase, spacing);
     const auto grid = makeScenePressureCellGrid(counts, lower);
     const auto epoch = buildSceneFluidGridEpoch(
         surface.definition, state, grid, transfer);
@@ -570,7 +602,8 @@ auditScenePressureCellMimeticConductancePhaseRefinement(
 
     ScenePressureCellMimeticConductancePhaseRefinementAudit result;
     result.settings = settings;
-    const Scene scene = makeScenePressureCellRefinementGeometry();
+    const Scene scene = translatedRefinementScene(
+        settings.geometryTranslationMeters);
     const auto assembly = makeScenePressureCellAssembly(scene);
     const Structure structure(assembly.definition);
     result.structureDefinitionFingerprint =
@@ -668,11 +701,8 @@ void validateScenePressureCellMimeticConductancePhaseRefinementAuditIntegrity(
              phaseIndex < level.samples.size(); ++phaseIndex) {
             const auto& sample = level.samples[phaseIndex];
             const auto phase = audit.gridPhaseFractions[phaseIndex];
-            const fluid::Vector3 lower{
-                phase.x * spacing,
-                phase.y * spacing,
-                phase.z * spacing,
-            };
+            const fluid::Vector3 lower = translatedGridLower(
+                audit.settings.geometryTranslationMeters, phase, spacing);
             if (sample.sampleIndex != nextSampleIndex
                 || sample.phaseIndex != phaseIndex
                 || sample.gridPhaseFraction != phase

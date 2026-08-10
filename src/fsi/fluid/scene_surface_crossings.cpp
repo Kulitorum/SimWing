@@ -245,20 +245,26 @@ bool sameVertexWithinRoundoff(
     const SceneFluidClippedVertex& first,
     const SceneFluidClippedVertex& second,
     const double positionTolerance) {
-    constexpr double barycentricTolerance =
-        256.0 * std::numeric_limits<double>::epsilon();
-    return near(first.positionMeters.x, second.positionMeters.x,
-                positionTolerance)
-        && near(first.positionMeters.y, second.positionMeters.y,
-                positionTolerance)
-        && near(first.positionMeters.z, second.positionMeters.z,
-                positionTolerance)
-        && near(first.barycentricCoordinates[0],
-                second.barycentricCoordinates[0], barycentricTolerance)
-        && near(first.barycentricCoordinates[1],
-                second.barycentricCoordinates[1], barycentricTolerance)
-        && near(first.barycentricCoordinates[2],
-                second.barycentricCoordinates[2], barycentricTolerance);
+    constexpr double barycentricProvenanceTolerance = 1.0e-12;
+    if (!near(first.positionMeters.x, second.positionMeters.x,
+              positionTolerance)
+        || !near(first.positionMeters.y, second.positionMeters.y,
+                 positionTolerance)
+        || !near(first.positionMeters.z, second.positionMeters.z,
+                 positionTolerance)) {
+        return false;
+    }
+    for (std::size_t corner = 0; corner < 3; ++corner) {
+        const double firstWeight = first.barycentricCoordinates[corner];
+        const double secondWeight = second.barycentricCoordinates[corner];
+        if (!std::isfinite(firstWeight) || !std::isfinite(secondWeight)
+            || (std::abs(firstWeight) <= barycentricProvenanceTolerance)
+                != (std::abs(secondWeight)
+                    <= barycentricProvenanceTolerance)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool sameSegmentWithinRoundoff(const CandidateSegment& first,

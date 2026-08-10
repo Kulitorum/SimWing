@@ -88,8 +88,10 @@ struct SceneFluidFaceCrossingSet {
 // Extracts positive-length intersections between ordinary owned triangle
 // patches and internal Cartesian faces. A true transverse crossing appears as
 // one segment from each adjacent cell and becomes one canonical lower-cell
-// crossing after their independently clipped endpoints agree within a fixed
-// machine-roundoff envelope (not a user geometry tolerance).
+// crossing after their independently clipped positions agree within a fixed
+// machine-roundoff envelope and their barycentric zero/nonzero provenance
+// agrees (neither is a user geometry tolerance). Nonzero barycentric weights
+// are redundant with the accepted position and may differ by clipping order.
 // An unpaired segment is retained only as a contact count; triangle area that
 // lies in a face remains owned by SceneFluidOwnedFacePatch and is not converted
 // into a line crossing. Grid-edge-aligned paired segments are rejected until a

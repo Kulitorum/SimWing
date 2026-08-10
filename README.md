@@ -880,6 +880,15 @@ and audited checkpoint remain byte-identical. The complete phase matrix still
 does not establish shadow convergence or authorize a live solver switch; the
 uniform area-weighted multi-opening source also differs intentionally from the
 earlier graph-manufactured source.
+A separate origin-invariance oracle moves that same `8^3`, phase
+`[0,-0.5,0]` sample and its grid together by `[256,-512,1024] m`. All 524
+controls, full/reduced traces, and four opening traces retain their topology;
+the intake area changes by only `5.93e-14 m^2` and normalized conductance by
+`1.27e-11`. Adjacent-cell crossings now compare geometric position plus
+barycentric zero/nonzero provenance, canonical face nodes admit only a fixed
+coordinate-ULP envelope, and capped arrangements switch to a local chart when
+that envelope exceeds their declared minimum tolerance. The ordinary-origin
+path and both production hashes remain byte-identical.
 Its checkpoint also stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and
