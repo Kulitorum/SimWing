@@ -2455,6 +2455,21 @@ artifact is deterministic, fingerprinted, and independently bounded. Direct
 velocity retention is only a warm-state policy: it deliberately claims no
 momentum-conservative advection across the changed face metric, does not yet
 accept the next pressure transaction, persist a restart, or select a worker.
+`planar_region_fragment_opening_continuation_momentum_audit.*` now quantifies
+that limitation instead of hiding it. It applies the exact diagonal mass
+`rho*area*centre-distance` to every stable same-region grid degree and to every
+aperture plug, then compares the previous and current mass, scalar momentum,
+and kinetic energy at the unchanged carried velocity. In the canonical
+breathing transition, 33 of 65 flow degrees change metric; the largest dual-
+volume change is `0.1 m3` (50%), the largest local momentum change is
+`0.048676 kg*m/s`, and the globally near-cancelling local changes still alter
+kinetic energy by `0.013419632753952637 J`. An otherwise identical consecutive
+stationary transition is bit-exact zero in mass, momentum, and energy. The
+bounded fingerprinted per-degree ledger therefore supplies concrete transport-
+blocker evidence. It deliberately performs no local mass rescaling: such a
+repair can conserve one diagonal degree while violating ALE free-stream/GCL
+behavior because only swept-volume flux determines where exchanged momentum
+belongs.
 `planar_region_fragment_opening_pressure_epoch.*` composes that warm product
 with the existing resistance-plus-augmented-projection transaction. It builds
 all four mutable fields privately, advances them together, and captures a new

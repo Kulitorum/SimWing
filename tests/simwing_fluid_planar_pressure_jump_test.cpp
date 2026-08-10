@@ -7,6 +7,7 @@
 #include "fluid/planar_region_fragment_opening_accepted_state.h"
 #include "fluid/planar_region_fragment_opening_accepted_state_persistence.h"
 #include "fluid/planar_region_fragment_opening_continuation.h"
+#include "fluid/planar_region_fragment_opening_continuation_momentum_audit.h"
 #include "fluid/planar_region_fragment_opening_load_state.h"
 #include "fluid/planar_region_fragment_opening_pressure_state.h"
 #include "fluid/planar_region_fragment_opening.h"
@@ -9415,6 +9416,210 @@ void testPlanarRegionalResistedOpeningPressureStep() {
         resistance, nextPressureOperator, nextBase, nextSweep,
         nextFragments, nextTopology, nextVolumeRates, definitions,
         nextOpenings);
+
+    const auto continuationMomentumAudit =
+        auditPlanarPressureRegionFragmentOpeningContinuationMomentum(
+            continuation, acceptedState, pressureOperator, base, geometry,
+            sweep, fragments, topology, volumeRates, definitions, openings,
+            resistance, nextPressureOperator, nextBase, nextSweep,
+            nextFragments, nextTopology, nextVolumeRates, definitions,
+            nextOpenings);
+    const auto repeatedContinuationMomentumAudit =
+        auditPlanarPressureRegionFragmentOpeningContinuationMomentum(
+            continuation, acceptedState, pressureOperator, base, geometry,
+            sweep, fragments, topology, volumeRates, definitions, openings,
+            resistance, nextPressureOperator, nextBase, nextSweep,
+            nextFragments, nextTopology, nextVolumeRates, definitions,
+            nextOpenings);
+    check(continuationMomentumAudit == repeatedContinuationMomentumAudit
+              && continuationMomentumAudit.version
+                  == planarPressureRegionFragmentOpeningContinuationMomentumAuditVersion
+              && continuationMomentumAudit.fingerprint != 0
+              && continuationMomentumAudit.audited
+              && continuationMomentumAudit.sourceContinuationFingerprint
+                  == continuation.fingerprint
+              && continuationMomentumAudit.sourceAcceptedStateFingerprint
+                  == acceptedState.fingerprint
+              && continuationMomentumAudit.previousTopologyFingerprint
+                  == topology.fingerprint
+              && continuationMomentumAudit.currentTopologyFingerprint
+                  == nextTopology.fingerprint
+              && continuationMomentumAudit.samples.size()
+                  == topology.sameRegionGridLinkCount
+                      + openings.patches.size()
+              && continuationMomentumAudit.sameRegionGridSampleCount
+                  == topology.sameRegionGridLinkCount
+              && continuationMomentumAudit.openingPatchSampleCount
+                  == openings.patches.size()
+              && continuationMomentumAudit.metricChanged
+              && continuationMomentumAudit.metricChangedSampleCount == 33
+              && continuationMomentumAudit.warmCarryChangesMomentum
+              && continuationMomentumAudit.momentumChangedSampleCount == 33
+              && continuationMomentumAudit
+                     .maximumAbsoluteDualVolumeChangeCubicMeters > 0.0
+              && continuationMomentumAudit
+                     .maximumAbsoluteMomentumChangeKilogramMetersPerSecond
+                  > 0.0
+              && continuationMomentumAudit.ownedStorageBytes > 0
+              && continuationMomentumAudit.workingStorageBytes > 0,
+          "opening continuation momentum audit exposes metric-induced warm-carry drift");
+    checkNear(
+        continuationMomentumAudit
+            .maximumAbsoluteDualVolumeChangeCubicMeters,
+        0.1, 2.0e-15,
+        "opening continuation momentum audit retains maximum metric change");
+    checkNear(
+        continuationMomentumAudit.maximumRelativeDualVolumeChange,
+        0.5, 3.0e-14,
+        "opening continuation momentum audit retains relative metric change");
+    checkNear(
+        continuationMomentumAudit
+            .maximumAbsoluteMomentumChangeKilogramMetersPerSecond,
+        0.048676001341721321, 2.0e-14,
+        "opening continuation momentum audit retains maximum local momentum drift");
+    checkNear(
+        continuationMomentumAudit.kineticEnergyChangeJoules,
+        0.013419632753952637, 2.0e-14,
+        "opening continuation momentum audit retains aggregate energy drift");
+    for (const auto& sample : continuationMomentumAudit.samples) {
+        check(sample.previousMomentumKilogramMetersPerSecond
+                      == sample.previousMassKilograms
+                          * sample.carriedVelocityMetersPerSecond
+                  && sample.carriedMomentumKilogramMetersPerSecond
+                      == sample.currentMassKilograms
+                          * sample.carriedVelocityMetersPerSecond
+                  && sample.momentumChangeKilogramMetersPerSecond
+                      == sample.carriedMomentumKilogramMetersPerSecond
+                          - sample.previousMomentumKilogramMetersPerSecond
+                  && sample.kineticEnergyChangeJoules
+                      == sample.carriedKineticEnergyJoules
+                          - sample.previousKineticEnergyJoules,
+              "opening continuation momentum audit retains exact per-degree arithmetic");
+    }
+    validatePlanarPressureRegionFragmentOpeningContinuationMomentumAuditIntegrity(
+        continuationMomentumAudit);
+    validatePlanarPressureRegionFragmentOpeningContinuationMomentumAudit(
+        continuationMomentumAudit, continuation, acceptedState,
+        pressureOperator, base, geometry, sweep, fragments, topology,
+        volumeRates, definitions, openings, resistance,
+        nextPressureOperator, nextBase, nextSweep, nextFragments,
+        nextTopology, nextVolumeRates, definitions, nextOpenings);
+
+    auto corruptMomentumAudit = continuationMomentumAudit;
+    corruptMomentumAudit.samples[0].currentMassKilograms += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningContinuationMomentumAuditIntegrity(
+                corruptMomentumAudit);
+        },
+        "opening continuation momentum audit rejects sample corruption");
+    auto momentumAuditLimits =
+        PlanarPressureRegionFragmentOpeningContinuationMomentumAuditLimits{};
+    momentumAuditLimits.maximumOwnedBytes =
+        continuationMomentumAudit.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                auditPlanarPressureRegionFragmentOpeningContinuationMomentum(
+                    continuation, acceptedState, pressureOperator, base,
+                    geometry, sweep, fragments, topology, volumeRates,
+                    definitions, openings, resistance,
+                    nextPressureOperator, nextBase, nextSweep,
+                    nextFragments, nextTopology, nextVolumeRates,
+                    definitions, nextOpenings, momentumAuditLimits));
+        },
+        "opening continuation momentum audit enforces its owned-storage limit");
+
+    const auto stationarySweep = makePlanarPressureRegionSweepLedger(
+        geometry, current, current, 0.5);
+    const auto stationaryFragments = buildPlanarPressureRegionFragments(
+        geometry, stationarySweep);
+    const auto stationaryTopology =
+        buildPlanarPressureRegionFragmentTopology(
+            geometry, stationarySweep, stationaryFragments);
+    const auto stationaryBase =
+        buildPlanarPressureRegionFragmentPressureOperator(
+            geometry, stationarySweep, stationaryFragments,
+            stationaryTopology);
+    const auto stationaryVolumeRates =
+        buildPlanarPressureRegionFragmentVolumeRates(
+            geometry, stationarySweep, stationaryFragments,
+            stationaryTopology);
+    const auto stationaryOpenings =
+        buildPlanarPressureRegionFragmentOpenings(
+            geometry, stationarySweep, stationaryFragments,
+            stationaryTopology, definitions);
+    const auto stationaryPressureOperator =
+        buildPlanarPressureRegionFragmentOpeningPressureOperator(
+            stationaryBase, geometry, stationarySweep,
+            stationaryFragments, stationaryTopology, definitions,
+            stationaryOpenings);
+    const auto stationaryContinuation =
+        buildPlanarPressureRegionFragmentOpeningContinuation(
+            acceptedState, pressureOperator, base, geometry, sweep,
+            fragments, topology, volumeRates, definitions, openings,
+            resistance, stationaryPressureOperator, stationaryBase,
+            stationarySweep, stationaryFragments, stationaryTopology,
+            stationaryVolumeRates, definitions, stationaryOpenings);
+    const auto stationaryMomentumAudit =
+        auditPlanarPressureRegionFragmentOpeningContinuationMomentum(
+            stationaryContinuation, acceptedState, pressureOperator, base,
+            geometry, sweep, fragments, topology, volumeRates, definitions,
+            openings, resistance, stationaryPressureOperator,
+            stationaryBase, stationarySweep, stationaryFragments,
+            stationaryTopology, stationaryVolumeRates, definitions,
+            stationaryOpenings);
+    check(!stationaryMomentumAudit.metricChanged
+              && !stationaryMomentumAudit.warmCarryChangesMomentum
+              && stationaryMomentumAudit.metricChangedSampleCount == 0
+              && stationaryMomentumAudit.momentumChangedSampleCount == 0
+              && stationaryMomentumAudit.previousMassByAxisKilograms
+                  == stationaryMomentumAudit.currentMassByAxisKilograms
+              && stationaryMomentumAudit
+                     .previousMomentumKilogramMetersPerSecond
+                  == stationaryMomentumAudit
+                         .carriedMomentumKilogramMetersPerSecond
+              && stationaryMomentumAudit
+                     .momentumChangeKilogramMetersPerSecond
+                  == Vector3{}
+              && stationaryMomentumAudit.previousKineticEnergyJoules
+                  == stationaryMomentumAudit.carriedKineticEnergyJoules
+              && stationaryMomentumAudit.kineticEnergyChangeJoules == 0.0
+              && stationaryMomentumAudit
+                     .maximumAbsoluteDualVolumeChangeCubicMeters == 0.0,
+          "opening continuation momentum audit has an exact stationary-geometry zero oracle");
+    validatePlanarPressureRegionFragmentOpeningContinuationMomentumAudit(
+        stationaryMomentumAudit, stationaryContinuation, acceptedState,
+        pressureOperator, base, geometry, sweep, fragments, topology,
+        volumeRates, definitions, openings, resistance,
+        stationaryPressureOperator, stationaryBase, stationarySweep,
+        stationaryFragments, stationaryTopology, stationaryVolumeRates,
+        definitions, stationaryOpenings);
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningContinuationMomentumAudit(
+                continuationMomentumAudit, stationaryContinuation,
+                acceptedState, pressureOperator, base, geometry, sweep,
+                fragments, topology, volumeRates, definitions, openings,
+                resistance, stationaryPressureOperator, stationaryBase,
+                stationarySweep, stationaryFragments, stationaryTopology,
+                stationaryVolumeRates, definitions, stationaryOpenings);
+        },
+        "opening continuation momentum audit rejects a foreign current epoch");
+    momentumAuditLimits = {};
+    momentumAuditLimits.maximumWorkingBytes =
+        continuationMomentumAudit.workingStorageBytes - 1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningContinuationMomentumAudit(
+                continuationMomentumAudit, continuation, acceptedState,
+                pressureOperator, base, geometry, sweep, fragments,
+                topology, volumeRates, definitions, openings, resistance,
+                nextPressureOperator, nextBase, nextSweep, nextFragments,
+                nextTopology, nextVolumeRates, definitions, nextOpenings,
+                momentumAuditLimits);
+        },
+        "opening continuation momentum audit enforces validation working storage");
 
     auto corruptContinuation = continuation;
     corruptContinuation.pressureCorrectionPascals[0] += 0.1;

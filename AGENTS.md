@@ -1976,6 +1976,12 @@ makes this a certified aerodynamic solver.
   volumes, and rebuilds current opening flux. Appearance, retirement, changed
   aperture semantics, and rebases reject; this is warm state, not momentum
   advection.
+- `src/fsi/fluid/planar_region_fragment_opening_continuation_momentum_audit.{h,cpp}`
+  measures that warm carry against the exact previous/current diagonal mass
+  of every same-region and aperture degree. It publishes immutable per-degree
+  mass, momentum, and kinetic-energy changes plus aggregate ledgers. It is
+  blocker evidence for a future swept-volume ALE transport, not a local mass-
+  rescale repair or an alternate continuation.
 - `src/fsi/fluid/planar_region_fragment_opening_pressure_epoch.{h,cpp}`
   privately composes that continuation with resistance, augmented projection,
   and accepted-state capture. Numerical rejection publishes a typed stage and
@@ -2619,6 +2625,21 @@ mean, and rebuild current opening flux. Never invent donor values for appeared
 or retired identities, repair a rebase, or claim momentum-conservative
 transport. Bound owned and mapping storage and rederive the full product during
 validation.
+
+For `planar_region_fragment_opening_continuation_momentum_audit.*`, fully
+validate the source continuation and compute each same-region degree's mass as
+`rho*link.area*link.centerDistance` and each aperture degree's mass from the
+identical patch plug geometry. Retain canonical stable-ID samples with exact
+previous/current mass, unchanged carried velocity, scalar momentum, kinetic
+energy, and their differences; close axis-wise mass/momentum and total energy
+from those samples. The canonical moving transition must expose 33 changed
+degrees, up to `0.1 m3`/50% dual-volume change, `0.048676 kg*m/s` local
+momentum change, and `0.013419632753952637 J` aggregate kinetic-energy change,
+while the consecutive stationary-geometry oracle is exact zero. Reject nested
+continuation/source corruption and sample/owned/working limits. Do not repair
+the drift by rescaling velocity: without swept-volume flux that would not
+prove free-stream/GCL preservation or momentum advection. Do not feed this
+audit into pressure acceptance or the worker.
 
 For `planar_region_fragment_opening_pressure_epoch.*`, build continuation
 fields privately and pass them through the complete resistance-plus-projection
