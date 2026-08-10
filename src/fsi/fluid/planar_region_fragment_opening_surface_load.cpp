@@ -1016,6 +1016,31 @@ capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
     return result;
 }
 
+PlanarPressureRegionFragmentOpeningSurfaceLoadLedger
+capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+    const PlanarPressureRegionFragmentSurfaceLoadLedger& surfaceLoads,
+    const PlanarPressureRegionFragmentOpeningPressureState& pressureState,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
+    const PlanarPressureRegionFragmentOpeningSurfaceLoadLimits& limits) {
+    validatePlanarPressureRegionFragmentSurfaceLoads(
+        surfaceLoads, pressureState, limits.surfaceLoadLimits);
+    validatePlanarPressureRegionFragmentOpenings(
+        openings, grid, sweep, fragments, topology, openingDefinitions,
+        limits.openingLimits);
+    const auto result = buildLedger(surfaceLoads, openings, limits);
+    validatePlanarPressureRegionFragmentOpeningSurfaceLoads(
+        result, surfaceLoads, pressureState, grid, sweep, fragments,
+        topology, openingDefinitions, openings, limits);
+    return result;
+}
+
 void validatePlanarPressureRegionFragmentOpeningSurfaceLoadLedgerIntegrity(
     const PlanarPressureRegionFragmentOpeningSurfaceLoadLedger& ledger) {
     if (ledger.version
@@ -1052,6 +1077,40 @@ void validatePlanarPressureRegionFragmentOpeningSurfaceLoads(
     const PlanarPressureRegionFragmentOpeningSurfaceLoadLedger& ledger,
     const PlanarPressureRegionFragmentSurfaceLoadLedger& surfaceLoads,
     const PlanarPressureRegionFragmentPressureState& pressureState,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
+    const PlanarPressureRegionFragmentOpeningSurfaceLoadLimits& limits) {
+    validateLimits(limits);
+    validatePlanarPressureRegionFragmentSurfaceLoads(
+        surfaceLoads, pressureState, limits.surfaceLoadLimits);
+    validatePlanarPressureRegionFragmentOpenings(
+        openings, grid, sweep, fragments, topology, openingDefinitions,
+        limits.openingLimits);
+    if (ledger.tiles.size() > limits.maximumTiles
+        || ledger.surfaces.size() > limits.maximumSurfaces
+        || ledger.ownedStorageBytes > limits.maximumOwnedBytes
+        || ledger.workingStorageBytes > limits.maximumWorkingBytes) {
+        throw std::length_error(
+            "opening-aware regional surface-load validation limit exceeded");
+    }
+    validatePlanarPressureRegionFragmentOpeningSurfaceLoadLedgerIntegrity(
+        ledger);
+    if (ledger != buildLedger(surfaceLoads, openings, limits)) {
+        throw std::invalid_argument(
+            "opening-aware regional surface-load ledger is corrupted");
+    }
+}
+
+void validatePlanarPressureRegionFragmentOpeningSurfaceLoads(
+    const PlanarPressureRegionFragmentOpeningSurfaceLoadLedger& ledger,
+    const PlanarPressureRegionFragmentSurfaceLoadLedger& surfaceLoads,
+    const PlanarPressureRegionFragmentOpeningPressureState& pressureState,
     const PeriodicCartesianGrid& grid,
     const PlanarPressureRegionSweepLedger& sweep,
     const PlanarPressureRegionFragmentSet& fragments,

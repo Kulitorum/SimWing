@@ -392,9 +392,9 @@ and material work. The two absolute fluid-side wall contributions close to
 `-dt*sum(p*dV/dt)` independently per opening-connected component and globally,
 while the correction geometry work must reproduce the accepted aperture
 projection. X/Y/Z orientation, source fingerprints, corruption, foreign
-endpoints, and bounded storage are covered. This is still the full-wall source
-ledger: the next handoff must bind it to the aperture area partition before
-any retained-solid traction can reach Structure.
+endpoints, bounded storage, and exact static/moving-volume provenance are
+covered. The standard full-wall load capture now accepts this connected-gauge
+state directly and retains its fingerprint and aggregate impulse.
 An opening-aware surface-load ledger now supplies the missing opt-in load-area
 partition. It binds each aperture partition to its exact composed pressure-wall
 tile, leaves pressure-jump traction unchanged, removes force/impulse/work from
@@ -404,7 +404,11 @@ fully open tile carries exact zero structural pressure load, and moving X/Y/Z
 fixtures close the removed-plus-solid force, impulse, moment, and work ledgers.
 The current aperture model authors area but no independent sub-tile centroid,
 so both fractions intentionally use the wall-tile centroid. This is immutable
-handoff data only; it neither mutates Structure nor selects a worker path.
+handoff data only; it neither mutates Structure nor selects a worker path. The
+opt-in aperture transaction therefore now has one complete immutable endpoint:
+accepted flow -> opening-connected total pressure -> full-wall load -> removed-
+aperture/retained-solid load. It does not yet distribute the retained load to
+Structure.
 A first diagonal face-inertia metric now closes the missing geometric mass
 ownership without yet creating a velocity state. Each same-region Cartesian
 link has one shared normal-velocity degree of freedom with dual volume `area *

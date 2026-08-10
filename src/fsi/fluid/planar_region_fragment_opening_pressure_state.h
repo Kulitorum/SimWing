@@ -10,7 +10,7 @@
 namespace simwing::fsi::fluid {
 
 inline constexpr std::uint32_t
-    planarPressureRegionFragmentOpeningPressureStateVersion = 1;
+    planarPressureRegionFragmentOpeningPressureStateVersion = 2;
 
 struct PlanarPressureRegionFragmentOpeningPressureStateSettings {
     double absolutePressureResidualTolerancePascals = 1.0e-12;
@@ -136,6 +136,8 @@ struct PlanarPressureRegionFragmentOpeningPressureState {
     std::uint64_t sourceTopologyFingerprint = 0;
     std::uint64_t sourceVolumeRateFingerprint = 0;
     PlanarPressureRegionFragmentOpeningPressureStateSettings settings;
+    bool staticGeometry = false;
+    bool usesMovingVolumeRates = false;
     double timeStepSeconds = 0.0;
     std::vector<PlanarPressureRegionFragmentOpeningPressureStateControl>
         controls;

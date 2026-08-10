@@ -102,6 +102,28 @@ void validateLimits(
     }
 }
 
+bool isStaticGeometry(const PlanarPressureRegionSweepLedger& sweep) {
+    if (sweep.previousProfile != sweep.currentProfile
+        || sweep.globalGeometryVolumeChangeCubicMeters != 0.0
+        || sweep.globalBoundarySweptVolumeCubicMeters != 0.0
+        || sweep.globalSurfaceGeometryResidualCubicMeters != 0.0) {
+        return false;
+    }
+    return std::ranges::all_of(
+        sweep.intervals,
+        [](const PlanarPressureRegionIntervalSweep& interval) {
+            return interval.previousVolumeCubicMeters
+                    == interval.currentVolumeCubicMeters
+                && interval.geometryVolumeChangeCubicMeters == 0.0
+                && interval.lowerSurfaceDisplacementMeters == 0.0
+                && interval.upperSurfaceDisplacementMeters == 0.0
+                && interval.lowerSurfaceVelocityMetersPerSecond == 0.0
+                && interval.upperSurfaceVelocityMetersPerSecond == 0.0
+                && interval.boundarySweptVolumeCubicMeters == 0.0
+                && interval.surfaceGeometryResidualCubicMeters == 0.0;
+        });
+}
+
 double scaledTolerance(const double absolute,
                        const double relative,
                        const std::initializer_list<double> values) {
@@ -189,6 +211,8 @@ std::uint64_t stateFingerprint(
         fingerprint.integer(value);
     }
     fingerprintSettings(fingerprint, state.settings);
+    fingerprint.boolean(state.staticGeometry);
+    fingerprint.boolean(state.usesMovingVolumeRates);
     fingerprint.real(state.timeStepSeconds);
     fingerprint.integer(static_cast<std::uint64_t>(state.controls.size()));
     for (const auto& control : state.controls) {
@@ -360,6 +384,8 @@ PlanarPressureRegionFragmentOpeningPressureState buildState(
     result.sourceTopologyFingerprint = topology.fingerprint;
     result.sourceVolumeRateFingerprint = volumeRates.fingerprint;
     result.settings = settings;
+    result.staticGeometry = isStaticGeometry(sweep);
+    result.usesMovingVolumeRates = true;
     result.timeStepSeconds =
         acceptedState.settings.projection.timeStepSeconds;
     result.controls.reserve(fragments.fragments.size());

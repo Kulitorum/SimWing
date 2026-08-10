@@ -8,6 +8,8 @@
 
 namespace simwing::fsi::fluid {
 
+struct PlanarPressureRegionFragmentOpeningPressureState;
+
 inline constexpr std::uint32_t
     planarPressureRegionFragmentSurfaceLoadVersion = 1;
 
@@ -67,7 +69,9 @@ struct PlanarPressureRegionFragmentSurfaceLoadLimits {
 // tile retains the exact regional pressure-wall identity and geometry needed
 // by a later conservative structural adapter. Force, time-integrated impulse,
 // and material work remain split into authored/correction/total ownership and
-// close back to the accepted composed pressure state.
+// close back to the accepted composed pressure state. The source may use the
+// sealed regional gauge or the opt-in opening-connected gauge; its fingerprint
+// and static/moving-volume provenance remain exact in either case.
 //
 // Capturing this ledger applies no Structure load, changes no fluid momentum,
 // and owns no transport, topology rebase, or production continuation.
@@ -107,12 +111,22 @@ capturePlanarPressureRegionFragmentSurfaceLoads(
     const PlanarPressureRegionFragmentPressureState& pressureState,
     const PlanarPressureRegionFragmentSurfaceLoadLimits& limits = {});
 
+[[nodiscard]] PlanarPressureRegionFragmentSurfaceLoadLedger
+capturePlanarPressureRegionFragmentSurfaceLoads(
+    const PlanarPressureRegionFragmentOpeningPressureState& pressureState,
+    const PlanarPressureRegionFragmentSurfaceLoadLimits& limits = {});
+
 void validatePlanarPressureRegionFragmentSurfaceLoadLedgerIntegrity(
     const PlanarPressureRegionFragmentSurfaceLoadLedger& ledger);
 
 void validatePlanarPressureRegionFragmentSurfaceLoads(
     const PlanarPressureRegionFragmentSurfaceLoadLedger& ledger,
     const PlanarPressureRegionFragmentPressureState& pressureState,
+    const PlanarPressureRegionFragmentSurfaceLoadLimits& limits = {});
+
+void validatePlanarPressureRegionFragmentSurfaceLoads(
+    const PlanarPressureRegionFragmentSurfaceLoadLedger& ledger,
+    const PlanarPressureRegionFragmentOpeningPressureState& pressureState,
     const PlanarPressureRegionFragmentSurfaceLoadLimits& limits = {});
 
 } // namespace simwing::fsi::fluid

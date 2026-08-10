@@ -9207,6 +9207,8 @@ void testPlanarRegionalResistedOpeningPressureStep() {
                   == openings.fingerprint
               && openingPressureState.sourceVolumeRateFingerprint
                   == volumeRates.fingerprint
+              && !openingPressureState.staticGeometry
+              && openingPressureState.usesMovingVolumeRates
               && openingPressureState.controls.size()
                   == fragments.fragments.size()
               && openingPressureState.walls.size()
@@ -9258,6 +9260,73 @@ void testPlanarRegionalResistedOpeningPressureStep() {
         openingPressureState, acceptedState, pressureOperator, base,
         geometry, sweep, fragments, topology, volumeRates, definitions,
         openings, resistance);
+    const auto openingSurfaceLoads =
+        capturePlanarPressureRegionFragmentSurfaceLoads(
+            openingPressureState);
+    const auto openingAdjustedSurfaceLoads =
+        capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+            openingSurfaceLoads, openingPressureState, geometry, sweep,
+            fragments, topology, definitions, openings);
+    check(openingSurfaceLoads.accepted
+              && openingSurfaceLoads.sourcePressureStateFingerprint
+                  == openingPressureState.fingerprint
+              && openingSurfaceLoads.sourceTopologyFingerprint
+                  == topology.fingerprint
+              && !openingSurfaceLoads.staticGeometry
+              && openingSurfaceLoads.usesMovingVolumeRates
+              && openingSurfaceLoads.totalPressureImpulseOnSheetNewtonSeconds
+                  == openingPressureState
+                         .totalPressureImpulseOnSheetNewtonSeconds,
+          "opening pressure state captures the full-wall load ledger with exact provenance");
+    check(openingAdjustedSurfaceLoads.accepted
+              && openingAdjustedSurfaceLoads.sourceSurfaceLoadFingerprint
+                  == openingSurfaceLoads.fingerprint
+              && openingAdjustedSurfaceLoads.sourcePressureStateFingerprint
+                  == openingPressureState.fingerprint
+              && openingAdjustedSurfaceLoads.sourceOpeningFingerprint
+                  == openings.fingerprint
+              && openingAdjustedSurfaceLoads
+                         .maximumAbsoluteAreaPartitionResidualSquareMeters
+                  <= 1.0e-12
+              && openingAdjustedSurfaceLoads
+                         .maximumAbsoluteForcePartitionResidualNewtons
+                  <= 1.0e-12
+              && openingAdjustedSurfaceLoads
+                         .maximumAbsoluteImpulsePartitionResidualNewtonSeconds
+                  <= 1.0e-12
+              && openingAdjustedSurfaceLoads
+                         .maximumAbsoluteMomentPartitionResidualNewtonMeters
+                  <= 1.0e-12
+              && std::abs(
+                     openingAdjustedSurfaceLoads.workPartitionResidualJoules)
+                  <= 1.0e-12,
+          "opening pressure loads close removed-aperture and retained-solid ownership");
+    validatePlanarPressureRegionFragmentSurfaceLoads(
+        openingSurfaceLoads, openingPressureState);
+    validatePlanarPressureRegionFragmentOpeningSurfaceLoads(
+        openingAdjustedSurfaceLoads, openingSurfaceLoads,
+        openingPressureState, geometry, sweep, fragments, topology,
+        definitions, openings);
+    auto corruptOpeningSurfaceLoads = openingSurfaceLoads;
+    corruptOpeningSurfaceLoads.tiles[0]
+        .totalPressureForceOnSheetNewtons.x += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentSurfaceLoads(
+                corruptOpeningSurfaceLoads, openingPressureState);
+        },
+        "opening pressure surface-load validation rejects corruption");
+    auto openingSurfaceLoadLimits =
+        PlanarPressureRegionFragmentSurfaceLoadLimits{};
+    openingSurfaceLoadLimits.maximumTiles =
+        openingSurfaceLoads.tiles.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentSurfaceLoads(
+                    openingPressureState, openingSurfaceLoadLimits));
+        },
+        "opening pressure surface loads enforce the tile limit");
     auto corruptOpeningPressureState = openingPressureState;
     corruptOpeningPressureState.controls[0].totalPressurePascals += 0.1;
     expectRejected(
@@ -9467,6 +9536,31 @@ void testPlanarRegionalResistedOpeningPressureStep() {
                   <= authoredDrivePressureState
                          .settings.absoluteWorkResidualToleranceJoules,
           "opening pressure state follows the authored-drive correction without mixing sealed gauges");
+    const auto authoredDriveSurfaceLoads =
+        capturePlanarPressureRegionFragmentSurfaceLoads(
+            authoredDrivePressureState);
+    const auto authoredDriveOpeningAdjustedLoads =
+        capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+            authoredDriveSurfaceLoads, authoredDrivePressureState, geometry,
+            sweep, fragments, topology, definitions, openings);
+    check(authoredDriveSurfaceLoads.sourcePressureStateFingerprint
+              == authoredDrivePressureState.fingerprint
+              && authoredDriveOpeningAdjustedLoads
+                         .sourcePressureStateFingerprint
+                  == authoredDrivePressureState.fingerprint
+              && authoredDriveOpeningAdjustedLoads
+                         .solidCorrectionPressureForceOnSheetNewtons
+                  != openingAdjustedSurfaceLoads
+                         .solidCorrectionPressureForceOnSheetNewtons,
+          "authored aperture drive reaches the retained-solid load ledger");
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningSurfaceLoads(
+                openingAdjustedSurfaceLoads, openingSurfaceLoads,
+                authoredDrivePressureState, geometry, sweep, fragments,
+                topology, definitions, openings);
+        },
+        "opening surface loads reject a foreign pressure endpoint");
     expectRejected(
         [&] {
             validatePlanarPressureRegionFragmentOpeningPressureState(
@@ -9698,6 +9792,12 @@ void testPlanarRegionalOpeningPressureStateAxes() {
                 accepted, pressureOperator, base, geometry, sweep,
                 fragments, topology, volumeRates, definitions, openings,
                 resistance);
+        const auto surfaceLoads =
+            capturePlanarPressureRegionFragmentSurfaceLoads(state);
+        const auto solidLoads =
+            capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+                surfaceLoads, state, geometry, sweep, fragments, topology,
+                definitions, openings);
         const auto pressureWall = std::ranges::find_if(
             state.walls,
             [&](const auto& candidate) {
@@ -9706,6 +9806,14 @@ void testPlanarRegionalOpeningPressureStateAxes() {
         check(pressureWall != state.walls.end(),
               "opening pressure state retains its source wall on every axis");
         if (pressureWall == state.walls.end()) continue;
+        const auto solidTile = std::ranges::find_if(
+            solidLoads.tiles,
+            [&](const auto& candidate) {
+                return candidate.sourceFaceLinkStableId == wall->stableId;
+            });
+        check(solidTile != solidLoads.tiles.end(),
+              "opening pressure loads retain the aperture wall on every axis");
+        if (solidTile == solidLoads.tiles.end()) continue;
         const Vector3 expectedAuthoredForce = axis == GridFaceAxis::X
             ? Vector3{-70.0 * wall->areaSquareMeters, 0.0, 0.0}
             : axis == GridFaceAxis::Y
@@ -9730,6 +9838,30 @@ void testPlanarRegionalOpeningPressureStateAxes() {
                       <= state.settings
                              .absoluteWorkResidualToleranceJoules,
               "opening pressure state closes force, impulse, and work on every axis");
+        check(surfaceLoads.accepted && solidLoads.accepted
+                  && !surfaceLoads.staticGeometry
+                  && surfaceLoads.usesMovingVolumeRates
+                  && solidTile->axis == axis
+                  && solidTile->openingAreaSquareMeters == patchArea
+                  && solidTile->solidAreaSquareMeters == patchArea
+                  && solidLoads.sourcePressureStateFingerprint
+                      == state.fingerprint,
+              "opening-connected pressure partitions full-wall load on every axis");
+        checkNear(
+            solidTile->solidTotalPressureForceOnSheetNewtons.x,
+            0.5 * pressureWall->totalPressureForceOnSheetNewtons.x,
+            1.0e-12,
+            "opening-connected solid X force uses retained area");
+        checkNear(
+            solidTile->solidTotalPressureForceOnSheetNewtons.y,
+            0.5 * pressureWall->totalPressureForceOnSheetNewtons.y,
+            1.0e-12,
+            "opening-connected solid Y force uses retained area");
+        checkNear(
+            solidTile->solidTotalPressureForceOnSheetNewtons.z,
+            0.5 * pressureWall->totalPressureForceOnSheetNewtons.z,
+            1.0e-12,
+            "opening-connected solid Z force uses retained area");
     }
 }
 

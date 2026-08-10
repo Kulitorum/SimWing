@@ -1,5 +1,7 @@
 #include "fluid/planar_region_fragment_surface_load.h"
 
+#include "fluid/planar_region_fragment_opening_pressure_state.h"
+
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -229,11 +231,23 @@ std::uint64_t ledgerFingerprint(
     return fingerprint.value();
 }
 
+void validateSourcePressureStateIntegrity(
+    const PlanarPressureRegionFragmentPressureState& pressureState) {
+    validatePlanarPressureRegionFragmentPressureStateIntegrity(pressureState);
+}
+
+void validateSourcePressureStateIntegrity(
+    const PlanarPressureRegionFragmentOpeningPressureState& pressureState) {
+    validatePlanarPressureRegionFragmentOpeningPressureStateIntegrity(
+        pressureState);
+}
+
+template<typename PressureState>
 PlanarPressureRegionFragmentSurfaceLoadLedger buildLedger(
-    const PlanarPressureRegionFragmentPressureState& pressureState,
+    const PressureState& pressureState,
     const PlanarPressureRegionFragmentSurfaceLoadLimits& limits) {
     validateLimits(limits);
-    validatePlanarPressureRegionFragmentPressureStateIntegrity(pressureState);
+    validateSourcePressureStateIntegrity(pressureState);
     if (pressureState.walls.size() > limits.maximumTiles) {
         throw std::length_error(
             "planar regional surface-load tile limit exceeded");
@@ -465,6 +479,15 @@ PlanarPressureRegionFragmentSurfaceLoadLedger buildLedger(
     const Vector3 totalSourceResidual = vectorDifference(
         result.totalPressureForceOnSheetNewtons,
         pressureState.totalPressureForceOnSheetNewtons);
+    Vector3 impulseSourceResidual;
+    if constexpr (requires {
+                      pressureState
+                          .totalPressureImpulseOnSheetNewtonSeconds;
+                  }) {
+        impulseSourceResidual = vectorDifference(
+            result.totalPressureImpulseOnSheetNewtonSeconds,
+            pressureState.totalPressureImpulseOnSheetNewtonSeconds);
+    }
     const double forceTolerance = closureTolerance(maximumForceNewtons);
     const double impulseTolerance =
         forceTolerance * result.timeStepSeconds;
@@ -482,6 +505,8 @@ PlanarPressureRegionFragmentSurfaceLoadLedger buildLedger(
         || maximumAbsoluteComponent(authoredSourceResidual) > forceTolerance
         || maximumAbsoluteComponent(correctionSourceResidual) > forceTolerance
         || maximumAbsoluteComponent(totalSourceResidual) > forceTolerance
+        || maximumAbsoluteComponent(impulseSourceResidual)
+            > impulseTolerance
         || maximumAbsoluteComponent(surfaceAuthoredResidual) > forceTolerance
         || maximumAbsoluteComponent(surfaceCorrectionResidual) > forceTolerance
         || maximumAbsoluteComponent(surfaceTotalResidual) > forceTolerance
@@ -511,6 +536,13 @@ capturePlanarPressureRegionFragmentSurfaceLoads(
     return buildLedger(pressureState, limits);
 }
 
+PlanarPressureRegionFragmentSurfaceLoadLedger
+capturePlanarPressureRegionFragmentSurfaceLoads(
+    const PlanarPressureRegionFragmentOpeningPressureState& pressureState,
+    const PlanarPressureRegionFragmentSurfaceLoadLimits& limits) {
+    return buildLedger(pressureState, limits);
+}
+
 void validatePlanarPressureRegionFragmentSurfaceLoadLedgerIntegrity(
     const PlanarPressureRegionFragmentSurfaceLoadLedger& ledger) {
     if (ledger.version != planarPressureRegionFragmentSurfaceLoadVersion
@@ -528,6 +560,22 @@ void validatePlanarPressureRegionFragmentSurfaceLoadLedgerIntegrity(
 void validatePlanarPressureRegionFragmentSurfaceLoads(
     const PlanarPressureRegionFragmentSurfaceLoadLedger& ledger,
     const PlanarPressureRegionFragmentPressureState& pressureState,
+    const PlanarPressureRegionFragmentSurfaceLoadLimits& limits) {
+    validateLimits(limits);
+    if (ledger.tiles.size() > limits.maximumTiles
+        || ledger.surfaces.size() > limits.maximumSurfaces) {
+        throw std::length_error(
+            "planar regional surface-load validation limit exceeded");
+    }
+    if (ledger != buildLedger(pressureState, limits)) {
+        throw std::invalid_argument(
+            "planar regional surface-load ledger is corrupted");
+    }
+}
+
+void validatePlanarPressureRegionFragmentSurfaceLoads(
+    const PlanarPressureRegionFragmentSurfaceLoadLedger& ledger,
+    const PlanarPressureRegionFragmentOpeningPressureState& pressureState,
     const PlanarPressureRegionFragmentSurfaceLoadLimits& limits) {
     validateLimits(limits);
     if (ledger.tiles.size() > limits.maximumTiles

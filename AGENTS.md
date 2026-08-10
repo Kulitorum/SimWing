@@ -1967,7 +1967,8 @@ makes this a certified aerodynamic solver.
   composes authored fragment pressure with that accepted correction on the
   opening-connected gauge. It publishes full-wall authored/correction/total
   pressure, sheet force/impulse, and moving work, closing component/global
-  wall work to `-dt*sum(p*dV/dt)`. It does not remove aperture load area or
+  wall work to `-dt*sum(p*dV/dt)`, and preserves exact static/moving-volume
+  provenance for the load boundary. It does not remove aperture load area or
   apply traction.
 - `src/fsi/fluid/planar_region_fragment_opening_surface_load.{h,cpp}` is the
   opt-in load-area counterpart. It binds the exact opening partitions to the
@@ -2012,9 +2013,10 @@ makes this a certified aerodynamic solver.
   correction, and total fragment pressures, fabric jumps, sheet forces,
   centroids, and moving work splits. It remains diagnostic and applies no
   structural load or fluid momentum update.
-- `src/fsi/fluid/planar_region_fragment_surface_load.{h,cpp}` captures that
-  accepted state as immutable per-tile pressure tractions and deterministic
-  per-authored-surface summaries. It retains stable link/surface identity,
+- `src/fsi/fluid/planar_region_fragment_surface_load.{h,cpp}` captures an
+  accepted sealed or opening-connected state as immutable per-tile pressure
+  tractions and deterministic per-authored-surface summaries. It retains stable
+  link/surface identity, exact source fingerprint and static/moving provenance,
   centroid, area, normal, force, impulse, and work, but has no Structure or
   worker dependency and applies nothing.
 - `src/fsi/fluid/planar_region_fragment_accepted_state.{h,cpp}` atomically
@@ -2684,6 +2686,13 @@ X/Y/Z loads must close force, impulse, and work exactly back to the source
 pressure state. Reject corrupted state/ledger data and tile/surface/owned/
 working limits. Do not infer conservative nodal distribution, Structure load
 application, fluid momentum exchange, rebase, transport, or production use.
+
+The same requirements apply when the source is
+`planar_region_fragment_opening_pressure_state.*`: preserve its connected-
+gauge fingerprint, static/moving-volume provenance, and exact aggregate
+impulse. An active-aperture load path must capture this full-wall ledger and
+then pass it through `planar_region_fragment_opening_surface_load.*`; never
+pair an active opening endpoint with the sealed pressure state.
 
 For `planar_region_fragment_opening_surface_load.*`, require exact source-
 load, pressure-state, opening-overlay, and topology binding. Preserve every

@@ -172,6 +172,19 @@ capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
     const PlanarPressureRegionFragmentOpeningSet& openings,
     const PlanarPressureRegionFragmentOpeningSurfaceLoadLimits& limits = {});
 
+[[nodiscard]] PlanarPressureRegionFragmentOpeningSurfaceLoadLedger
+capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+    const PlanarPressureRegionFragmentSurfaceLoadLedger& surfaceLoads,
+    const PlanarPressureRegionFragmentOpeningPressureState& pressureState,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
+    const PlanarPressureRegionFragmentOpeningSurfaceLoadLimits& limits = {});
+
 void validatePlanarPressureRegionFragmentOpeningSurfaceLoadLedgerIntegrity(
     const PlanarPressureRegionFragmentOpeningSurfaceLoadLedger& ledger);
 
@@ -179,6 +192,19 @@ void validatePlanarPressureRegionFragmentOpeningSurfaceLoads(
     const PlanarPressureRegionFragmentOpeningSurfaceLoadLedger& ledger,
     const PlanarPressureRegionFragmentSurfaceLoadLedger& surfaceLoads,
     const PlanarPressureRegionFragmentPressureState& pressureState,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
+    const PlanarPressureRegionFragmentOpeningSurfaceLoadLimits& limits = {});
+
+void validatePlanarPressureRegionFragmentOpeningSurfaceLoads(
+    const PlanarPressureRegionFragmentOpeningSurfaceLoadLedger& ledger,
+    const PlanarPressureRegionFragmentSurfaceLoadLedger& surfaceLoads,
+    const PlanarPressureRegionFragmentOpeningPressureState& pressureState,
     const PeriodicCartesianGrid& grid,
     const PlanarPressureRegionSweepLedger& sweep,
     const PlanarPressureRegionFragmentSet& fragments,

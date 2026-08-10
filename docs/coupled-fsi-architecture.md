@@ -505,6 +505,8 @@ src/fsi/
         planar_region_fragment_opening_pressure_step.* constrained loss+projection step
         planar_region_fragment_opening_accepted_state.* immutable aperture-step continuation
         planar_region_fragment_opening_pressure_state.* opening-connected total pressure
+        planar_region_fragment_surface_load.* sealed/opening full-wall load ledger
+        planar_region_fragment_opening_surface_load.* aperture/solid load partition
         planar_region_fragment_pressure_solve.* correction-only CG oracle
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
@@ -2438,10 +2440,9 @@ authored, correction, and total `-dt*sum(p*dV/dt)` work must close per component
 and globally, and correction geometry work must equal the accepted projection
 ledger. The separate authored aperture-drive work is deliberately not folded
 into moving-wall work. Deterministic X/Y/Z checks, complete fingerprints,
-nested validation, and count/byte bounds make this an immutable total-pressure
-source. It still describes the entire wall tile. The following open-area load
-partition must consume this state before retained-solid traction can be called
-a Structure handoff; no pressure relaxation, rebase, or worker selection occurs.
+nested validation, count/byte bounds, and static/moving-volume provenance make
+this an immutable total-pressure source. The common full-wall load ledger now
+accepts this state directly and closes its aggregate impulse to it.
 `planar_region_fragment_opening_surface_load.*` provides the corresponding
 opt-in pressure-load area partition. It binds the immutable aperture overlay
 to the composed wall-load ledger, preserves the tile pressure-jump traction,
@@ -2452,8 +2453,9 @@ tiles preserve the sealed handoff bit-exactly and a fully open tile has exact
 zero retained load. Since the opening contract currently authors area and wall
 identity but no separate sub-tile centroid, both fractions share the exact
 wall-tile centroid rather than inventing a moment arm. The ledger is immutable
-and does not apply Structure loads, replace the accepted regional endpoint,
-handle rebases, or enter a production worker.
+and completes the accepted-flow -> connected-pressure -> full-wall-load ->
+retained-solid-load transaction. It does not apply Structure loads, replace the
+accepted regional endpoint, handle rebases, or enter a production worker.
 `planar_region_fragment_velocity_metric.*` adds the corresponding immutable
 diagonal face geometry for a future velocity state. A same-region Cartesian
 link owns one shared normal degree of freedom with dual volume equal to face
@@ -2534,16 +2536,19 @@ jump geometry work plus the correction geometry work within `5e-13 J`, and the
 sheet receives the exact opposite work. The immutable state still applies no
 traction or fluid impulse and owns no transport, topology rebase, or production
 continuation.
-`planar_region_fragment_surface_load.*` captures that accepted pressure state
-as the minimal future structural handoff. Every wall tile retains stable link
-and authored-surface identity, wrapped centroid, area, orientation, all three
+`planar_region_fragment_surface_load.*` captures an accepted sealed or opening-
+connected pressure state as the minimal future structural handoff. Every wall
+tile retains stable link and authored-surface identity, wrapped centroid, area,
+orientation, all three
 pressure tractions/forces, total impulse, and material work. Tiles remain
 individually visible while surface summaries are canonically sorted and reject
 mixed axes or region sides. The X canonical has eight tiles, two `4 m2`
 surfaces centered at `x=-0.8/-0.2 m`, and authored sheet resultants of
 `-280/+280 N`; moving X/Y/Z capture closes force, impulse, and work exactly to
-the composed pressure state. This is provenance-rich load data only and owns
-no structural mutation.
+the composed pressure state. Opening-connected capture additionally preserves
+the exact source fingerprint, moving-volume provenance, and aggregate impulse
+before the aperture-area partition removes non-solid load. This is provenance-
+rich load data only and owns no structural mutation.
 `planar_region_fragment_accepted_state.*` packages the first rollback-safe
 regional continuation endpoint. It recursively integrity-checks and owns the
 projected after-velocity, composed total pressure, and authored-surface load
