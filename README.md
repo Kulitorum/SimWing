@@ -253,6 +253,17 @@ RHS removes correction gauges while preserving every authored 70 Pa wall jump.
 Incompatible or iteration-truncated attempts leave the warm start bit-for-bit
 unchanged. No velocity divergence, pressure RHS, or production step invokes
 this solve yet.
+A first static regional face projection now supplies that physical RHS without
+changing production. One oriented normal velocity is owned per topology link;
+the 64 same-region Cartesian links contribute area-weighted outward flow and
+receive the matching `dt/rho` pressure-gradient correction, while all eight
+pressure-layer walls must remain exactly zero-flow. Manufactured divergence is
+cancelled below `3e-14 m3/s` on X/Y/Z, uniform wall-tangential flow is
+preserved, and a failed pressure solve publishes neither corrected velocity
+nor its pressure warm start. Projection work has an explicit storage ceiling.
+Moving layers remain rejected until local fragment swept-volume rates exist,
+and this opt-in oracle still owns no face momentum mass, opening conductance,
+kinetic-energy claim, or production worker state.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

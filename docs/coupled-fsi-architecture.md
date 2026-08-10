@@ -2249,6 +2249,22 @@ The canonical manufactured two-component correction is recovered within
 `2e-12 Pa*m` and volume-mean residual below `3e-16 Pa`. Incompatible and
 iteration-truncated solves leave their warm start bit-for-bit unchanged. No
 regional velocity divergence or production pressure source owns this solve.
+`planar_region_fragment_pressure_projection.*` is the first physical
+velocity/RHS boundary over those controls, but remains a static opt-in oracle.
+It assigns one scalar normal velocity to every topology link, oriented from
+the minus fragment to the plus fragment. Only same-region Cartesian links
+enter the integrated outward-flow divergence and receive
+`dt/rho * (p_minus - p_plus) / distance`; pressure-layer walls require exact
+zero flow and are never corrected across fabric. The pressure RHS is
+`-rho/dt` times the predicted net outward flow. Acceptance requires the nested
+component-compatible solve plus an independently recomputed per-fragment
+continuity residual, and both velocity and warm pressure roll back together on
+failure. A manufactured correction cancels its generating flow below
+`3e-14 m3/s` on X/Y/Z, while a uniform wall-tangential field is unchanged.
+Working storage and nested operator size are bounded. Moving geometry is
+rejected until every current fragment has an authoritative swept-volume rate;
+no face momentum mass, energy statement, opening conductance, or production
+worker ownership is inferred.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

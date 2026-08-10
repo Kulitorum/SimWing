@@ -1909,6 +1909,12 @@ makes this a certified aerodynamic solver.
   roundoff, commits roundoff-zero volume-mean corrections, keeps the static
   regional potential separate, and rolls back the warm start on failure. It
   owns no divergence source or production pressure update.
+- `src/fsi/fluid/planar_region_fragment_pressure_projection.{h,cpp}` supplies
+  the first static per-link velocity projection over that solve. Same-region
+  links own oriented area flow and receive pressure correction; pressure-layer
+  walls require exact zero flow. Velocity and pressure commit together only
+  after recomputed continuity closes. Moving layers, face momentum mass,
+  opening conductance, and production integration remain outside this slice.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2278,6 +2284,19 @@ start rollback for incompatible or iteration-truncated solves. Reject mutated
 operator/source products, wrong-sized or non-finite fields, non-finite/empty
 tolerance policies, and a zero iteration bound. Do not infer a regional
 velocity divergence, physical pressure RHS, projection acceptance, or
+production ownership.
+
+For `planar_region_fragment_pressure_projection.*`, require deterministic
+manufactured-divergence cancellation below `3e-14 m3/s` through X/Y/Z, exact
+preservation of uniform wall-tangential flow, and exact zero velocity on every
+pressure-layer wall. Require the physical `-rho/dt` integrated RHS, the
+matching `dt/rho` same-region link correction, independent corrected-
+continuity recomputation, source fingerprints, and bounded working storage.
+Pressure non-convergence must preserve both link velocity and pressure warm
+start bit-for-bit. Reject moving geometry, nonzero wall flow, mutated sources,
+wrong-sized/non-finite fields, invalid density/time/tolerances, and working or
+nested-operator limit violations. Do not infer local swept-volume mapping,
+face momentum mass, kinetic-energy acceptance, opening conductance, or
 production ownership.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
