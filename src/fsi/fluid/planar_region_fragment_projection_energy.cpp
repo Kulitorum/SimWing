@@ -246,8 +246,11 @@ std::uint64_t auditFingerprint(
     fingerprint.integer(audit.sourceMetricFingerprint);
     fingerprint.integer(audit.sourceTopologyFingerprint);
     fingerprint.integer(audit.sourceFragmentFingerprint);
+    fingerprint.integer(audit.volumeRateFingerprint);
     fingerprint.integer(audit.beforeVelocityStateFingerprint);
     fingerprint.integer(audit.afterVelocityStateFingerprint);
+    fingerprint.boolean(audit.staticGeometry);
+    fingerprint.boolean(audit.usesMovingVolumeRates);
     fingerprintSettings(fingerprint, audit.settings);
     fingerprint.integer(static_cast<std::uint64_t>(
         audit.pressureCorrectionPascals.size()));
@@ -285,7 +288,10 @@ std::uint64_t auditFingerprint(
                      .momentumImpulseResidualKilogramMetersPerSecond,
                  correction.kineticEnergyChangeJoules,
                  correction.midpointPressureWorkJoules,
-                 correction.workEnergyResidualJoules}) {
+                 correction.workEnergyResidualJoules,
+                 correction.correctionKineticEnergyJoules,
+                 correction.finalPressureWorkJoules,
+                 correction.affineWorkResidualJoules}) {
             fingerprint.real(value);
         }
     }
@@ -300,9 +306,11 @@ std::uint64_t auditFingerprint(
             component.correctionCount));
         fingerprint.real(component.pressureCorrectionVolumeMeanPascals);
         fingerprint.real(
-            component.predictedNetOutwardFlowCubicMetersPerSecond);
+            component.predictedContinuityResidualCubicMetersPerSecond);
         fingerprint.real(
-            component.correctedNetOutwardFlowCubicMetersPerSecond);
+            component.correctedContinuityResidualCubicMetersPerSecond);
+        fingerprint.real(
+            component.geometryVolumeRateCubicMetersPerSecond);
         fingerprintVector(
             fingerprint, component.momentumChangeKilogramMetersPerSecond);
         fingerprintVector(
@@ -314,9 +322,14 @@ std::uint64_t auditFingerprint(
         fingerprint.real(component.kineticEnergyChangeJoules);
         fingerprint.real(component.midpointPressureWorkJoules);
         fingerprint.real(component.workEnergyResidualJoules);
+        fingerprint.real(component.correctionKineticEnergyJoules);
+        fingerprint.real(component.finalPressureWorkJoules);
+        fingerprint.real(component.geometryPressureWorkJoules);
+        fingerprint.real(component.finalGeometryWorkResidualJoules);
+        fingerprint.real(component.affineEnergyResidualJoules);
     }
     fingerprint.integer(static_cast<std::uint64_t>(
-        audit.sealedPressureLayerTraceCount));
+        audit.pressureLayerTraceCount));
     for (const double value : {
              audit.predictedContinuityResidualL2CubicMetersPerSecond,
              audit.predictedContinuityResidualMaximumCubicMetersPerSecond,
@@ -326,7 +339,10 @@ std::uint64_t auditFingerprint(
              audit.maximumAbsoluteVelocityChangeResidualMetersPerSecond,
              audit
                  .maximumAbsoluteMomentumImpulseResidualKilogramMetersPerSecond,
-             audit.maximumAbsolutePressureGaugePascals}) {
+             audit.maximumAbsolutePressureGaugePascals,
+             audit.maximumAbsoluteWallTraceVelocityResidualMetersPerSecond,
+             audit
+                 .maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond}) {
         fingerprint.real(value);
     }
     fingerprintVector(
@@ -346,6 +362,11 @@ std::uint64_t auditFingerprint(
              audit.kineticEnergyChangeJoules,
              audit.midpointPressureWorkJoules,
              audit.workEnergyResidualJoules,
+             audit.correctionKineticEnergyJoules,
+             audit.finalPressureWorkJoules,
+             audit.geometryPressureWorkJoules,
+             audit.finalGeometryWorkResidualJoules,
+             audit.affineEnergyResidualJoules,
              audit.kineticEnergyRemovedJoules}) {
         fingerprint.real(value);
     }
@@ -363,6 +384,7 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
     const PlanarPressureRegionSweepLedger& sweep,
     const PlanarPressureRegionFragmentSet& fragments,
     const PlanarPressureRegionFragmentTopology& topology,
+    const PlanarPressureRegionFragmentVolumeRateSet* volumeRates,
     const PlanarPressureRegionFragmentVelocityMetric& metric,
     const PlanarPressureRegionFragmentVelocityState& before,
     const PlanarPressureRegionFragmentVelocityState& after,
@@ -371,10 +393,21 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
     const PlanarPressureRegionFragmentProjectionEnergyLimits& limits) {
     validateSettings(settings);
     validateLimits(limits);
-    if (!isStaticGeometry(sweep)) {
+    const bool staticGeometry = isStaticGeometry(sweep);
+    if (volumeRates == nullptr && !staticGeometry) {
         throw std::invalid_argument(
             "planar regional projection-energy audit requires static "
             "geometry");
+    }
+    if (volumeRates != nullptr) {
+        validatePlanarPressureRegionFragmentVolumeRates(
+            *volumeRates, grid, sweep, fragments, topology,
+            limits.volumeRateLimits);
+        if (volumeRates->durationSeconds != settings.timeStepSeconds) {
+            throw std::invalid_argument(
+                "planar regional projection-energy duration does not "
+                "match its volume rates");
+        }
     }
     validatePlanarPressureRegionFragmentVelocityState(
         before, grid, sweep, fragments, topology, metric,
@@ -404,8 +437,12 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
     result.sourceMetricFingerprint = metric.fingerprint;
     result.sourceTopologyFingerprint = topology.fingerprint;
     result.sourceFragmentFingerprint = fragments.fingerprint;
+    result.volumeRateFingerprint =
+        volumeRates == nullptr ? 0 : volumeRates->fingerprint;
     result.beforeVelocityStateFingerprint = before.fingerprint;
     result.afterVelocityStateFingerprint = after.fingerprint;
+    result.staticGeometry = staticGeometry;
+    result.usesMovingVolumeRates = volumeRates != nullptr;
     result.settings = settings;
     result.ownedStorageBytes = ownedStorageBytes(
         pressureCorrectionPascals.size(), metric.sharedRegionGridDofCount,
@@ -468,12 +505,33 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
         if (dof.kind
             != PlanarPressureRegionFragmentVelocityDofKind::
                 SharedRegionGrid) {
-            ++result.sealedPressureLayerTraceCount;
-            if (beforeSample.normalVelocityMetersPerSecond != 0.0
-                || afterSample.normalVelocityMetersPerSecond != 0.0) {
+            ++result.pressureLayerTraceCount;
+            double expectedWallVelocity = 0.0;
+            if (volumeRates != nullptr) {
+                const auto& rate = volumeRates->fragments[
+                    dof.ownerFragmentIndex];
+                expectedWallVelocity = dof.kind
+                        == PlanarPressureRegionFragmentVelocityDofKind::
+                            PressureLayerMinusTrace
+                    ? rate.upperBoundaryVelocityMetersPerSecond
+                    : rate.lowerBoundaryVelocityMetersPerSecond;
+            }
+            const double beforeResidual =
+                beforeSample.normalVelocityMetersPerSecond
+                - expectedWallVelocity;
+            const double afterResidual =
+                afterSample.normalVelocityMetersPerSecond
+                - expectedWallVelocity;
+            result.maximumAbsoluteWallTraceVelocityResidualMetersPerSecond =
+                std::max({
+                    result
+                        .maximumAbsoluteWallTraceVelocityResidualMetersPerSecond,
+                    std::abs(beforeResidual), std::abs(afterResidual)});
+            if (!std::isfinite(expectedWallVelocity)
+                || beforeResidual != 0.0 || afterResidual != 0.0) {
                 throw std::invalid_argument(
                     "planar regional projection-energy wall trace is "
-                    "not sealed");
+                    "inconsistent with material motion");
             }
             continue;
         }
@@ -515,20 +573,34 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
                + afterSample.normalVelocityMetersPerSecond);
         const double workEnergyResidual =
             kineticEnergyChange - midpointPressureWork;
+        const double correctionKineticEnergy = 0.5
+            * settings.densityKgPerCubicMeter
+            * dof.dualVolumeCubicMeters
+            * actualVelocityChange * actualVelocityChange;
+        const double finalPressureWork = pressureImpulse
+            * afterSample.normalVelocityMetersPerSecond;
+        const double affineWorkResidual = midpointPressureWork
+            - (finalPressureWork - correctionKineticEnergy);
         const double energyTolerance = scaledTolerance(
             settings.absoluteEnergyResidualToleranceJoules,
             settings.relativeEnergyResidualTolerance,
             {beforeSample.kineticEnergyJoules,
              afterSample.kineticEnergyJoules,
              kineticEnergyChange,
-             midpointPressureWork});
+             midpointPressureWork,
+             correctionKineticEnergy,
+             finalPressureWork});
         if (!std::isfinite(expectedVelocityChange)
             || !std::isfinite(velocityResidual)
             || !std::isfinite(momentumResidual)
             || !std::isfinite(workEnergyResidual)
+            || !std::isfinite(correctionKineticEnergy)
+            || !std::isfinite(finalPressureWork)
+            || !std::isfinite(affineWorkResidual)
             || std::abs(velocityResidual) > velocityTolerance
             || std::abs(momentumResidual) > momentumTolerance
-            || std::abs(workEnergyResidual) > energyTolerance) {
+            || std::abs(workEnergyResidual) > energyTolerance
+            || std::abs(affineWorkResidual) > energyTolerance) {
             throw std::invalid_argument(
                 "planar regional projection-energy correction closure "
                 "failed");
@@ -559,6 +631,9 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
             kineticEnergyChange,
             midpointPressureWork,
             workEnergyResidual,
+            correctionKineticEnergy,
+            finalPressureWork,
+            affineWorkResidual,
         });
         result.maximumAbsoluteVelocityChangeResidualMetersPerSecond =
             std::max(
@@ -578,10 +653,15 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
             component.pressureImpulseKilogramMetersPerSecond,
             dof.axis) += pressureImpulse;
         component.midpointPressureWorkJoules += midpointPressureWork;
+        component.correctionKineticEnergyJoules +=
+            correctionKineticEnergy;
+        component.finalPressureWorkJoules += finalPressureWork;
         vectorCoordinate(
             result.pressureImpulseKilogramMetersPerSecond,
             dof.axis) += pressureImpulse;
         result.midpointPressureWorkJoules += midpointPressureWork;
+        result.correctionKineticEnergyJoules += correctionKineticEnergy;
+        result.finalPressureWorkJoules += finalPressureWork;
 
         const double predictedVolumeFlow = link.areaSquareMeters
             * beforeSample.normalVelocityMetersPerSecond;
@@ -593,10 +673,33 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
         correctedFlow[link.plusFragmentIndex] -= correctedVolumeFlow;
     }
     if (result.corrections.size() != metric.sharedRegionGridDofCount
-        || result.sealedPressureLayerTraceCount
+        || result.pressureLayerTraceCount
             != metric.pressureLayerTraceDofCount) {
         throw std::invalid_argument(
             "planar regional projection-energy DOF coverage is incomplete");
+    }
+
+    for (std::size_t index = 0; index < fragments.fragments.size(); ++index) {
+        const double geometryVolumeRate = volumeRates == nullptr
+            ? 0.0
+            : volumeRates->fragments[index]
+                .geometryVolumeChangeRateCubicMetersPerSecond;
+        result.maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond =
+            std::max(
+                result
+                    .maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond,
+                std::abs(geometryVolumeRate));
+        predictedFlow[index] += geometryVolumeRate;
+        correctedFlow[index] += geometryVolumeRate;
+        const std::size_t componentIndex =
+            metric.fragments[index].componentIndex;
+        result.components[componentIndex]
+            .geometryVolumeRateCubicMetersPerSecond += geometryVolumeRate;
+        const double geometryPressureWork = -settings.timeStepSeconds
+            * pressureCorrectionPascals[index] * geometryVolumeRate;
+        result.components[componentIndex].geometryPressureWorkJoules +=
+            geometryPressureWork;
+        result.geometryPressureWorkJoules += geometryPressureWork;
     }
 
     result.predictedContinuityResidualL2CubicMetersPerSecond =
@@ -661,6 +764,12 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
         - result.kineticEnergyBeforeJoules;
     result.workEnergyResidualJoules = result.kineticEnergyChangeJoules
         - result.midpointPressureWorkJoules;
+    result.finalGeometryWorkResidualJoules =
+        result.finalPressureWorkJoules
+        - result.geometryPressureWorkJoules;
+    result.affineEnergyResidualJoules = result.kineticEnergyChangeJoules
+        - (result.geometryPressureWorkJoules
+           - result.correctionKineticEnergyJoules);
     result.kineticEnergyRemovedJoules =
         -result.kineticEnergyChangeJoules;
     const double globalEnergyTolerance = scaledTolerance(
@@ -669,14 +778,24 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
         {result.kineticEnergyBeforeJoules,
          result.kineticEnergyAfterJoules,
          result.kineticEnergyChangeJoules,
-         result.midpointPressureWorkJoules});
+         result.midpointPressureWorkJoules,
+         result.correctionKineticEnergyJoules,
+         result.finalPressureWorkJoules,
+         result.geometryPressureWorkJoules});
     result.nonIncreasingKineticEnergy =
         result.kineticEnergyAfterJoules
         <= result.kineticEnergyBeforeJoules + globalEnergyTolerance;
     if (!std::isfinite(result.workEnergyResidualJoules)
+        || !std::isfinite(result.finalGeometryWorkResidualJoules)
+        || !std::isfinite(result.affineEnergyResidualJoules)
         || std::abs(result.workEnergyResidualJoules)
             > globalEnergyTolerance
-        || !result.nonIncreasingKineticEnergy) {
+        || std::abs(result.finalGeometryWorkResidualJoules)
+            > globalEnergyTolerance
+        || std::abs(result.affineEnergyResidualJoules)
+            > globalEnergyTolerance
+        || (volumeRates == nullptr
+            && !result.nonIncreasingKineticEnergy)) {
         throw std::invalid_argument(
             "planar regional projection-energy global energy closure "
             "failed");
@@ -686,9 +805,9 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
          fragmentIndex < fragments.fragments.size(); ++fragmentIndex) {
         auto& component = result.components[
             metric.fragments[fragmentIndex].componentIndex];
-        component.predictedNetOutwardFlowCubicMetersPerSecond +=
+        component.predictedContinuityResidualCubicMetersPerSecond +=
             predictedFlow[fragmentIndex];
-        component.correctedNetOutwardFlowCubicMetersPerSecond +=
+        component.correctedContinuityResidualCubicMetersPerSecond +=
             correctedFlow[fragmentIndex];
     }
     for (std::size_t index = 0; index < result.components.size(); ++index) {
@@ -714,6 +833,13 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
         component.workEnergyResidualJoules =
             component.kineticEnergyChangeJoules
             - component.midpointPressureWorkJoules;
+        component.finalGeometryWorkResidualJoules =
+            component.finalPressureWorkJoules
+            - component.geometryPressureWorkJoules;
+        component.affineEnergyResidualJoules =
+            component.kineticEnergyChangeJoules
+            - (component.geometryPressureWorkJoules
+               - component.correctionKineticEnergyJoules);
         const double componentMomentumTolerance = scaledTolerance(
             settings
                 .absoluteMomentumResidualToleranceKilogramMetersPerSecond,
@@ -728,7 +854,10 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
             {before.components[index].kineticEnergyJoules,
              after.components[index].kineticEnergyJoules,
              component.kineticEnergyChangeJoules,
-             component.midpointPressureWorkJoules});
+             component.midpointPressureWorkJoules,
+             component.correctionKineticEnergyJoules,
+             component.finalPressureWorkJoules,
+             component.geometryPressureWorkJoules});
         if (!finiteVector(
                 component
                     .momentumImpulseResidualKilogramMetersPerSecond)
@@ -737,11 +866,17 @@ PlanarPressureRegionFragmentProjectionEnergyAudit buildAudit(
                        .momentumImpulseResidualKilogramMetersPerSecond)
                 > componentMomentumTolerance
             || !std::isfinite(component.workEnergyResidualJoules)
+            || !std::isfinite(component.finalGeometryWorkResidualJoules)
+            || !std::isfinite(component.affineEnergyResidualJoules)
             || std::abs(component.workEnergyResidualJoules)
+                > componentEnergyTolerance
+            || std::abs(component.finalGeometryWorkResidualJoules)
+                > componentEnergyTolerance
+            || std::abs(component.affineEnergyResidualJoules)
                 > componentEnergyTolerance
             || std::abs(
                    component
-                       .correctedNetOutwardFlowCubicMetersPerSecond)
+                       .correctedContinuityResidualCubicMetersPerSecond)
                 > result.continuityToleranceCubicMetersPerSecond) {
             throw std::invalid_argument(
                 "planar regional projection-energy component closure "
@@ -769,7 +904,7 @@ auditStaticPlanarPressureRegionFragmentProjectionEnergy(
     const PlanarPressureRegionFragmentProjectionEnergySettings& settings,
     const PlanarPressureRegionFragmentProjectionEnergyLimits& limits) {
     return buildAudit(
-        grid, sweep, fragments, topology, metric, before, after,
+        grid, sweep, fragments, topology, nullptr, metric, before, after,
         pressureCorrectionPascals, settings, limits);
 }
 
@@ -792,11 +927,58 @@ void validateStaticPlanarPressureRegionFragmentProjectionEnergyAudit(
             "planar regional projection-energy validation limit exceeded");
     }
     if (audit != buildAudit(
-                     grid, sweep, fragments, topology, metric, before, after,
-                     audit.pressureCorrectionPascals, audit.settings,
-                     limits)) {
+                     grid, sweep, fragments, topology, nullptr, metric,
+                     before, after, audit.pressureCorrectionPascals,
+                     audit.settings, limits)) {
         throw std::invalid_argument(
             "planar regional projection-energy audit is corrupted");
+    }
+}
+
+PlanarPressureRegionFragmentProjectionEnergyAudit
+auditMovingPlanarPressureRegionFragmentProjectionEnergy(
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    const PlanarPressureRegionFragmentVelocityMetric& metric,
+    const PlanarPressureRegionFragmentVelocityState& before,
+    const PlanarPressureRegionFragmentVelocityState& after,
+    const std::vector<double>& pressureCorrectionPascals,
+    const PlanarPressureRegionFragmentProjectionEnergySettings& settings,
+    const PlanarPressureRegionFragmentProjectionEnergyLimits& limits) {
+    return buildAudit(
+        grid, sweep, fragments, topology, &volumeRates, metric, before, after,
+        pressureCorrectionPascals, settings, limits);
+}
+
+void validateMovingPlanarPressureRegionFragmentProjectionEnergyAudit(
+    const PlanarPressureRegionFragmentProjectionEnergyAudit& audit,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    const PlanarPressureRegionFragmentVelocityMetric& metric,
+    const PlanarPressureRegionFragmentVelocityState& before,
+    const PlanarPressureRegionFragmentVelocityState& after,
+    const PlanarPressureRegionFragmentProjectionEnergyLimits& limits) {
+    validateLimits(limits);
+    if (audit.pressureCorrectionPascals.size()
+            > limits.maximumPressureSamples
+        || audit.corrections.size() > limits.maximumCorrections
+        || audit.components.size() > limits.maximumComponents) {
+        throw std::length_error(
+            "moving planar regional projection-energy validation limit "
+            "exceeded");
+    }
+    if (audit != buildAudit(
+                     grid, sweep, fragments, topology, &volumeRates, metric,
+                     before, after, audit.pressureCorrectionPascals,
+                     audit.settings, limits)) {
+        throw std::invalid_argument(
+            "moving planar regional projection-energy audit is corrupted");
     }
 }
 

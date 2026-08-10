@@ -1934,12 +1934,12 @@ makes this a certified aerodynamic solver.
   independent pressure-wall traces. It owns no wall prescription, pressure-
   projection certificate, transport, pressure work, or production state.
 - `src/fsi/fluid/planar_region_fragment_projection_energy.{h,cpp}` certifies a
-  static correction against before/after regional velocity states. It closes
-  gradient velocity change, pressure impulse versus diagonal momentum,
-  midpoint pressure work versus kinetic-energy change, component gauges, and
-  corrected fragment continuity while requiring exact-zero one-sided wall
-  traces. It excludes authored jump work, moving geometry, transport, and
-  production.
+  static or topology-stable moving correction against before/after regional
+  velocity states. It closes gradient velocity change, pressure impulse versus
+  diagonal momentum, midpoint pressure work versus kinetic-energy change,
+  component gauges, and corrected continuity. Moving audits bind volume rates,
+  material-wall trace velocity, and the affine geometry-work identity. It
+  excludes authored jump work, topology rebase, transport, and production.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2373,21 +2373,25 @@ byte/working-byte/nested-metric limit violations. Do not infer a wall velocity
 prescription, pressure-projection certificate, transport acceptance, pressure
 work, or production ownership.
 
-For `planar_region_fragment_projection_energy.*`, require a static source-
-bound before/after state pair with the projection density, one correction entry
-for every shared degree, and exact-zero velocity on every one-sided wall trace.
-Require `dt/rho * delta-p / distance` velocity change, `dt * area * delta-p`
+For `planar_region_fragment_projection_energy.*`, require a source-bound
+before/after state pair with projection density, one correction per shared
+degree, `dt/rho * delta-p / distance` velocity change, `dt * area * delta-p`
 pressure impulse, diagonal momentum closure, midpoint pressure-work/kinetic-
-energy closure per degree, component, and global ledger, roundoff-zero volume-
-weighted correction gauge per component, and non-increasing kinetic energy.
-The manufactured X/Y/Z gradient must close corrected continuity below
-`3e-14 m3/s`, reduce after-energy below `1e-26 J`, and keep work-energy residual
-below `3e-18 J`; the tangential null field must remain bit-exact. Reject moving
-geometry, unsealed traces, gauge shifts, inconsistent before/after fields,
-mutated products/sources, wrong-sized/non-finite pressure, invalid settings,
-and correction/pressure/component/owned-byte/working-byte/nested-state limits.
-Do not infer authored static-jump work, affine moving-volume acceptance, wall
-kinematics, momentum transport, or production ownership.
+energy closure per degree/component/global ledger, and roundoff-zero volume-
+weighted correction gauges. Static audits require exact-zero one-sided wall
+traces, non-increasing kinetic energy, X/Y/Z continuity below `3e-14 m3/s`,
+pure-gradient after-energy below `1e-26 J`, work residual below `3e-18 J`, and
+bit-exact tangential null flow. Moving audits require exact volume-rate source
+and duration binding, both traces at material-wall velocity, local
+`dV/dt + flow` closure, and `delta-K = geometry-pressure work - correction
+kinetic energy`. Rigid `0.1 m/s` translation from zero grid flow must receive
+twice the correction energy as final geometry work, retain half as new kinetic
+energy, and close affine/final-work residuals below `4e-13 J` on X/Y/Z; sealed
+breathing must reject. Reject mismatched wall traces, gauge shifts, inconsistent
+states, corrupt sources, wrong-sized/non-finite pressure, invalid settings, and
+all correction/pressure/component/owned/working/nested state or volume-rate
+limits. Do not infer authored static-jump work, topology rebase, momentum
+transport, or production ownership.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

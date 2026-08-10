@@ -310,19 +310,21 @@ globally. Motion updates the source fingerprint and component mass while a
 uniform field preserves global momentum and energy. This immutable state does
 not prescribe wall velocity, prove projection acceptance, transport momentum,
 apply pressure work, or enter production.
-A separate static projection-energy audit now certifies that missing claim
-without changing the projector. For each of the 64 shared velocity degrees it
-reconstructs `dt/rho * (p_minus-p_plus)/distance`, proves the matching pressure
+A projection-energy audit now certifies both static and topology-stable moving
+corrections without changing the projector. For each of the 64 shared velocity
+degrees it reconstructs `dt/rho * (p_minus-p_plus)/distance`, proves pressure
 impulse equals diagonal momentum change, and closes midpoint pressure work to
-kinetic-energy change. All 16 one-sided fabric traces must remain exact zero,
-the correction pressure retains a roundoff-zero volume gauge in each component,
-and corrected fragment continuity closes below `3e-14 m3/s` through X/Y/Z.
-The manufactured pure-gradient field is stripped to below `1e-26 J`, with
-per-degree/global work-energy residuals below `3e-18 J`; the tangential null
-field preserves its energy bit-exactly. The bounded fingerprinted certificate
-covers only a static correction potential. It does not include the authored
-70 Pa fabric jump, moving-volume pressure work, wall prescription, momentum
-transport, or production ownership.
+kinetic-energy change. Static geometry keeps all 16 one-sided fabric traces at
+exact zero, closes continuity below `3e-14 m3/s` through X/Y/Z, strips a pure
+gradient below `1e-26 J`, and preserves the tangential null field bit-exactly.
+The moving overload binds the local volume-rate artifact and sets each trace to
+its material-wall velocity. Its affine identity is `delta-K = geometry-pressure
+work - correction kinetic energy`: a rigid `0.1 m/s` translation from zero grid
+flow receives twice the correction energy from geometry and retains half as new
+kinetic energy, with work residuals below `4e-13 J` on every axis. Sealed
+breathing remains incompatible. The bounded fingerprinted certificate still
+excludes the authored 70 Pa jump, topology rebase, momentum transport, and
+production ownership.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

@@ -2319,20 +2319,24 @@ wall close separate exterior/pocket contributions and aggregate to
 but preserves global uniform-flow momentum and energy. The bounded,
 fingerprinted state still has no wall prescription, projection certificate,
 pressure-work ledger, transport update, or production ownership.
-`planar_region_fragment_projection_energy.*` independently certifies a static
-regional pressure correction against that inertia state. Every shared degree
-must change by `dt/rho * (p_minus-p_plus)/distance`; its diagonal momentum
-change must equal `dt * area * (p_minus-p_plus)`, and the midpoint impulse work
-must equal its kinetic-energy change. Component and global sums repeat those
-closures, while all 16 one-sided fabric traces remain exact zero. The pressure
-correction also retains a roundoff-zero volume-weighted component gauge, and
-the after-state closes fragment continuity below `3e-14 m3/s` on X/Y/Z. In the
-canonical pure-gradient oracle, projection reduces kinetic energy to below
-`1e-26 J` with work-energy residual below `3e-18 J`; a nonzero tangential null
-field is unchanged bit-for-bit. This bounded, fingerprinted audit covers only
-the correction potential on static geometry. It neither adds the authored
-fabric pressure jump nor claims moving-volume work, wall kinematics, momentum
-transport, or production integration.
+`planar_region_fragment_projection_energy.*` independently certifies static
+and topology-stable moving regional corrections against that inertia state.
+Every shared degree must change by `dt/rho * (p_minus-p_plus)/distance`; its
+diagonal momentum change equals `dt * area * (p_minus-p_plus)`, and midpoint
+impulse work equals kinetic-energy change per degree, component, and globally.
+The correction retains a roundoff-zero volume gauge. Static geometry requires
+all 16 wall traces to be exact zero, closes continuity below `3e-14 m3/s` on
+X/Y/Z, reduces the pure-gradient oracle below `1e-26 J`, and leaves a
+tangential null field bit-exact. The moving overload binds the volume-rate
+fingerprint and duration, requires both one-sided traces to equal their
+material-wall velocity, and closes `dV/dt + net outward grid flow`. Its affine
+ledger proves `delta-K = geometry-pressure work - correction kinetic energy`.
+For rigid `0.1 m/s` translation from zero grid flow, final geometry work is
+twice the correction energy and half remains as kinetic energy, with affine and
+final-work residuals below `4e-13 J` through all axes. Sealed breathing still
+rejects. This certificate covers only the correction potential; it does not add
+the authored fabric jump, topology rebase, momentum transport, or production
+integration.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

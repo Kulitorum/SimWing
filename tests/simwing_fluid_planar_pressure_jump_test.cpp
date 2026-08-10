@@ -231,7 +231,8 @@ findFragmentVelocityStateComponent(
 
 std::vector<double> regionalMetricVelocityFromTopologyLinks(
     const PlanarPressureRegionFragmentVelocityMetric& metric,
-    const std::vector<double>& linkVelocityMetersPerSecond) {
+    const std::vector<double>& linkVelocityMetersPerSecond,
+    const PlanarPressureRegionFragmentVolumeRateSet* volumeRates = nullptr) {
     std::vector<double> result(metric.dofs.size(), 0.0);
     for (const auto& dof : metric.dofs) {
         if (dof.kind
@@ -239,6 +240,14 @@ std::vector<double> regionalMetricVelocityFromTopologyLinks(
                 SharedRegionGrid) {
             result[dof.dofIndex] =
                 linkVelocityMetersPerSecond[dof.sourceFaceLinkIndex];
+        } else if (volumeRates != nullptr) {
+            const auto& rate =
+                volumeRates->fragments[dof.ownerFragmentIndex];
+            result[dof.dofIndex] = dof.kind
+                    == PlanarPressureRegionFragmentVelocityDofKind::
+                        PressureLayerMinusTrace
+                ? rate.upperBoundaryVelocityMetersPerSecond
+                : rate.lowerBoundaryVelocityMetersPerSecond;
         }
     }
     return result;
@@ -3358,6 +3367,8 @@ void testPlanarRegionalFragmentPressureOperator() {
         geometry, sweep);
     const auto topology = buildPlanarPressureRegionFragmentTopology(
         geometry, sweep, fragments);
+    const auto metric = buildPlanarPressureRegionFragmentVelocityMetric(
+        geometry, sweep, fragments, topology);
     const auto pressureOperator =
         buildPlanarPressureRegionFragmentPressureOperator(
             geometry, sweep, fragments, topology);
@@ -4211,12 +4222,21 @@ void testPlanarRegionalFragmentProjectionEnergyAudit() {
               && audit.sourceMetricFingerprint == metric.fingerprint
               && audit.sourceTopologyFingerprint == topology.fingerprint
               && audit.sourceFragmentFingerprint == fragments.fingerprint
+              && audit.volumeRateFingerprint == 0
               && audit.beforeVelocityStateFingerprint == before.fingerprint
               && audit.afterVelocityStateFingerprint == after.fingerprint
+              && audit.staticGeometry
+              && !audit.usesMovingVolumeRates
               && audit.pressureCorrectionPascals == pressure
               && audit.corrections.size() == 64
               && audit.components.size() == 2
-              && audit.sealedPressureLayerTraceCount == 16
+              && audit.pressureLayerTraceCount == 16
+              && audit
+                      .maximumAbsoluteWallTraceVelocityResidualMetersPerSecond
+                  == 0.0
+              && audit
+                      .maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond
+                  == 0.0
               && audit.ownedStorageBytes > 0
               && audit.workingStorageBytes
                   == 2 * sizeof(double) * fragments.fragments.size()
@@ -4247,6 +4267,15 @@ void testPlanarRegionalFragmentProjectionEnergyAudit() {
                   - audit.kineticEnergyAfterJoules,
               0.0,
               "projection energy audit retains exact removed energy");
+    checkNear(audit.correctionKineticEnergyJoules,
+              audit.kineticEnergyRemovedJoules, 3.0e-18,
+              "static correction kinetic energy equals removed energy");
+    checkNear(audit.finalPressureWorkJoules, 0.0, 3.0e-18,
+              "static final divergence has zero correction-pressure work");
+    checkNear(audit.geometryPressureWorkJoules, 0.0, 0.0,
+              "static geometry contributes exact zero pressure work");
+    checkNear(audit.affineEnergyResidualJoules, 0.0, 3.0e-18,
+              "static affine identity reduces to orthogonal projection");
     checkNear(
         std::max({
             std::abs(
@@ -4429,7 +4458,7 @@ void testPlanarRegionalFragmentProjectionEnergyAxesAndRejection() {
         check(projection.accepted && audit.accepted
                   && audit.corrections.size()
                       == metric.sharedRegionGridDofCount
-                  && audit.sealedPressureLayerTraceCount
+                  && audit.pressureLayerTraceCount
                       == metric.pressureLayerTraceDofCount
                   && audit.kineticEnergyRemovedJoules > 0.0
                   && audit
@@ -4951,6 +4980,8 @@ void testPlanarRegionalMovingFragmentPressureProjection() {
         geometry, sweep);
     const auto topology = buildPlanarPressureRegionFragmentTopology(
         geometry, sweep, fragments);
+    const auto metric = buildPlanarPressureRegionFragmentVelocityMetric(
+        geometry, sweep, fragments, topology);
     const auto pressureOperator =
         buildPlanarPressureRegionFragmentPressureOperator(
             geometry, sweep, fragments, topology);
@@ -4967,6 +4998,7 @@ void testPlanarRegionalMovingFragmentPressureProjection() {
     settings.pressureSolve.maximumIterations = 200;
 
     std::vector<double> velocity(topology.links.size(), 0.0);
+    const auto beforeProjectionVelocity = velocity;
     std::vector<double> pressure(pressureOperator.rows.size(), 0.0);
     auto repeatedVelocity = velocity;
     auto repeatedPressure = pressure;
@@ -5013,6 +5045,129 @@ void testPlanarRegionalMovingFragmentPressureProjection() {
                       "moving regional projection keeps wall-relative flow zero");
         }
     }
+
+    const auto beforeMetricVelocity =
+        regionalMetricVelocityFromTopologyLinks(
+            metric, beforeProjectionVelocity, &volumeRates);
+    const auto afterMetricVelocity =
+        regionalMetricVelocityFromTopologyLinks(
+            metric, velocity, &volumeRates);
+    const auto beforeState =
+        buildPlanarPressureRegionFragmentVelocityState(
+            geometry, sweep, fragments, topology, metric,
+            beforeMetricVelocity, settings.densityKgPerCubicMeter);
+    const auto afterState =
+        buildPlanarPressureRegionFragmentVelocityState(
+            geometry, sweep, fragments, topology, metric,
+            afterMetricVelocity, settings.densityKgPerCubicMeter);
+    PlanarPressureRegionFragmentProjectionEnergySettings energySettings;
+    energySettings.densityKgPerCubicMeter =
+        settings.densityKgPerCubicMeter;
+    energySettings.timeStepSeconds = settings.timeStepSeconds;
+    energySettings.absoluteContinuityToleranceCubicMetersPerSecond =
+        settings.absoluteContinuityToleranceCubicMetersPerSecond;
+    energySettings.relativeContinuityTolerance =
+        settings.relativeContinuityTolerance;
+    const auto energy =
+        auditMovingPlanarPressureRegionFragmentProjectionEnergy(
+            geometry, sweep, fragments, topology, volumeRates, metric,
+            beforeState, afterState, pressure, energySettings);
+    const auto repeatedEnergy =
+        auditMovingPlanarPressureRegionFragmentProjectionEnergy(
+            geometry, sweep, fragments, topology, volumeRates, metric,
+            beforeState, afterState, pressure, energySettings);
+    check(energy == repeatedEnergy && energy.accepted
+              && !energy.staticGeometry
+              && energy.usesMovingVolumeRates
+              && energy.volumeRateFingerprint == volumeRates.fingerprint
+              && energy.pressureLayerTraceCount == 16
+              && energy
+                      .maximumAbsoluteWallTraceVelocityResidualMetersPerSecond
+                  == 0.0
+              && energy
+                      .maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond
+                  == 0.1
+              && energy.kineticEnergyChangeJoules > 0.0
+              && !energy.nonIncreasingKineticEnergy
+              && energy.correctionKineticEnergyJoules > 0.0
+              && energy.geometryPressureWorkJoules > 0.0,
+          "moving projection energy audit binds material walls and affine volume work");
+    checkNear(energy.kineticEnergyChangeJoules,
+              energy.correctionKineticEnergyJoules, 2.0e-13,
+              "zero-flow moving projection adds exactly correction kinetic energy");
+    checkNear(energy.geometryPressureWorkJoules,
+              2.0 * energy.correctionKineticEnergyJoules, 4.0e-13,
+              "moving geometry supplies twice the correction energy at the final state");
+    checkNear(energy.finalPressureWorkJoules,
+              energy.geometryPressureWorkJoules, 4.0e-13,
+              "final pressure work closes against geometry volume work");
+    checkNear(energy.midpointPressureWorkJoules,
+              energy.kineticEnergyChangeJoules, 2.0e-13,
+              "moving midpoint pressure work closes kinetic-energy change");
+    checkNear(energy.affineEnergyResidualJoules, 0.0, 4.0e-13,
+              "moving affine pressure-work identity closes");
+    checkNear(energy.finalGeometryWorkResidualJoules, 0.0, 4.0e-13,
+              "moving final pressure work closes geometry work");
+    validateMovingPlanarPressureRegionFragmentProjectionEnergyAudit(
+        energy, geometry, sweep, fragments, topology, volumeRates, metric,
+        beforeState, afterState);
+    auto corruptEnergy = energy;
+    corruptEnergy.volumeRateFingerprint = 0;
+    expectRejected(
+        [&] {
+            validateMovingPlanarPressureRegionFragmentProjectionEnergyAudit(
+                corruptEnergy, geometry, sweep, fragments, topology,
+                volumeRates, metric, beforeState, afterState);
+        },
+        "moving projection energy audit rejects volume-rate binding corruption");
+    auto wrongWallVelocity = beforeMetricVelocity;
+    const auto firstWallDof = std::ranges::find_if(
+        metric.dofs,
+        [](const auto& dof) {
+            return dof.kind
+                != PlanarPressureRegionFragmentVelocityDofKind::
+                    SharedRegionGrid;
+        });
+    wrongWallVelocity[firstWallDof->dofIndex] = 0.0;
+    const auto wrongWallState =
+        buildPlanarPressureRegionFragmentVelocityState(
+            geometry, sweep, fragments, topology, metric,
+            wrongWallVelocity, settings.densityKgPerCubicMeter);
+    expectRejected(
+        [&] { static_cast<void>(
+            auditMovingPlanarPressureRegionFragmentProjectionEnergy(
+                geometry, sweep, fragments, topology, volumeRates, metric,
+                wrongWallState, afterState, pressure, energySettings)); },
+        "moving projection energy audit rejects a trace foreign to wall motion");
+    auto mismatchedEnergySettings = energySettings;
+    mismatchedEnergySettings.timeStepSeconds = 0.5;
+    expectRejected(
+        [&] { static_cast<void>(
+            auditMovingPlanarPressureRegionFragmentProjectionEnergy(
+                geometry, sweep, fragments, topology, volumeRates, metric,
+                beforeState, afterState, pressure,
+                mismatchedEnergySettings)); },
+        "moving projection energy audit rejects a mismatched duration");
+    auto corruptEnergyRates = volumeRates;
+    corruptEnergyRates.fragments[0]
+        .geometryVolumeChangeRateCubicMetersPerSecond += 0.1;
+    expectRejected(
+        [&] { static_cast<void>(
+            auditMovingPlanarPressureRegionFragmentProjectionEnergy(
+                geometry, sweep, fragments, topology, corruptEnergyRates,
+                metric, beforeState, afterState, pressure,
+                energySettings)); },
+        "moving projection energy audit rejects corrupted volume rates");
+    auto energyLimits =
+        PlanarPressureRegionFragmentProjectionEnergyLimits{};
+    energyLimits.volumeRateLimits.maximumFragments = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            auditMovingPlanarPressureRegionFragmentProjectionEnergy(
+                geometry, sweep, fragments, topology, volumeRates, metric,
+                beforeState, afterState, pressure, energySettings,
+                energyLimits)); },
+        "moving projection energy audit enforces nested volume-rate limits");
 
     const auto balancedVelocity = velocity;
     pressure.assign(pressure.size(), 0.0);
@@ -5078,6 +5233,31 @@ void testPlanarRegionalMovingFragmentPressureProjection() {
             .maximumAbsoluteComponentCompatibilityPascalsMeters,
         3.84, 1.0e-14,
         "sealed breathing maps volume deficit into the physical pressure RHS");
+    const auto breathingMetric =
+        buildPlanarPressureRegionFragmentVelocityMetric(
+            geometry, breathingSweep, breathingFragments,
+            breathingTopology);
+    const auto breathingMetricVelocity =
+        regionalMetricVelocityFromTopologyLinks(
+            breathingMetric, originalBreathingVelocity, &breathingRates);
+    const auto breathingState =
+        buildPlanarPressureRegionFragmentVelocityState(
+            geometry, breathingSweep, breathingFragments,
+            breathingTopology, breathingMetric, breathingMetricVelocity,
+            breathingSettings.densityKgPerCubicMeter);
+    const std::vector<double> zeroBreathingPressure(
+        breathingFragments.fragments.size(), 0.0);
+    auto breathingEnergySettings = energySettings;
+    breathingEnergySettings.timeStepSeconds =
+        breathingSettings.timeStepSeconds;
+    expectRejected(
+        [&] { static_cast<void>(
+            auditMovingPlanarPressureRegionFragmentProjectionEnergy(
+                geometry, breathingSweep, breathingFragments,
+                breathingTopology, breathingRates, breathingMetric,
+                breathingState, breathingState, zeroBreathingPressure,
+                breathingEnergySettings)); },
+        "moving projection energy audit rejects incompatible breathing continuity");
 
     auto truncatedSettings = settings;
     truncatedSettings.pressureSolve.absoluteResidualTolerancePascalsMeters =
@@ -5149,6 +5329,9 @@ void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
     settings.pressureSolve.absoluteResidualTolerancePascalsMeters = 1.0e-13;
     settings.pressureSolve.relativeResidualTolerance = 1.0e-12;
     settings.pressureSolve.maximumIterations = 200;
+    PlanarPressureRegionFragmentProjectionEnergySettings energySettings;
+    energySettings.densityKgPerCubicMeter = settings.densityKgPerCubicMeter;
+    energySettings.timeStepSeconds = settings.timeStepSeconds;
     for (const GridFaceAxis axis
          : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
         const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
@@ -5169,6 +5352,9 @@ void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
             geometry, sweep);
         const auto topology = buildPlanarPressureRegionFragmentTopology(
             geometry, sweep, fragments);
+        const auto metric =
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, sweep, fragments, topology);
         const auto pressureOperator =
             buildPlanarPressureRegionFragmentPressureOperator(
                 geometry, sweep, fragments, topology);
@@ -5176,17 +5362,45 @@ void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
             buildPlanarPressureRegionFragmentVolumeRates(
                 geometry, sweep, fragments, topology);
         std::vector<double> velocity(topology.links.size(), 0.0);
+        const auto beforeLinks = velocity;
         std::vector<double> pressure(pressureOperator.rows.size(), 0.0);
         const auto diagnostics =
             projectMovingPlanarPressureRegionFragmentFaceVelocities(
                 pressureOperator, geometry, sweep, fragments, topology,
                 volumeRates, velocity, pressure, settings);
+        const auto beforeVelocity =
+            regionalMetricVelocityFromTopologyLinks(
+                metric, beforeLinks, &volumeRates);
+        const auto afterVelocity =
+            regionalMetricVelocityFromTopologyLinks(
+                metric, velocity, &volumeRates);
+        const auto before =
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, sweep, fragments, topology, metric,
+                beforeVelocity, settings.densityKgPerCubicMeter);
+        const auto after =
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, sweep, fragments, topology, metric,
+                afterVelocity, settings.densityKgPerCubicMeter);
+        const auto energy =
+            auditMovingPlanarPressureRegionFragmentProjectionEnergy(
+                geometry, sweep, fragments, topology, volumeRates, metric,
+                before, after, pressure, energySettings);
         check(diagnostics.accepted
                   && diagnostics.usesMovingVolumeRates
                   && diagnostics
                           .correctedContinuityResidualMaximumCubicMetersPerSecond
-                      < 1.0e-11,
-              "moving regional projection closes rigid motion on every axis");
+                      < 1.0e-11
+                  && energy.accepted
+                  && energy.usesMovingVolumeRates
+                  && energy
+                          .maximumAbsoluteWallTraceVelocityResidualMetersPerSecond
+                      == 0.0
+                  && std::abs(energy.affineEnergyResidualJoules)
+                      < 4.0e-13
+                  && std::abs(energy.finalGeometryWorkResidualJoules)
+                      < 4.0e-13,
+              "moving regional projection and affine energy close on every axis");
     }
 }
 
