@@ -2041,8 +2041,10 @@ makes this a certified aerodynamic solver.
   zero-sample tiles explicit. Evaluation is immutable. Explicit sealed or
   opening-aware load application is epoch- and kinematics-bound, preserves
   existing pending loads, publishes a per-node receipt, and restores the
-  complete Structure checkpoint on failure. It does not step Structure or
-  select worker pressure ownership.
+  complete Structure checkpoint on failure. Receipt integrity is self-
+  contained; full validation re-evaluates the sampled quadrature and requires
+  every applied node load to match the exact source/transfer topology. It does
+  not step Structure or select worker pressure ownership.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2765,8 +2767,10 @@ aware application must bind the exact Structure epoch/kinematics, prevalidate
 all resulting node loads and limits, preserve unrelated pending loads, change
 no committed state, and restore the full checkpoint after any failure. Cover
 static/moving/opening application, pre-existing load preservation, receipt
-corruption, stale epoch, and node/Structure/owned/working limits. Neither path
-enables a worker.
+corruption, stale epoch, and node/Structure/owned/working limits. Full receipt
+validation must re-evaluate the immutable transfer, compare every stable node
+ID/index/applied force, reject a valid receipt paired with a foreign source,
+and independently enforce validation bounds. Neither path enables a worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

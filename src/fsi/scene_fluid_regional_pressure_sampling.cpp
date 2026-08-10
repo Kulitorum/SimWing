@@ -1247,6 +1247,9 @@ applySceneFluidRegionalAcceptedPressureLoads(
         application.fingerprint = applicationFingerprint(application);
         validateSceneFluidRegionalPressureLoadApplicationIntegrity(
             application);
+        validateSceneFluidRegionalPressureLoadApplication(
+            application, surface, state, transfer, quadrature, samples,
+            transferSettings, limits);
         return application;
     } catch (...) {
         target.restore(before);
@@ -1325,6 +1328,61 @@ void validateSceneFluidRegionalPressureLoadApplicationIntegrity(
             > tolerance(forceScale)) {
         throw std::invalid_argument(
             "scene fluid regional pressure load-application closure is invalid");
+    }
+}
+
+void validateSceneFluidRegionalPressureLoadApplication(
+    const SceneFluidRegionalPressureLoadApplication& application,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidRegionalPressureSampleSet& samples,
+    const ConservativeTransferSettings& transferSettings,
+    const SceneFluidRegionalPressureLoadApplicationLimits& limits) {
+    validateApplicationLimits(limits);
+    validateSceneFluidRegionalPressureSampleIntegrity(samples);
+    validateSceneFluidRegionalPressureLoadApplicationIntegrity(application);
+    if (application.nodeLoads.size() > limits.maximumNodeLoads
+        || application.structureNodeCount > limits.maximumStructureNodes
+        || application.ownedStorageBytes > limits.maximumOwnedBytes
+        || application.workingStorageBytes > limits.maximumWorkingBytes) {
+        throw std::length_error(
+            "scene fluid regional pressure load-application validation limit exceeded");
+    }
+    if (application.sourceSamplingFingerprint != samples.fingerprint
+        || application.sourceSurfaceStateFingerprint != state.fingerprint
+        || application.couplingSurfaceFingerprint
+            != transfer.couplingSurfaceFingerprint()
+        || application.targetDefinitionFingerprint
+            != transfer.targetDefinitionFingerprint()
+        || application.acceptedStepCount != state.acceptedStepCount
+        || application.simulationTimeSeconds != state.simulationTimeSeconds
+        || application.nodeLoads.size() != transfer.nodes().size()) {
+        throw std::invalid_argument(
+            "scene fluid regional pressure load application is foreign to its source");
+    }
+    const auto transferred =
+        evaluateSceneFluidRegionalAcceptedPressureQuadrature(
+            surface, state, transfer, quadrature, samples,
+            transferSettings);
+    const auto transferredLoads = transferred.nodeLoads();
+    if (transferredLoads.size() != application.nodeLoads.size()) {
+        throw std::invalid_argument(
+            "scene fluid regional pressure load application changed node count");
+    }
+    for (std::size_t index = 0;
+         index < transferredLoads.size(); ++index) {
+        const auto& expected = transferredLoads[index];
+        const auto& actual = application.nodeLoads[index];
+        if (actual.loadIndex != index
+            || actual.stableId != expected.stableId
+            || actual.structureNode != expected.structureNode
+            || actual.appliedPressureForceNewtons
+                != expected.forceNewtons) {
+            throw std::invalid_argument(
+                "scene fluid regional pressure applied node load is foreign to its source");
+        }
     }
 }
 

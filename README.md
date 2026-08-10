@@ -522,7 +522,11 @@ kinematics, precomputes every resulting load, preserves unrelated pending
 loads, and records a fingerprinted per-node receipt. Any failed postcondition
 restores the complete pre-application Structure checkpoint. It deliberately
 does not advance XPBD, consume the pending forces, or select the regional
-solver for a worker.
+solver for a worker. A separate public full validator now re-evaluates the
+immutable quadrature transfer and requires every receipt node ID, Structure
+index, and applied force to match that exact sealed or opening-aware sample
+set. This distinguishes internal checksum integrity from source ownership;
+foreign accepted epochs and bounded validation limits reject.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

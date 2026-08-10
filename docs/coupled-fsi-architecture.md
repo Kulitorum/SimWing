@@ -2608,6 +2608,12 @@ only after their retained area, force, moment, and power have closed to the
 atomic opening-load endpoint; an opening-specific preallocation-limit oracle
 proves rejection before mutation. This is a tested mutation boundary, not a
 structural advance, pressure refresh, checkpoint format, or worker integration.
+Receipt integrity validates its internal arithmetic and fingerprint. The
+separate full validator additionally rebuilds the immutable quadrature
+evaluation and requires every stable node ID, Structure node index, and applied
+force to equal that exact source. Sealed, moving, fully open, and partial-
+opening receipts revalidate; a valid receipt paired with a foreign accepted
+epoch and independent validation limits reject without mutation.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

@@ -761,6 +761,9 @@ void testOpeningAwareSamplingAndApplication() {
               == samples.sampledPressureForceOnSheetNewtons,
           "regional opening sampling: Structure receives no aperture traction");
     validateSceneFluidRegionalPressureLoadApplicationIntegrity(application);
+    validateSceneFluidRegionalPressureLoadApplication(
+        application, fixture.surface.definition, fixture.state,
+        fixture.transfer, fixture.quadrature, samples);
 
     auto corrupt = samples;
     corrupt.regionalOpeningLoadStateFingerprint ^= 1U;
@@ -900,6 +903,9 @@ void testPartialOpeningSamplingAndApplication() {
             "regional partial opening: Structure receives the retained resultant");
     }
     validateSceneFluidRegionalPressureLoadApplicationIntegrity(application);
+    validateSceneFluidRegionalPressureLoadApplication(
+        application, fixture.surface.definition, fixture.state,
+        fixture.transfer, fixture.quadrature, samples);
 }
 
 void testMovingSamplingAndPower() {
@@ -989,6 +995,32 @@ void testTransactionalLoadApplication() {
     check(after.pendingExternalForcesNewtons == expected,
           "regional application: all resulting pending loads match the receipt");
     validateSceneFluidRegionalPressureLoadApplicationIntegrity(application);
+    validateSceneFluidRegionalPressureLoadApplication(
+        application, fixture.surface.definition, fixture.state,
+        fixture.transfer, fixture.quadrature, samples);
+    auto validationLimits =
+        SceneFluidRegionalPressureLoadApplicationLimits{};
+    validationLimits.maximumNodeLoads = application.nodeLoads.size() - 1;
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalPressureLoadApplication(
+                application, fixture.surface.definition, fixture.state,
+                fixture.transfer, fixture.quadrature, samples, {},
+                validationLimits);
+        },
+        "regional application: source-aware validation enforces its node limit");
+
+    const RegionalEndpoint movingEndpoint(true);
+    SceneFixture movingFixture(true);
+    const auto movingSamples = sample(movingEndpoint, movingFixture);
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalPressureLoadApplication(
+                application, movingFixture.surface.definition,
+                movingFixture.state, movingFixture.transfer,
+                movingFixture.quadrature, movingSamples);
+        },
+        "regional application: source-aware validation rejects a foreign accepted source");
     auto corrupt = application;
     corrupt.nodeLoads[0].resultingPendingForceNewtons.x += 1.0;
     expectRejected(
@@ -1016,6 +1048,9 @@ void testMovingLoadApplication() {
               && after.pendingExternalForcesNewtons
                   != before.pendingExternalForcesNewtons,
           "regional application: moving accepted pressure reaches pending XPBD loads without stepping");
+    validateSceneFluidRegionalPressureLoadApplication(
+        application, fixture.surface.definition, fixture.state,
+        fixture.transfer, fixture.quadrature, samples);
 }
 
 void testApplicationRollbackAndLimits() {

@@ -133,6 +133,8 @@ struct SceneFluidRegionalPressureAppliedNodeLoad {
 // are validated before the first load changes; every postcondition is checked
 // against a saved Structure checkpoint and any failure restores that checkpoint.
 // Existing non-pressure pending loads are retained exactly.
+// Internal integrity is self-contained; the full validator below also rebuilds
+// the immutable source transfer and proves each applied node load's ownership.
 //
 // This does not step Structure, consume the pending loads, persist regional
 // state, or enable a production worker path.
@@ -261,5 +263,19 @@ applySceneFluidRegionalAcceptedPressureLoads(
 
 void validateSceneFluidRegionalPressureLoadApplicationIntegrity(
     const SceneFluidRegionalPressureLoadApplication& application);
+
+// Re-evaluates the immutable sampled quadrature and proves that every applied
+// node load in the receipt belongs to that exact sealed or opening-aware source
+// and transfer topology. Prior pending loads remain receipt-owned history; this
+// validator mutates neither Structure nor any source artifact.
+void validateSceneFluidRegionalPressureLoadApplication(
+    const SceneFluidRegionalPressureLoadApplication& application,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidRegionalPressureSampleSet& samples,
+    const ConservativeTransferSettings& transferSettings = {},
+    const SceneFluidRegionalPressureLoadApplicationLimits& limits = {});
 
 } // namespace simwing::fsi
