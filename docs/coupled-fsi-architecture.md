@@ -2442,6 +2442,20 @@ artifact is deterministic, fingerprinted, and independently bounded. Direct
 velocity retention is only a warm-state policy: it deliberately claims no
 momentum-conservative advection across the changed face metric, does not yet
 accept the next pressure transaction, persist a restart, or select a worker.
+`planar_region_fragment_opening_pressure_epoch.*` composes that warm product
+with the existing resistance-plus-augmented-projection transaction. It builds
+all four mutable fields privately, advances them together, and captures a new
+immutable accepted aperture endpoint only when nested pressure and aggregate
+energy acceptance both succeed. A numerical rejection publishes its typed
+resistance, pressure-projection, or aggregate-energy failure stage and no
+partial endpoint; invalid sources still reject before the transaction. Two
+consecutive breathing transitions now chain deterministically through accepted
+state, while a deliberately truncated second solve leaves the prior state
+bit-exact. Complete replay validation re-derives both the continuation and
+pressure result, and aggregate diagnostics/state storage is independently
+bounded. The harness remains opt-in and inherits the continuation's explicit
+lack of momentum advection; it owns no rebase, persistence, load application,
+or worker selection.
 `planar_region_fragment_opening_pressure_state.*` now performs that first
 pressure composition. It consumes only the validated accepted aperture state,
 uses the augmented operator's connected-component mapping, and publishes each

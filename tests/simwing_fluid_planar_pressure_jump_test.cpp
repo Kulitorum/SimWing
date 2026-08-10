@@ -11,6 +11,7 @@
 #include "fluid/planar_region_fragment_opening.h"
 #include "fluid/planar_region_fragment_opening_flux.h"
 #include "fluid/planar_region_fragment_opening_pressure_operator.h"
+#include "fluid/planar_region_fragment_opening_pressure_epoch.h"
 #include "fluid/planar_region_fragment_opening_pressure_projection.h"
 #include "fluid/planar_region_fragment_opening_pressure_step.h"
 #include "fluid/planar_region_fragment_opening_resistance.h"
@@ -9465,6 +9466,181 @@ void testPlanarRegionalResistedOpeningPressureStep() {
                     renamedDefinitions, renamedOpenings));
         },
         "opening continuation rejects aperture appearance and retirement");
+
+    const auto pressureEpoch =
+        acceptPlanarPressureRegionFragmentOpeningPressureEpoch(
+            acceptedState, pressureOperator, base, geometry, sweep,
+            fragments, topology, volumeRates, definitions, openings,
+            resistance, nextPressureOperator, nextBase, nextSweep,
+            nextFragments, nextTopology, nextVolumeRates, definitions,
+            nextOpenings, resistance, settings);
+    const auto repeatedPressureEpoch =
+        acceptPlanarPressureRegionFragmentOpeningPressureEpoch(
+            acceptedState, pressureOperator, base, geometry, sweep,
+            fragments, topology, volumeRates, definitions, openings,
+            resistance, nextPressureOperator, nextBase, nextSweep,
+            nextFragments, nextTopology, nextVolumeRates, definitions,
+            nextOpenings, resistance, settings);
+    check(pressureEpoch == repeatedPressureEpoch
+              && pressureEpoch.version
+                  == planarPressureRegionFragmentOpeningPressureEpochVersion
+              && pressureEpoch.diagnostics.accepted
+              && pressureEpoch.diagnostics.usedConsecutiveContinuation
+              && pressureEpoch.diagnostics.failureStage
+                  == PlanarPressureRegionFragmentOpeningPressureEpochFailureStage::
+                      None
+              && pressureEpoch.diagnostics.pressureStep.accepted
+              && pressureEpoch.sourceAcceptedStateFingerprint
+                  == acceptedState.fingerprint
+              && pressureEpoch.continuationFingerprint
+                  == continuation.fingerprint
+              && pressureEpoch.continuationOpeningFluxFingerprint
+                  == continuation.openingFlux.fingerprint
+              && pressureEpoch.currentPressureOperatorFingerprint
+                  == nextPressureOperator.fingerprint
+              && pressureEpoch.currentVolumeRateFingerprint
+                  == nextVolumeRates.fingerprint
+              && pressureEpoch.acceptedState.accepted
+              && pressureEpoch.acceptedState.sourcePressureOperatorFingerprint
+                  == nextPressureOperator.fingerprint
+              && pressureEpoch.acceptedState.sourceOpeningFluxFingerprint
+                  == continuation.openingFlux.fingerprint
+              && pressureEpoch.acceptedState.resultOpeningFluxFingerprint
+                  == pressureEpoch.diagnostics.pressureStep
+                         .resultOpeningFluxFingerprint,
+          "opening pressure epoch atomically accepts one continued moving state");
+    validatePlanarPressureRegionFragmentOpeningPressureEpochResultIntegrity(
+        pressureEpoch);
+    validatePlanarPressureRegionFragmentOpeningPressureEpochResult(
+        pressureEpoch, acceptedState, pressureOperator, base, geometry,
+        sweep, fragments, topology, volumeRates, definitions, openings,
+        resistance, nextPressureOperator, nextBase, nextSweep,
+        nextFragments, nextTopology, nextVolumeRates, definitions,
+        nextOpenings, resistance, settings);
+    auto corruptPressureEpoch = pressureEpoch;
+    corruptPressureEpoch.acceptedState.pressureCorrectionPascals[0] += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningPressureEpochResultIntegrity(
+                corruptPressureEpoch);
+        },
+        "opening pressure epoch rejects accepted-endpoint corruption");
+    auto foreignEpochResistance = resistance;
+    foreignEpochResistance[0].resistance.linearPascalSecondsPerMeter += 1.0;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningPressureEpochResult(
+                pressureEpoch, acceptedState, pressureOperator, base,
+                geometry, sweep, fragments, topology, volumeRates,
+                definitions, openings, resistance, nextPressureOperator,
+                nextBase, nextSweep, nextFragments, nextTopology,
+                nextVolumeRates, definitions, nextOpenings,
+                foreignEpochResistance, settings);
+        },
+        "opening pressure epoch rejects foreign current resistance provenance");
+
+    auto rejectedEpochSettings = settings;
+    rejectedEpochSettings.projection.pressureSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-16;
+    rejectedEpochSettings.projection.pressureSolve
+        .relativeResidualTolerance = 0.0;
+    rejectedEpochSettings.projection.pressureSolve.maximumIterations = 1;
+    const auto retainedPreviousState = acceptedState;
+    const auto rejectedPressureEpoch =
+        acceptPlanarPressureRegionFragmentOpeningPressureEpoch(
+            acceptedState, pressureOperator, base, geometry, sweep,
+            fragments, topology, volumeRates, definitions, openings,
+            resistance, nextPressureOperator, nextBase, nextSweep,
+            nextFragments, nextTopology, nextVolumeRates, definitions,
+            nextOpenings, resistance, rejectedEpochSettings);
+    check(!rejectedPressureEpoch.diagnostics.accepted
+              && rejectedPressureEpoch.diagnostics.usedConsecutiveContinuation
+              && rejectedPressureEpoch.diagnostics.failureStage
+                  == PlanarPressureRegionFragmentOpeningPressureEpochFailureStage::
+                      PressureProjection
+              && rejectedPressureEpoch.diagnostics.pressureStep
+                     .resistance.accepted
+              && !rejectedPressureEpoch.diagnostics.pressureStep
+                      .projection.accepted
+              && !rejectedPressureEpoch.acceptedState.accepted
+              && rejectedPressureEpoch.acceptedState.fingerprint == 0
+              && acceptedState == retainedPreviousState,
+          "rejected opening pressure epoch publishes no partial endpoint");
+    validatePlanarPressureRegionFragmentOpeningPressureEpochResultIntegrity(
+        rejectedPressureEpoch);
+    validatePlanarPressureRegionFragmentOpeningPressureEpochResult(
+        rejectedPressureEpoch, acceptedState, pressureOperator, base,
+        geometry, sweep, fragments, topology, volumeRates, definitions,
+        openings, resistance, nextPressureOperator, nextBase, nextSweep,
+        nextFragments, nextTopology, nextVolumeRates, definitions,
+        nextOpenings, resistance, rejectedEpochSettings);
+    auto pressureEpochLimits =
+        PlanarPressureRegionFragmentOpeningPressureEpochLimits{};
+    pressureEpochLimits.maximumOwnedBytes =
+        pressureEpoch.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                acceptPlanarPressureRegionFragmentOpeningPressureEpoch(
+                    acceptedState, pressureOperator, base, geometry, sweep,
+                    fragments, topology, volumeRates, definitions, openings,
+                    resistance, nextPressureOperator, nextBase, nextSweep,
+                    nextFragments, nextTopology, nextVolumeRates,
+                    definitions, nextOpenings, resistance, settings,
+                    pressureEpochLimits));
+        },
+        "opening pressure epoch enforces its aggregate owned-storage limit");
+
+    if (pressureEpoch.diagnostics.accepted) {
+        auto thirdLayers = nextLayers;
+        thirdLayers[0].physicalPlaneCoordinateMeters -= 0.02;
+        thirdLayers[1].physicalPlaneCoordinateMeters += 0.02;
+        const auto thirdSweep = makePlanarPressureRegionSweepLedger(
+            geometry, nextLayers, thirdLayers, 0.5);
+        const auto thirdFragments = buildPlanarPressureRegionFragments(
+            geometry, thirdSweep);
+        const auto thirdTopology =
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, thirdSweep, thirdFragments);
+        const auto thirdBase =
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, thirdSweep, thirdFragments, thirdTopology);
+        const auto thirdVolumeRates =
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, thirdSweep, thirdFragments, thirdTopology);
+        const auto thirdOpenings =
+            buildPlanarPressureRegionFragmentOpenings(
+                geometry, thirdSweep, thirdFragments, thirdTopology,
+                definitions);
+        const auto thirdPressureOperator =
+            buildPlanarPressureRegionFragmentOpeningPressureOperator(
+                thirdBase, geometry, thirdSweep, thirdFragments,
+                thirdTopology, definitions, thirdOpenings);
+        const auto thirdPressureEpoch =
+            acceptPlanarPressureRegionFragmentOpeningPressureEpoch(
+                pressureEpoch.acceptedState, nextPressureOperator,
+                nextBase, geometry, nextSweep, nextFragments, nextTopology,
+                nextVolumeRates, definitions, nextOpenings, resistance,
+                thirdPressureOperator, thirdBase, thirdSweep,
+                thirdFragments, thirdTopology, thirdVolumeRates,
+                definitions, thirdOpenings, resistance, settings);
+        check(thirdPressureEpoch.diagnostics.accepted
+                  && thirdPressureEpoch.sourceAcceptedStateFingerprint
+                      == pressureEpoch.acceptedState.fingerprint
+                  && thirdPressureEpoch.acceptedState
+                         .sourcePressureOperatorFingerprint
+                      == thirdPressureOperator.fingerprint
+                  && thirdPressureEpoch.acceptedState.fingerprint
+                      != pressureEpoch.acceptedState.fingerprint,
+              "opening pressure epochs chain through two consecutive accepted transitions");
+        validatePlanarPressureRegionFragmentOpeningPressureEpochResult(
+            thirdPressureEpoch, pressureEpoch.acceptedState,
+            nextPressureOperator, nextBase, geometry, nextSweep,
+            nextFragments, nextTopology, nextVolumeRates, definitions,
+            nextOpenings, resistance, thirdPressureOperator, thirdBase,
+            thirdSweep, thirdFragments, thirdTopology, thirdVolumeRates,
+            definitions, thirdOpenings, resistance, settings);
+    }
 
     const auto openingPressureState =
         composePlanarPressureRegionFragmentOpeningPressureState(

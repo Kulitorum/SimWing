@@ -1965,6 +1965,18 @@ makes this a certified aerodynamic solver.
   resistance/settings lineage, and independently reconstructs final
   continuity, connected pressure gauges, and diagonal kinetic energy before
   publication. It does not itself compose total regional pressure or loads.
+- `src/fsi/fluid/planar_region_fragment_opening_continuation.{h,cpp}` maps
+  that endpoint into one exactly consecutive topology-stable epoch by
+  one-to-one link, patch, fragment, and connected-component stable identity.
+  It preserves velocities, re-gauges correction pressure to current fragment
+  volumes, and rebuilds current opening flux. Appearance, retirement, changed
+  aperture semantics, and rebases reject; this is warm state, not momentum
+  advection.
+- `src/fsi/fluid/planar_region_fragment_opening_pressure_epoch.{h,cpp}`
+  privately composes that continuation with resistance, augmented projection,
+  and accepted-state capture. Numerical rejection publishes a typed stage and
+  no partial endpoint. It remains opt-in and owns no persistence, load
+  application, rebase, or worker selection.
 - `src/fsi/fluid/planar_region_fragment_opening_pressure_state.{h,cpp}`
   composes authored fragment pressure with that accepted correction on the
   opening-connected gauge. It publishes full-wall authored/correction/total
@@ -2573,6 +2585,27 @@ aggregate count/owned/working limits, and reject foreign coefficients,
 unaccepted steps, corrupted fields, and mismatched source epochs. This state
 does not certify total regional pressure, open-area pressure-load subtraction,
 Structure traction, rebase, or worker ownership.
+
+For `planar_region_fragment_opening_continuation.*`, fully validate the prior
+accepted state and both epochs, require `previous.currentProfile ==
+current.previousProfile`, and require exact stable-ID coverage and compatible
+link/patch/fragment/component semantics. Geometry and metric weights may move
+without changing identity. Preserve each stable link and aperture velocity,
+map correction pressure by fragment ID, subtract the current component-volume
+mean, and rebuild current opening flux. Never invent donor values for appeared
+or retired identities, repair a rebase, or claim momentum-conservative
+transport. Bound owned and mapping storage and rederive the full product during
+validation.
+
+For `planar_region_fragment_opening_pressure_epoch.*`, build continuation
+fields privately and pass them through the complete resistance-plus-projection
+step. Publish an accepted state only after nested and aggregate acceptance;
+otherwise retain the typed resistance/projection/aggregate failure and an
+empty endpoint. Bind the prior state, continuation flux, current operators,
+geometry, openings, resistance definitions, and exact settings. Require
+deterministic consecutive replay, multi-epoch chaining, rejected-step rollback,
+and aggregate storage limits. Do not add persistence, rebase, Structure load
+application, worker selection, or hide the lack of momentum advection.
 
 For `planar_region_fragment_opening_pressure_state.*`, require a fully
 validated opening accepted state and exact agreement with its augmented/base
