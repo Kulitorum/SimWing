@@ -18,6 +18,7 @@
 #include "scene_fluid_regional_opening_momentum_wall_exchange.h"
 #include "scene_fluid_regional_opening_momentum_wall_cycle_owner.h"
 #include "scene_fluid_regional_opening_momentum_wall_coupled_state.h"
+#include "scene_fluid_regional_opening_momentum_wall_coupled_state_persistence.h"
 #include "scene_fluid_regional_opening_momentum_wall_cycle_state_persistence.h"
 #include "scene_fluid_regional_opening_momentum_wall_input.h"
 #include "scene_fluid_regional_opening_momentum_wall_load_application.h"
@@ -73,6 +74,11 @@ void refreshOpeningMomentumWallCycleStatePersistenceChecksum(
         bytes[checksumOffset + byte] = static_cast<std::uint8_t>(
             value >> (8U * byte));
     }
+}
+
+void refreshOpeningMomentumWallCoupledStatePersistenceChecksum(
+    std::vector<std::uint8_t>& bytes) {
+    refreshOpeningMomentumWallCycleStatePersistenceChecksum(bytes);
 }
 
 template<typename Callback>
@@ -2924,6 +2930,221 @@ void testOpeningMomentumWallExchange() {
                   beforeLateLimitedCoupledOwner,
                   lateLimitedCoupledOwner.structure().checkpoint()),
           "regional opening wall coupled owner: late rejection retains prior fluid absence and exact Structure");
+
+    const auto serializeCoupledState = [&](
+        const SceneFluidRegionalOpeningMomentumWallCoupledState& state,
+        const Structure& definitionOwner,
+        std::vector<std::uint8_t>& bytes,
+        SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceError*
+            error,
+        const SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceLimits&
+            limits) {
+        return serializeSceneFluidRegionalOpeningMomentumWallCoupledState(
+            state, endpoint.openingMetric, endpoint.pressureOperator,
+            endpoint.basePressureOperator, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.resistanceDefinitions,
+            endpoint.baseMetric, endpoint.openingMetric,
+            coupledOwnerSources.surface.definition,
+            coupledOwnerSources.state, coupledOwnerSources.transfer,
+            coupledOwnerSources.quadrature, definitionOwner,
+            structureStepSettings, bytes, error, limits);
+    };
+    const auto deserializeCoupledState = [&](
+        const std::span<const std::uint8_t> bytes,
+        const Structure& definitionOwner,
+        const SceneFluidQuadratureDefinition& sourceQuadrature,
+        SceneFluidRegionalOpeningMomentumWallCoupledState& state,
+        SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceError*
+            error,
+        const SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceLimits&
+            limits) {
+        return deserializeSceneFluidRegionalOpeningMomentumWallCoupledState(
+            bytes, endpoint.openingMetric, endpoint.pressureOperator,
+            endpoint.basePressureOperator, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.resistanceDefinitions,
+            endpoint.baseMetric, endpoint.openingMetric,
+            coupledOwnerSources.surface.definition,
+            coupledOwnerSources.state, coupledOwnerSources.transfer,
+            sourceQuadrature, definitionOwner, structureStepSettings,
+            state, error, limits);
+    };
+
+    std::vector<std::uint8_t> coupledEncoding;
+    SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceError
+        coupledPersistenceError;
+    check(serializeCoupledState(
+              coupledCheckpoint, coupledOwner.structure(), coupledEncoding,
+              &coupledPersistenceError, {})
+              && coupledEncoding.size() > 64
+              && coupledEncoding[0] == 'S'
+              && coupledEncoding[1] == 'W'
+              && coupledEncoding[2] == 'R'
+              && coupledEncoding[3] == 'C',
+          "regional opening wall coupled persistence: accepted pair encodes as distinct SWRC");
+    SceneFluidRegionalOpeningMomentumWallCoupledState decodedCoupledState;
+    check(deserializeCoupledState(
+              coupledEncoding, coupledOwnerSources.structure,
+              coupledOwnerSources.quadrature, decodedCoupledState,
+              &coupledPersistenceError, {})
+              && decodedCoupledState.fingerprint
+                  == coupledCheckpoint.fingerprint
+              && decodedCoupledState.cycleState
+                  == coupledCheckpoint.cycleState
+              && decodedCoupledState.structureStep.fingerprint
+                  == coupledCheckpoint.structureStep.fingerprint
+              && decodedCoupledState.structureStep
+                     .beforeStructureCheckpoint
+                  == coupledCheckpoint.structureStep
+                         .beforeStructureCheckpoint
+              && decodedCoupledState.structureStep
+                     .afterStructureCheckpoint
+                  == coupledCheckpoint.structureStep
+                         .afterStructureCheckpoint,
+          "regional opening wall coupled persistence: decode replays the complete in-memory receipt");
+    std::vector<std::uint8_t> repeatedCoupledEncoding;
+    check(serializeCoupledState(
+              decodedCoupledState, coupledOwnerSources.structure,
+              repeatedCoupledEncoding, &coupledPersistenceError, {})
+              && repeatedCoupledEncoding == coupledEncoding,
+          "regional opening wall coupled persistence: round trip is bit-exact");
+
+    SceneFluidRegionalOpeningMomentumWallCoupledStateOwner
+        decodedCoupledOwner(
+            Structure(coupledOwnerSources.structureAssembly.definition));
+    restoreCoupledOwner(decodedCoupledOwner, decodedCoupledState, {});
+    const auto decodedNextTransport =
+        advancePlanarPressureRegionFragmentOpeningMomentum(
+            decodedCoupledOwner.state().cycleState.adjustedMomentum,
+            endpoint.openingMetric, adjustedTargetFlow,
+            endpoint.openingMetric, endpoint.geometry, endpoint.sweep,
+            endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates,
+            endpoint.momentumCycle.transportSettings);
+    check(encodeOwnerStructure(decodedCoupledOwner)
+                  == coupledStructureBytes
+              && decodedNextTransport == adjustedNextTransport,
+          "regional opening wall coupled persistence: restored SWRC pair preserves both continuations");
+
+    auto retainedDecodedCoupledState = decodedCoupledState;
+    const auto decodedDestinationRetained = [&] {
+        return retainedDecodedCoupledState.fingerprint
+                == decodedCoupledState.fingerprint
+            && retainedDecodedCoupledState.structureStep
+                   .afterStructureCheckpoint
+                == decodedCoupledState.structureStep
+                       .afterStructureCheckpoint;
+    };
+    auto corruptCoupledEncoding = coupledEncoding;
+    corruptCoupledEncoding[0] ^= 0x01U;
+    check(!deserializeCoupledState(
+              corruptCoupledEncoding, coupledOwnerSources.structure,
+              coupledOwnerSources.quadrature,
+              retainedDecodedCoupledState, &coupledPersistenceError, {})
+              && coupledPersistenceError.code
+                  == SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceErrorCode::InvalidMagic
+              && decodedDestinationRetained(),
+          "regional opening wall coupled persistence: foreign magic retains destination");
+    corruptCoupledEncoding = coupledEncoding;
+    corruptCoupledEncoding.back() ^= 0x01U;
+    check(!deserializeCoupledState(
+              corruptCoupledEncoding, coupledOwnerSources.structure,
+              coupledOwnerSources.quadrature,
+              retainedDecodedCoupledState, &coupledPersistenceError, {})
+              && coupledPersistenceError.code
+                  == SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceErrorCode::ChecksumMismatch
+              && decodedDestinationRetained(),
+          "regional opening wall coupled persistence: checksum corruption retains destination");
+    corruptCoupledEncoding = coupledEncoding;
+    corruptCoupledEncoding[32] ^= 0x01U;
+    refreshOpeningMomentumWallCoupledStatePersistenceChecksum(
+        corruptCoupledEncoding);
+    check(!deserializeCoupledState(
+              corruptCoupledEncoding, coupledOwnerSources.structure,
+              coupledOwnerSources.quadrature,
+              retainedDecodedCoupledState, &coupledPersistenceError, {})
+              && coupledPersistenceError.code
+                  == SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceErrorCode::ReplayMismatch
+              && decodedDestinationRetained(),
+          "regional opening wall coupled persistence: recomputed-checksum receipt identity corruption rejects");
+    corruptCoupledEncoding = coupledEncoding;
+    corruptCoupledEncoding[64] ^= 0x01U;
+    refreshOpeningMomentumWallCoupledStatePersistenceChecksum(
+        corruptCoupledEncoding);
+    check(!deserializeCoupledState(
+              corruptCoupledEncoding, coupledOwnerSources.structure,
+              coupledOwnerSources.quadrature,
+              retainedDecodedCoupledState, &coupledPersistenceError, {})
+              && decodedDestinationRetained(),
+          "regional opening wall coupled persistence: recomputed-checksum nested SWRW corruption rejects");
+    corruptCoupledEncoding = coupledEncoding;
+    corruptCoupledEncoding.pop_back();
+    check(!deserializeCoupledState(
+              corruptCoupledEncoding, coupledOwnerSources.structure,
+              coupledOwnerSources.quadrature,
+              retainedDecodedCoupledState, &coupledPersistenceError, {})
+              && coupledPersistenceError.code
+                  == SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceErrorCode::Truncated
+              && decodedDestinationRetained(),
+          "regional opening wall coupled persistence: truncation retains destination");
+    corruptCoupledEncoding = coupledEncoding;
+    corruptCoupledEncoding.push_back(0);
+    check(!deserializeCoupledState(
+              corruptCoupledEncoding, coupledOwnerSources.structure,
+              coupledOwnerSources.quadrature,
+              retainedDecodedCoupledState, &coupledPersistenceError, {})
+              && coupledPersistenceError.code
+                  == SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceErrorCode::TrailingData
+              && decodedDestinationRetained(),
+          "regional opening wall coupled persistence: trailing data retains destination");
+
+    check(!deserializeCoupledState(
+              coupledEncoding, coupledOwnerSources.structure,
+              foreignWallCycleFixture.quadrature,
+              retainedDecodedCoupledState, &coupledPersistenceError, {})
+              && coupledPersistenceError.code
+                  == SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceErrorCode::SourceMismatch
+              && decodedDestinationRetained(),
+          "regional opening wall coupled persistence: foreign quadrature retains destination");
+    auto foreignStructureDefinition =
+        coupledOwnerSources.structureAssembly.definition;
+    foreignStructureDefinition.nodes.front().massKg *= 2.0;
+    Structure foreignStructure(std::move(foreignStructureDefinition));
+    check(!deserializeCoupledState(
+              coupledEncoding, foreignStructure,
+              coupledOwnerSources.quadrature,
+              retainedDecodedCoupledState, &coupledPersistenceError, {})
+              && coupledPersistenceError.code
+                  == SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceErrorCode::TopologyMismatch
+              && decodedDestinationRetained(),
+          "regional opening wall coupled persistence: foreign Structure definition retains destination");
+
+    auto coupledPersistenceLimits =
+        SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceLimits{};
+    coupledPersistenceLimits.maximumEncodedBytes =
+        coupledEncoding.size() - 1;
+    check(!deserializeCoupledState(
+              coupledEncoding, coupledOwnerSources.structure,
+              coupledOwnerSources.quadrature,
+              retainedDecodedCoupledState, &coupledPersistenceError,
+              coupledPersistenceLimits)
+              && coupledPersistenceError.code
+                  == SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceErrorCode::LimitExceeded
+              && decodedDestinationRetained(),
+          "regional opening wall coupled persistence: decode byte limit retains destination");
+    std::vector<std::uint8_t> retainedCoupledEncoding{1, 2, 3};
+    check(!serializeCoupledState(
+              coupledCheckpoint, coupledOwnerSources.structure,
+              retainedCoupledEncoding, &coupledPersistenceError,
+              coupledPersistenceLimits)
+              && coupledPersistenceError.code
+                  == SceneFluidRegionalOpeningMomentumWallCoupledStatePersistenceErrorCode::LimitExceeded
+              && retainedCoupledEncoding
+                  == std::vector<std::uint8_t>({1, 2, 3}),
+          "regional opening wall coupled persistence: encode byte limit retains destination");
 
     const auto rejectingLayers = translatePlanarPressureJumpLayers(
         endpoint.geometry, endpoint.layers, 0.1).layers;

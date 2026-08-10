@@ -445,6 +445,7 @@ src/fsi/
     scene_fluid_regional_opening_momentum_wall_load_epoch.* atomic pressure-plus-wall pending-load epoch
     scene_fluid_regional_opening_momentum_wall_structure_step_epoch.* replayable one-step XPBD consumption
     scene_fluid_regional_opening_momentum_wall_coupled_state.* atomic in-memory fluid/Structure owner
+    scene_fluid_regional_opening_momentum_wall_coupled_state_persistence.* replay-validated SWRC restart
     scene_fluid_region_link_flow.* current-link region predictor
     scene_fluid_pressure_coupling.* strong pressure/shear feedback
     scene_pressure_cell_geometry.* shared visible/refinement tetrahedra
@@ -3024,6 +3025,15 @@ pre-pressure Structure while retaining the prior fluid owner; a restored pair
 reproduces both byte-identical Structure state and the exact next ALE transport.
 This owner is in-memory only and still performs no topology rebase, repeated
 coupled stepping, persistence, or production selection.
+Its `..._persistence.*` companion adds the distinct checksummed `SWRC` restart
+envelope without copying the large derived receipt onto the wire. The payload
+nests the existing `SWRW` fluid endpoint and both canonical `SWST` Structure
+encodings. Decode restores the trusted pre-step Structure, repeats the combined
+pressure/wall load and single XPBD step, and publishes only when the rebuilt
+coupled fingerprint and both Structure byte streams are exact. Corrupt outer or
+nested identity, foreign quadrature/topology, truncation, trailing data, and
+bounds retain the destination. This changes neither nested protocol nor any
+production checkpoint/worker path.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

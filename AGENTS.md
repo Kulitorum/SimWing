@@ -2237,6 +2237,12 @@ makes this a certified aerodynamic solver.
   encoding before a no-throw pair publication. Late owner failure restores the
   pre-load Structure and prior fluid owner together. It is in-memory only and
   remains outside the worker.
+- `src/fsi/scene_fluid_regional_opening_momentum_wall_coupled_state_persistence.{h,cpp}`
+  owns the distinct `SWRC` restart envelope for that pair. It nests the existing
+  `SWRW` endpoint plus the retained pre/post `SWST` Structure encodings, then
+  reconstructs the omitted diagnostic/load receipt by one bounded deterministic
+  replay before transactional decode publication. It does not change `SWRW`,
+  `SWST`, or any production checkpoint.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -3313,6 +3319,18 @@ replay, corrupt-state restore with both prior owners unchanged, and a late
 owner-limit failure with no fluid publication and exact Structure rollback. Do
 not add persistence, topology rebase, repeated coupled stepping, or a worker
 selection.
+
+For its `..._persistence.*` companion, use distinct `SWRC` magic and keep the
+wire payload compact: nested `SWRW` plus the already canonical pre/post `SWST`
+Structure encodings and minimal coupled identity. Do not serialize the large
+derived load/diagnostic receipt. Decode must validate live fluid/scene sources,
+restore the trusted pre-step Structure, replay exactly one combined load/XPBD
+epoch, require both reconstructed Structure encodings and coupled fingerprint
+to match, and only then publish the rebuilt in-memory state. Cover bit-exact
+round trip, restored Structure and next-fluid continuation, magic/checksum,
+recomputed-checksum outer identity and nested-`SWRW` corruption, truncation,
+trailing data, foreign quadrature/Structure topology, encode/decode limits, and
+retained destinations. Do not alter nested wire contracts or add worker I/O.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.
