@@ -488,9 +488,11 @@ src/fsi/
         evolution.*         transactional flow steps and subcycling
         projection.*
         interface_jump.*
+        planar_face_topology.* generic axis-aligned periodic plane epochs
+        planar_pressure_jump.* closed moving multi-layer pressure chains
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
-        porous_topology.*   bidirectional periodic porous-face epochs
+        porous_topology.*   compatibility API over planar face topology
         moving_interface.*  grid-face constraints and region topology
         moving_control_volume.* open planar GCL and topology epochs
         checkpoint.*        accepted fluid/topology checkpoint + persistence
@@ -2111,6 +2113,20 @@ projection must reproduce the analytic `-125/+125 Pa` cell field, remain below
 bit-identically across independent and repeated workers. This makes multiple
 same-face layers inspectable end-to-end but does not claim moving folded or
 cut-cell topology.
+A new thin multi-layer planar topology oracle supplies the next moving-interface
+prerequisite without changing the production solver. It canonicalizes stable
+layer entities into a closed periodic region chain, expands each complete plane
+over every transverse tile on X, Y, or Z, and rigidly translates the whole chain
+through retained, adjacent, and periodic-wrapped face epochs. Exact-boundary and
+skipped-segment motion, broken or nonperiodic region chains, mixed axes,
+duplicate surfaces, and invalid coordinates reject transactionally. When the
+canonical `+70/-70 Pa` pocket enters one face segment, both ordered layers and
+their distinct fractions remain inspectable but the current dense stencil sums
+them to zero and cannot recover the intermediate subcell pressure. When they
+separate onto adjacent faces, the analytic pressure pocket returns without
+spurious flow. This deliberately exposes the remaining regional-subcell or
+conservative unresolved-interface requirement; it is not a leakage closure,
+deforming folded-surface tracker, or moving folded-interface solve.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

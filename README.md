@@ -171,6 +171,15 @@ retain their stable surfaces and region sequence while the paired gradient and
 Poisson stencils use their deterministic signed sum. A split-region slab is
 bit-identical to its compact jump and a balanced folded subcell pocket creates
 no spurious pressure or flow.
+The axis-aligned face epoch used by moving porous sheets is now a reusable
+planar topology primitive, with the established porous API delegating to the
+same arithmetic. A thin multi-layer pressure oracle builds complete X/Y/Z
+closed region chains and rigidly translates them through adjacent faces and
+periodic wraps. Its `+70/-70 Pa` pocket deliberately records the current
+limitation: both same-face layers and fractions remain visible, but their dense
+stencil sum is zero and there is no independent intermediate subcell pressure
+until they occupy separate faces. This is moving-topology groundwork, not a
+general folded-fabric or leakage solve.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

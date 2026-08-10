@@ -241,9 +241,10 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   instance has distinct provenance/fingerprint, flips pump and coupled momentum,
   crosses `0 -> 7` into signed image `-1`, resumes that epoch, and rejects the
   next negative pump image. The CLI remains the positive canonical. The reusable
-  `fluid/porous_topology.*` selector owns strict open-segment placement,
+  `fluid/planar_face_topology.*` selector owns strict open-segment placement,
   bidirectional adjacent-face rebases, X/Y/Z axes, and unwrapped periodic-image
-  tracking. `fluid/planar_porous_sheet.*` validates an authored epoch and
+  tracking; `fluid/porous_topology.*` preserves the porous compatibility API.
+  `fluid/planar_porous_sheet.*` validates an authored epoch and
   expands it into the complete deterministic X/Y/Z transverse crossing plane
   shared with `simwing_porous_flow_case`; the one-way oracle rejects its pump
   collision after selection.
@@ -1851,6 +1852,15 @@ makes this a certified aerodynamic solver.
   surface identity, have distinct open-interval positions, and must form an
   ordered continuous region chain. The dense stencil uses their deterministic
   signed sum; this static pressure-jump subset is not moving folded topology.
+- `src/fsi/fluid/planar_face_topology.{h,cpp}` is the generic pure
+  axis-aligned moving-plane selector. `porous_topology.*` aliases and delegates
+  to it so the established porous contract and arithmetic remain unchanged.
+- `src/fsi/fluid/planar_pressure_jump.{h,cpp}` canonicalizes a closed periodic
+  chain of stable planar pressure layers, expands every layer over all
+  transverse X/Y/Z tiles, and transactionally translates each layer through at
+  most one adjacent or wrapped face epoch. Same-face layers remain distinct in
+  the sparse field, but the present dense stencil still aggregates their signed
+  jumps and cannot solve an independent intermediate subcell pressure.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -1873,12 +1883,13 @@ makes this a certified aerodynamic solver.
   separate. Impermeable and porous faces cannot overlap. This supports
   fixed-grid moving boundaries around porous flow, not moving porous cut-cell
   topology.
-- `src/fsi/fluid/porous_topology.{h,cpp}` is the pure moving-sheet face
-  selector. A topology epoch carries axis, wrapped face coordinate, and signed
-  periodic image. Selection retains the current strict `(0,1)` crossing or
-  advances exactly one face in either direction, including X/Y/Z wraps; exact
-  MAC-plane placement, skipped segments, invalid axes/versions, and non-finite
-  positions are rejected before caller state changes.
+- `src/fsi/fluid/porous_topology.{h,cpp}` preserves the moving-sheet API over
+  the generic planar selector. A topology epoch carries axis, wrapped face
+  coordinate, and signed periodic image. Selection retains the current strict
+  `(0,1)` crossing or advances exactly one face in either direction, including
+  X/Y/Z wraps; exact MAC-plane placement, skipped segments, invalid
+  axes/versions, and non-finite positions are rejected before caller state
+  changes.
 - `src/fsi/fluid/planar_porous_sheet.{h,cpp}` expands one validated authored
   topology epoch into exactly one deterministic crossing for every transverse
   MAC tile on X, Y, or Z. It owns the common stable-ID, two-sided-region,
@@ -2117,6 +2128,16 @@ same-face crossings, distinct open-interval positions, continuous region-chain
 validation, deterministic signed aggregation, bit-identical split/compact slab
 projection, and zero spurious pressure/flow for a balanced folded subcell
 pocket. This does not close the moving folded-interface gate.
+
+Also run `simwing_fluid_planar_pressure_jump` for changes to generic planar
+epochs or layered pressure motion. It requires complete transverse X/Y/Z
+planes, stable closed region chains, deterministic authored-order
+canonicalization, adjacent and periodic one-face translation, and transactional
+exact-boundary/skipped-segment rejection. The canonical same-face thin pocket
+must retain both layer fractions while its current dense jump remains exactly
+zero; only the separated-face state recovers the intermediate analytic
+pressure. This exposes the unresolved subcell limitation; it is not acceptance
+of moving folded-interface physics.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

@@ -1,40 +1,20 @@
 #pragma once
 
-#include "fluid/interface_jump.h"
-
-#include <cstddef>
-#include <cstdint>
+#include "fluid/planar_face_topology.h"
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t movingPorousFaceTopologyVersion = 1;
+inline constexpr std::uint32_t movingPorousFaceTopologyVersion =
+    movingPlanarFaceTopologyVersion;
 
 // One unwrapped planar porous-sheet epoch on a periodic MAC grid. The face
 // coordinate owns the wrapped fluid topology; periodicImage disambiguates the
 // physical plane after a domain wrap without changing any field index.
-struct MovingPorousFaceTopology {
-    std::uint32_t version = movingPorousFaceTopologyVersion;
-    GridFaceAxis axis = GridFaceAxis::X;
-    std::size_t faceCoordinate = 0;
-    std::int64_t periodicImage = 0;
+using MovingPorousFaceTopology = MovingPlanarFaceTopology;
 
-    bool operator==(const MovingPorousFaceTopology&) const = default;
-};
+using PorousTopologyRebaseDirection = PlanarTopologyRebaseDirection;
 
-enum class PorousTopologyRebaseDirection : std::int8_t {
-    Negative = -1,
-    None = 0,
-    Positive = 1,
-};
-
-struct MovingPorousTopologySelection {
-    MovingPorousFaceTopology topology;
-    double crossingFraction = 0.5;
-    PorousTopologyRebaseDirection rebaseDirection =
-        PorousTopologyRebaseDirection::None;
-
-    bool operator==(const MovingPorousTopologySelection&) const = default;
-};
+using MovingPorousTopologySelection = MovingPlanarTopologySelection;
 
 // Returns the strict (0, 1) crossing coordinate for a physical plane already
 // owned by the supplied epoch. Exact MAC-plane placement is intentionally not
