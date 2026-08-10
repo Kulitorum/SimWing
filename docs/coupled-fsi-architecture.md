@@ -2337,6 +2337,24 @@ final-work residuals below `4e-13 J` through all axes. Sealed breathing still
 rejects. This certificate covers only the correction potential; it does not add
 the authored fabric jump, topology rebase, momentum transport, or production
 integration.
+`planar_region_fragment_pressure_jump_energy.*` independently certifies that
+excluded authored jump. For every pressure-layer tile it reconstructs the
+minus-fluid force `-p_minus*A*n` and plus-fluid force `p_plus*A*n`, then proves
+their sum equals `A*(p_plus-p_minus)*n`. The opposite sheet force and both
+time-integrated impulses are explicit, but the artifact applies none of them.
+Static traces remain exact zero and every closed periodic pressure component
+has zero resultant. With material motion, the two traces must equal the bound
+layer velocity and the resolved side work must equal both signed jump work and
+`-dt*sum(p*dV/dt)` per component and globally. A rigid `0.1 m/s` X translation
+transfers `+28/-28 J` through the two layers with zero net work; Y/Z close the
+same identity at their larger transverse area. A topology-stable pocket
+breathing outward by `0.1 m` on both sides over `0.5 s` provides a deliberately
+separate energy oracle: fluid work is `-56 J`, sheet work is `+56 J`, and the
+exterior/pocket geometry terms are `-11.2/-44.8 J`. The sealed projection still
+rejects that motion because its component continuity is infeasible. The
+bounded fingerprinted ledger therefore proves interface action/reaction and
+work ownership only; it does not accept incompressible motion, update momentum,
+transport state, handle topology rebase, or enter production.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

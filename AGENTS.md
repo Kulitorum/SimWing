@@ -1940,6 +1940,12 @@ makes this a certified aerodynamic solver.
   component gauges, and corrected continuity. Moving audits bind volume rates,
   material-wall trace velocity, and the affine geometry-work identity. It
   excludes authored jump work, topology rebase, transport, and production.
+- `src/fsi/fluid/planar_region_fragment_pressure_jump_energy.{h,cpp}` is the
+  separate read-only authored-jump ledger. It reconstructs both absolute
+  fluid-side pressure forces, proves their sum against the signed jump,
+  publishes the opposite sheet force/impulse, and closes moving wall work to
+  `-dt*sum(p*dV/dt)` per component and globally. It applies none of those
+  loads and owns no projection, transport, rebase, or production state.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2392,6 +2398,23 @@ states, corrupt sources, wrong-sized/non-finite pressure, invalid settings, and
 all correction/pressure/component/owned/working/nested state or volume-rate
 limits. Do not infer authored static-jump work, topology rebase, momentum
 transport, or production ownership.
+
+For `planar_region_fragment_pressure_jump_energy.*`, require exact topology,
+metric, velocity-state, and optional volume-rate source binding. Reconstruct
+each wall's minus/plus absolute pressure forces independently, require their
+sum to equal `area * (p_plus-p_minus) * normal`, and publish an exactly
+opposite sheet force and time-integrated impulse. Static traces must be zero.
+Moving traces must equal the material boundary velocity, and both per-
+component and global fluid work must close to `-dt*sum(p*dV/dt)`. The
+canonical static and rigidly translating pockets must have zero aggregate
+force and work; rigid translation must transfer `+28/-28 J` through its two X
+layers. The `0.2 m` breathing expansion over `0.5 s` remains valid as a
+read-only work oracle even though sealed projection rejects it: require
+`-56 J` fluid, `+56 J` sheet, and `-11.2/-44.8 J` exterior/pocket geometry
+work. Cover X/Y/Z motion, corruption, wrong wall traces/duration, and all
+layer/component/owned/working/nested state or volume-rate limits. Do not infer
+that the ledger applies momentum, accepts incompressible motion, rebases
+topology, transports state, or belongs to production.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

@@ -325,6 +325,17 @@ kinetic energy, with work residuals below `4e-13 J` on every axis. Sealed
 breathing remains incompatible. The bounded fingerprinted certificate still
 excludes the authored 70 Pa jump, topology rebase, momentum transport, and
 production ownership.
+A separate authored-jump energy audit now resolves the absolute pressure force
+on each fluid side of every fabric tile and proves that their sum is the signed
+`area * pressure-jump * normal` load. It publishes the opposite sheet force and
+impulse without applying either one. Static walls do exactly zero work; a rigid
+`0.1 m/s` X translation transfers `+28 J` through one layer and `-28 J` through
+the other, closing globally. The deliberately projection-incompatible breathing
+pocket is still useful as a work oracle: its expanding `70 Pa` pocket gives
+`-56 J` to the fluid and `+56 J` to the sheet, while exterior/pocket geometry
+work closes at `-11.2/-44.8 J`. The same bounded source-bound checks cover
+X/Y/Z, but remain diagnostic only: no impulse is applied and no transport,
+topology rebase, or production state is introduced.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

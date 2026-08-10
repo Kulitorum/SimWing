@@ -4,6 +4,7 @@
 #include "fluid/planar_region_opening_power.h"
 #include "fluid/planar_region_fragment.h"
 #include "fluid/planar_region_fragment_pressure_operator.h"
+#include "fluid/planar_region_fragment_pressure_jump_energy.h"
 #include "fluid/planar_region_fragment_pressure_projection.h"
 #include "fluid/planar_region_fragment_projection_energy.h"
 #include "fluid/planar_region_fragment_pressure_solve.h"
@@ -227,6 +228,29 @@ findFragmentVelocityStateComponent(
         state.components, regionStableId,
         &PlanarPressureRegionFragmentVelocityStateComponent::regionStableId);
     return found == state.components.end() ? nullptr : &*found;
+}
+
+const PlanarPressureRegionFragmentPressureJumpEnergyComponent*
+findFragmentPressureJumpEnergyComponent(
+    const PlanarPressureRegionFragmentPressureJumpEnergyAudit& audit,
+    const std::uint64_t regionStableId) {
+    const auto found = std::ranges::find(
+        audit.components, regionStableId,
+        &PlanarPressureRegionFragmentPressureJumpEnergyComponent::
+            regionStableId);
+    return found == audit.components.end() ? nullptr : &*found;
+}
+
+double pressureJumpSurfaceWork(
+    const PlanarPressureRegionFragmentPressureJumpEnergyAudit& audit,
+    const std::uint64_t surfaceStableId) {
+    double result = 0.0;
+    for (const auto& layer : audit.layers) {
+        if (layer.surfaceStableId == surfaceStableId) {
+            result += layer.pressureJumpWorkToFluidJoules;
+        }
+    }
+    return result;
 }
 
 std::vector<double> regionalMetricVelocityFromTopologyLinks(
@@ -3358,6 +3382,481 @@ void testPlanarRegionalFragmentVelocityStateMotionAndRejection() {
         "regional velocity state rejects a mutated source metric");
 }
 
+void testPlanarRegionalFragmentPressureJumpEnergyAudit() {
+    constexpr double density = 1.2;
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 0.5);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto metric = buildPlanarPressureRegionFragmentVelocityMetric(
+        geometry, sweep, fragments, topology);
+    const auto state = buildPlanarPressureRegionFragmentVelocityState(
+        geometry, sweep, fragments, topology, metric,
+        std::vector<double>(metric.dofs.size(), 0.0), density);
+    PlanarPressureRegionFragmentPressureJumpEnergySettings settings;
+    settings.timeStepSeconds = 0.5;
+
+    const auto audit =
+        auditStaticPlanarPressureRegionFragmentPressureJumpEnergy(
+            geometry, sweep, fragments, topology, metric, state, settings);
+    const auto repeated =
+        auditStaticPlanarPressureRegionFragmentPressureJumpEnergy(
+            geometry, sweep, fragments, topology, metric, state, settings);
+    check(audit == repeated
+              && audit.version
+                  == planarPressureRegionFragmentPressureJumpEnergyVersion
+              && audit.fingerprint != 0
+              && audit.sourceMetricFingerprint == metric.fingerprint
+              && audit.sourceVelocityStateFingerprint == state.fingerprint
+              && audit.sourceTopologyFingerprint == topology.fingerprint
+              && audit.sourceFragmentFingerprint == fragments.fingerprint
+              && audit.volumeRateFingerprint == 0
+              && audit.staticGeometry
+              && !audit.usesMovingVolumeRates
+              && audit.accepted
+              && audit.layers.size() == 8
+              && audit.components.size() == 2
+              && audit.pressureLayerTraceCount == 16
+              && audit.ownedStorageBytes > 0
+              && audit.workingStorageBytes
+                  == 2 * topology.links.size() * sizeof(std::size_t),
+          "static regional pressure-jump energy audit is deterministic and source-bound");
+    for (const auto& layer : audit.layers) {
+        const double sign = layer.surfaceStableId == 10 ? 1.0 : -1.0;
+        check(layer.minusTraceDofIndex != layer.plusTraceDofIndex
+                  && layer.areaSquareMeters == 1.0
+                  && layer.axis == GridFaceAxis::X
+                  && layer.authoredPressureJumpPascals == sign * 70.0
+                  && layer.reconstructedPressureJumpPascals
+                      == layer.authoredPressureJumpPascals
+                  && layer.pressureJumpResidualPascals == 0.0
+                  && layer.materialWallVelocityMetersPerSecond == 0.0
+                  && layer.minusTraceVelocityMetersPerSecond == 0.0
+                  && layer.plusTraceVelocityMetersPerSecond == 0.0
+                  && layer.maximumAbsoluteWallVelocityResidualMetersPerSecond
+                      == 0.0,
+              "static pressure-jump layer retains exact wall sources");
+        checkNear(
+            layer.authoredPressureJumpForceOnFluidNewtons.x,
+            sign * 70.0, 0.0,
+            "static pressure-jump layer reconstructs signed fluid force");
+        checkNear(
+            layer.pressureForceOnSheetNewtons.x,
+            -sign * 70.0, 0.0,
+            "static pressure-jump layer publishes opposite sheet force");
+        checkNear(
+            layer.pressureJumpImpulseOnFluidNewtonSeconds.x,
+            sign * 35.0, 0.0,
+            "static pressure-jump layer integrates fluid impulse");
+        check(layer.resolvedPressureForceOnFluidNewtons
+                      == layer.authoredPressureJumpForceOnFluidNewtons
+                  && layer.pressureForceClosureResidualNewtons == Vector3{}
+                  && layer.actionReactionForceResidualNewtons == Vector3{}
+                  && layer.actionReactionImpulseResidualNewtonSeconds
+                      == Vector3{}
+                  && layer.resolvedPressurePowerToFluidWatts == 0.0
+                  && layer.authoredPressureJumpPowerToFluidWatts == 0.0
+                  && layer.pressureJumpWorkToFluidJoules == 0.0
+                  && layer.pressureWorkToSheetJoules == 0.0,
+              "static pressure-jump layer closes action, reaction, and zero work");
+    }
+    const auto* exterior = findFragmentPressureJumpEnergyComponent(audit, 1);
+    const auto* pocket = findFragmentPressureJumpEnergyComponent(audit, 2);
+    check(exterior != nullptr && pocket != nullptr,
+          "pressure-jump audit retains both pressure components");
+    if (exterior != nullptr && pocket != nullptr) {
+        check(exterior->pressureLayerSideCount == 8
+                  && pocket->pressureLayerSideCount == 8
+                  && exterior->resolvedPressureForceOnFluidNewtons
+                      == Vector3{}
+                  && pocket->resolvedPressureForceOnFluidNewtons
+                      == Vector3{}
+                  && exterior->pressureWorkToFluidJoules == 0.0
+                  && pocket->pressureWorkToFluidJoules == 0.0
+                  && exterior->workGeometryResidualJoules == 0.0
+                  && pocket->workGeometryResidualJoules == 0.0,
+              "static pressure components close boundary force and work independently");
+    }
+    check(audit.resolvedPressureForceOnFluidNewtons == Vector3{}
+              && audit.authoredPressureJumpForceOnFluidNewtons == Vector3{}
+              && audit.pressureForceOnSheetNewtons == Vector3{}
+              && audit.actionReactionForceResidualNewtons == Vector3{}
+              && audit.pressureJumpImpulseOnFluidNewtonSeconds == Vector3{}
+              && audit.pressureJumpWorkToFluidJoules == 0.0
+              && audit.pressureWorkToSheetJoules == 0.0
+              && audit.geometryPressureWorkToFluidJoules == 0.0
+              && audit.workGeometryResidualJoules == 0.0,
+          "static authored pressure jumps are globally internal and do no work");
+    validateStaticPlanarPressureRegionFragmentPressureJumpEnergyAudit(
+        audit, geometry, sweep, fragments, topology, metric, state);
+
+    auto corrupt = audit;
+    corrupt.fingerprint = 0;
+    expectRejected(
+        [&] {
+            validateStaticPlanarPressureRegionFragmentPressureJumpEnergyAudit(
+                corrupt, geometry, sweep, fragments, topology, metric,
+                state);
+        },
+        "pressure-jump energy audit rejects fingerprint corruption");
+    corrupt = audit;
+    corrupt.layers[0].pressureJumpWorkToFluidJoules += 0.1;
+    expectRejected(
+        [&] {
+            validateStaticPlanarPressureRegionFragmentPressureJumpEnergyAudit(
+                corrupt, geometry, sweep, fragments, topology, metric,
+                state);
+        },
+        "pressure-jump energy audit rejects layer corruption");
+    corrupt = audit;
+    corrupt.components[0].pressureWorkToFluidJoules += 0.1;
+    expectRejected(
+        [&] {
+            validateStaticPlanarPressureRegionFragmentPressureJumpEnergyAudit(
+                corrupt, geometry, sweep, fragments, topology, metric,
+                state);
+        },
+        "pressure-jump energy audit rejects component corruption");
+
+    auto movingWallVelocity = std::vector<double>(metric.dofs.size(), 0.0);
+    const auto wallDof = std::ranges::find_if(
+        metric.dofs,
+        [](const auto& dof) {
+            return dof.kind
+                != PlanarPressureRegionFragmentVelocityDofKind::
+                    SharedRegionGrid;
+        });
+    movingWallVelocity[wallDof->dofIndex] = 0.01;
+    const auto inconsistentWallState =
+        buildPlanarPressureRegionFragmentVelocityState(
+            geometry, sweep, fragments, topology, metric,
+            movingWallVelocity, density);
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                auditStaticPlanarPressureRegionFragmentPressureJumpEnergy(
+                    geometry, sweep, fragments, topology, metric,
+                    inconsistentWallState, settings));
+        },
+        "static pressure-jump energy audit rejects a moving wall trace");
+
+    auto invalidSettings = settings;
+    invalidSettings.timeStepSeconds = 0.0;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                auditStaticPlanarPressureRegionFragmentPressureJumpEnergy(
+                    geometry, sweep, fragments, topology, metric, state,
+                    invalidSettings));
+        },
+        "pressure-jump energy audit rejects an invalid time step");
+    auto limits = PlanarPressureRegionFragmentPressureJumpEnergyLimits{};
+    limits.maximumLayers = audit.layers.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                auditStaticPlanarPressureRegionFragmentPressureJumpEnergy(
+                    geometry, sweep, fragments, topology, metric, state,
+                    settings, limits));
+        },
+        "pressure-jump energy audit enforces the layer limit");
+    limits = {};
+    limits.maximumComponents = audit.components.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                auditStaticPlanarPressureRegionFragmentPressureJumpEnergy(
+                    geometry, sweep, fragments, topology, metric, state,
+                    settings, limits));
+        },
+        "pressure-jump energy audit enforces the component limit");
+    limits = {};
+    limits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                auditStaticPlanarPressureRegionFragmentPressureJumpEnergy(
+                    geometry, sweep, fragments, topology, metric, state,
+                    settings, limits));
+        },
+        "pressure-jump energy audit enforces the owned byte limit");
+    limits = {};
+    limits.maximumWorkingBytes = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                auditStaticPlanarPressureRegionFragmentPressureJumpEnergy(
+                    geometry, sweep, fragments, topology, metric, state,
+                    settings, limits));
+        },
+        "pressure-jump energy audit enforces the working byte limit");
+    limits = {};
+    limits.velocityStateLimits.maximumSamples = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                auditStaticPlanarPressureRegionFragmentPressureJumpEnergy(
+                    geometry, sweep, fragments, topology, metric, state,
+                    settings, limits));
+        },
+        "pressure-jump energy audit enforces nested velocity-state limits");
+}
+
+void testPlanarRegionalMovingPressureJumpEnergyAudit() {
+    constexpr double density = 1.2;
+    const auto geometry = grid();
+    const auto previous = pocketLayers();
+    const auto current = translatePlanarPressureJumpLayers(
+        geometry, previous, 0.1).layers;
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, previous, current, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto rates = buildPlanarPressureRegionFragmentVolumeRates(
+        geometry, sweep, fragments, topology);
+    const auto metric = buildPlanarPressureRegionFragmentVelocityMetric(
+        geometry, sweep, fragments, topology);
+    const auto wallVelocity = regionalMetricVelocityFromTopologyLinks(
+        metric, std::vector<double>(topology.links.size(), 0.0), &rates);
+    const auto state = buildPlanarPressureRegionFragmentVelocityState(
+        geometry, sweep, fragments, topology, metric, wallVelocity, density);
+    PlanarPressureRegionFragmentPressureJumpEnergySettings settings;
+    settings.timeStepSeconds = 1.0;
+    const auto audit =
+        auditMovingPlanarPressureRegionFragmentPressureJumpEnergy(
+            geometry, sweep, fragments, topology, rates, metric, state,
+            settings);
+    const auto repeated =
+        auditMovingPlanarPressureRegionFragmentPressureJumpEnergy(
+            geometry, sweep, fragments, topology, rates, metric, state,
+            settings);
+    check(audit == repeated && audit.accepted && !audit.staticGeometry
+              && audit.usesMovingVolumeRates
+              && audit.volumeRateFingerprint == rates.fingerprint
+              && audit.maximumAbsolutePressureJumpResidualPascals == 0.0
+              && audit.maximumAbsoluteWallVelocityResidualMetersPerSecond
+                  == 0.0,
+          "moving pressure-jump energy audit is deterministic and rate-bound");
+    checkNear(pressureJumpSurfaceWork(audit, 10), 28.0, 3.0e-14,
+              "rigid translation receives positive work at the first layer");
+    checkNear(pressureJumpSurfaceWork(audit, 20), -28.0, 3.0e-14,
+              "rigid translation returns work at the second layer");
+    checkNear(audit.pressureJumpWorkToFluidJoules, 0.0, 6.0e-14,
+              "rigid translation has zero net authored pressure work");
+    checkNear(audit.geometryPressureWorkToFluidJoules, 0.0, 6.0e-14,
+              "rigid translation has zero net geometry pressure work");
+    checkNear(audit.workGeometryResidualJoules, 0.0, 6.0e-14,
+              "rigid translation closes authored and geometry work");
+    check(audit.authoredPressureJumpForceOnFluidNewtons == Vector3{}
+              && audit.pressureForceOnSheetNewtons == Vector3{}
+              && audit.actionReactionForceResidualNewtons == Vector3{},
+          "rigid pressure-jump forces remain globally internal");
+    validateMovingPlanarPressureRegionFragmentPressureJumpEnergyAudit(
+        audit, geometry, sweep, fragments, topology, rates, metric, state);
+
+    auto breathing = previous;
+    breathing[0].physicalPlaneCoordinateMeters -= 0.1;
+    breathing[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto breathingSweep = makePlanarPressureRegionSweepLedger(
+        geometry, previous, breathing, 0.5);
+    const auto breathingFragments = buildPlanarPressureRegionFragments(
+        geometry, breathingSweep);
+    const auto breathingTopology =
+        buildPlanarPressureRegionFragmentTopology(
+            geometry, breathingSweep, breathingFragments);
+    const auto breathingRates =
+        buildPlanarPressureRegionFragmentVolumeRates(
+            geometry, breathingSweep, breathingFragments,
+            breathingTopology);
+    const auto breathingMetric =
+        buildPlanarPressureRegionFragmentVelocityMetric(
+            geometry, breathingSweep, breathingFragments,
+            breathingTopology);
+    const auto breathingVelocity = regionalMetricVelocityFromTopologyLinks(
+        breathingMetric,
+        std::vector<double>(breathingTopology.links.size(), 0.0),
+        &breathingRates);
+    const auto breathingState =
+        buildPlanarPressureRegionFragmentVelocityState(
+            geometry, breathingSweep, breathingFragments,
+            breathingTopology, breathingMetric, breathingVelocity,
+            density);
+    PlanarPressureRegionFragmentPressureJumpEnergySettings breathingSettings;
+    breathingSettings.timeStepSeconds = 0.5;
+    const auto breathingAudit =
+        auditMovingPlanarPressureRegionFragmentPressureJumpEnergy(
+            geometry, breathingSweep, breathingFragments,
+            breathingTopology, breathingRates, breathingMetric,
+            breathingState, breathingSettings);
+    check(breathingAudit.accepted
+              && breathingAudit.authoredPressureJumpForceOnFluidNewtons
+                  == Vector3{}
+              && breathingAudit.pressureForceOnSheetNewtons == Vector3{},
+          "sealed breathing retains zero aggregate pressure force");
+    checkNear(pressureJumpSurfaceWork(breathingAudit, 10), -28.0, 3.0e-14,
+              "breathing transfers work through the first moving layer");
+    checkNear(pressureJumpSurfaceWork(breathingAudit, 20), -28.0, 3.0e-14,
+              "breathing transfers work through the second moving layer");
+    checkNear(breathingAudit.pressureJumpWorkToFluidJoules,
+              -56.0, 8.0e-14,
+              "breathing pressure jump removes the analytic fluid work");
+    checkNear(breathingAudit.pressureWorkToSheetJoules,
+              56.0, 8.0e-14,
+              "breathing pressure jump gives opposite work to the sheet");
+    checkNear(breathingAudit.geometryPressureWorkToFluidJoules,
+              -56.0, 8.0e-14,
+              "breathing geometry reconstructs analytic pressure work");
+    checkNear(breathingAudit.workGeometryResidualJoules,
+              0.0, 8.0e-14,
+              "breathing closes authored pressure work to geometry");
+    const auto* breathingExterior =
+        findFragmentPressureJumpEnergyComponent(breathingAudit, 1);
+    const auto* breathingPocket =
+        findFragmentPressureJumpEnergyComponent(breathingAudit, 2);
+    check(breathingExterior != nullptr && breathingPocket != nullptr,
+          "breathing pressure-jump audit retains both components");
+    if (breathingExterior != nullptr && breathingPocket != nullptr) {
+        checkNear(breathingExterior->geometryPressureWorkToFluidJoules,
+                  -11.2, 4.0e-14,
+                  "breathing exterior closes its gauge-dependent work");
+        checkNear(breathingPocket->geometryPressureWorkToFluidJoules,
+                  -44.8, 6.0e-14,
+                  "breathing pocket closes its pressure work");
+        checkNear(breathingExterior->workGeometryResidualJoules,
+                  0.0, 4.0e-14,
+                  "breathing exterior wall work matches volume work");
+        checkNear(breathingPocket->workGeometryResidualJoules,
+                  0.0, 6.0e-14,
+                  "breathing pocket wall work matches volume work");
+    }
+
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> axisPrevious{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        const auto axisCurrent = translatePlanarPressureJumpLayers(
+            geometry, axisPrevious, 0.1).layers;
+        const auto axisSweep = makePlanarPressureRegionSweepLedger(
+            geometry, axisPrevious, axisCurrent, 1.0);
+        const auto axisFragments = buildPlanarPressureRegionFragments(
+            geometry, axisSweep);
+        const auto axisTopology =
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, axisSweep, axisFragments);
+        const auto axisRates =
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, axisSweep, axisFragments, axisTopology);
+        const auto axisMetric =
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, axisSweep, axisFragments, axisTopology);
+        const auto axisVelocity = regionalMetricVelocityFromTopologyLinks(
+            axisMetric,
+            std::vector<double>(axisTopology.links.size(), 0.0),
+            &axisRates);
+        const auto axisState =
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, axisSweep, axisFragments, axisTopology,
+                axisMetric, axisVelocity, density);
+        const auto axisAudit =
+            auditMovingPlanarPressureRegionFragmentPressureJumpEnergy(
+                geometry, axisSweep, axisFragments, axisTopology,
+                axisRates, axisMetric, axisState, settings);
+        check(axisAudit.accepted && axisAudit.layers.size()
+                  == axisTopology.pressureLayerWallLinkCount
+                  && axisAudit.authoredPressureJumpForceOnFluidNewtons
+                      == Vector3{},
+              "all-axis rigid pressure-jump audit retains internal force closure");
+        checkNear(pressureJumpSurfaceWork(axisAudit, 10),
+                  axis == GridFaceAxis::X ? 28.0 : 56.0,
+                  8.0e-14,
+                  "all-axis rigid pressure-jump audit closes first-layer work");
+        checkNear(axisAudit.pressureJumpWorkToFluidJoules,
+                  0.0, 2.0e-13,
+                  "all-axis rigid pressure-jump audit closes net work");
+    }
+
+    auto corrupt = breathingAudit;
+    corrupt.layers[0].authoredPressureJumpPascals += 1.0;
+    expectRejected(
+        [&] {
+            validateMovingPlanarPressureRegionFragmentPressureJumpEnergyAudit(
+                corrupt, geometry, breathingSweep, breathingFragments,
+                breathingTopology, breathingRates, breathingMetric,
+                breathingState);
+        },
+        "moving pressure-jump energy audit rejects layer corruption");
+    auto wrongBreathingVelocity = breathingVelocity;
+    const auto breathingWallDof = std::ranges::find_if(
+        breathingMetric.dofs,
+        [](const auto& dof) {
+            return dof.kind
+                != PlanarPressureRegionFragmentVelocityDofKind::
+                    SharedRegionGrid;
+        });
+    wrongBreathingVelocity[breathingWallDof->dofIndex] += 0.01;
+    const auto wrongBreathingState =
+        buildPlanarPressureRegionFragmentVelocityState(
+            geometry, breathingSweep, breathingFragments,
+            breathingTopology, breathingMetric, wrongBreathingVelocity,
+            density);
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                auditMovingPlanarPressureRegionFragmentPressureJumpEnergy(
+                    geometry, breathingSweep, breathingFragments,
+                    breathingTopology, breathingRates, breathingMetric,
+                    wrongBreathingState, breathingSettings));
+        },
+        "moving pressure-jump energy audit rejects a wrong wall trace");
+    auto wrongDuration = breathingSettings;
+    wrongDuration.timeStepSeconds = 1.0;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                auditMovingPlanarPressureRegionFragmentPressureJumpEnergy(
+                    geometry, breathingSweep, breathingFragments,
+                    breathingTopology, breathingRates, breathingMetric,
+                    breathingState, wrongDuration));
+        },
+        "moving pressure-jump energy audit rejects a duration mismatch");
+    auto corruptRates = breathingRates;
+    corruptRates.fingerprint = 0;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                auditMovingPlanarPressureRegionFragmentPressureJumpEnergy(
+                    geometry, breathingSweep, breathingFragments,
+                    breathingTopology, corruptRates, breathingMetric,
+                    breathingState, breathingSettings));
+        },
+        "moving pressure-jump energy audit rejects corrupted volume rates");
+    auto limits = PlanarPressureRegionFragmentPressureJumpEnergyLimits{};
+    limits.volumeRateLimits.maximumFragments = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                auditMovingPlanarPressureRegionFragmentPressureJumpEnergy(
+                    geometry, breathingSweep, breathingFragments,
+                    breathingTopology, breathingRates, breathingMetric,
+                    breathingState, breathingSettings, limits));
+        },
+        "moving pressure-jump energy audit enforces nested volume-rate limits");
+}
+
 void testPlanarRegionalFragmentPressureOperator() {
     const auto geometry = grid();
     const auto layers = pocketLayers();
@@ -5560,6 +6059,8 @@ int main() {
     testPlanarRegionalFragmentVelocityMetricAxesAndRejection();
     testPlanarRegionalFragmentVelocityState();
     testPlanarRegionalFragmentVelocityStateMotionAndRejection();
+    testPlanarRegionalFragmentPressureJumpEnergyAudit();
+    testPlanarRegionalMovingPressureJumpEnergyAudit();
     testPlanarRegionalFragmentPressureOperator();
     testPlanarRegionalFragmentPressureOperatorAxesAndRejection();
     testPlanarRegionalFragmentPressureCorrectionSolve();
