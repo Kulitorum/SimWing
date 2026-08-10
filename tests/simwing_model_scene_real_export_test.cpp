@@ -11,6 +11,7 @@
 #include "scene_fluid_mimetic_pressure_state.h"
 #include "scene_fluid_mimetic_pressure_state_persistence.h"
 #include "scene_fluid_pressure_shadow_comparison.h"
+#include "scene_fluid_pressure_owner_transition.h"
 #include "scene_fluid_mimetic_trace_flow.h"
 #include "scene_fluid_mimetic_trace_solve.h"
 #include "scene_fluid_mimetic_trace_system.h"
@@ -795,6 +796,21 @@ void testRealDesignCapture(const std::filesystem::path &input,
             realPressureComparison);
         simwing::fsi::validateSceneFluidPressureShadowComparisonIntegrity(
             realPressureZeroComparison);
+        simwing::fsi::SceneFluidPressureOwnerTransitionPolicy
+            exactComparisonPolicy;
+        exactComparisonPolicy.requireSourceComparison = false;
+        const auto exactComparisonTransition =
+            simwing::fsi::decideSceneFluidPressureOwnerTransition(
+                realPressureZeroComparison, exactComparisonPolicy);
+        const auto missingSourceTransition =
+            simwing::fsi::decideSceneFluidPressureOwnerTransition(
+                realPressureZeroComparison);
+        simwing::fsi::
+            validateSceneFluidPressureOwnerTransitionDecisionIntegrity(
+                exactComparisonTransition, realPressureZeroComparison);
+        simwing::fsi::
+            validateSceneFluidPressureOwnerTransitionDecisionIntegrity(
+                missingSourceTransition, realPressureZeroComparison);
         realPressureComparisonCloses =
             realPressureComparison.diagnostics.finite
             && !realPressureComparison.includesSourceComparison
@@ -831,6 +847,15 @@ void testRealDesignCapture(const std::filesystem::path &input,
                     .nodalForceCosineSimilarity < 1.0 + 1.0e-15
             && realPressureZeroComparison.diagnostics
                     .bestFitNodalForceShapeResidualL2Newtons == 0.0
+            && exactComparisonTransition.selectedOwner
+                == simwing::fsi::SceneFluidPressureOwner::ShadowMimetic
+            && exactComparisonTransition.rejectionMask == 0
+            && missingSourceTransition.selectedOwner
+                == simwing::fsi::SceneFluidPressureOwner::ReferenceGraph
+            && simwing::fsi::sceneFluidPressureOwnerTransitionRejectedFor(
+                missingSourceTransition,
+                simwing::fsi::SceneFluidPressureOwnerTransitionRejection::
+                    MissingSourceComparison)
             && realPressureComparison.diagnostics.referenceTransfer
                     .forceResidualNormNewtons < 1.0e-8
             && realPressureComparison.diagnostics.shadowTransfer

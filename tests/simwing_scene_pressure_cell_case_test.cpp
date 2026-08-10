@@ -6,6 +6,7 @@
 #include "scene_pressure_cell_mimetic_conductance_phase_refinement_audit.h"
 #include "scene_fluid_mimetic_region_conductance_audit.h"
 #include "scene_fluid_pressure_operator_response_audit.h"
+#include "scene_fluid_pressure_owner_transition.h"
 #include "viewer_protocol.h"
 
 #include <algorithm>
@@ -603,10 +604,68 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
             previousComparisonFingerprint = comparison->fingerprint;
         }
     }
+    const auto& acceptedComparison =
+        *audited.acceptedMimeticPressureComparison();
+    const auto transition =
+        fsi::decideSceneFluidPressureOwnerTransition(acceptedComparison);
+    const auto repeatedTransition =
+        fsi::decideSceneFluidPressureOwnerTransition(acceptedComparison);
+    fsi::validateSceneFluidPressureOwnerTransitionDecisionIntegrity(
+        transition, acceptedComparison);
+    check(transition == repeatedTransition
+              && transition.selectedOwner
+                  == fsi::SceneFluidPressureOwner::ReferenceGraph
+              && transition.rejectionCount >= 4
+              && fsi::sceneFluidPressureOwnerTransitionRejectedFor(
+                  transition,
+                  fsi::SceneFluidPressureOwnerTransitionRejection::
+                      PressureDifferenceMismatch)
+              && fsi::sceneFluidPressureOwnerTransitionRejectedFor(
+                  transition,
+                  fsi::SceneFluidPressureOwnerTransitionRejection::
+                      PressureScaleMismatch)
+              && fsi::sceneFluidPressureOwnerTransitionRejectedFor(
+                  transition,
+                  fsi::SceneFluidPressureOwnerTransitionRejection::
+                      NodalForceScaleMismatch)
+              && fsi::sceneFluidPressureOwnerTransitionRejectedFor(
+                  transition,
+                  fsi::SceneFluidPressureOwnerTransitionRejection::
+                      NetForceMismatch)
+              && !fsi::sceneFluidPressureOwnerTransitionRejectedFor(
+                  transition,
+                  fsi::SceneFluidPressureOwnerTransitionRejection::
+                      IntegratedSourceMismatch),
+          "pressure-owner transition gate retains graph loads for the live mimetic pressure and force mismatch while accepting roundoff-equivalent sources");
+    auto corruptedTransition = transition;
+    corruptedTransition.selectedOwner =
+        fsi::SceneFluidPressureOwner::ShadowMimetic;
+    bool rejected = false;
+    try {
+        fsi::validateSceneFluidPressureOwnerTransitionDecisionIntegrity(
+            corruptedTransition, acceptedComparison);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected,
+          "pressure-owner transition decision rejects selected-owner corruption");
+    auto invalidPolicy = transition.policy;
+    invalidPolicy.maximumRelativeNetForceDelta =
+        -std::numeric_limits<double>::epsilon();
+    rejected = false;
+    try {
+        static_cast<void>(fsi::decideSceneFluidPressureOwnerTransition(
+            acceptedComparison, invalidPolicy));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected,
+          "pressure-owner transition rejects invalid policy before selection");
+
     auto corrupted = *audited.acceptedMimeticPressureAudit();
     ++corrupted.pressureEpoch.diagnostics.pressureSolve
           .reducedTraceSolve.iterationCount;
-    bool rejected = false;
+    rejected = false;
     try {
         fsi::validateSceneFluidMimeticPressureAuditEndpointIntegrity(
             corrupted);

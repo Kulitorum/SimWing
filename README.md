@@ -804,6 +804,17 @@ applying the shadow load. The diagnostic is decisive on the current pressure
 cell: relative pressure-jump and net-force differences are about `0.60` both
 at step 4 and after 600 steps. Mimetic load selection therefore remains
 disabled rather than treating solver acceptance as physical agreement.
+That evidence now feeds a separate immutable pressure-owner decision. Its
+explicit default policy requires the graph and mimetic source vectors to agree,
+then bounds pressure magnitude and shape, nodal-force magnitude and shape, net
+force, moment, power, and conservative-transfer closure. Every failed check has
+a typed rejection bit and selects the graph owner; only a zero-rejection result
+names the mimetic candidate. The real-wing exact self-comparison proves the
+positive path when source evidence is explicitly waived, while the live cell
+fails pressure magnitude/scale, nodal-force scale, and net-force checks. The
+decision is diagnostic only: no worker uses it to apply mimetic loads, and
+agreement with the current graph path is not presented as a continuum-truth
+criterion.
 The mismatch has now been narrowed further. The graph and mimetic source
 vectors agree to relative roundoff (`5.3e-16` at step 4 and `1.7e-16` after
 600 steps), while the shadow pressure and every transferred nodal load are

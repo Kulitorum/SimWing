@@ -532,6 +532,18 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   post-fit relative shape residuals near `2e-16`). The unresolved transition
   question is therefore the cut-cell graph-versus-mixed-hybrid operator
   response, not source units, gauge-safe sampling, or conservative transfer.
+- `scene_fluid_pressure_owner_transition.{h,cpp}` turns that immutable
+  evidence into a separate typed decision without applying either field. Its
+  fingerprinted policy requires source agreement by default and independently
+  bounds pressure magnitude/shape, nodal-force magnitude/shape, net force,
+  moment, power, and both conservative-transfer closures. Any failed criterion
+  selects the reference graph owner and records a stable rejection bit; only a
+  zero-rejection decision names the mimetic candidate. The exact real-wing
+  self-comparison exercises the positive branch with source evidence explicitly
+  waived, while the live pressure-cell records pressure magnitude, pressure
+  scale, nodal-force scale, and net-force rejections and therefore retains graph
+  loads. This is an agreement gate, not a claim that the graph operator is a
+  continuum oracle, and no worker consumes the decision to apply loads yet.
 - `scene_fluid_pressure_operator_response_audit.{h,cpp}` is the offline
   bounded inverse-response discriminator for that remaining question. It runs
   the accepted source plus six deterministic component-compatible coordinate,

@@ -1243,6 +1243,22 @@ oracle. The live pressure-cell disagreement is not small: relative pressure
 and force delta are about `0.605` at step 4 and `0.601` after 600 steps. This
 is evidence against enabling mimetic loads yet, not a tolerance to waive.
 
+`src/fsi/scene_fluid_pressure_owner_transition.*` now makes the selection
+decision itself immutable without changing the selected production field. A
+fingerprinted policy requires source comparison by default and independently
+bounds source-row deltas, material pressure magnitude and fitted shape, nodal
+force magnitude and fitted shape, net force, moment, power, and both
+conservative-transfer closures. The decision retains the comparison and policy
+fingerprints, selected owner, rejection count, and one stable bit per failed
+criterion. Any bit selects the reference graph owner; only a zero-bit decision
+names the mimetic candidate. The 74,326-sample real-wing exact self-comparison
+passes the default numerical thresholds when absence of source rows is
+explicitly allowed. The live pressure-cell fails pressure-difference,
+pressure-scale, nodal-force-scale, and net-force checks while its source rows
+pass, so the typed result retains graph loads. This closes the software
+decision boundary but does not turn graph agreement into a physical continuum
+oracle, and no worker consumes the decision to apply the candidate field.
+
 The comparison also retains every upstream control source row. On the live
 cell, graph and mimetic geometry rates are exact and their predicted-flow,
 continuity, and integrated-source vectors agree to summation roundoff: relative

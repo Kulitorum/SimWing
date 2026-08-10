@@ -387,6 +387,8 @@ add_library(simwing_scene_fluid_cell_volume STATIC
     src/fsi/scene_fluid_pressure_operator_response_audit.h
     src/fsi/scene_fluid_pressure_shadow_comparison.cpp
     src/fsi/scene_fluid_pressure_shadow_comparison.h
+    src/fsi/scene_fluid_pressure_owner_transition.cpp
+    src/fsi/scene_fluid_pressure_owner_transition.h
     src/fsi/scene_fluid_mimetic_pressure_warm_start.cpp
     src/fsi/scene_fluid_mimetic_pressure_warm_start.h
     src/fsi/scene_fluid_mimetic_pressure_source.cpp
