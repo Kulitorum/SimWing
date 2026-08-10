@@ -491,6 +491,7 @@ src/fsi/
         planar_face_topology.* generic axis-aligned periodic plane epochs
         planar_pressure_jump.* closed moving multi-layer pressure chains
         planar_region_sweep.* bounded two-epoch regional geometry/GCL
+        planar_region_flux.* minimum impermeability/relative-flux screen
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
         porous_topology.*   compatibility API over planar face topology
@@ -2147,6 +2148,17 @@ foreign identities, and count/region/byte-limit violations reject before a
 candidate is published. This is the geometric-conservation half of moving
 regional flow only: no Eulerian subcell velocity or relative flux exists yet,
 so the no-leakage gate remains open.
+`planar_region_flux.*` now quantifies that open gate without selecting a solver.
+For each interval it fits the least-squares uniform axial fluid velocity to the
+two layer velocities, retains both signed one-sided outward-relative flows, and
+checks `delta volume + integrated outward relative flow = 0` independently of
+impermeability. Rigid motion has zero slip and zero relative flow, including a
+periodic rebase. The canonical breathing pocket closes continuity only with
+`0.2 m/s` minimum interface slip and `1.6 m^3/s` total absolute one-sided flow;
+the exterior ledger is equal and opposite. All-axis area scaling, input-ledger
+revalidation, tolerances, and count/region/byte bounds are explicit. This is a
+compatibility screen, not a regional projection or permission to let fluid
+cross fabric.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

@@ -1,4 +1,5 @@
 #include "fluid/planar_pressure_jump.h"
+#include "fluid/planar_region_flux.h"
 #include "fluid/planar_region_sweep.h"
 #include "fluid/projection.h"
 
@@ -125,6 +126,17 @@ const PlanarPressureRegionSweepSummary* findSweepRegion(
             return region.regionStableId == regionStableId;
         });
     return found == ledger.regions.end() ? nullptr : &*found;
+}
+
+const PlanarPressureRegionFluxSummary* findFluxRegion(
+    const PlanarPressureRegionFluxCompatibility& compatibility,
+    const std::uint64_t regionStableId) {
+    const auto found = std::ranges::find_if(
+        compatibility.regions,
+        [&](const auto& region) {
+            return region.regionStableId == regionStableId;
+        });
+    return found == compatibility.regions.end() ? nullptr : &*found;
 }
 
 void testCanonicalAssemblyAndSameFacePocket() {
@@ -651,6 +663,219 @@ void testRegionalSweepAllAxesAndRejection() {
           "rejected regional sweep cannot mutate either endpoint");
 }
 
+void testRegionalFluxCompatibility() {
+    const auto geometry = grid();
+    const auto previous = pocketLayers();
+    const auto rigidLayers = translatePlanarPressureJumpLayers(
+        geometry, previous, 0.5).layers;
+    const auto rigidSweep = makePlanarPressureRegionSweepLedger(
+        geometry, previous, rigidLayers, 1.0);
+    const auto rigid = assessPlanarPressureRegionFluxCompatibility(
+        rigidSweep);
+    check(rigid.version == planarPressureRegionFluxVersion
+              && rigid.sourceSweepVersion
+                  == planarPressureRegionSweepVersion
+              && rigid.intervals.size() == 2
+              && rigid.regions.size() == 2
+              && rigid.failedImpermeableIntervalCount == 0
+              && rigid.failedContinuityIntervalCount == 0
+              && rigid.failedImpermeableRegionCount == 0
+              && rigid.failedContinuityRegionCount == 0
+              && rigid.allIntervalsImpermeableWithinTolerance
+              && rigid.allIntervalsContinuousWithinTolerance
+              && rigid.allRegionsImpermeableWithinTolerance
+              && rigid.allRegionsContinuousWithinTolerance
+              && rigid.ownedStorageBytes > 0,
+          "regional flux compatibility accepts an exactly sealed rigid pocket");
+    for (const auto& interval : rigid.intervals) {
+        checkNear(interval.leastSquaresFluidVelocityMetersPerSecond,
+                  0.5, 1.0e-15,
+                  "rigid regional flux recovers the common layer velocity");
+        checkNear(interval.maximumAbsoluteInterfaceSlipMetersPerSecond,
+                  0.0, 1.0e-15,
+                  "rigid regional flux has zero material-relative slip");
+        checkNear(
+            interval.totalAbsoluteInterfaceRelativeFlowRateCubicMetersPerSecond,
+            0.0, 1.0e-15,
+            "rigid regional flux has zero one-sided leakage");
+        checkNear(interval.continuityResidualCubicMeters,
+                  0.0, 4.0e-15,
+                  "rigid regional flux closes interval continuity");
+    }
+
+    auto breathingLayers = previous;
+    breathingLayers[0].physicalPlaneCoordinateMeters -= 0.1;
+    breathingLayers[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto breathingSweep = makePlanarPressureRegionSweepLedger(
+        geometry, previous, breathingLayers, 0.5);
+    const auto breathing = assessPlanarPressureRegionFluxCompatibility(
+        breathingSweep);
+    check(breathing.failedImpermeableIntervalCount == 2
+              && breathing.failedImpermeableRegionCount == 2
+              && breathing.failedContinuityIntervalCount == 0
+              && breathing.failedContinuityRegionCount == 0
+              && !breathing.allIntervalsImpermeableWithinTolerance
+              && !breathing.allRegionsImpermeableWithinTolerance
+              && breathing.allIntervalsContinuousWithinTolerance
+              && breathing.allRegionsContinuousWithinTolerance,
+          "regional flux compatibility exposes breathing as necessarily permeable");
+    checkNear(breathing.maximumAbsoluteInterfaceSlipMetersPerSecond,
+              0.2, 2.0e-15,
+              "breathing regional flux reports the minimum interface slip");
+    const auto* pocket = findFluxRegion(breathing, 2);
+    const auto* exterior = findFluxRegion(breathing, 1);
+    check(pocket != nullptr && exterior != nullptr,
+          "breathing regional flux retains interior and exterior summaries");
+    if (pocket != nullptr && exterior != nullptr) {
+        checkNear(pocket->geometryVolumeChangeCubicMeters,
+                  0.8, 4.0e-15,
+                  "breathing flux retains pocket volume growth");
+        checkNear(pocket->outwardRelativeFlowRateCubicMetersPerSecond,
+                  -1.6, 8.0e-15,
+                  "breathing flux requires inward material-relative pocket flow");
+        checkNear(pocket->integratedOutwardRelativeVolumeCubicMeters,
+                  -0.8, 4.0e-15,
+                  "breathing flux integrates the inward pocket flow");
+        checkNear(pocket->continuityResidualCubicMeters,
+                  0.0, 4.0e-15,
+                  "breathing pocket volume and relative flow close continuity");
+        checkNear(
+            pocket->totalAbsoluteInterfaceRelativeFlowRateCubicMetersPerSecond,
+            1.6, 8.0e-15,
+            "breathing flux reports the minimum absolute pocket leakage");
+        checkNear(exterior->geometryVolumeChangeCubicMeters,
+                  -0.8, 4.0e-15,
+                  "breathing flux retains opposite exterior volume change");
+        checkNear(exterior->outwardRelativeFlowRateCubicMetersPerSecond,
+                  1.6, 8.0e-15,
+                  "breathing flux retains opposite exterior relative flow");
+    }
+    checkNear(breathing.globalGeometryVolumeChangeCubicMeters,
+              0.0, 4.0e-15,
+              "breathing regional flux preserves global volume");
+    checkNear(breathing.globalIntegratedOutwardRelativeVolumeCubicMeters,
+              0.0, 4.0e-15,
+              "breathing regional flux cancels globally integrated relative flow");
+    checkNear(breathing.globalContinuityResidualCubicMeters,
+              0.0, 4.0e-15,
+              "breathing regional flux closes global continuity");
+
+    const std::vector<PlanarPressureJumpLayerDefinition> wrapping{
+        {10, 1, 2,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 3, 0},
+         1.2, 70.0},
+        {20, 2, 1,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 0, 1},
+         1.8, -70.0},
+    };
+    const auto wrapped = translatePlanarPressureJumpLayers(
+        geometry, wrapping, 0.5);
+    const auto wrappedFlux = assessPlanarPressureRegionFluxCompatibility(
+        makePlanarPressureRegionSweepLedger(
+            geometry, wrapping, wrapped.layers, 1.0));
+    check(wrappedFlux.allRegionsImpermeableWithinTolerance
+              && wrappedFlux.allRegionsContinuousWithinTolerance,
+          "regional flux remains sealed through a periodic rebase");
+
+    const std::vector<PlanarPressureJumpLayerDefinition> reverseWrapping{
+        {10, 1, 2,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 3, -1},
+         -2.8, 70.0},
+        {20, 2, 1,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 0, 0},
+         -2.2, -70.0},
+    };
+    const auto reverseWrapped = translatePlanarPressureJumpLayers(
+        geometry, reverseWrapping, -0.5);
+    const auto reverseWrappedFlux =
+        assessPlanarPressureRegionFluxCompatibility(
+            makePlanarPressureRegionSweepLedger(
+                geometry, reverseWrapping,
+                reverseWrapped.layers, 1.0));
+    check(reverseWrappedFlux.allRegionsImpermeableWithinTolerance
+              && reverseWrappedFlux.allRegionsContinuousWithinTolerance,
+          "regional flux remains sealed through a negative periodic rebase");
+}
+
+void testRegionalFluxAllAxesAndRejection() {
+    const auto geometry = grid();
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> previous{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        auto current = previous;
+        current[0].physicalPlaneCoordinateMeters -= 0.1;
+        current[1].physicalPlaneCoordinateMeters += 0.1;
+        const auto compatibility =
+            assessPlanarPressureRegionFluxCompatibility(
+                makePlanarPressureRegionSweepLedger(
+                    geometry, previous, current, 0.5));
+        const auto* pocket = findFluxRegion(compatibility, 2);
+        const double expectedAbsoluteFlow = axis == GridFaceAxis::X
+            ? 1.6 : 3.2;
+        check(pocket != nullptr,
+              "regional flux retains the incompatible pocket on each axis");
+        if (pocket != nullptr) {
+            checkNear(
+                pocket->totalAbsoluteInterfaceRelativeFlowRateCubicMetersPerSecond,
+                expectedAbsoluteFlow, 1.6e-14,
+                "regional flux uses physical interface area on each axis");
+            check(!pocket->impermeableWithinTolerance
+                      && pocket->continuityWithinTolerance,
+                  "regional flux distinguishes impermeability from continuity on each axis");
+        }
+    }
+
+    const auto previous = pocketLayers();
+    const auto current = translatePlanarPressureJumpLayers(
+        geometry, previous, 0.1).layers;
+    const auto validSweep = makePlanarPressureRegionSweepLedger(
+        geometry, previous, current, 1.0);
+    auto corrupt = validSweep;
+    corrupt.intervals[0].lowerSurfaceVelocityMetersPerSecond += 1.0;
+    expectRejected(
+        [&] { static_cast<void>(
+            assessPlanarPressureRegionFluxCompatibility(corrupt)); },
+        "regional flux rejects a corrupted source interval ledger");
+    corrupt = validSweep;
+    corrupt.previousProfile.intervals[0].pressurePascals += 1.0;
+    expectRejected(
+        [&] { static_cast<void>(
+            assessPlanarPressureRegionFluxCompatibility(corrupt)); },
+        "regional flux rejects a corrupted source pressure profile");
+    auto invalidSettings = PlanarPressureRegionFluxSettings{};
+    invalidSettings.absoluteVelocityToleranceMetersPerSecond = 0.0;
+    invalidSettings.relativeVelocityTolerance = 0.0;
+    expectRejected(
+        [&] { static_cast<void>(
+            assessPlanarPressureRegionFluxCompatibility(
+                validSweep, invalidSettings)); },
+        "regional flux rejects a zero velocity-tolerance policy");
+    expectRejected(
+        [&] { static_cast<void>(
+            assessPlanarPressureRegionFluxCompatibility(
+                validSweep, {}, {1, 2, 1024 * 1024})); },
+        "regional flux enforces its interval limit");
+    expectRejected(
+        [&] { static_cast<void>(
+            assessPlanarPressureRegionFluxCompatibility(
+                validSweep, {}, {2, 1, 1024 * 1024})); },
+        "regional flux enforces its region limit");
+    expectRejected(
+        [&] { static_cast<void>(
+            assessPlanarPressureRegionFluxCompatibility(
+                validSweep, {}, {2, 2, 1})); },
+        "regional flux enforces its byte limit");
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -792,6 +1017,8 @@ int main() {
     testStaticRegionalPressureProfile();
     testRegionalSweepLedger();
     testRegionalSweepAllAxesAndRejection();
+    testRegionalFluxCompatibility();
+    testRegionalFluxAllAxesAndRejection();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {

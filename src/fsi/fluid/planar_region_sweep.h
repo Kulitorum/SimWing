@@ -80,4 +80,10 @@ makePlanarPressureRegionSweepLedger(
     double durationSeconds,
     const PlanarPressureRegionSweepLimits& limits = {});
 
+// Recomputes all derived interval, region, global, and storage ledgers from the
+// owning endpoint profiles and rejects any mutated or foreign payload.
+void validatePlanarPressureRegionSweepLedger(
+    const PlanarPressureRegionSweepLedger& ledger,
+    const PlanarPressureRegionSweepLimits& limits = {});
+
 } // namespace simwing::fsi::fluid

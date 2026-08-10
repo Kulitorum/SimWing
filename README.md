@@ -191,6 +191,13 @@ geometric volume change per interval, per region, and globally. Rigid and
 breathing pockets close on X/Y/Z through positive and negative periodic
 rebases. The ledger still contains no Eulerian regional flux, so it proves the
 moving geometry/GCL prerequisite without claiming no-leakage dynamics.
+A companion regional flux compatibility screen now fits one uniform axial
+fluid velocity to each interval's two moving boundaries. Rigid motion matches
+both exactly and is sealed. A full-plane breathing pocket instead reports the
+least unavoidable one-sided slip and material-relative flow while independently
+closing `volume change + integrated outward relative flow = 0`. This keeps
+impermeability distinct from continuity and provides evidence for the next
+regional velocity discretization; it still does not advance fluid state.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

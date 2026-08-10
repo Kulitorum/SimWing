@@ -1870,6 +1870,11 @@ makes this a certified aerodynamic solver.
   per-interval boundary sweep closes against volume change before per-region
   and global aggregation. It owns no Eulerian regional flux and is not a
   leakage solver.
+- `src/fsi/fluid/planar_region_flux.{h,cpp}` revalidates that sweep and fits
+  one least-squares uniform axial fluid velocity per interval. It reports both
+  one-sided outward-relative flows, impermeability and continuity separately,
+  and the minimum unavoidable slip for incompatible boundary motion. It is an
+  offline screen and never advances or applies fluid state.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2158,6 +2163,14 @@ endpoint identity, deterministic authored-order canonicalization, finite
 positive duration, and count/region/byte bounds. Exact-boundary, skipped,
 crossed, or foreign layer motion must reject transactionally. This is only the
 regional GCL boundary ledger; no Eulerian relative-flux claim is permitted.
+
+Also require the regional flux compatibility screen to keep rigid motion
+exactly impermeable and continuous, expose breathing motion as non-impermeable
+while closing `delta volume + integrated outward relative flow`, scale physical
+flow with X/Y/Z area, retain periodic-rebase sealing, and reject corrupted
+source profiles/ledgers plus invalid tolerance or storage policies. It remains
+diagnostic; never interpret its least-squares interval velocity as a production
+regional projection.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.
