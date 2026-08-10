@@ -574,6 +574,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/planar_region_fragment_opening_flux.h
     src/fsi/fluid/planar_region_fragment_opening_pressure_operator.cpp
     src/fsi/fluid/planar_region_fragment_opening_pressure_operator.h
+    src/fsi/fluid/planar_region_fragment_opening_pressure_projection.cpp
+    src/fsi/fluid/planar_region_fragment_opening_pressure_projection.h
     src/fsi/fluid/planar_region_fragment_topology.cpp
     src/fsi/fluid/planar_region_fragment_topology.h
     src/fsi/fluid/planar_region_fragment_pressure_operator.cpp

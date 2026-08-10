@@ -1919,10 +1919,11 @@ makes this a certified aerodynamic solver.
   opening-connected gauges while excluding remaining solid wall area. It owns
   no RHS, solve, aperture momentum/resistance, load correction, or worker path.
 - `src/fsi/fluid/planar_region_fragment_pressure_solve.{h,cpp}` solves only a
-  component-compatible correction on that operator. It removes admitted RHS
-  roundoff, commits roundoff-zero volume-mean corrections, keeps the static
-  regional potential separate, and rolls back the warm start on failure. It
-  owns no divergence source or production pressure update.
+  component-compatible correction on either the sealed or opt-in opening-
+  augmented operator. It removes admitted RHS roundoff, commits roundoff-zero
+  volume-mean corrections, keeps the static regional potential separate, and
+  rolls back the warm start on failure. It owns no divergence source or
+  production pressure update.
 - `src/fsi/fluid/planar_region_fragment_pressure_projection.{h,cpp}` supplies
   per-link static and topology-stable moving projection over that solve.
   Same-region links own oriented area flow and receive pressure correction;
@@ -1932,6 +1933,14 @@ makes this a certified aerodynamic solver.
   velocity zero. Velocity and pressure commit together only after recomputed
   continuity closes. Rebases, face/opening momentum, constitutive intake flow,
   open-area load correction, and production integration remain outside.
+- `src/fsi/fluid/planar_region_fragment_opening_pressure_projection.{h,cpp}`
+  makes the exact aperture samples active degrees in a separate opt-in moving
+  projection. The augmented correction updates same-region and aperture
+  velocities with diagonal `rho*area*distance` inertia, requires continuity,
+  pressure-impulse/momentum, midpoint-work/energy, and moving affine-energy
+  closure, then commits link velocity, samples, rebuilt flux, and warm pressure
+  together. It supplies no aperture resistance/loss, static-jump evolution,
+  traction correction, rebase, or production path.
 - `src/fsi/fluid/planar_region_fragment_volume_rate.{h,cpp}` reconstructs
   topology-stable previous volume and constant geometry `dV/dt` for every
   current regional fragment from its layer-boundary displacements. It closes
@@ -2406,7 +2415,7 @@ connected volume gauge, and reproduce the sealed solution for an empty
 overlay. Apply the same deterministic residual and rollback contract. Do not
 infer an aperture velocity, inertia/resistance law, regional velocity
 divergence, physical pressure RHS, projection acceptance, or production
-ownership.
+ownership from the solve alone.
 
 For `planar_region_fragment_pressure_projection.*`, require deterministic
 manufactured-divergence cancellation below `3e-14 m3/s` through X/Y/Z, exact
@@ -2440,6 +2449,26 @@ component deficit and roll back velocity and warm pressure bit-for-bit. Reject
 corrupt/foreign opening state or samples and nested opening-flux limits. Do not
 infer a pressure-driven opening law, aperture momentum or energy acceptance,
 solid-wall traction subtraction, topology rebase, or production ownership.
+
+For `planar_region_fragment_opening_pressure_projection.*`, require exact
+augmented/base operator, volume-rate, opening-set, opening-flux, sample, and
+duration binding. Starting from zero predicted grid and aperture velocity, the
+canonical topology-stable breathing case must pressure-accelerate the `0.5
+m2` negative-to-positive intake to carry the complete `1.6 m3/s`, redistribute
+its localized source through same-region links, and close fragment plus
+opening-connected-component continuity on X/Y/Z. Every corrected grid/opening
+degree uses diagonal mass `rho*area*centerDistance`: require per-degree
+pressure impulse/momentum and midpoint-work/kinetic-energy closure plus the
+aggregate moving identity `deltaK = geometryPressureWork -
+correctionKineticEnergy`. All solid pressure-layer topology-link velocities
+remain exact zero. Commit topology velocities, stable-ID-keyed opening
+samples, rebuilt immutable opening-flux state, and pressure warm start as one
+transaction; incompatibility, truncation, non-finite arithmetic, continuity,
+momentum, or energy failure must preserve all four. Reject corrupted/foreign
+sources, nonzero wall velocity, invalid settings, duration mismatch, and
+working/nested limits. Do not infer aperture resistance/loss, authored static-
+pressure evolution, open-area traction subtraction, rebase, or production
+ownership.
 
 For `planar_region_fragment_volume_rate.*`, require canonical breathing to
 publish `+1.6/-1.6 m3/s` pocket/exterior component rates while every fixed

@@ -500,6 +500,7 @@ src/fsi/
         planar_region_fragment_opening_flux.* prescribed aperture flow state
         planar_region_fragment_pressure_operator.* regional graph Laplacian
         planar_region_fragment_opening_pressure_operator.* aperture graph Laplacian
+        planar_region_fragment_opening_pressure_projection.* active aperture projection
         planar_region_fragment_pressure_solve.* correction-only CG oracle
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
@@ -2289,8 +2290,9 @@ arbitrary correction gauges while preserving every authored 70 Pa wall jump.
 The canonical manufactured two-component correction is recovered within
 `3e-11 Pa`, with an explicitly recomputed maximum residual below
 `2e-12 Pa*m` and volume-mean residual below `3e-16 Pa`. Incompatible and
-iteration-truncated solves leave their warm start bit-for-bit unchanged. No
-regional velocity divergence or production pressure source owns this solve.
+iteration-truncated solves leave their warm start bit-for-bit unchanged. The
+separate opt-in active-opening projection supplies one physical divergence RHS;
+the solve itself owns no regional velocity or production pressure state.
 The canonical aperture overload merges the two sealed components, accepts the
 equal-and-opposite cross-wall RHS rejected by the base solve, recovers the
 connected regional field, and retains base/operator/opening fingerprints. An
@@ -2348,6 +2350,23 @@ creates twice the component incompatibility and preserves caller velocity and
 warm pressure bit-for-bit. This is a continuity consumer for prescribed
 kinematics, not a conductance/resistance solve, aperture momentum or energy
 acceptance, open-area wall-load correction, rebase, or production integration.
+`planar_region_fragment_opening_pressure_projection.*` is the isolated active-
+aperture counterpart. It assembles the same moving residual from geometry,
+Cartesian flow, and the current immutable opening-flux state, but solves the
+opening-augmented graph and applies `dt/rho * (p_minus-p_plus)/distance` to
+both same-region links and material-relative aperture samples. The remaining
+pressure-layer topology links stay exact zero. From a fully resting predicted
+field, canonical breathing accelerates the `0.5 m^2` intake to carry the full
+`1.6 m^3/s`, redistributes the localized source, and closes fragment and
+connected-component continuity on X/Y/Z. With diagonal mass
+`rho*area*centerDistance`, every corrected degree closes pressure impulse to
+momentum and midpoint pressure work to kinetic-energy change; globally the
+moving identity is `deltaK = geometryPressureWork - correctionKineticEnergy`.
+The corrected topology velocities, aperture samples, rebuilt flux state, and
+pressure warm start publish in one transaction only after continuity and
+energy acceptance. This is inviscid projection inertia, not a resistance/loss
+law, evolution of authored static pressure, solid-wall traction subtraction,
+topology-transition handling, or production ownership.
 `planar_region_fragment_velocity_metric.*` adds the corresponding immutable
 diagonal face geometry for a future velocity state. A same-region Cartesian
 link owns one shared normal degree of freedom with dual volume equal to face

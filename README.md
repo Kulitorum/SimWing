@@ -283,8 +283,9 @@ accepts the equal-and-opposite cross-wall RHS that the sealed graph must reject,
 recovers the aperture-coupled regional field, and publishes the base/operator/
 opening provenance. An empty overlay retains the sealed solution within
 roundoff. Incompatible or iteration-truncated attempts leave the warm start
-bit-for-bit unchanged. No aperture velocity, pressure-drop law, or production
-step invokes this solve yet.
+bit-for-bit unchanged. The later isolated opening projection consumes this
+overload; the solve itself still owns no aperture velocity, pressure-drop law,
+or production step.
 A first static regional face projection now supplies that physical RHS without
 changing production. One oriented normal velocity is owned per topology link;
 the 64 same-region Cartesian links contribute area-weighted outward flow and
@@ -326,6 +327,21 @@ zero-valued pressure-wall topology links. Reversing it doubles the component
 deficit and rolls back both fields. This accepts only caller-prescribed
 kinematics; it still supplies no pressure-driven intake law, aperture momentum
 or energy ledger, open-area traction subtraction, rebase, or worker path.
+The separate `planar_region_fragment_opening_pressure_projection.*` path now
+uses the augmented graph to make those aperture samples active projection
+degrees. Starting with zero grid and intake velocity, canonical breathing
+solves one connected correction, accelerates the half-square-metre intake to
+carry the complete `1.6 m³/s`, redistributes that localized flow through the
+same-region faces, and closes local/component continuity on X/Y/Z. Every grid
+or aperture correction uses diagonal mass `rho * area * centerDistance`; its
+pressure impulse equals momentum change, midpoint work equals kinetic-energy
+change per degree, and the moving aggregate closes `deltaK = geometry pressure
+work - correction kinetic energy`. The solid remainder retains exact zero wall
+velocity. All velocity samples, the rebuilt immutable flux state, and the
+pressure warm start commit together; incompatibility, truncation, or failed
+energy closure publishes none of them. This remains an opt-in inviscid
+projection with no intake resistance/loss law, authored static-pressure
+relaxation, open-area traction correction, rebase, or worker integration.
 A first diagonal face-inertia metric now closes the missing geometric mass
 ownership without yet creating a velocity state. Each same-region Cartesian
 link has one shared normal-velocity degree of freedom with dual volume `area *
