@@ -11,6 +11,7 @@
 #include "fluid/planar_region_fragment_opening_velocity_metric.h"
 #include "fluid/planar_region_fragment_opening_velocity_state.h"
 #include "fluid/planar_region_fragment_opening_load_state.h"
+#include "fluid/planar_region_fragment_opening_momentum_transport.h"
 #include "fluid/planar_region_fragment_opening_pressure_state.h"
 #include "fluid/planar_region_fragment_opening.h"
 #include "fluid/planar_region_fragment_opening_flux.h"
@@ -9147,6 +9148,442 @@ void testPlanarRegionalOpeningResistance() {
           "opening resistance rejection preserves samples and flux");
 }
 
+void testPlanarRegionalOpeningMomentumTransport() {
+    const auto geometry = grid();
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> previous{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        auto current = previous;
+        current[0].physicalPlaneCoordinateMeters += 0.05;
+        current[1].physicalPlaneCoordinateMeters += 0.05;
+        const auto sourceSweep = makePlanarPressureRegionSweepLedger(
+            geometry, previous, previous, 0.5);
+        const auto sourceFragments = buildPlanarPressureRegionFragments(
+            geometry, sourceSweep);
+        const auto sourceTopology =
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, sourceSweep, sourceFragments);
+        const auto targetSweep = makePlanarPressureRegionSweepLedger(
+            geometry, previous, current, 0.5);
+        const auto targetFragments = buildPlanarPressureRegionFragments(
+            geometry, targetSweep);
+        const auto targetTopology =
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, targetSweep, targetFragments);
+        const auto targetVolumeRates =
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, targetSweep, targetFragments, targetTopology);
+        const auto targetWall = std::ranges::find_if(
+            targetTopology.links,
+            [](const auto& link) {
+                return link.kind
+                        == PlanarPressureRegionFragmentFaceKind::
+                            PressureLayerWall
+                    && link.surfaceStableId == 10;
+            });
+        check(targetWall != targetTopology.links.end(),
+              "opening momentum transport finds its moving wall");
+        if (targetWall == targetTopology.links.end()) continue;
+        const std::vector<
+            PlanarPressureRegionFragmentOpeningPatchDefinition>
+            definitions{{
+                100, 1000, targetWall->surfaceStableId, targetWall->axis,
+                targetWall->i, targetWall->j, targetWall->k,
+                targetWall->minusRegionStableId,
+                targetWall->plusRegionStableId,
+                0.5 * targetWall->areaSquareMeters,
+            }};
+        const auto sourceOpenings =
+            buildPlanarPressureRegionFragmentOpenings(
+                geometry, sourceSweep, sourceFragments, sourceTopology,
+                definitions);
+        const auto targetOpenings =
+            buildPlanarPressureRegionFragmentOpenings(
+                geometry, targetSweep, targetFragments, targetTopology,
+                definitions);
+        const auto sourceBaseMetric =
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, sourceSweep, sourceFragments, sourceTopology);
+        const auto targetBaseMetric =
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, targetSweep, targetFragments, targetTopology);
+        const auto sourceMetric =
+            buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+                geometry, sourceSweep, sourceFragments, sourceTopology,
+                sourceBaseMetric, definitions, sourceOpenings);
+        const auto targetMetric =
+            buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+                geometry, targetSweep, targetFragments, targetTopology,
+                targetBaseMetric, definitions, targetOpenings);
+
+        Vector3 uniformVelocity{0.03, -0.04, 0.05};
+        if (axis == GridFaceAxis::X) uniformVelocity.x = 0.1;
+        if (axis == GridFaceAxis::Y) uniformVelocity.y = 0.1;
+        if (axis == GridFaceAxis::Z) uniformVelocity.z = 0.1;
+        const auto makeUniformState = [&](const auto& metric) {
+            std::vector<double> normal(metric.dofs.size(), 0.0);
+            std::vector<double> material(metric.dofs.size(), 0.0);
+            std::vector<double> relative(metric.dofs.size(), 0.0);
+            for (const auto& dof : metric.dofs) {
+                const double component = dof.axis == GridFaceAxis::X
+                    ? uniformVelocity.x
+                    : dof.axis == GridFaceAxis::Y
+                    ? uniformVelocity.y : uniformVelocity.z;
+                normal[dof.dofIndex] = component;
+                if (dof.kind
+                    == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                        SharedRegionGrid) {
+                    relative[dof.dofIndex] = component;
+                } else {
+                    material[dof.dofIndex] = component;
+                }
+            }
+            return buildPlanarPressureRegionFragmentOpeningVelocityState(
+                metric, normal, material, relative, 1.2);
+        };
+        const auto sourceState = makeUniformState(sourceMetric);
+        const auto targetFlowState = makeUniformState(targetMetric);
+        const auto transport =
+            advancePlanarPressureRegionFragmentOpeningMomentum(
+                sourceState, sourceMetric, targetFlowState, targetMetric,
+                geometry, targetSweep, targetFragments, targetTopology,
+                targetVolumeRates);
+        const auto repeatedTransport =
+            advancePlanarPressureRegionFragmentOpeningMomentum(
+                sourceState, sourceMetric, targetFlowState, targetMetric,
+                geometry, targetSweep, targetFragments, targetTopology,
+                targetVolumeRates);
+        check(transport == repeatedTransport && transport.diagnostics.accepted
+                  && transport.diagnostics.finite
+                  && transport.diagnostics.failureStage
+                      == PlanarPressureRegionFragmentOpeningMomentumTransportFailureStage::
+                          None
+                  && transport.controls.size()
+                      == targetFragments.fragments.size()
+                  && transport.diagnostics.openingDofCount == 1
+                  && transport.diagnostics
+                         .maximumContinuityResidualCubicMetersPerSecond
+                      <= transport.diagnostics
+                             .continuityToleranceCubicMetersPerSecond
+                  && transport.diagnostics
+                         .momentumResidualNormKilogramMetersPerSecond
+                      < 2.0e-13,
+              "opening momentum transport deterministically accepts moving uniform flow on every axis");
+        for (const auto& control : transport.controls) {
+            checkNear(control.velocityMetersPerSecond.x,
+                      uniformVelocity.x, 2.0e-14,
+                      "opening momentum transport preserves uniform X velocity");
+            checkNear(control.velocityMetersPerSecond.y,
+                      uniformVelocity.y, 2.0e-14,
+                      "opening momentum transport preserves uniform Y velocity");
+            checkNear(control.velocityMetersPerSecond.z,
+                      uniformVelocity.z, 2.0e-14,
+                      "opening momentum transport preserves uniform Z velocity");
+        }
+        checkNear(transport.diagnostics.maximumVelocityChangeMetersPerSecond,
+                  0.0, 3.0e-14,
+                  "opening momentum transport satisfies the moving free-stream GCL");
+        checkNear(transport.diagnostics.advectiveKineticEnergyLossJoules,
+                  0.0, 4.0e-13,
+                  "uniform opening momentum transport has zero mixing loss");
+        validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
+            transport);
+        validatePlanarPressureRegionFragmentOpeningMomentumTransport(
+            transport, sourceState, sourceMetric, targetFlowState,
+            targetMetric, geometry, targetSweep, targetFragments,
+            targetTopology, targetVolumeRates);
+
+        if (axis != GridFaceAxis::X) continue;
+        std::vector<double> nonuniformNormal(
+            sourceMetric.dofs.size(), 0.0);
+        std::vector<double> nonuniformMaterial(
+            sourceMetric.dofs.size(), 0.0);
+        std::vector<double> nonuniformRelative(
+            sourceMetric.dofs.size(), 0.0);
+        for (const auto& dof : sourceMetric.dofs) {
+            const double base = dof.axis == GridFaceAxis::X
+                ? uniformVelocity.x
+                : dof.axis == GridFaceAxis::Y
+                ? uniformVelocity.y : uniformVelocity.z;
+            const double value = base
+                + 0.01 * static_cast<double>(
+                    static_cast<int>(dof.dofIndex % 5) - 2);
+            nonuniformNormal[dof.dofIndex] = value;
+            if (dof.kind
+                == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                    SharedRegionGrid) {
+                nonuniformRelative[dof.dofIndex] = value;
+            } else {
+                nonuniformMaterial[dof.dofIndex] = value;
+            }
+        }
+        const auto nonuniformSource =
+            buildPlanarPressureRegionFragmentOpeningVelocityState(
+                sourceMetric, nonuniformNormal, nonuniformMaterial,
+                nonuniformRelative, 1.2);
+        const auto mixed =
+            advancePlanarPressureRegionFragmentOpeningMomentum(
+                nonuniformSource, sourceMetric, targetFlowState,
+                targetMetric, geometry, targetSweep, targetFragments,
+                targetTopology, targetVolumeRates);
+        check(mixed.diagnostics.accepted
+                  && mixed.diagnostics.finite
+                  && mixed.diagnostics.advectiveKineticEnergyLossJoules
+                      > 0.0
+                  && mixed.diagnostics
+                         .momentumResidualNormKilogramMetersPerSecond
+                      <= mixed.settings
+                             .absoluteMomentumToleranceKilogramMetersPerSecond,
+              "opening momentum transport conserves nonuniform momentum with dissipative donor mixing");
+        validatePlanarPressureRegionFragmentOpeningMomentumTransport(
+            mixed, nonuniformSource, sourceMetric, targetFlowState,
+            targetMetric, geometry, targetSweep, targetFragments,
+            targetTopology, targetVolumeRates);
+
+        auto breathingCurrent = previous;
+        breathingCurrent[0].physicalPlaneCoordinateMeters -= 0.1;
+        breathingCurrent[1].physicalPlaneCoordinateMeters += 0.1;
+        const auto breathingSweep = makePlanarPressureRegionSweepLedger(
+            geometry, previous, breathingCurrent, 0.5);
+        const auto breathingFragments =
+            buildPlanarPressureRegionFragments(geometry, breathingSweep);
+        const auto breathingTopology =
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, breathingSweep, breathingFragments);
+        const auto breathingVolumeRates =
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, breathingSweep, breathingFragments,
+                breathingTopology);
+        const auto breathingWall = std::ranges::find_if(
+            breathingTopology.links,
+            [](const auto& link) {
+                return link.kind
+                        == PlanarPressureRegionFragmentFaceKind::
+                            PressureLayerWall
+                    && link.surfaceStableId == 10;
+            });
+        check(breathingWall != breathingTopology.links.end(),
+              "opening momentum transport finds its breathing aperture wall");
+        if (breathingWall != breathingTopology.links.end()) {
+            const auto breathingOpenings =
+                buildPlanarPressureRegionFragmentOpenings(
+                    geometry, breathingSweep, breathingFragments,
+                    breathingTopology, definitions);
+            const auto breathingBaseMetric =
+                buildPlanarPressureRegionFragmentVelocityMetric(
+                    geometry, breathingSweep, breathingFragments,
+                    breathingTopology);
+            const auto breathingMetric =
+                buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+                    geometry, breathingSweep, breathingFragments,
+                    breathingTopology, breathingBaseMetric, definitions,
+                    breathingOpenings);
+            const auto breathingPressureOperator =
+                buildPlanarPressureRegionFragmentPressureOperator(
+                    geometry, breathingSweep, breathingFragments,
+                    breathingTopology);
+            const double requiredOpeningFlow =
+                -breathingVolumeRates
+                     .components[breathingWall->minusComponentIndex]
+                     .geometryVolumeChangeRateCubicMetersPerSecond;
+            const std::vector<
+                PlanarPressureRegionFragmentOpeningVelocitySample>
+                breathingSamples{{
+                    100,
+                    requiredOpeningFlow / definitions[0].areaSquareMeters,
+                }};
+            const auto breathingFlux =
+                buildPlanarPressureRegionFragmentOpeningFluxState(
+                    geometry, breathingSweep, breathingFragments,
+                    breathingTopology, definitions, breathingOpenings,
+                    breathingSamples);
+            PlanarPressureRegionFragmentPressureProjectionSettings
+                projectionSettings;
+            projectionSettings.densityKgPerCubicMeter = 1.2;
+            projectionSettings.timeStepSeconds = 0.5;
+            projectionSettings.pressureSolve
+                .absoluteResidualTolerancePascalsMeters = 1.0e-13;
+            projectionSettings.pressureSolve.relativeResidualTolerance =
+                1.0e-12;
+            projectionSettings.pressureSolve.maximumIterations = 300;
+            std::vector<double> breathingLinkVelocity(
+                breathingTopology.links.size(), 0.0);
+            std::vector<double> breathingPressure(
+                breathingFragments.fragments.size(), 0.0);
+            const auto breathingProjection =
+                projectMovingPlanarPressureRegionFragmentFaceVelocitiesWithOpenings(
+                    breathingPressureOperator, geometry, breathingSweep,
+                    breathingFragments, breathingTopology,
+                    breathingVolumeRates, definitions, breathingOpenings,
+                    breathingFlux, breathingSamples, breathingLinkVelocity,
+                    breathingPressure, projectionSettings);
+            check(breathingProjection.accepted,
+                  "opening momentum transport receives a corrected breathing flow");
+            std::vector<double> breathingNormal(
+                breathingMetric.dofs.size(), 0.0);
+            std::vector<double> breathingMaterial(
+                breathingMetric.dofs.size(), 0.0);
+            std::vector<double> breathingRelative(
+                breathingMetric.dofs.size(), 0.0);
+            for (const auto& dof : breathingMetric.dofs) {
+                const auto& link = breathingTopology.links.at(
+                    dof.sourceFaceLinkIndex);
+                if (dof.kind
+                    == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                        SharedRegionGrid) {
+                    breathingRelative[dof.dofIndex] =
+                        breathingLinkVelocity[link.linkIndex];
+                } else {
+                    breathingMaterial[dof.dofIndex] = breathingVolumeRates
+                        .fragments[link.minusFragmentIndex]
+                        .upperBoundaryVelocityMetersPerSecond;
+                    if (dof.kind
+                        == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                            OpeningPatch) {
+                        breathingRelative[dof.dofIndex] =
+                            breathingSamples[dof.sourceOpeningPatchIndex]
+                                .relativeNormalVelocityMetersPerSecond;
+                    }
+                }
+                breathingNormal[dof.dofIndex] =
+                    breathingMaterial[dof.dofIndex]
+                    + breathingRelative[dof.dofIndex];
+            }
+            const auto breathingFlowState =
+                buildPlanarPressureRegionFragmentOpeningVelocityState(
+                    breathingMetric, breathingNormal, breathingMaterial,
+                    breathingRelative, 1.2);
+            const auto breathingTransport =
+                advancePlanarPressureRegionFragmentOpeningMomentum(
+                    nonuniformSource, sourceMetric, breathingFlowState,
+                    breathingMetric, geometry, breathingSweep,
+                    breathingFragments, breathingTopology,
+                    breathingVolumeRates);
+            check(breathingTransport.diagnostics.accepted
+                      && breathingTransport.diagnostics.openingDofCount == 1
+                      && breathingTransport.diagnostics
+                             .maximumAbsoluteOpeningRelativeVolumeFlowRateCubicMetersPerSecond
+                          > 0.0
+                      && breathingTransport.diagnostics
+                             .advectiveKineticEnergyLossJoules
+                          > 0.0
+                      && breathingTransport.diagnostics
+                             .momentumResidualNormKilogramMetersPerSecond
+                          <= breathingTransport.settings
+                                 .absoluteMomentumToleranceKilogramMetersPerSecond,
+                  "opening momentum transport carries full vector momentum through a live aperture");
+            validatePlanarPressureRegionFragmentOpeningMomentumTransport(
+                breathingTransport, nonuniformSource, sourceMetric,
+                breathingFlowState, breathingMetric, geometry,
+                breathingSweep, breathingFragments, breathingTopology,
+                breathingVolumeRates);
+        }
+
+        auto substepSettings =
+            PlanarPressureRegionFragmentOpeningMomentumTransportSettings{};
+        substepSettings.maximumOutgoingCourantNumber = 1.0e-6;
+        substepSettings.maximumSubsteps = 1;
+        const auto substepRejected =
+            advancePlanarPressureRegionFragmentOpeningMomentum(
+                sourceState, sourceMetric, targetFlowState, targetMetric,
+                geometry, targetSweep, targetFragments, targetTopology,
+                targetVolumeRates, substepSettings);
+        check(!substepRejected.diagnostics.accepted
+                  && substepRejected.controls.empty()
+                  && substepRejected.diagnostics.substepCount > 1
+                  && substepRejected.diagnostics.failureStage
+                      == PlanarPressureRegionFragmentOpeningMomentumTransportFailureStage::
+                          SubstepLimit,
+              "opening momentum transport rejects a step beyond its subcycling limit");
+
+        std::vector<double> incompatibleNormal(
+            targetMetric.dofs.size(), 0.0);
+        std::vector<double> incompatibleMaterial(
+            targetMetric.dofs.size(), 0.0);
+        std::vector<double> incompatibleRelative(
+            targetMetric.dofs.size(), 0.0);
+        for (const auto& dof : targetMetric.dofs) {
+            if (dof.kind
+                != PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                    SharedRegionGrid) {
+                const double material = dof.axis == GridFaceAxis::X
+                    ? uniformVelocity.x
+                    : dof.axis == GridFaceAxis::Y
+                    ? uniformVelocity.y : uniformVelocity.z;
+                incompatibleMaterial[dof.dofIndex] = material;
+                incompatibleNormal[dof.dofIndex] = material;
+            }
+        }
+        const auto incompatibleFlow =
+            buildPlanarPressureRegionFragmentOpeningVelocityState(
+                targetMetric, incompatibleNormal, incompatibleMaterial,
+                incompatibleRelative, 1.2);
+        const auto rejected =
+            advancePlanarPressureRegionFragmentOpeningMomentum(
+                sourceState, sourceMetric, incompatibleFlow, targetMetric,
+                geometry, targetSweep, targetFragments, targetTopology,
+                targetVolumeRates);
+        check(!rejected.diagnostics.accepted
+                  && rejected.controls.empty()
+                  && rejected.diagnostics.failureStage
+                      == PlanarPressureRegionFragmentOpeningMomentumTransportFailureStage::
+                          FlowContinuity,
+              "opening momentum transport rejects relative flow that violates moving continuity");
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    advancePlanarPressureRegionFragmentOpeningMomentum(
+                        sourceState, sourceMetric, sourceState, sourceMetric,
+                        geometry, targetSweep, targetFragments,
+                        targetTopology, targetVolumeRates));
+            },
+            "opening momentum transport rejects a target metric foreign to the current geometry");
+        auto corruptTransport = transport;
+        corruptTransport.controls[0].volumeCubicMeters += 0.1;
+        expectRejected(
+            [&] {
+                validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
+                    corruptTransport);
+            },
+            "opening momentum transport rejects control corruption");
+        auto transportLimits =
+            PlanarPressureRegionFragmentOpeningMomentumTransportLimits{};
+        transportLimits.maximumOwnedBytes = transport.ownedStorageBytes - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    advancePlanarPressureRegionFragmentOpeningMomentum(
+                        sourceState, sourceMetric, targetFlowState,
+                        targetMetric, geometry, targetSweep, targetFragments,
+                        targetTopology, targetVolumeRates, {},
+                        transportLimits));
+            },
+            "opening momentum transport enforces its owned-storage limit before allocation");
+        transportLimits = {};
+        transportLimits.maximumWorkingBytes =
+            transport.workingStorageBytes - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    advancePlanarPressureRegionFragmentOpeningMomentum(
+                        sourceState, sourceMetric, targetFlowState,
+                        targetMetric, geometry, targetSweep, targetFragments,
+                        targetTopology, targetVolumeRates, {},
+                        transportLimits));
+            },
+            "opening momentum transport enforces its working-storage limit before allocation");
+    }
+}
+
 void testPlanarRegionalResistedOpeningPressureStep() {
     const auto geometry = grid();
     const auto previous = pocketLayers();
@@ -11669,6 +12106,7 @@ int main() {
     testPlanarRegionalOpeningFluxPressureProjection();
     testPlanarRegionalPressureDrivenOpeningProjection();
     testPlanarRegionalOpeningResistance();
+    testPlanarRegionalOpeningMomentumTransport();
     testPlanarRegionalResistedOpeningPressureStep();
     testPlanarRegionalOpeningPressureStateAxes();
     testAllAxisAssembly();

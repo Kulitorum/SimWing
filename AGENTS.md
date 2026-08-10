@@ -1994,6 +1994,13 @@ makes this a certified aerodynamic solver.
   fragment. Its accepted-endpoint adapter maps fixed-grid, solid-wall, and
   aperture velocities from validated pressure state and geometry motion. It
   owns no transport, projection, rebase, or worker selection.
+- `src/fsi/fluid/planar_region_fragment_opening_momentum_transport.{h,cpp}`
+  performs the first topology-stable ALE advance on that collocated state.
+  Corrected same-region and aperture-relative flow carries the complete vector
+  momentum by deterministic donor-cell substeps while physical fragment
+  volumes move linearly. It requires local continuity, non-increasing kinetic
+  energy, and global internal-momentum closure, but applies no pressure,
+  viscosity, wall shear, rebase, or production-worker mutation.
 - `src/fsi/fluid/planar_region_fragment_opening_pressure_epoch.{h,cpp}`
   privately composes that continuation with resistance, augmented projection,
   and accepted-state capture. Numerical rejection publishes a typed stage and
@@ -2679,6 +2686,24 @@ fully validate pressure/volume-rate/metric sources and map fixed-grid flow,
 material solid-wall motion, and material-plus-relative aperture flow. Reject
 composition/source corruption, foreign endpoints, and owned/working limits
 before allocation. Do not advance transport, pressure, topology, or a worker.
+
+For `planar_region_fragment_opening_momentum_transport.*`, fully validate both
+opening-aware velocity states, their metrics, and the current topology-stable
+volume-rate epoch before mapping fragments by stable identity. Independently
+reconstructed endpoint volumes may differ only by scaled floating-point
+roundoff. Transport only through same-region Cartesian and aperture degrees;
+retained solid traces have zero inter-fragment mass flux. Require corrected
+`dV/dt + div(Q_relative) = 0` per fragment, linearly advance each physical
+volume, and use first-order donor selection to carry the complete collocated
+vector momentum. Deterministically subcycle against the minimum endpoint
+volume so every outgoing-volume Courant number is bounded. Each accepted
+substep must be finite and non-increasing in collocated kinetic energy, and the
+complete internal step must conserve all three momentum components. Cover
+roundoff-exact moving uniform flow on X/Y/Z, nonuniform dissipative transport,
+a genuinely nonzero aperture-flow transfer, substep-limit rejection,
+continuity rejection, corruption, foreign endpoints, and owned/working limits.
+Do not apply pressure, viscosity, wall shear, topology rebase, or select the
+production worker.
 
 For `planar_region_fragment_opening_pressure_epoch.*`, build continuation
 fields privately and pass them through the complete resistance-plus-projection

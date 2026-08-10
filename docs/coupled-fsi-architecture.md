@@ -504,6 +504,9 @@ src/fsi/
         planar_region_fragment_opening_resistance.* passive aperture loss
         planar_region_fragment_opening_pressure_step.* constrained loss+projection step
         planar_region_fragment_opening_accepted_state.* immutable aperture-step continuation
+        planar_region_fragment_opening_velocity_metric.* aperture-aware inertia geometry
+        planar_region_fragment_opening_velocity_state.* fragment vector momentum state
+        planar_region_fragment_opening_momentum_transport.* conservative ALE donor transport
         planar_region_fragment_opening_pressure_state.* opening-connected total pressure
         planar_region_fragment_surface_load.* sealed/opening full-wall load ledger
         planar_region_fragment_opening_surface_load.* aperture/solid load partition
@@ -2501,6 +2504,23 @@ fully validates the pressure flow and volume-rate epoch before mapping solid
 material motion and material-plus-relative aperture velocity. The immutable
 state is the source representation for later ALE transport; it does not yet
 advect momentum, project pressure, rebase topology, or enter the worker.
+`planar_region_fragment_opening_momentum_transport.*` now performs that first
+topology-stable ALE advance. It maps previous and current fragments by stable
+identity, admits only roundoff-scale differences between independently
+reconstructed endpoint volumes, and consumes the pressure-corrected relative
+flow on same-region Cartesian and aperture degrees. Retained solid traces move
+with their material but carry no inter-fragment mass. Deterministic subcycling
+bounds outgoing-volume Courant number against the smallest endpoint volume;
+first-order donor selection then carries the complete collocated vector
+momentum while fragment volumes move linearly. Every accepted substep is
+finite and non-increasing in collocated kinetic energy, and pair exchanges
+conserve global three-component momentum. Translating uniform flow is a
+roundoff-exact discrete-GCL solution on X/Y/Z; a nonuniform fixture dissipates
+energy without losing momentum, and a separate breathing fixture proves full
+vector transfer through a genuinely nonzero aperture flow. Continuity and
+substep-limit failures publish typed empty results. This remains an opt-in
+transport artifact: it adds no pressure, viscosity, wall shear, topology
+rebase, endpoint face reconstruction, or worker selection.
 `planar_region_fragment_opening_pressure_epoch.*` composes that warm product
 with the existing resistance-plus-augmented-projection transaction. It builds
 all four mutable fields privately, advances them together, and captures a new
