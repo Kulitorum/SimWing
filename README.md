@@ -261,12 +261,11 @@ pressure-layer walls must remain exactly zero-flow. Manufactured divergence is
 cancelled below `3e-14 m3/s` on X/Y/Z, uniform wall-tangential flow is
 preserved, and a failed pressure solve publishes neither corrected velocity
 nor its pressure warm start. Projection work has an explicit storage ceiling.
-Moving layers remain rejected until the local fragment volume-rate ledger is
-explicitly composed into continuity, and this opt-in oracle still owns no face
-momentum mass, opening conductance, kinetic-energy claim, or production worker
-state.
+The base overload rejects moving layers, and this opt-in oracle still owns no
+face momentum mass, opening conductance, kinetic-energy claim, or production
+worker state.
 A separate topology-stable fragment volume-rate ledger now supplies that local
-moving geometry without yet changing the projection. It reconstructs each
+moving geometry. It reconstructs each
 current control's previous volume from its two exact layer-boundary
 displacements and makes `change = current - previous` bit-exact. Canonical
 breathing assigns `+1.6/-1.6 m3/s` to the pocket/exterior components while
@@ -275,7 +274,17 @@ rigid motion instead exchanges volume locally with zero component change.
 The result closes independently through fragments, cells, regions, and graph
 components on X/Y/Z. It is bounded, fingerprinted, and rejects a layer that
 crosses a grid segment because appearance/retirement ownership is not yet
-defined. The static projection does not consume this ledger yet.
+defined. The static overload remains unchanged.
+The topology-stable moving projection overload now does consume it. Its
+continuity residual is exactly `dV/dt + net outward grid flow`, and its
+physical RHS is `-rho/dt` times that residual. A rigid `0.1 m` translation
+starts with `0.1 m3/s` local geometry demand and pressure-projects the required
+same-region redistribution on X/Y/Z while all layer-wall relative flows remain
+zero. The corrected residual closes below `1e-11 m3/s`. A sealed breathing
+pocket instead exposes its `1.6 m3/s` component deficit, maps it to `3.84
+Pa*m`, and rolls back as incompatible rather than fabricating a wall or opening
+flux. Duration and source identities are exact, and static projection behavior
+remains a separate overload.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

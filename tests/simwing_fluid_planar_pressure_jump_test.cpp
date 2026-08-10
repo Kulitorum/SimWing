@@ -3223,6 +3223,8 @@ void testPlanarRegionalFragmentPressureProjection() {
               && pressureCorrection == repeatedPressure
               && diagnostics.accepted && diagnostics.finite
               && diagnostics.staticGeometry
+              && !diagnostics.usesMovingVolumeRates
+              && diagnostics.volumeRateFingerprint == 0
               && diagnostics.pressureSolve.compatible
               && diagnostics.pressureSolve.converged
               && diagnostics.pressureOperatorFingerprint
@@ -3259,6 +3261,10 @@ void testPlanarRegionalFragmentPressureProjection() {
               && diagnostics
                       .correctedNetOutwardFlowMaximumCubicMetersPerSecond
                   < 3.0e-14
+              && diagnostics
+                      .correctedContinuityResidualMaximumCubicMetersPerSecond
+                  == diagnostics
+                      .correctedNetOutwardFlowMaximumCubicMetersPerSecond
               && diagnostics
                       .maximumAbsoluteCorrectedComponentBalanceCubicMetersPerSecond
                   < 3.0e-14,
@@ -3589,6 +3595,256 @@ void testPlanarRegionalFragmentPressureProjectionAxesAndRollback() {
         "regional face projection enforces nested operator limits");
 }
 
+void testPlanarRegionalMovingFragmentPressureProjection() {
+    const auto geometry = grid();
+    const auto previousLayers = pocketLayers();
+    const auto currentLayers = translatePlanarPressureJumpLayers(
+        geometry, previousLayers, 0.1).layers;
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, previousLayers, currentLayers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto pressureOperator =
+        buildPlanarPressureRegionFragmentPressureOperator(
+            geometry, sweep, fragments, topology);
+    const auto volumeRates = buildPlanarPressureRegionFragmentVolumeRates(
+        geometry, sweep, fragments, topology);
+
+    PlanarPressureRegionFragmentPressureProjectionSettings settings;
+    settings.densityKgPerCubicMeter = 1.2;
+    settings.timeStepSeconds = 1.0;
+    settings.absoluteContinuityToleranceCubicMetersPerSecond = 1.0e-12;
+    settings.relativeContinuityTolerance = 1.0e-10;
+    settings.pressureSolve.absoluteResidualTolerancePascalsMeters = 1.0e-13;
+    settings.pressureSolve.relativeResidualTolerance = 1.0e-12;
+    settings.pressureSolve.maximumIterations = 200;
+
+    std::vector<double> velocity(topology.links.size(), 0.0);
+    std::vector<double> pressure(pressureOperator.rows.size(), 0.0);
+    auto repeatedVelocity = velocity;
+    auto repeatedPressure = pressure;
+    const auto diagnostics =
+        projectMovingPlanarPressureRegionFragmentFaceVelocities(
+            pressureOperator, geometry, sweep, fragments, topology,
+            volumeRates, velocity, pressure, settings);
+    const auto repeated =
+        projectMovingPlanarPressureRegionFragmentFaceVelocities(
+            pressureOperator, geometry, sweep, fragments, topology,
+            volumeRates, repeatedVelocity, repeatedPressure, settings);
+    check(diagnostics == repeated
+              && velocity == repeatedVelocity
+              && pressure == repeatedPressure
+              && diagnostics.accepted && diagnostics.finite
+              && !diagnostics.staticGeometry
+              && diagnostics.usesMovingVolumeRates
+              && diagnostics.volumeRateFingerprint
+                  == volumeRates.fingerprint
+              && diagnostics.pressureSolve.compatible
+              && diagnostics.pressureSolve.converged,
+          "moving regional projection is deterministic and rate-bound");
+    checkNear(
+        diagnostics.maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond,
+        0.1, 4.0e-16,
+        "moving regional projection retains local geometry dV/dt");
+    checkNear(
+        diagnostics.predictedContinuityResidualMaximumCubicMetersPerSecond,
+        0.1, 4.0e-16,
+        "moving regional projection starts from geometry continuity demand");
+    check(diagnostics.maximumAbsoluteVelocityCorrectionMetersPerSecond
+              > 1.0e-3
+              && diagnostics
+                      .correctedContinuityResidualMaximumCubicMetersPerSecond
+                  < 1.0e-11
+              && diagnostics
+                      .maximumAbsoluteCorrectedComponentContinuityResidualCubicMetersPerSecond
+                  < 1.0e-11,
+          "moving regional projection redistributes rigid-motion volume");
+    for (const auto& link : topology.links) {
+        if (link.kind
+            == PlanarPressureRegionFragmentFaceKind::PressureLayerWall) {
+            checkNear(velocity[link.linkIndex], 0.0, 0.0,
+                      "moving regional projection keeps wall-relative flow zero");
+        }
+    }
+
+    const auto balancedVelocity = velocity;
+    pressure.assign(pressure.size(), 0.0);
+    const auto balanced =
+        projectMovingPlanarPressureRegionFragmentFaceVelocities(
+            pressureOperator, geometry, sweep, fragments, topology,
+            volumeRates, velocity, pressure, settings);
+    double maximumBalancedVelocityChange = 0.0;
+    for (std::size_t index = 0; index < velocity.size(); ++index) {
+        maximumBalancedVelocityChange = std::max(
+            maximumBalancedVelocityChange,
+            std::abs(velocity[index] - balancedVelocity[index]));
+    }
+    check(balanced.accepted
+              && balanced
+                      .predictedContinuityResidualMaximumCubicMetersPerSecond
+                  < 1.0e-11
+              && maximumBalancedVelocityChange < 1.0e-10,
+          "moving regional projection preserves a prebalanced flow field");
+
+    auto breathingLayers = previousLayers;
+    breathingLayers[0].physicalPlaneCoordinateMeters -= 0.1;
+    breathingLayers[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto breathingSweep = makePlanarPressureRegionSweepLedger(
+        geometry, previousLayers, breathingLayers, 0.5);
+    const auto breathingFragments = buildPlanarPressureRegionFragments(
+        geometry, breathingSweep);
+    const auto breathingTopology = buildPlanarPressureRegionFragmentTopology(
+        geometry, breathingSweep, breathingFragments);
+    const auto breathingOperator =
+        buildPlanarPressureRegionFragmentPressureOperator(
+            geometry, breathingSweep, breathingFragments,
+            breathingTopology);
+    const auto breathingRates =
+        buildPlanarPressureRegionFragmentVolumeRates(
+            geometry, breathingSweep, breathingFragments,
+            breathingTopology);
+    auto breathingSettings = settings;
+    breathingSettings.timeStepSeconds = 0.5;
+    std::vector<double> breathingVelocity(
+        breathingTopology.links.size(), 0.0);
+    std::vector<double> breathingPressure(
+        breathingOperator.rows.size(), 0.25);
+    const auto originalBreathingVelocity = breathingVelocity;
+    const auto originalBreathingPressure = breathingPressure;
+    const auto breathing =
+        projectMovingPlanarPressureRegionFragmentFaceVelocities(
+            breathingOperator, geometry, breathingSweep,
+            breathingFragments, breathingTopology, breathingRates,
+            breathingVelocity, breathingPressure, breathingSettings);
+    check(!breathing.accepted && breathing.finite
+              && !breathing.pressureSolve.compatible
+              && !breathing.pressureSolve.converged
+              && breathingVelocity == originalBreathingVelocity
+              && breathingPressure == originalBreathingPressure,
+          "sealed breathing projection rejects incompatible component volume");
+    checkNear(
+        breathing.maximumAbsolutePredictedComponentContinuityResidualCubicMetersPerSecond,
+        1.6, 4.0e-15,
+        "sealed breathing exposes its component continuity deficit");
+    checkNear(
+        breathing.pressureSolve
+            .maximumAbsoluteComponentCompatibilityPascalsMeters,
+        3.84, 1.0e-14,
+        "sealed breathing maps volume deficit into the physical pressure RHS");
+
+    auto truncatedSettings = settings;
+    truncatedSettings.pressureSolve.absoluteResidualTolerancePascalsMeters =
+        1.0e-16;
+    truncatedSettings.pressureSolve.relativeResidualTolerance = 0.0;
+    truncatedSettings.pressureSolve.maximumIterations = 1;
+    velocity.assign(velocity.size(), 0.0);
+    pressure.assign(pressure.size(), 0.25);
+    const auto originalVelocity = velocity;
+    const auto originalPressure = pressure;
+    const auto truncated =
+        projectMovingPlanarPressureRegionFragmentFaceVelocities(
+            pressureOperator, geometry, sweep, fragments, topology,
+            volumeRates, velocity, pressure, truncatedSettings);
+    check(!truncated.accepted && truncated.pressureSolve.compatible
+              && !truncated.pressureSolve.converged
+              && velocity == originalVelocity
+              && pressure == originalPressure,
+          "truncated moving regional projection rolls back both fields");
+
+    auto mismatchedSettings = settings;
+    mismatchedSettings.timeStepSeconds = 0.5;
+    expectRejected(
+        [&] {
+            auto candidateVelocity = originalVelocity;
+            auto candidatePressure = originalPressure;
+            static_cast<void>(
+                projectMovingPlanarPressureRegionFragmentFaceVelocities(
+                    pressureOperator, geometry, sweep, fragments, topology,
+                    volumeRates, candidateVelocity, candidatePressure,
+                    mismatchedSettings));
+        },
+        "moving regional projection rejects a mismatched epoch duration");
+    auto corruptRates = volumeRates;
+    corruptRates.fragments[0]
+        .geometryVolumeChangeRateCubicMetersPerSecond += 0.1;
+    expectRejected(
+        [&] {
+            auto candidateVelocity = originalVelocity;
+            auto candidatePressure = originalPressure;
+            static_cast<void>(
+                projectMovingPlanarPressureRegionFragmentFaceVelocities(
+                    pressureOperator, geometry, sweep, fragments, topology,
+                    corruptRates, candidateVelocity, candidatePressure,
+                    settings));
+        },
+        "moving regional projection rejects corrupted volume rates");
+    auto limits =
+        PlanarPressureRegionFragmentPressureProjectionLimits{};
+    limits.volumeRateLimits.maximumFragments = 1;
+    expectRejected(
+        [&] {
+            auto candidateVelocity = originalVelocity;
+            auto candidatePressure = originalPressure;
+            static_cast<void>(
+                projectMovingPlanarPressureRegionFragmentFaceVelocities(
+                    pressureOperator, geometry, sweep, fragments, topology,
+                    volumeRates, candidateVelocity, candidatePressure,
+                    settings, limits));
+        },
+        "moving regional projection enforces nested volume-rate limits");
+}
+
+void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
+    const auto geometry = grid();
+    PlanarPressureRegionFragmentPressureProjectionSettings settings;
+    settings.densityKgPerCubicMeter = 1.2;
+    settings.timeStepSeconds = 1.0;
+    settings.pressureSolve.absoluteResidualTolerancePascalsMeters = 1.0e-13;
+    settings.pressureSolve.relativeResidualTolerance = 1.0e-12;
+    settings.pressureSolve.maximumIterations = 200;
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> previous{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        const auto current = translatePlanarPressureJumpLayers(
+            geometry, previous, 0.1).layers;
+        const auto sweep = makePlanarPressureRegionSweepLedger(
+            geometry, previous, current, 1.0);
+        const auto fragments = buildPlanarPressureRegionFragments(
+            geometry, sweep);
+        const auto topology = buildPlanarPressureRegionFragmentTopology(
+            geometry, sweep, fragments);
+        const auto pressureOperator =
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, sweep, fragments, topology);
+        const auto volumeRates =
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, sweep, fragments, topology);
+        std::vector<double> velocity(topology.links.size(), 0.0);
+        std::vector<double> pressure(pressureOperator.rows.size(), 0.0);
+        const auto diagnostics =
+            projectMovingPlanarPressureRegionFragmentFaceVelocities(
+                pressureOperator, geometry, sweep, fragments, topology,
+                volumeRates, velocity, pressure, settings);
+        check(diagnostics.accepted
+                  && diagnostics.usesMovingVolumeRates
+                  && diagnostics
+                          .correctedContinuityResidualMaximumCubicMetersPerSecond
+                      < 1.0e-11,
+              "moving regional projection closes rigid motion on every axis");
+    }
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -3747,6 +4003,8 @@ int main() {
     testPlanarRegionalFragmentPressureCorrectionRollback();
     testPlanarRegionalFragmentPressureProjection();
     testPlanarRegionalFragmentPressureProjectionAxesAndRollback();
+    testPlanarRegionalMovingFragmentPressureProjection();
+    testPlanarRegionalMovingFragmentPressureProjectionAllAxes();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {

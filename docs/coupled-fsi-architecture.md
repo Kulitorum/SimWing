@@ -2261,10 +2261,9 @@ component-compatible solve plus an independently recomputed per-fragment
 continuity residual, and both velocity and warm pressure roll back together on
 failure. A manufactured correction cancels its generating flow below
 `3e-14 m3/s` on X/Y/Z, while a uniform wall-tangential field is unchanged.
-Working storage and nested operator size are bounded. Moving geometry is
-rejected until the separate fragment volume-rate product is explicitly
-composed into this RHS; no face momentum mass, energy statement, opening
-conductance, or production worker ownership is inferred.
+Working storage and nested operator size are bounded. The base overload rejects
+moving geometry; no face momentum mass, energy statement, opening conductance,
+or production worker ownership is inferred.
 `planar_region_fragment_volume_rate.*` now supplies that separate immutable
 geometry product for topology-stable motion. Each current fragment retains its
 two boundary displacements and velocities, reconstructs a strictly positive
@@ -2277,7 +2276,19 @@ exchange. Fragment sums close through fixed cells, source sweep regions,
 topology components, and the periodic domain on X/Y/Z. The source-bound
 artifact is bounded and rejects any layer crossing a Cartesian segment; a
 future transition map must own fragment appearance/retirement across rebases.
-No projection or production worker consumes these rates yet.
+The topology-stable moving overload of
+`planar_region_fragment_pressure_projection.*` now consumes these rates. It
+requires the rate duration to equal `dt`, assembles
+`-rho/dt * (dV/dt + net outward grid flow)`, and applies the same symmetric
+same-region pressure correction as the static path. Acceptance recomputes the
+complete moving continuity residual; velocity and pressure still commit
+together. A rigid `0.1 m` layer translation generates `0.1 m3/s` local demand
+and closes below `1e-11 m3/s` on X/Y/Z. A sealed breathing pocket cannot close
+its `1.6 m3/s` component rate: the corresponding `3.84 Pa*m` compatibility
+defect rejects transactionally. Pressure-layer links remain exact zero
+material-relative flow. This proves topology-stable geometric continuity only,
+not opening flow, momentum transport, energy acceptance, rebase handling, or
+production ownership.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

@@ -135,13 +135,16 @@ double maximumComponentBalance(
 
 } // namespace
 
+namespace {
+
 PlanarPressureRegionFragmentPressureProjectionDiagnostics
-projectStaticPlanarPressureRegionFragmentFaceVelocities(
+projectPlanarPressureRegionFragmentFaceVelocities(
     const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
     const PeriodicCartesianGrid& grid,
     const PlanarPressureRegionSweepLedger& sweep,
     const PlanarPressureRegionFragmentSet& fragments,
     const PlanarPressureRegionFragmentTopology& topology,
+    const PlanarPressureRegionFragmentVolumeRateSet* volumeRates,
     std::vector<double>& orientedNormalVelocityMetersPerSecond,
     std::vector<double>& pressureCorrectionPascals,
     const PlanarPressureRegionFragmentPressureProjectionSettings& settings,
@@ -154,6 +157,15 @@ projectStaticPlanarPressureRegionFragmentFaceVelocities(
     validatePlanarPressureRegionFragmentPressureOperator(
         pressureOperator, grid, sweep, fragments, topology,
         limits.pressureOperatorLimits);
+    if (volumeRates != nullptr) {
+        validatePlanarPressureRegionFragmentVolumeRates(
+            *volumeRates, grid, sweep, fragments, topology,
+            limits.volumeRateLimits);
+        if (settings.timeStepSeconds != volumeRates->durationSeconds) {
+            throw std::invalid_argument(
+                "moving planar regional projection duration does not match its volume rates");
+        }
+    }
     if (orientedNormalVelocityMetersPerSecond.size()
             != topology.links.size()
         || pressureCorrectionPascals.size()
@@ -169,6 +181,9 @@ projectStaticPlanarPressureRegionFragmentFaceVelocities(
     diagnostics.pressureOperatorFingerprint = pressureOperator.fingerprint;
     diagnostics.topologyFingerprint = topology.fingerprint;
     diagnostics.fragmentFingerprint = fragments.fingerprint;
+    diagnostics.usesMovingVolumeRates = volumeRates != nullptr;
+    diagnostics.volumeRateFingerprint = volumeRates == nullptr
+        ? 0 : volumeRates->fingerprint;
     diagnostics.fragmentCount = fragments.fragments.size();
     diagnostics.linkCount = topology.links.size();
     diagnostics.workingStorageBytes = workingStorageBytes(
@@ -179,7 +194,7 @@ projectStaticPlanarPressureRegionFragmentFaceVelocities(
             "planar regional pressure-projection working storage exceeds its limit");
     }
     diagnostics.staticGeometry = isStaticGeometry(sweep);
-    if (!diagnostics.staticGeometry) {
+    if (volumeRates == nullptr && !diagnostics.staticGeometry) {
         throw std::invalid_argument(
             "planar regional pressure projection requires static geometry");
     }
@@ -211,11 +226,30 @@ projectStaticPlanarPressureRegionFragmentFaceVelocities(
 
     std::vector<double> integratedRightHandSide(
         pressureOperator.rows.size(), 0.0);
+    for (std::size_t row = 0; row < integratedRightHandSide.size(); ++row) {
+        const double geometryVolumeRate = volumeRates == nullptr
+            ? 0.0
+            : volumeRates->fragments[row]
+                .geometryVolumeChangeRateCubicMetersPerSecond;
+        diagnostics.maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond =
+            std::max(
+                diagnostics
+                    .maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond,
+                std::abs(geometryVolumeRate));
+        integratedRightHandSide[row] =
+            predictedNetOutwardFlow[row] + geometryVolumeRate;
+    }
+    diagnostics.predictedContinuityResidualL2CubicMetersPerSecond =
+        rootMeanSquare(integratedRightHandSide);
+    diagnostics.predictedContinuityResidualMaximumCubicMetersPerSecond =
+        maximumAbsolute(integratedRightHandSide);
+    diagnostics
+        .maximumAbsolutePredictedComponentContinuityResidualCubicMetersPerSecond =
+        maximumComponentBalance(pressureOperator, integratedRightHandSide);
     const double rightHandSideScale =
         -settings.densityKgPerCubicMeter / settings.timeStepSeconds;
     for (std::size_t row = 0; row < integratedRightHandSide.size(); ++row) {
-        integratedRightHandSide[row] =
-            rightHandSideScale * predictedNetOutwardFlow[row];
+        integratedRightHandSide[row] *= rightHandSideScale;
     }
     if (!allFinite(integratedRightHandSide)) {
         diagnostics.finite = false;
@@ -269,27 +303,92 @@ projectStaticPlanarPressureRegionFragmentFaceVelocities(
         maximumAbsolute(correctedNetOutwardFlow);
     diagnostics.maximumAbsoluteCorrectedComponentBalanceCubicMetersPerSecond =
         maximumComponentBalance(pressureOperator, correctedNetOutwardFlow);
+    for (std::size_t row = 0; row < correctedNetOutwardFlow.size(); ++row) {
+        if (volumeRates != nullptr) {
+            correctedNetOutwardFlow[row] +=
+                volumeRates->fragments[row]
+                    .geometryVolumeChangeRateCubicMetersPerSecond;
+        }
+    }
+    diagnostics.correctedContinuityResidualL2CubicMetersPerSecond =
+        rootMeanSquare(correctedNetOutwardFlow);
+    diagnostics.correctedContinuityResidualMaximumCubicMetersPerSecond =
+        maximumAbsolute(correctedNetOutwardFlow);
+    diagnostics
+        .maximumAbsoluteCorrectedComponentContinuityResidualCubicMetersPerSecond =
+        maximumComponentBalance(pressureOperator, correctedNetOutwardFlow);
     diagnostics.continuityToleranceCubicMetersPerSecond = std::max(
         settings.absoluteContinuityToleranceCubicMetersPerSecond,
         settings.relativeContinuityTolerance
             * diagnostics
-                .predictedNetOutwardFlowMaximumCubicMetersPerSecond);
+                .predictedContinuityResidualMaximumCubicMetersPerSecond);
     diagnostics.finite = std::isfinite(
             diagnostics.correctedNetOutwardFlowL2CubicMetersPerSecond)
         && std::isfinite(
             diagnostics.correctedNetOutwardFlowMaximumCubicMetersPerSecond)
         && std::isfinite(
+            diagnostics
+                .maximumAbsoluteCorrectedComponentBalanceCubicMetersPerSecond)
+        && std::isfinite(
+            diagnostics
+                .maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond)
+        && std::isfinite(
+            diagnostics.correctedContinuityResidualL2CubicMetersPerSecond)
+        && std::isfinite(
+            diagnostics
+                .correctedContinuityResidualMaximumCubicMetersPerSecond)
+        && std::isfinite(
+            diagnostics
+                .maximumAbsoluteCorrectedComponentContinuityResidualCubicMetersPerSecond)
+        && std::isfinite(
             diagnostics.maximumAbsoluteVelocityCorrectionMetersPerSecond)
         && std::isfinite(
             diagnostics.continuityToleranceCubicMetersPerSecond);
     diagnostics.accepted = diagnostics.finite
-        && diagnostics.correctedNetOutwardFlowMaximumCubicMetersPerSecond
+        && diagnostics.correctedContinuityResidualMaximumCubicMetersPerSecond
             <= diagnostics.continuityToleranceCubicMetersPerSecond;
     if (!diagnostics.accepted) return diagnostics;
 
     orientedNormalVelocityMetersPerSecond = std::move(candidateVelocity);
     pressureCorrectionPascals = std::move(candidatePressure);
     return diagnostics;
+}
+
+} // namespace
+
+PlanarPressureRegionFragmentPressureProjectionDiagnostics
+projectStaticPlanarPressureRegionFragmentFaceVelocities(
+    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    std::vector<double>& orientedNormalVelocityMetersPerSecond,
+    std::vector<double>& pressureCorrectionPascals,
+    const PlanarPressureRegionFragmentPressureProjectionSettings& settings,
+    const PlanarPressureRegionFragmentPressureProjectionLimits& limits) {
+    return projectPlanarPressureRegionFragmentFaceVelocities(
+        pressureOperator, grid, sweep, fragments, topology, nullptr,
+        orientedNormalVelocityMetersPerSecond, pressureCorrectionPascals,
+        settings, limits);
+}
+
+PlanarPressureRegionFragmentPressureProjectionDiagnostics
+projectMovingPlanarPressureRegionFragmentFaceVelocities(
+    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    std::vector<double>& orientedNormalVelocityMetersPerSecond,
+    std::vector<double>& pressureCorrectionPascals,
+    const PlanarPressureRegionFragmentPressureProjectionSettings& settings,
+    const PlanarPressureRegionFragmentPressureProjectionLimits& limits) {
+    return projectPlanarPressureRegionFragmentFaceVelocities(
+        pressureOperator, grid, sweep, fragments, topology, &volumeRates,
+        orientedNormalVelocityMetersPerSecond, pressureCorrectionPascals,
+        settings, limits);
 }
 
 } // namespace simwing::fsi::fluid
