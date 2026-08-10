@@ -10,6 +10,7 @@
 #include "fluid/planar_region_fragment_opening_pressure_projection.h"
 #include "fluid/planar_region_fragment_opening_pressure_step.h"
 #include "fluid/planar_region_fragment_opening_resistance.h"
+#include "fluid/planar_region_fragment_opening_surface_load.h"
 #include "fluid/planar_region_fragment_pressure_operator.h"
 #include "fluid/planar_region_fragment_pressure_jump_energy.h"
 #include "fluid/planar_region_fragment_pressure_projection.h"
@@ -5368,6 +5369,342 @@ void testPlanarRegionalFragmentProjectionEnergyAudit() {
         surfaceLoads);
     validatePlanarPressureRegionFragmentSurfaceLoads(
         surfaceLoads, pressureState);
+
+    const std::vector<
+        PlanarPressureRegionFragmentOpeningPatchDefinition> loadOpening{
+        {100, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.5},
+    };
+    const auto loadOpenings =
+        buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, loadOpening);
+    const auto openingAdjustedLoads =
+        capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+            surfaceLoads, pressureState, geometry, sweep, fragments,
+            topology, loadOpening, loadOpenings);
+    const auto repeatedOpeningAdjustedLoads =
+        capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+            surfaceLoads, pressureState, geometry, sweep, fragments,
+            topology, loadOpening, loadOpenings);
+    check(openingAdjustedLoads == repeatedOpeningAdjustedLoads
+              && openingAdjustedLoads.version
+                  == planarPressureRegionFragmentOpeningSurfaceLoadVersion
+              && openingAdjustedLoads.fingerprint != 0
+              && openingAdjustedLoads.accepted
+              && openingAdjustedLoads.sourceSurfaceLoadFingerprint
+                  == surfaceLoads.fingerprint
+              && openingAdjustedLoads.sourcePressureStateFingerprint
+                  == pressureState.fingerprint
+              && openingAdjustedLoads.sourceOpeningFingerprint
+                  == loadOpenings.fingerprint
+              && openingAdjustedLoads.sourceTopologyFingerprint
+                  == topology.fingerprint
+              && openingAdjustedLoads.staticGeometry
+              && !openingAdjustedLoads.usesMovingVolumeRates
+              && openingAdjustedLoads.tiles.size()
+                  == surfaceLoads.tiles.size()
+              && openingAdjustedLoads.surfaces.size()
+                  == surfaceLoads.surfaces.size()
+              && openingAdjustedLoads.totalWallAreaSquareMeters == 8.0
+              && openingAdjustedLoads.totalOpeningAreaSquareMeters == 0.5
+              && openingAdjustedLoads.totalSolidAreaSquareMeters == 7.5
+              && openingAdjustedLoads.wallAreaPartitionResidualSquareMeters
+                  == 0.0
+              && openingAdjustedLoads.ownedStorageBytes > 0
+              && openingAdjustedLoads.workingStorageBytes
+                  == surfaceLoads.tiles.size()
+                     * (sizeof(std::pair<std::size_t, std::size_t>)
+                        + sizeof(std::size_t)),
+          "opening-aware surface load is deterministic and source-bound");
+    const auto adjustedTile = std::ranges::find(
+        openingAdjustedLoads.tiles,
+        loadOpenings.patches[0].sourceFaceLinkStableId,
+        &PlanarPressureRegionFragmentOpeningSurfaceLoadTile::
+            sourceFaceLinkStableId);
+    const auto sourceTile = std::ranges::find(
+        surfaceLoads.tiles,
+        loadOpenings.patches[0].sourceFaceLinkStableId,
+        &PlanarPressureRegionFragmentSurfaceLoadTile::
+            sourceFaceLinkStableId);
+    check(adjustedTile != openingAdjustedLoads.tiles.end()
+              && sourceTile != surfaceLoads.tiles.end(),
+          "opening-aware surface load retains the exact source wall tile");
+    if (adjustedTile != openingAdjustedLoads.tiles.end()
+        && sourceTile != surfaceLoads.tiles.end()) {
+        check(adjustedTile->touchedByOpening
+                  && adjustedTile->sourceOpeningPartitionIndex == 0
+                  && adjustedTile->openingPatchCount == 1
+                  && adjustedTile->wallAreaSquareMeters == 1.0
+                  && adjustedTile->openingAreaSquareMeters == 0.5
+                  && adjustedTile->solidAreaSquareMeters == 0.5
+                  && adjustedTile->openingAreaFraction == 0.5,
+              "opening-aware surface load partitions the touched tile exactly");
+        check(adjustedTile->authoredPressureTractionOnSheetPascals
+                      == sourceTile
+                             ->authoredPressureTractionOnSheetPascals
+                  && adjustedTile
+                         ->correctionPressureTractionOnSheetPascals
+                      == sourceTile
+                             ->correctionPressureTractionOnSheetPascals
+                  && adjustedTile->totalPressureTractionOnSheetPascals
+                      == sourceTile->totalPressureTractionOnSheetPascals,
+              "opening-aware load preserves pressure-jump traction without an absolute-pressure gauge path");
+        for (const auto& component : {
+                 std::pair{
+                     adjustedTile
+                         ->openingRemovedTotalPressureForceOnSheetNewtons.x,
+                     sourceTile->totalPressureForceOnSheetNewtons.x},
+                 std::pair{
+                     adjustedTile->solidTotalPressureForceOnSheetNewtons.x,
+                     sourceTile->totalPressureForceOnSheetNewtons.x},
+                 std::pair{
+                     adjustedTile
+                         ->openingRemovedTotalPressureImpulseOnSheetNewtonSeconds.x,
+                     sourceTile
+                         ->totalPressureImpulseOnSheetNewtonSeconds.x},
+                 std::pair{
+                     adjustedTile
+                         ->solidTotalPressureImpulseOnSheetNewtonSeconds.x,
+                     sourceTile
+                         ->totalPressureImpulseOnSheetNewtonSeconds.x}}) {
+            checkNear(component.first, 0.5 * component.second, 3.0e-14,
+                      "half-open tile halves retained and removed load ownership");
+        }
+        const auto cross = [](const Vector3& first, const Vector3& second) {
+            return Vector3{
+                first.y * second.z - first.z * second.y,
+                first.z * second.x - first.x * second.z,
+                first.x * second.y - first.y * second.x,
+            };
+        };
+        const Vector3 sourceMoment = cross(
+            sourceTile->wrappedCentroidMeters,
+            sourceTile->totalPressureForceOnSheetNewtons);
+        const Vector3 partitionedMoment{
+            adjustedTile
+                    ->openingRemovedTotalPressureMomentOnSheetNewtonMeters.x
+                + adjustedTile
+                      ->solidTotalPressureMomentOnSheetNewtonMeters.x,
+            adjustedTile
+                    ->openingRemovedTotalPressureMomentOnSheetNewtonMeters.y
+                + adjustedTile
+                      ->solidTotalPressureMomentOnSheetNewtonMeters.y,
+            adjustedTile
+                    ->openingRemovedTotalPressureMomentOnSheetNewtonMeters.z
+                + adjustedTile
+                      ->solidTotalPressureMomentOnSheetNewtonMeters.z,
+        };
+        checkNear(partitionedMoment.x, sourceMoment.x, 3.0e-14,
+                  "opening-aware tile closes pressure moment X");
+        checkNear(partitionedMoment.y, sourceMoment.y, 3.0e-14,
+                  "opening-aware tile closes pressure moment Y");
+        checkNear(partitionedMoment.z, sourceMoment.z, 3.0e-14,
+                  "opening-aware tile closes pressure moment Z");
+    }
+    check(openingAdjustedLoads.surfaces[0].surfaceStableId == 10
+              && openingAdjustedLoads.surfaces[0].tileCount == 4
+              && openingAdjustedLoads.surfaces[0].openingTouchedTileCount
+                  == 1
+              && openingAdjustedLoads.surfaces[0].fullyOpenTileCount == 0
+              && openingAdjustedLoads.surfaces[0].wallAreaSquareMeters
+                  == 4.0
+              && openingAdjustedLoads.surfaces[0].openingAreaSquareMeters
+                  == 0.5
+              && openingAdjustedLoads.surfaces[0].solidAreaSquareMeters
+                  == 3.5
+              && openingAdjustedLoads.surfaces[1].openingAreaSquareMeters
+                  == 0.0
+              && openingAdjustedLoads.surfaces[1].solidAreaSquareMeters
+                  == 4.0,
+          "opening-aware surface summaries retain touched and untouched area");
+    check(openingAdjustedLoads.maximumAbsoluteAreaPartitionResidualSquareMeters
+                  < 1.0e-15
+              && openingAdjustedLoads
+                         .maximumAbsoluteForcePartitionResidualNewtons
+                  < 1.0e-12
+              && openingAdjustedLoads
+                         .maximumAbsoluteForceSplitResidualNewtons
+                  < 1.0e-12
+              && openingAdjustedLoads
+                         .maximumAbsoluteImpulsePartitionResidualNewtonSeconds
+                  < 1.0e-12
+              && openingAdjustedLoads
+                         .maximumAbsoluteMomentPartitionResidualNewtonMeters
+                  < 1.0e-12
+              && openingAdjustedLoads
+                         .maximumAbsoluteSurfaceAggregationResidualNewtons
+                  < 1.0e-12
+              && openingAdjustedLoads.workPartitionResidualJoules == 0.0,
+          "opening-aware load closes area, force, impulse, moment, and work");
+    validatePlanarPressureRegionFragmentOpeningSurfaceLoadLedgerIntegrity(
+        openingAdjustedLoads);
+    validatePlanarPressureRegionFragmentOpeningSurfaceLoads(
+        openingAdjustedLoads, surfaceLoads, pressureState, geometry, sweep,
+        fragments, topology, loadOpening, loadOpenings);
+
+    const std::vector<
+        PlanarPressureRegionFragmentOpeningPatchDefinition> fullLoadOpening{
+        {100, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 1.0},
+    };
+    const auto fullLoadOpenings =
+        buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, fullLoadOpening);
+    const auto fullyOpenLoads =
+        capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+            surfaceLoads, pressureState, geometry, sweep, fragments,
+            topology, fullLoadOpening, fullLoadOpenings);
+    const auto fullyOpenTile = std::ranges::find(
+        fullyOpenLoads.tiles,
+        fullLoadOpenings.patches[0].sourceFaceLinkStableId,
+        &PlanarPressureRegionFragmentOpeningSurfaceLoadTile::
+            sourceFaceLinkStableId);
+    check(fullyOpenTile != fullyOpenLoads.tiles.end()
+              && fullyOpenTile->solidAreaSquareMeters == 0.0
+              && fullyOpenTile->solidAuthoredPressureForceOnSheetNewtons
+                  == Vector3{}
+              && fullyOpenTile->solidCorrectionPressureForceOnSheetNewtons
+                  == Vector3{}
+              && fullyOpenTile->solidTotalPressureForceOnSheetNewtons
+                  == Vector3{}
+              && fullyOpenTile
+                         ->solidTotalPressureImpulseOnSheetNewtonSeconds
+                  == Vector3{}
+              && fullyOpenTile
+                         ->solidTotalPressureMomentOnSheetNewtonMeters
+                  == Vector3{}
+              && fullyOpenTile->solidTotalPressureWorkToSheetJoules == 0.0
+              && fullyOpenLoads.surfaces[0].fullyOpenTileCount == 1,
+          "a fully open tile carries exactly zero solid-wall pressure load");
+
+    std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition>
+        sharedLoadOpening{
+            {111, 2000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.2},
+            {110, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.3},
+        };
+    const auto sharedLoadOpenings =
+        buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, sharedLoadOpening);
+    const auto sharedOpeningLoads =
+        capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+            surfaceLoads, pressureState, geometry, sweep, fragments,
+            topology, sharedLoadOpening, sharedLoadOpenings);
+    auto reversedSharedLoadOpening = sharedLoadOpening;
+    std::ranges::reverse(reversedSharedLoadOpening);
+    const auto reversedSharedLoadOpenings =
+        buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology,
+            reversedSharedLoadOpening);
+    const auto reversedSharedOpeningLoads =
+        capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+            surfaceLoads, pressureState, geometry, sweep, fragments,
+            topology, reversedSharedLoadOpening,
+            reversedSharedLoadOpenings);
+    check(sharedLoadOpenings == reversedSharedLoadOpenings
+              && sharedOpeningLoads == reversedSharedOpeningLoads
+              && sharedOpeningLoads.tiles[0].openingPatchCount == 2
+              && sharedOpeningLoads.tiles[0].openingAreaSquareMeters == 0.5,
+          "opening-aware load canonicalizes multiple patches on one tile");
+
+    const auto emptyLoadOpenings =
+        buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, {});
+    const auto emptyOpeningLoads =
+        capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+            surfaceLoads, pressureState, geometry, sweep, fragments,
+            topology, {}, emptyLoadOpenings);
+    bool emptyPreservesSource =
+        emptyOpeningLoads.totalOpeningAreaSquareMeters == 0.0
+        && emptyOpeningLoads.totalSolidAreaSquareMeters
+            == surfaceLoads.totalAreaSquareMeters
+        && emptyOpeningLoads.solidAuthoredPressureForceOnSheetNewtons
+            == surfaceLoads.authoredPressureForceOnSheetNewtons
+        && emptyOpeningLoads.solidCorrectionPressureForceOnSheetNewtons
+            == surfaceLoads.correctionPressureForceOnSheetNewtons
+        && emptyOpeningLoads.solidTotalPressureForceOnSheetNewtons
+            == surfaceLoads.totalPressureForceOnSheetNewtons
+        && emptyOpeningLoads.solidTotalPressureImpulseOnSheetNewtonSeconds
+            == surfaceLoads.totalPressureImpulseOnSheetNewtonSeconds
+        && emptyOpeningLoads.solidTotalPressureWorkToSheetJoules
+            == surfaceLoads.totalPressureWorkToSheetJoules;
+    for (std::size_t index = 0;
+         index < surfaceLoads.tiles.size(); ++index) {
+        emptyPreservesSource = emptyPreservesSource
+            && !emptyOpeningLoads.tiles[index].touchedByOpening
+            && emptyOpeningLoads.tiles[index].openingAreaSquareMeters == 0.0
+            && emptyOpeningLoads.tiles[index].solidAreaSquareMeters
+                == surfaceLoads.tiles[index].areaSquareMeters
+            && emptyOpeningLoads.tiles[index]
+                   .solidTotalPressureForceOnSheetNewtons
+                == surfaceLoads.tiles[index]
+                       .totalPressureForceOnSheetNewtons;
+    }
+    check(emptyPreservesSource,
+          "an empty opening overlay preserves every sealed load bit-exactly");
+
+    auto corruptOpeningAdjustedLoads = openingAdjustedLoads;
+    corruptOpeningAdjustedLoads.tiles[0]
+        .solidTotalPressureForceOnSheetNewtons.x += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningSurfaceLoadLedgerIntegrity(
+                corruptOpeningAdjustedLoads);
+        },
+        "opening-aware surface-load integrity rejects tile corruption");
+    auto corruptLoadOpenings = loadOpenings;
+    corruptLoadOpenings.partitions[0].solidAreaSquareMeters += 0.1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+                    surfaceLoads, pressureState, geometry, sweep, fragments,
+                    topology, loadOpening, corruptLoadOpenings));
+        },
+        "opening-aware surface load rejects opening partition corruption");
+    auto openingLoadLimits =
+        PlanarPressureRegionFragmentOpeningSurfaceLoadLimits{};
+    openingLoadLimits.maximumTiles = surfaceLoads.tiles.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+                    surfaceLoads, pressureState, geometry, sweep, fragments,
+                    topology, loadOpening, loadOpenings,
+                    openingLoadLimits));
+        },
+        "opening-aware surface load enforces its tile limit");
+    openingLoadLimits = {};
+    openingLoadLimits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+                    surfaceLoads, pressureState, geometry, sweep, fragments,
+                    topology, loadOpening, loadOpenings,
+                    openingLoadLimits));
+        },
+        "opening-aware surface load enforces its owned-byte limit");
+    openingLoadLimits = {};
+    openingLoadLimits.maximumWorkingBytes = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+                    surfaceLoads, pressureState, geometry, sweep, fragments,
+                    topology, loadOpening, loadOpenings,
+                    openingLoadLimits));
+        },
+        "opening-aware surface load enforces its working-byte limit");
+    openingLoadLimits = {};
+    openingLoadLimits.openingLimits.maximumPatches = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+                    surfaceLoads, pressureState, geometry, sweep, fragments,
+                    topology, sharedLoadOpening, sharedLoadOpenings,
+                    openingLoadLimits));
+        },
+        "opening-aware surface load enforces nested opening limits");
+
     const auto acceptedState =
         capturePlanarPressureRegionFragmentAcceptedState(
             geometry, sweep, fragments, topology, metric, after,
@@ -6833,6 +7170,40 @@ void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
                 before, after, energy, jumpEnergy);
         const auto surfaceLoads =
             capturePlanarPressureRegionFragmentSurfaceLoads(pressureState);
+        const auto wall = std::ranges::find_if(
+            topology.links,
+            [](const auto& link) {
+                return link.kind
+                        == PlanarPressureRegionFragmentFaceKind::
+                            PressureLayerWall
+                    && link.surfaceStableId == 10;
+            });
+        check(wall != topology.links.end(),
+              "moving opening-aware load finds its wall on every axis");
+        std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition>
+            openingDefinitions;
+        if (wall != topology.links.end()) {
+            openingDefinitions.push_back({
+                100,
+                1000,
+                wall->surfaceStableId,
+                wall->axis,
+                wall->i,
+                wall->j,
+                wall->k,
+                wall->minusRegionStableId,
+                wall->plusRegionStableId,
+                0.5 * wall->areaSquareMeters,
+            });
+        }
+        const auto openings =
+            buildPlanarPressureRegionFragmentOpenings(
+                geometry, sweep, fragments, topology,
+                openingDefinitions);
+        const auto openingAdjustedLoads =
+            capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+                surfaceLoads, pressureState, geometry, sweep, fragments,
+                topology, openingDefinitions, openings);
         const auto acceptedState =
             capturePlanarPressureRegionFragmentAcceptedState(
                 geometry, sweep, fragments, topology, metric, after,
@@ -6858,9 +7229,68 @@ void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
                   && surfaceLoads.accepted
                   && surfaceLoads.surfaces.size() == 2
                   && surfaceLoads.sourceWorkResidualJoules == 0.0
+                  && openingAdjustedLoads.accepted
+                  && openingAdjustedLoads.usesMovingVolumeRates
+                  && wall != topology.links.end()
+                  && openingAdjustedLoads.totalOpeningAreaSquareMeters
+                      == 0.5 * wall->areaSquareMeters
+                  && openingAdjustedLoads.wallAreaPartitionResidualSquareMeters
+                      == 0.0
                   && acceptedState.accepted
                   && acceptedState.usesMovingVolumeRates,
               "moving regional projection and accepted endpoint close on every axis");
+        if (wall != topology.links.end()) {
+            const auto sourceTile = std::ranges::find(
+                surfaceLoads.tiles, wall->stableId,
+                &PlanarPressureRegionFragmentSurfaceLoadTile::
+                    sourceFaceLinkStableId);
+            const auto adjustedTile = std::ranges::find(
+                openingAdjustedLoads.tiles, wall->stableId,
+                &PlanarPressureRegionFragmentOpeningSurfaceLoadTile::
+                    sourceFaceLinkStableId);
+            check(sourceTile != surfaceLoads.tiles.end()
+                      && adjustedTile != openingAdjustedLoads.tiles.end(),
+                  "moving opening-aware load retains source identity on every axis");
+            if (sourceTile != surfaceLoads.tiles.end()
+                && adjustedTile != openingAdjustedLoads.tiles.end()) {
+                checkNear(
+                    adjustedTile->solidTotalPressureForceOnSheetNewtons.x,
+                    0.5 * sourceTile->totalPressureForceOnSheetNewtons.x,
+                    5.0e-13,
+                    "moving opening-aware solid force closes X");
+                checkNear(
+                    adjustedTile->solidTotalPressureForceOnSheetNewtons.y,
+                    0.5 * sourceTile->totalPressureForceOnSheetNewtons.y,
+                    5.0e-13,
+                    "moving opening-aware solid force closes Y");
+                checkNear(
+                    adjustedTile->solidTotalPressureForceOnSheetNewtons.z,
+                    0.5 * sourceTile->totalPressureForceOnSheetNewtons.z,
+                    5.0e-13,
+                    "moving opening-aware solid force closes Z");
+                checkNear(
+                    adjustedTile->solidTotalPressureWorkToSheetJoules,
+                    0.5 * sourceTile->totalPressureWorkToSheetJoules,
+                    5.0e-13,
+                    "moving opening-aware solid work follows retained area");
+                checkNear(
+                    adjustedTile
+                        ->openingRemovedTotalPressureWorkToSheetJoules,
+                    0.5 * sourceTile->totalPressureWorkToSheetJoules,
+                    5.0e-13,
+                    "moving opening-aware removed work follows aperture area");
+                const double axialSourceForce =
+                    axis == GridFaceAxis::X
+                    ? sourceTile->totalPressureForceOnSheetNewtons.x
+                    : axis == GridFaceAxis::Y
+                    ? sourceTile->totalPressureForceOnSheetNewtons.y
+                    : sourceTile->totalPressureForceOnSheetNewtons.z;
+                check(std::abs(axialSourceForce) > 1.0
+                          && sourceTile->totalPressureWorkToSheetJoules
+                              != 0.0,
+                      "moving opening-aware load exercises oriented force and nonzero work");
+            }
+        }
     }
 }
 

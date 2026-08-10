@@ -365,8 +365,18 @@ the complete flow; the combined ledger closes `deltaK = geometry pressure work
 bit-exact with direct projection, while a truncated nested solve rolls back
 topology velocity, aperture samples, flux state, and pressure together. This
 is the first complete opt-in intake substep, but it still lacks scene-authored
-coefficients, topology rebases, open-area traction correction, and worker
-integration.
+coefficients and topology rebases, and it does not itself own pressure-load or
+worker integration.
+An opening-aware surface-load ledger now supplies the missing opt-in load-area
+partition. It binds each aperture partition to its exact composed pressure-wall
+tile, leaves pressure-jump traction unchanged, removes force/impulse/work from
+the open area, and retains those quantities plus origin moment on only the
+solid remainder. Untouched walls reproduce the sealed load bit-exactly, a
+fully open tile carries exact zero structural pressure load, and moving X/Y/Z
+fixtures close the removed-plus-solid force, impulse, moment, and work ledgers.
+The current aperture model authors area but no independent sub-tile centroid,
+so both fractions intentionally use the wall-tile centroid. This is immutable
+handoff data only; it neither mutates Structure nor selects a worker path.
 A first diagonal face-inertia metric now closes the missing geometric mass
 ownership without yet creating a velocity state. Each same-region Cartesian
 link has one shared normal-velocity degree of freedom with dual volume `area *

@@ -1953,6 +1953,13 @@ makes this a certified aerodynamic solver.
   the combined geometry-work/correction-energy/dissipation identity and owns
   the outer four-field transaction, but no scene mapping, traction, rebase, or
   production path.
+- `src/fsi/fluid/planar_region_fragment_opening_surface_load.{h,cpp}` is the
+  opt-in load-area counterpart. It binds the exact opening partitions to the
+  composed pressure-wall load ledger, removes traction from aperture area,
+  and retains force, impulse, origin moment, and material work only on the
+  solid tile remainder. Opening patches currently inherit the wall-tile
+  centroid, so sub-tile moment arms are deliberately not invented. It mutates
+  neither Structure nor worker state.
 - `src/fsi/fluid/planar_region_fragment_volume_rate.{h,cpp}` reconstructs
   topology-stable previous volume and constant geometry `dV/dt` for every
   current regional fragment from its layer-boundary displacements. It closes
@@ -2616,6 +2623,21 @@ X/Y/Z loads must close force, impulse, and work exactly back to the source
 pressure state. Reject corrupted state/ledger data and tile/surface/owned/
 working limits. Do not infer conservative nodal distribution, Structure load
 application, fluid momentum exchange, rebase, transport, or production use.
+
+For `planar_region_fragment_opening_surface_load.*`, require exact source-
+load, pressure-state, opening-overlay, and topology binding. Preserve every
+source pressure-wall tile while partitioning it as `opening + solid = wall`;
+untouched tiles must retain their sealed force/impulse/work bit-exactly and a
+fully open tile must retain exact zero solid load. Pressure traction itself is
+unchanged and remains jump/gauge based. Require authored/correction/total force
+splits, time-integrated impulse, origin moment, and moving material work to
+partition and aggregate per surface and globally on X/Y/Z. Multiple patches
+on one tile must canonicalize through the opening partition. Treat every patch
+centroid as the source wall-tile centroid until independent sub-tile geometry
+is authored; never invent a moment arm. Reject corrupt/foreign nested sources
+and tile/surface/owned/working/nested-opening limits. Do not infer sub-tile
+traction variation, Structure mutation, accepted-state replacement, rebase,
+or production selection.
 
 For `planar_region_fragment_accepted_state.*`, require the pressure state to
 name the exact projected after-state and require all three nested products to

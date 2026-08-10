@@ -2397,7 +2397,20 @@ velocities, opening samples, flux state, and pressure live off to the side
 through both stages and commit only after nested and aggregate acceptance, so
 a truncated pressure solve rolls back the already-computed resistance update.
 The composition is bounded and opt-in; it still has no scene coefficient
-mapping, rebase ownership, open-area load correction, or worker selection.
+mapping, rebase ownership, or worker selection, and it does not itself own
+pressure-load transfer.
+`planar_region_fragment_opening_surface_load.*` provides the corresponding
+opt-in pressure-load area partition. It binds the immutable aperture overlay
+to the composed wall-load ledger, preserves the tile pressure-jump traction,
+and splits each touched wall exactly into removed opening area and retained
+solid area. Force, time-integrated impulse, origin moment, and moving material
+work close independently per tile, authored surface, and globally; untouched
+tiles preserve the sealed handoff bit-exactly and a fully open tile has exact
+zero retained load. Since the opening contract currently authors area and wall
+identity but no separate sub-tile centroid, both fractions share the exact
+wall-tile centroid rather than inventing a moment arm. The ledger is immutable
+and does not apply Structure loads, replace the accepted regional endpoint,
+handle rebases, or enter a production worker.
 `planar_region_fragment_velocity_metric.*` adds the corresponding immutable
 diagonal face geometry for a future velocity state. A same-region Cartesian
 link owns one shared normal degree of freedom with dual volume equal to face
