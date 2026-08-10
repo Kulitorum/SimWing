@@ -6,8 +6,14 @@
 #include "fluid/planar_region_fragment_surface_load.h"
 #include "fluid/planar_region_fragment_velocity_state.h"
 #include "fluid/planar_region_fragment_volume_rate.h"
+#include "fluid/planar_region_fragment_opening_momentum_cycle.h"
+#include "fluid/planar_region_fragment_opening_momentum_cycle_state.h"
+#include "fluid/planar_region_fragment_opening_momentum_cycle_state_persistence.h"
+#include "fluid/planar_region_fragment_opening_velocity_metric.h"
+#include "fluid/planar_region_fragment_opening_velocity_state.h"
 #include "scene_fluid_regional_pressure_sampling.h"
 #include "scene_fluid_regional_opening_load_epoch.h"
+#include "scene_fluid_regional_opening_momentum_load_epoch.h"
 
 #include <algorithm>
 #include <cmath>
@@ -250,6 +256,11 @@ struct OpeningRegionalEndpoint {
     std::vector<PlanarPressureRegionFragmentOpeningResistanceDefinition>
         resistanceDefinitions;
     PlanarPressureRegionFragmentOpeningAcceptedState acceptedFlow;
+    PlanarPressureRegionFragmentVelocityMetric baseMetric;
+    PlanarPressureRegionFragmentOpeningVelocityMetric openingMetric;
+    PlanarPressureRegionFragmentOpeningVelocityState openingVelocity;
+    PlanarPressureRegionFragmentOpeningMomentumCycleResult momentumCycle;
+    PlanarPressureRegionFragmentOpeningMomentumCycleState momentumCycleState;
     PlanarPressureRegionFragmentOpeningPressureState pressure;
     PlanarPressureRegionFragmentSurfaceLoadLedger surfaceLoads;
     PlanarPressureRegionFragmentOpeningSurfaceLoadLedger openingSurfaceLoads;
@@ -356,6 +367,35 @@ struct OpeningRegionalEndpoint {
                 fragments, topology, volumeRates, openingDefinitions,
                 openings, resistanceDefinitions, diagnostics, velocity,
                 samples, flux, pressureCorrection, settings);
+        baseMetric = buildPlanarPressureRegionFragmentVelocityMetric(
+            geometry, sweep, fragments, topology);
+        openingMetric =
+            buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+                geometry, sweep, fragments, topology, baseMetric,
+                openingDefinitions, openings);
+        openingVelocity =
+            capturePlanarPressureRegionFragmentOpeningVelocityState(
+                acceptedFlow, pressureOperator, basePressureOperator,
+                geometry, sweep, fragments, topology, volumeRates,
+                openingDefinitions, openings, resistanceDefinitions,
+                baseMetric, openingMetric);
+        momentumCycle =
+            advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+                openingVelocity, openingMetric, acceptedFlow,
+                pressureOperator, basePressureOperator, geometry, sweep,
+                fragments, topology, volumeRates, openingDefinitions,
+                openings, resistanceDefinitions, baseMetric, openingMetric,
+                pressureOperator, basePressureOperator, sweep, fragments,
+                topology, volumeRates, openingDefinitions, openings,
+                resistanceDefinitions, baseMetric, openingMetric, {},
+                settings);
+        if (!momentumCycle.diagnostics.accepted) {
+            throw std::runtime_error(
+                "opening regional fixture momentum cycle did not converge");
+        }
+        momentumCycleState =
+            capturePlanarPressureRegionFragmentOpeningMomentumCycleState(
+                momentumCycle, openingMetric, openingMetric);
         pressure = composePlanarPressureRegionFragmentOpeningPressureState(
             acceptedFlow, pressureOperator, basePressureOperator, geometry,
             sweep, fragments, topology, volumeRates, openingDefinitions,
@@ -599,6 +639,32 @@ SceneFluidRegionalOpeningLoadEpoch applyOpeningLoadEpoch(
         settings, limits);
 }
 
+SceneFluidRegionalOpeningMomentumLoadEpoch applyOpeningMomentumLoadEpoch(
+    const PlanarPressureRegionFragmentOpeningMomentumCycleState& cycleState,
+    const OpeningRegionalEndpoint& endpoint,
+    SceneFixture& scene,
+    const SceneFluidRegionalOpeningLoadEpochSettings& settings = {},
+    const SceneFluidRegionalOpeningMomentumLoadEpochLimits& limits = {}) {
+    return applySceneFluidRegionalOpeningMomentumLoadEpoch(
+        cycleState, endpoint.volumeRates,
+        endpoint.openingMetric, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.openingMetric,
+        scene.surface.definition, scene.state, scene.transfer,
+        scene.quadrature, scene.structure, settings, limits);
+}
+
+SceneFluidRegionalOpeningMomentumLoadEpoch applyOpeningMomentumLoadEpoch(
+    const OpeningRegionalEndpoint& endpoint,
+    SceneFixture& scene,
+    const SceneFluidRegionalOpeningLoadEpochSettings& settings = {},
+    const SceneFluidRegionalOpeningMomentumLoadEpochLimits& limits = {}) {
+    return applyOpeningMomentumLoadEpoch(
+        endpoint.momentumCycleState, endpoint, scene, settings, limits);
+}
+
 void validateOpeningLoadEpoch(
     const SceneFluidRegionalOpeningLoadEpoch& result,
     const OpeningRegionalEndpoint& endpoint,
@@ -612,6 +678,23 @@ void validateOpeningLoadEpoch(
         endpoint.openingDefinitions, endpoint.openings,
         endpoint.resistanceDefinitions, scene.surface.definition,
         scene.state, scene.transfer, scene.quadrature, settings, limits);
+}
+
+void validateOpeningMomentumLoadEpoch(
+    const SceneFluidRegionalOpeningMomentumLoadEpoch& result,
+    const OpeningRegionalEndpoint& endpoint,
+    const SceneFixture& scene,
+    const SceneFluidRegionalOpeningLoadEpochSettings& settings = {},
+    const SceneFluidRegionalOpeningMomentumLoadEpochLimits& limits = {}) {
+    validateSceneFluidRegionalOpeningMomentumLoadEpoch(
+        result, endpoint.momentumCycleState, endpoint.volumeRates,
+        endpoint.openingMetric, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.openingMetric,
+        scene.surface.definition, scene.state, scene.transfer,
+        scene.quadrature, settings, limits);
 }
 
 void testStaticSamplingAndTransfer() {
@@ -1216,6 +1299,125 @@ void testAtomicOpeningLoadEpoch() {
           "regional opening epoch: only pending Structure loads change");
     validateSceneFluidRegionalOpeningLoadEpochIntegrity(result);
     validateOpeningLoadEpoch(result, endpoint, fixture);
+
+    SceneFixture momentumFixture(partialOpeningPressureScene(), false);
+    SceneFixture repeatedMomentumFixture(
+        partialOpeningPressureScene(), false);
+    const auto momentumBefore = momentumFixture.structure.checkpoint();
+    const auto momentumResult =
+        applyOpeningMomentumLoadEpoch(endpoint, momentumFixture);
+    PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceError
+        momentumPersistenceError;
+    std::vector<std::uint8_t> momentumStateBytes;
+    check(serializePlanarPressureRegionFragmentOpeningMomentumCycleState(
+              endpoint.momentumCycleState, endpoint.volumeRates,
+              endpoint.openingMetric, endpoint.pressureOperator,
+              endpoint.basePressureOperator, endpoint.geometry,
+              endpoint.sweep, endpoint.fragments, endpoint.topology,
+              endpoint.volumeRates, endpoint.openingDefinitions,
+              endpoint.openings, endpoint.resistanceDefinitions,
+              endpoint.openingMetric, momentumStateBytes,
+              &momentumPersistenceError),
+          "regional opening momentum epoch: source cycle serializes before restart replay");
+    PlanarPressureRegionFragmentOpeningMomentumCycleState
+        restoredMomentumCycleState;
+    check(deserializePlanarPressureRegionFragmentOpeningMomentumCycleState(
+              momentumStateBytes, endpoint.volumeRates,
+              endpoint.openingMetric, endpoint.pressureOperator,
+              endpoint.basePressureOperator, endpoint.geometry,
+              endpoint.sweep, endpoint.fragments, endpoint.topology,
+              endpoint.volumeRates, endpoint.openingDefinitions,
+              endpoint.openings, endpoint.resistanceDefinitions,
+              endpoint.openingMetric, restoredMomentumCycleState,
+              &momentumPersistenceError)
+              && restoredMomentumCycleState
+                  == endpoint.momentumCycleState,
+          "regional opening momentum epoch: source cycle restores bit-exactly");
+    const auto repeatedMomentumResult =
+        applyOpeningMomentumLoadEpoch(
+            restoredMomentumCycleState, endpoint,
+            repeatedMomentumFixture);
+    check(momentumResult == repeatedMomentumResult
+              && momentumResult.version
+                  == sceneFluidRegionalOpeningMomentumLoadEpochVersion
+              && momentumResult.fingerprint != 0
+              && momentumResult.applied
+              && momentumResult.sourceCycleStateFingerprint
+                  == endpoint.momentumCycleState.fingerprint
+              && momentumResult.sourceTransportFingerprint
+                  == endpoint.momentumCycleState.transport.fingerprint
+              && momentumResult.sourceAcceptedStateFingerprint
+                  == endpoint.momentumCycleState.acceptedState.fingerprint
+              && momentumResult.loadEpoch.applied
+              && momentumResult.loadEpoch.loadState.acceptedFlow
+                  == endpoint.momentumCycleState.acceptedState
+              && momentumResult.workingStorageBytes
+                  == endpoint.momentumCycleState.ownedStorageBytes
+                      + momentumResult.loadEpoch.workingStorageBytes,
+          "regional opening momentum epoch: transported provenance and Structure application commit together deterministically");
+    check(momentumFixture.structure.checkpoint()
+                  .pendingExternalForcesNewtons
+              != momentumBefore.pendingExternalForcesNewtons,
+          "regional opening momentum epoch: transported pressure changes pending Structure loads");
+    validateSceneFluidRegionalOpeningMomentumLoadEpochIntegrity(
+        momentumResult);
+    validateOpeningMomentumLoadEpoch(
+        momentumResult, endpoint, momentumFixture);
+
+    auto corruptMomentumResult = momentumResult;
+    ++corruptMomentumResult.sourceTransportFingerprint;
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningMomentumLoadEpochIntegrity(
+                corruptMomentumResult);
+        },
+        "regional opening momentum epoch: transport provenance corruption rejects");
+
+    SceneFixture momentumLimited(
+        partialOpeningPressureScene(), false);
+    const auto momentumLimitedBefore =
+        momentumLimited.structure.checkpoint();
+    auto momentumLimits =
+        SceneFluidRegionalOpeningMomentumLoadEpochLimits{};
+    momentumLimits.maximumOwnedBytes =
+        momentumResult.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(applyOpeningMomentumLoadEpoch(
+                endpoint, momentumLimited, {}, momentumLimits));
+        },
+        "regional opening momentum epoch: late outer aggregate limit rejects");
+    check(samePublicCheckpoint(
+              momentumLimitedBefore,
+              momentumLimited.structure.checkpoint()),
+          "regional opening momentum epoch: late outer rejection restores exact Structure state");
+
+    SceneFixture momentumSourceLimited(
+        partialOpeningPressureScene(), false);
+    const auto momentumSourceLimitedBefore =
+        momentumSourceLimited.structure.checkpoint();
+    momentumLimits = {};
+    momentumLimits.cycleState.transport.maximumFragments =
+        endpoint.momentumCycleState.transport.controls.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(applyOpeningMomentumLoadEpoch(
+                endpoint, momentumSourceLimited, {}, momentumLimits));
+        },
+        "regional opening momentum epoch: source-cycle limit rejects");
+    check(samePublicCheckpoint(
+              momentumSourceLimitedBefore,
+              momentumSourceLimited.structure.checkpoint()),
+          "regional opening momentum epoch: source rejection preserves Structure state");
+
+    const OpeningRegionalEndpoint foreignMomentumEndpoint(true);
+    expectRejected(
+        [&] {
+            validateOpeningMomentumLoadEpoch(
+                momentumResult, foreignMomentumEndpoint,
+                momentumFixture);
+        },
+        "regional opening momentum epoch: foreign transported cycle rejects");
 
     auto corrupt = result;
     corrupt.samples.pressures[0].negativeSidePressurePascals += 1.0;

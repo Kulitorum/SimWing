@@ -2150,6 +2150,13 @@ makes this a certified aerodynamic solver.
   immutable receipt and restores the pre-application Structure checkpoint if
   any later validation or aggregate limit fails. It does not step Structure,
   transport fluid momentum, rebase topology, or select a worker path.
+- `src/fsi/scene_fluid_regional_opening_momentum_load_epoch.{h,cpp}` wraps that
+  application with exact accepted-cycle provenance. It validates collocated
+  transport/current-volume/current-metric and consecutive accepted pressure/
+  metric sources before applying retained-solid pressure loads, fingerprints
+  the cycle and nested receipt together, and encloses even late outer failures
+  in a Structure checkpoint rollback. It does not commit the cycle owner, add
+  wall shear, step Structure, rebase, or select production ownership.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -3071,6 +3078,18 @@ pre-application Structure checkpoint. Cover deterministic replay, partial-
 opening force delivery, nested corruption, foreign source/settings, nested
 limits, and late aggregate-limit rollback. Do not step or consume pending
 loads, persist the receipt, claim momentum transport/rebase, or enable a worker.
+
+For `scene_fluid_regional_opening_momentum_load_epoch.*`, fully validate the
+accepted cycle state against its live transport and accepted-pressure epochs
+before entering the existing load transaction. The wrapper receipt must bind
+the cycle/transport/accepted-state/current-metric/next-metric fingerprints to
+the nested applied receipt and include exact aggregate storage. Enclose the
+whole wrapper in the pre-application Structure checkpoint so a late wrapper
+limit or validation failure after nested success restores pending loads exactly.
+Cover deterministic `SWRM` restore onto a rebuilt target, transport provenance
+corruption, foreign cycle sources, early source limits, and late outer rollback. Do not
+commit the cycle owner, add wall shear, step Structure, rebase, or enable a
+worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

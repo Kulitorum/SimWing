@@ -2840,7 +2840,7 @@ opening receipts revalidate; a valid receipt paired with a foreign accepted
 epoch and independent validation limits reject without mutation.
 `scene_fluid_regional_opening_load_epoch.*` now removes the remaining manual
 assembly gap for the active-aperture path. Given one accepted regional opening
-state, it privately composes the connected-gauge pressure, full-wall load,
+state, it uses the shared composer for connected-gauge pressure, full-wall load,
 retained-solid partition, authoritative scene samples, and conservative nodal
 application. The outer immutable receipt binds every fluid, scene, quadrature,
 transfer, Structure-epoch, and settings fingerprint and retains all three
@@ -2853,6 +2853,20 @@ checkpoint even though the nested application had already succeeded. The
 transaction stops at pending loads: it does not step XPBD, transport fluid
 momentum, handle topology rebases, persist a coupled checkpoint, or select the
 production worker path.
+`scene_fluid_regional_opening_momentum_load_epoch.*` now proves that this
+Structure-facing transaction can be entered only through a fully validated
+transported cycle. Its outer receipt binds the `SWRM`-compatible cycle state,
+collocated transport, accepted pressure, current transport metric, consecutive
+accepted metric, and the complete nested load receipt. The stationary partial-
+opening scene fixture bootstraps a real opening momentum cycle; the source pair
+round-trips through `SWRM`, then rebuilt targets receive identical pending
+loads. A Structure checkpoint surrounds the
+entire wrapper, not only the nested application: a deliberately late outer
+owned-byte failure after successful nodal application restores pending loads
+bit-exactly, while source-cycle limits reject before mutation. Corrupt transport
+provenance and foreign cycle state also reject. The wrapper still does not
+commit the mutable cycle owner, add tangential wall exchange, step XPBD, handle
+topology rebase, persist a coupled receipt, or select production ownership.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

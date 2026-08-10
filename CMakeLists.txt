@@ -322,6 +322,8 @@ add_library(simwing_scene_fluid_quadrature STATIC
     src/fsi/scene_fluid_regional_pressure_sampling.h
     src/fsi/scene_fluid_regional_opening_load_epoch.cpp
     src/fsi/scene_fluid_regional_opening_load_epoch.h
+    src/fsi/scene_fluid_regional_opening_momentum_load_epoch.cpp
+    src/fsi/scene_fluid_regional_opening_momentum_load_epoch.h
 )
 target_include_directories(simwing_scene_fluid_quadrature PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
