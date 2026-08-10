@@ -2023,6 +2023,12 @@ makes this a certified aerodynamic solver.
   plus-augmented-projection transaction publishes an accepted opening state
   only after complete pressure/energy acceptance and otherwise exposes a typed
   empty rollback result. It does not apply loads or select production state.
+- `src/fsi/fluid/planar_region_fragment_opening_momentum_cycle.{h,cpp}`
+  atomically composes accepted-pressure flow capture, re-entrant ALE momentum
+  transport, next-geometry prediction, pressure-only warm mapping, and pressure
+  acceptance. It publishes the next staggered transport/pressure endpoint pair
+  together or neither, retaining typed scalar attempt diagnostics on rollback.
+  It remains opt-in and owns no viscosity, rebase, persistence, or worker mode.
 - `src/fsi/fluid/planar_region_fragment_opening_pressure_epoch.{h,cpp}`
   privately composes that continuation with resistance, augmented projection,
   and accepted-state capture. Numerical rejection publishes a typed stage and
@@ -2785,6 +2791,22 @@ deliberately truncated cold/warm rollback, nested corruption rejection, and
 aggregate owned/working limits. Do not modify the
 pressure solver, add viscosity/wall shear, apply traction, persist a restart,
 rebase topology, or select the production worker.
+
+For `planar_region_fragment_opening_momentum_cycle.*`, treat the physical owner
+as a staggered pair: source collocated momentum at the previous geometry and an
+accepted pressure endpoint at the current geometry. Fully validate and capture
+the current accepted pressure flow, advance the source transport directly into
+that current flow, predict the resulting controls onto exactly one consecutive
+next geometry, map only correction pressure into its current gauge, and run the
+warm pressure transaction. On complete acceptance publish the current transport
+and next accepted pressure state together. A transport or pressure rejection
+may retain typed scalar diagnostics and intermediate fingerprints, but both
+public endpoints must be empty. Aggregate all temporary owned/working storage
+with overflow checks and enforce separate endpoint storage. Cover deterministic
+equivalence to the explicit pipeline for uniform X/Y/Z and breathing flow,
+transport- and pressure-stage rollback, nested corruption, foreign sources,
+and aggregate limits. Do not add viscosity/wall shear, traction, topology
+rebase, persistence, or production-worker selection.
 
 For `planar_region_fragment_opening_pressure_epoch.*`, build continuation
 fields privately and pass them through the complete resistance-plus-projection

@@ -598,6 +598,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/planar_region_fragment_opening_momentum_transport.h
     src/fsi/fluid/planar_region_fragment_opening_momentum_prediction.cpp
     src/fsi/fluid/planar_region_fragment_opening_momentum_prediction.h
+    src/fsi/fluid/planar_region_fragment_opening_momentum_cycle.cpp
+    src/fsi/fluid/planar_region_fragment_opening_momentum_cycle.h
     src/fsi/fluid/planar_region_fragment_opening_momentum_pressure_epoch.cpp
     src/fsi/fluid/planar_region_fragment_opening_momentum_pressure_epoch.h
     src/fsi/fluid/planar_region_fragment_opening_pressure_epoch.cpp

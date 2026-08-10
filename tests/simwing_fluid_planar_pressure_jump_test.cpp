@@ -13,6 +13,7 @@
 #include "fluid/planar_region_fragment_opening_load_state.h"
 #include "fluid/planar_region_fragment_opening_momentum_transport.h"
 #include "fluid/planar_region_fragment_opening_momentum_prediction.h"
+#include "fluid/planar_region_fragment_opening_momentum_cycle.h"
 #include "fluid/planar_region_fragment_opening_momentum_pressure_epoch.h"
 #include "fluid/planar_region_fragment_opening_pressure_state.h"
 #include "fluid/planar_region_fragment_opening.h"
@@ -9657,6 +9658,55 @@ void testPlanarRegionalOpeningMomentumTransport() {
             definitions, warmOpenings, zeroResistance, warmBaseMetric,
             warmMetric, momentumPressureSettings);
 
+        const auto momentumCycle =
+            advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+                transport, targetMetric,
+                momentumPressureEpoch.acceptedState,
+                predictionPressureOperator,
+                predictionBasePressureOperator, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates, definitions, predictionOpenings,
+                zeroResistance, predictionBaseMetric, predictionMetric,
+                warmPressureOperator, warmBasePressureOperator, warmSweep,
+                warmFragments, warmTopology, warmVolumeRates, definitions,
+                warmOpenings, zeroResistance, warmBaseMetric, warmMetric,
+                {}, momentumPressureSettings);
+        const auto repeatedMomentumCycle =
+            advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+                transport, targetMetric,
+                momentumPressureEpoch.acceptedState,
+                predictionPressureOperator,
+                predictionBasePressureOperator, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates, definitions, predictionOpenings,
+                zeroResistance, predictionBaseMetric, predictionMetric,
+                warmPressureOperator, warmBasePressureOperator, warmSweep,
+                warmFragments, warmTopology, warmVolumeRates, definitions,
+                warmOpenings, zeroResistance, warmBaseMetric, warmMetric,
+                {}, momentumPressureSettings);
+        check(momentumCycle == repeatedMomentumCycle
+                  && momentumCycle.diagnostics.accepted
+                  && momentumCycle.diagnostics.usedReentrantTransport
+                  && momentumCycle.diagnostics.usedPressureWarmStart
+                  && momentumCycle.diagnostics.failureStage
+                      == PlanarPressureRegionFragmentOpeningMomentumCycleFailureStage::
+                          None
+                  && momentumCycle.transport == secondTransport
+                  && momentumCycle.acceptedState
+                      == warmMomentumPressureEpoch.acceptedState,
+              "atomic transported cycle reproduces both explicit uniform endpoints on every axis");
+        validatePlanarPressureRegionFragmentOpeningMomentumCycleResult(
+            momentumCycle, transport, targetMetric,
+            momentumPressureEpoch.acceptedState,
+            predictionPressureOperator,
+            predictionBasePressureOperator, geometry, predictionSweep,
+            predictionFragments, predictionTopology,
+            predictionVolumeRates, definitions, predictionOpenings,
+            zeroResistance, predictionBaseMetric, predictionMetric,
+            warmPressureOperator, warmBasePressureOperator, warmSweep,
+            warmFragments, warmTopology, warmVolumeRates, definitions,
+            warmOpenings, zeroResistance, warmBaseMetric, warmMetric);
+
         if (axis != GridFaceAxis::X) continue;
         std::vector<double> nonuniformNormal(
             sourceMetric.dofs.size(), 0.0);
@@ -10159,6 +10209,55 @@ void testPlanarRegionalOpeningMomentumTransport() {
                 definitions, breathingWarmOpenings, zeroResistance,
                 breathingWarmBaseMetric, breathingWarmMetric,
                 momentumPressureSettings);
+            const auto breathingMomentumCycle =
+                advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+                    breathingTransport, breathingMetric,
+                    breathingMomentumPressureEpoch.acceptedState,
+                    breathingPredictionPressureOperator,
+                    breathingPredictionBasePressureOperator, geometry,
+                    breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology,
+                    breathingPredictionVolumeRates, definitions,
+                    breathingPredictionOpenings, zeroResistance,
+                    breathingPredictionBaseMetric,
+                    breathingPredictionMetric,
+                    breathingWarmPressureOperator,
+                    breathingWarmBasePressureOperator,
+                    breathingWarmSweep, breathingWarmFragments,
+                    breathingWarmTopology, breathingWarmVolumeRates,
+                    definitions, breathingWarmOpenings, zeroResistance,
+                    breathingWarmBaseMetric, breathingWarmMetric, {},
+                    momentumPressureSettings);
+            check(breathingMomentumCycle.diagnostics.accepted
+                      && breathingMomentumCycle.diagnostics
+                             .usedReentrantTransport
+                      && breathingMomentumCycle.diagnostics
+                             .usedPressureWarmStart
+                      && breathingMomentumCycle.transport
+                          == breathingSecondTransport
+                      && breathingMomentumCycle.acceptedState
+                          == breathingWarmMomentumPressureEpoch.acceptedState,
+                  "atomic transported cycle reproduces both explicit breathing endpoints");
+            validatePlanarPressureRegionFragmentOpeningMomentumCycleResult(
+                breathingMomentumCycle, breathingTransport,
+                breathingMetric,
+                breathingMomentumPressureEpoch.acceptedState,
+                breathingPredictionPressureOperator,
+                breathingPredictionBasePressureOperator, geometry,
+                breathingPredictionSweep,
+                breathingPredictionFragments,
+                breathingPredictionTopology,
+                breathingPredictionVolumeRates, definitions,
+                breathingPredictionOpenings, zeroResistance,
+                breathingPredictionBaseMetric,
+                breathingPredictionMetric,
+                breathingWarmPressureOperator,
+                breathingWarmBasePressureOperator,
+                breathingWarmSweep, breathingWarmFragments,
+                breathingWarmTopology, breathingWarmVolumeRates,
+                definitions, breathingWarmOpenings, zeroResistance,
+                breathingWarmBaseMetric, breathingWarmMetric);
 
             auto truncatedMomentumPressureSettings =
                 momentumPressureSettings;
@@ -10250,6 +10349,60 @@ void testPlanarRegionalOpeningMomentumTransport() {
                 definitions, breathingWarmOpenings, zeroResistance,
                 breathingWarmBaseMetric, breathingWarmMetric,
                 truncatedMomentumPressureSettings);
+            const auto rejectedPressureMomentumCycle =
+                advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+                    breathingTransport, breathingMetric,
+                    breathingMomentumPressureEpoch.acceptedState,
+                    breathingPredictionPressureOperator,
+                    breathingPredictionBasePressureOperator, geometry,
+                    breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology,
+                    breathingPredictionVolumeRates, definitions,
+                    breathingPredictionOpenings, zeroResistance,
+                    breathingPredictionBaseMetric,
+                    breathingPredictionMetric,
+                    breathingWarmPressureOperator,
+                    breathingWarmBasePressureOperator,
+                    breathingWarmSweep, breathingWarmFragments,
+                    breathingWarmTopology, breathingWarmVolumeRates,
+                    definitions, breathingWarmOpenings, zeroResistance,
+                    breathingWarmBaseMetric, breathingWarmMetric, {},
+                    truncatedMomentumPressureSettings);
+            check(!rejectedPressureMomentumCycle.diagnostics.accepted
+                      && rejectedPressureMomentumCycle.diagnostics
+                             .failureStage
+                          == PlanarPressureRegionFragmentOpeningMomentumCycleFailureStage::
+                              PressureProjection
+                      && rejectedPressureMomentumCycle.diagnostics
+                             .transport.accepted
+                      && rejectedPressureMomentumCycle.diagnostics
+                             .prediction.finite
+                      && rejectedPressureMomentumCycle.transport.fingerprint
+                          == 0
+                      && rejectedPressureMomentumCycle.transport.controls.empty()
+                      && rejectedPressureMomentumCycle.acceptedState.fingerprint
+                          == 0,
+                  "atomic transported cycle publishes neither endpoint after pressure rejection");
+            validatePlanarPressureRegionFragmentOpeningMomentumCycleResult(
+                rejectedPressureMomentumCycle, breathingTransport,
+                breathingMetric,
+                breathingMomentumPressureEpoch.acceptedState,
+                breathingPredictionPressureOperator,
+                breathingPredictionBasePressureOperator, geometry,
+                breathingPredictionSweep,
+                breathingPredictionFragments,
+                breathingPredictionTopology,
+                breathingPredictionVolumeRates, definitions,
+                breathingPredictionOpenings, zeroResistance,
+                breathingPredictionBaseMetric,
+                breathingPredictionMetric,
+                breathingWarmPressureOperator,
+                breathingWarmBasePressureOperator,
+                breathingWarmSweep, breathingWarmFragments,
+                breathingWarmTopology, breathingWarmVolumeRates,
+                definitions, breathingWarmOpenings, zeroResistance,
+                breathingWarmBaseMetric, breathingWarmMetric);
         }
 
         auto substepSettings =
@@ -10268,6 +10421,44 @@ void testPlanarRegionalOpeningMomentumTransport() {
                       == PlanarPressureRegionFragmentOpeningMomentumTransportFailureStage::
                           SubstepLimit,
               "opening momentum transport rejects a step beyond its subcycling limit");
+        const auto rejectedTransportMomentumCycle =
+            advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+                transport, targetMetric,
+                momentumPressureEpoch.acceptedState,
+                predictionPressureOperator,
+                predictionBasePressureOperator, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates, definitions, predictionOpenings,
+                zeroResistance, predictionBaseMetric, predictionMetric,
+                warmPressureOperator, warmBasePressureOperator, warmSweep,
+                warmFragments, warmTopology, warmVolumeRates, definitions,
+                warmOpenings, zeroResistance, warmBaseMetric, warmMetric,
+                substepSettings, momentumPressureSettings);
+        check(!rejectedTransportMomentumCycle.diagnostics.accepted
+                  && rejectedTransportMomentumCycle.diagnostics.failureStage
+                      == PlanarPressureRegionFragmentOpeningMomentumCycleFailureStage::
+                          MomentumTransport
+                  && !rejectedTransportMomentumCycle.diagnostics
+                          .transport.accepted
+                  && rejectedTransportMomentumCycle.predictionFingerprint == 0
+                  && rejectedTransportMomentumCycle
+                         .pressureWarmStartFingerprint
+                      == 0
+                  && rejectedTransportMomentumCycle.transport.fingerprint == 0
+                  && rejectedTransportMomentumCycle.acceptedState.fingerprint
+                      == 0,
+              "atomic transported cycle publishes neither endpoint after transport rejection");
+        validatePlanarPressureRegionFragmentOpeningMomentumCycleResult(
+            rejectedTransportMomentumCycle, transport, targetMetric,
+            momentumPressureEpoch.acceptedState,
+            predictionPressureOperator,
+            predictionBasePressureOperator, geometry, predictionSweep,
+            predictionFragments, predictionTopology,
+            predictionVolumeRates, definitions, predictionOpenings,
+            zeroResistance, predictionBaseMetric, predictionMetric,
+            warmPressureOperator, warmBasePressureOperator, warmSweep,
+            warmFragments, warmTopology, warmVolumeRates, definitions,
+            warmOpenings, zeroResistance, warmBaseMetric, warmMetric);
         expectRejected(
             [&] {
                 static_cast<void>(
@@ -10548,6 +10739,80 @@ void testPlanarRegionalOpeningMomentumTransport() {
                         momentumPressureSettings, momentumPressureLimits));
             },
             "transported warm pressure epoch enforces its source-artifact limit");
+
+        auto corruptMomentumCycle = momentumCycle;
+        corruptMomentumCycle.transport.controls[0]
+            .momentumKilogramMetersPerSecond.x += 0.1;
+        expectRejected(
+            [&] {
+                validatePlanarPressureRegionFragmentOpeningMomentumCycleResultIntegrity(
+                    corruptMomentumCycle);
+            },
+            "atomic transported cycle rejects nested endpoint corruption");
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+                        transport, sourceMetric,
+                        momentumPressureEpoch.acceptedState,
+                        predictionPressureOperator,
+                        predictionBasePressureOperator, geometry,
+                        predictionSweep, predictionFragments,
+                        predictionTopology, predictionVolumeRates,
+                        definitions, predictionOpenings, zeroResistance,
+                        predictionBaseMetric, predictionMetric,
+                        warmPressureOperator, warmBasePressureOperator,
+                        warmSweep, warmFragments, warmTopology,
+                        warmVolumeRates, definitions, warmOpenings,
+                        zeroResistance, warmBaseMetric, warmMetric, {},
+                        momentumPressureSettings));
+            },
+            "atomic transported cycle rejects a foreign source metric");
+        auto momentumCycleLimits =
+            PlanarPressureRegionFragmentOpeningMomentumCycleLimits{};
+        momentumCycleLimits.maximumOwnedBytes =
+            momentumCycle.ownedStorageBytes - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+                        transport, targetMetric,
+                        momentumPressureEpoch.acceptedState,
+                        predictionPressureOperator,
+                        predictionBasePressureOperator, geometry,
+                        predictionSweep, predictionFragments,
+                        predictionTopology, predictionVolumeRates,
+                        definitions, predictionOpenings, zeroResistance,
+                        predictionBaseMetric, predictionMetric,
+                        warmPressureOperator, warmBasePressureOperator,
+                        warmSweep, warmFragments, warmTopology,
+                        warmVolumeRates, definitions, warmOpenings,
+                        zeroResistance, warmBaseMetric, warmMetric, {},
+                        momentumPressureSettings, momentumCycleLimits));
+            },
+            "atomic transported cycle enforces its endpoint storage limit");
+        momentumCycleLimits = {};
+        momentumCycleLimits.maximumWorkingBytes =
+            momentumCycle.workingStorageBytes - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+                        transport, targetMetric,
+                        momentumPressureEpoch.acceptedState,
+                        predictionPressureOperator,
+                        predictionBasePressureOperator, geometry,
+                        predictionSweep, predictionFragments,
+                        predictionTopology, predictionVolumeRates,
+                        definitions, predictionOpenings, zeroResistance,
+                        predictionBaseMetric, predictionMetric,
+                        warmPressureOperator, warmBasePressureOperator,
+                        warmSweep, warmFragments, warmTopology,
+                        warmVolumeRates, definitions, warmOpenings,
+                        zeroResistance, warmBaseMetric, warmMetric, {},
+                        momentumPressureSettings, momentumCycleLimits));
+            },
+            "atomic transported cycle enforces aggregate working storage");
     }
 }
 

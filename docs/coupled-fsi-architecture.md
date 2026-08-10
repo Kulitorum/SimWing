@@ -510,6 +510,7 @@ src/fsi/
         planar_region_fragment_opening_momentum_prediction.* consecutive face/aperture predictor
         planar_region_fragment_opening_pressure_warm_start.* pressure-only consecutive gauge map
         planar_region_fragment_opening_momentum_pressure_epoch.* transported cold/warm pressure transaction
+        planar_region_fragment_opening_momentum_cycle.* atomic staggered momentum/pressure cycle
         planar_region_fragment_opening_pressure_state.* opening-connected total pressure
         planar_region_fragment_surface_load.* sealed/opening full-wall load ledger
         planar_region_fragment_opening_surface_load.* aperture/solid load partition
@@ -2569,6 +2570,21 @@ flow retains nonzero warm pressure and reaches another constrained endpoint;
 deliberately truncated cold and warm solves publish typed empty results while
 leaving both prediction and warm history bit-exact. It adds no viscosity, wall
 shear, traction, persistence, topology rebase, or worker selection.
+`planar_region_fragment_opening_momentum_cycle.*` now gives the repeated path
+one atomic ownership boundary. Its source is the scheme's actual staggered
+pair: collocated transport controls at the previous geometry and an accepted
+pressure endpoint at the current geometry. It captures only that endpoint's
+corrected current flow, advances the prior controls into it, predicts the new
+controls onto one consecutive next geometry, maps only correction pressure,
+and accepts the warm pressure transaction. Complete success publishes exactly
+two endpoints together: transported momentum at the current geometry and
+accepted pressure at the next. A transport or pressure rejection retains typed
+scalar attempt diagnostics and immutable lineage but both public endpoints are
+empty. Uniform X/Y/Z and expanding breathing cases reproduce the separately
+assembled pipeline bit-for-bit; forced subcycle and truncated-pressure failures
+prove rollback at both numerical stages. The opt-in cycle aggregates bounded
+temporary storage but adds no viscosity, wall shear, traction, topology rebase,
+persistence, or production-worker selection.
 `planar_region_fragment_opening_pressure_epoch.*` composes that warm product
 with the existing resistance-plus-augmented-projection transaction. It builds
 all four mutable fields privately, advances them together, and captures a new
