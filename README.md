@@ -226,6 +226,15 @@ exterior/pocket/exterior fragments, and the thin pocket remains four `0.6 m³`
 layer-to-layer controls. Per-cell volume and first moment, per-region volume,
 and the periodic domain all close through X/Y/Z and signed rebases. No
 connectivity, velocity basis, or pressure solve uses these controls yet.
+A companion fragment topology now pairs every one of those control faces. The
+canonical 24 controls close as 72 two-sided links: 64 periodic same-region grid
+links and eight pressure-layer walls, producing separate 13.6/2.4 `m³`
+exterior/pocket components. Each wall tile retains its authored surface,
+orientation, area, centroid, center distance, and signed 70 Pa jump, but has
+exactly zero conductance. All six face incidences and boundary area close per
+fragment through X/Y/Z, rigid in-segment motion, and signed periodic rebases.
+This is connectivity evidence only; it still owns no regional velocity or
+pressure solve.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

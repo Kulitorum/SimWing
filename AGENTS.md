@@ -1894,6 +1894,11 @@ makes this a certified aerodynamic solver.
   transverse tiles. It retains layer/grid boundary provenance, periodic image,
   stable fragment identity, physical volume/centroid, regional pressure, and
   exact cell/region/domain closure. It owns no connectivity or velocity state.
+- `src/fsi/fluid/planar_region_fragment_topology.{h,cpp}` pairs all six faces
+  of those fragments. Same-region Cartesian pairs receive a geometric weight;
+  pressure-layer pairs retain two-sided wall geometry and signed static jump
+  with zero conductance. The graph assigns deterministic connected components
+  but owns no velocity, momentum, opening link, or pressure solve.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2224,6 +2229,20 @@ closure, X/Y/Z physical scaling, rigid translation, and signed periodic
 rebases. Reject mutated fragment/region/cell/fingerprint ledgers and interval/
 region/cell/fragment/byte limit violations. Do not infer connectivity, a
 regional velocity basis, mimetic pressure acceptance, or production wiring.
+
+For `planar_region_fragment_topology.*`, require the canonical 24 controls to
+close as 72 paired links: 64 same-region grid links, eight nonconductive layer
+walls, and 28 periodic grid links. Require one 20-fragment/13.6 `m^3` exterior
+component and one 4-fragment/2.4 `m^3` pocket component. Each fragment must
+close exactly six incidences and its analytic boundary area; the 56 `m^2`
+unique area must equal half the 112 `m^2` incident area. Each layer must retain
+four 1 `m^2` wall tiles, 0.4 m center distance, authored orientation, and the
+signed +/-70 Pa jump while publishing zero conductance. Require X/Y/Z closure,
+stable graph/component identity during within-segment rigid motion, signed
+periodic rebase closure, and deep rejection of mutated link/fragment/component/
+fingerprint products plus link/component/byte/nested-source limits. Do not
+infer a regional face velocity, opening conductance, momentum operator,
+mimetic pressure acceptance, or production wiring.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

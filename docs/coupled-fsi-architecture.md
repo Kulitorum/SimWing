@@ -495,6 +495,7 @@ src/fsi/
         planar_region_opening_flow.* bounded opening-graph feasibility oracle
         planar_region_opening_power.* midpoint pressure-power audit
         planar_region_fragment.* layer-split Cartesian control geometry
+        planar_region_fragment_topology.* paired grid/wall control faces
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
         porous_topology.*   compatibility API over planar face topology
@@ -2207,6 +2208,19 @@ controls. X/Y/Z, rigid motion, and positive/negative periodic rebases preserve
 per-cell volume/first moment, per-region volume, and domain closure. This is
 one-epoch geometry only; face connectivity, regional velocity/momentum,
 mimetic assembly, and production pressure ownership remain deliberately open.
+`planar_region_fragment_topology.*` pairs all six rectangular half-faces of
+each fragment. A Cartesian pair is accepted only when both controls retain the
+same regional pressure; an authored layer instead becomes one two-sided wall
+pair with source surface, orientation, area, centroid, center distance, and
+signed static pressure jump, but zero conductance. The canonical 24 controls
+produce 72 links: 64 periodic grid links and eight layer walls. Their graph has
+one 20-fragment/13.6 `m^3` exterior component and one 4-fragment/2.4 `m^3`
+pocket component; total unique face area is 56 `m^2` and the 112 `m^2`
+two-sided incidence closes every analytic prism boundary. Deterministic graph
+and component identity survives motion inside one topology segment, while
+X/Y/Z and positive/negative periodic rebases rebuild closed candidates. The
+graph does not yet assign face velocity, opening conductance, momentum mass,
+or a mimetic pressure operator.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

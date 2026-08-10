@@ -3,6 +3,7 @@
 #include "fluid/planar_region_opening_flow.h"
 #include "fluid/planar_region_opening_power.h"
 #include "fluid/planar_region_fragment.h"
+#include "fluid/planar_region_fragment_topology.h"
 #include "fluid/planar_region_sweep.h"
 #include "fluid/projection.h"
 
@@ -159,6 +160,15 @@ const PlanarPressureRegionFragmentRegionSummary* findFragmentRegion(
         fragments.regions, regionStableId,
         &PlanarPressureRegionFragmentRegionSummary::regionStableId);
     return found == fragments.regions.end() ? nullptr : &*found;
+}
+
+const PlanarPressureRegionFragmentComponent* findFragmentComponent(
+    const PlanarPressureRegionFragmentTopology& topology,
+    const std::uint64_t regionStableId) {
+    const auto found = std::ranges::find(
+        topology.components, regionStableId,
+        &PlanarPressureRegionFragmentComponent::regionStableId);
+    return found == topology.components.end() ? nullptr : &*found;
 }
 
 void testCanonicalAssemblyAndSameFacePocket() {
@@ -1839,6 +1849,309 @@ void testPlanarRegionalFragmentsAllAxesAndRejection() {
         "planar regional fragments enforce the byte limit");
 }
 
+void testPlanarRegionalFragmentTopology() {
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto repeated = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    check(topology == repeated
+              && topology.version
+                  == planarPressureRegionFragmentTopologyVersion
+              && topology.fingerprint != 0
+              && topology.sourceFragmentFingerprint
+                  == fragments.fingerprint
+              && topology.links.size() == 72
+              && topology.fragments.size() == 24
+              && topology.components.size() == 2
+              && topology.sameRegionGridLinkCount == 64
+              && topology.pressureLayerWallLinkCount == 8
+              && topology.periodicGridLinkCount == 28
+              && topology.ownedStorageBytes > 0,
+          "planar regional fragment topology pairs the complete canonical graph");
+    checkNear(topology.totalUniqueFaceAreaSquareMeters,
+              56.0, 2.0e-13,
+              "planar regional fragment topology retains unique face area");
+    checkNear(topology.totalIncidentFaceAreaSquareMeters,
+              112.0, 2.0e-13,
+              "planar regional fragment topology retains two-sided face area");
+    checkNear(topology.totalExpectedFragmentBoundaryAreaSquareMeters,
+              112.0, 2.0e-13,
+              "planar regional fragment topology closes analytic prism area");
+    checkNear(
+        topology
+            .maximumAbsoluteFragmentBoundaryAreaClosureResidualSquareMeters,
+        0.0, 2.0e-13,
+        "planar regional fragment topology closes every prism boundary");
+
+    const auto* exterior = findFragmentComponent(topology, 1);
+    const auto* pocket = findFragmentComponent(topology, 2);
+    check(exterior != nullptr && pocket != nullptr,
+          "planar regional fragment topology retains both components");
+    if (exterior != nullptr && pocket != nullptr) {
+        check(exterior->fragmentCount == 20
+                  && exterior->sameRegionGridLinkCount == 56
+                  && pocket->fragmentCount == 4
+                  && pocket->sameRegionGridLinkCount == 8,
+              "planar regional fragment topology retains component graph counts");
+        checkNear(exterior->volumeCubicMeters,
+                  13.6, 4.0e-14,
+                  "planar regional fragment topology retains exterior volume");
+        checkNear(pocket->volumeCubicMeters,
+                  2.4, 4.0e-14,
+                  "planar regional fragment topology retains pocket volume");
+    }
+
+    std::size_t surface10Count = 0;
+    std::size_t surface20Count = 0;
+    std::set<std::uint64_t> stableIds;
+    for (const auto& link : topology.links) {
+        stableIds.insert(link.stableId);
+        check(link.linkIndex < topology.links.size()
+                  && link.minusFragmentIndex < fragments.fragments.size()
+                  && link.plusFragmentIndex < fragments.fragments.size()
+                  && link.centerDistanceMeters > 0.0,
+              "planar regional fragment link retains bounded source identity");
+        if (link.kind
+            == PlanarPressureRegionFragmentFaceKind::SameRegionGrid) {
+            check(link.surfaceStableId == 0
+                      && link.minusRegionStableId
+                          == link.plusRegionStableId
+                      && link.minusComponentIndex
+                          == link.plusComponentIndex
+                      && link.pressureJumpPascals == 0.0
+                      && link.sameRegionGeometryWeightMeters > 0.0,
+                  "planar regional grid link connects only one pressure component");
+        } else {
+            check(link.sameRegionGeometryWeightMeters == 0.0
+                      && link.minusComponentIndex
+                          != link.plusComponentIndex
+                      && link.i == 1
+                      && link.areaSquareMeters == 1.0
+                      && !link.crossesPeriodicBoundary,
+                  "planar pressure-layer wall remains nonconductive and two-sided");
+            checkNear(link.centerDistanceMeters,
+                      0.4, 4.0e-15,
+                      "planar pressure-layer wall retains control-center distance");
+            if (link.surfaceStableId == 10) {
+                ++surface10Count;
+                checkNear(link.pressureJumpPascals,
+                          70.0, 1.0e-13,
+                          "first pressure-layer wall retains positive jump");
+                checkNear(link.wrappedCentroidMeters.x,
+                          -0.8, 4.0e-15,
+                          "first pressure-layer wall retains physical position");
+            } else if (link.surfaceStableId == 20) {
+                ++surface20Count;
+                checkNear(link.pressureJumpPascals,
+                          -70.0, 1.0e-13,
+                          "second pressure-layer wall retains negative jump");
+                checkNear(link.wrappedCentroidMeters.x,
+                          -0.2, 4.0e-15,
+                          "second pressure-layer wall retains physical position");
+            }
+        }
+    }
+    check(surface10Count == 4 && surface20Count == 4
+              && stableIds.size() == topology.links.size(),
+          "planar regional fragment topology retains every unique layer tile");
+    for (const auto& summary : topology.fragments) {
+        check(summary.incidentFaceCount == 6
+                  && summary.sameRegionGridFaceCount
+                          + summary.pressureLayerWallFaceCount
+                      == 6,
+              "planar regional fragment topology closes six faces per prism");
+        if (summary.regionStableId == 2) {
+            check(summary.sameRegionGridFaceCount == 4
+                      && summary.pressureLayerWallFaceCount == 2,
+                  "thin-pocket controls retain four grid faces and two walls");
+        }
+    }
+    validatePlanarPressureRegionFragmentTopology(
+        topology, geometry, sweep, fragments);
+
+    const auto translatedLayers = translatePlanarPressureJumpLayers(
+        geometry, layers, 0.1).layers;
+    const auto translatedSweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, translatedLayers, 1.0);
+    const auto translatedFragments = buildPlanarPressureRegionFragments(
+        geometry, translatedSweep);
+    const auto translatedTopology =
+        buildPlanarPressureRegionFragmentTopology(
+            geometry, translatedSweep, translatedFragments);
+    std::set<std::uint64_t> translatedLinkIds;
+    for (const auto& link : translatedTopology.links) {
+        translatedLinkIds.insert(link.stableId);
+    }
+    check(translatedLinkIds == stableIds
+              && translatedTopology.components[0].stableId
+                  == topology.components[0].stableId
+              && translatedTopology.components[1].stableId
+                  == topology.components[1].stableId,
+          "within-segment layer motion preserves graph and component identity");
+}
+
+void testPlanarRegionalFragmentTopologyAxesAndRejection() {
+    const auto geometry = grid();
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> layers{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        const auto sweep = makePlanarPressureRegionSweepLedger(
+            geometry, layers, layers, 1.0);
+        const auto fragments = buildPlanarPressureRegionFragments(
+            geometry, sweep);
+        const auto topology = buildPlanarPressureRegionFragmentTopology(
+            geometry, sweep, fragments);
+        const auto counts = geometry.cellCounts();
+        const std::size_t transverseTiles = axis == GridFaceAxis::X
+            ? counts.y * counts.z
+            : (axis == GridFaceAxis::Y
+                ? counts.x * counts.z
+                : counts.x * counts.y);
+        check(topology.profileAxis == axis
+                  && topology.links.size() == 3 * fragments.fragments.size()
+                  && topology.pressureLayerWallLinkCount
+                      == 2 * transverseTiles
+                  && topology.components.size() == 2
+                  && topology.periodicGridLinkCount > 0,
+              "planar regional fragment topology closes every axis");
+        checkNear(
+            topology
+                .maximumAbsoluteFragmentBoundaryAreaClosureResidualSquareMeters,
+            0.0, 3.0e-13,
+            "planar regional fragment topology closes area on every axis");
+        validatePlanarPressureRegionFragmentTopology(
+            topology, geometry, sweep, fragments);
+    }
+
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+
+    const std::vector<PlanarPressureJumpLayerDefinition> wrapping{
+        {10, 1, 2,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 3, 0},
+         1.2, 70.0},
+        {20, 2, 1,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 0, 1},
+         1.8, -70.0},
+    };
+    const auto wrapped = translatePlanarPressureJumpLayers(
+        geometry, wrapping, 0.5).layers;
+    const auto wrappedSweep = makePlanarPressureRegionSweepLedger(
+        geometry, wrapping, wrapped, 1.0);
+    const auto wrappedFragments = buildPlanarPressureRegionFragments(
+        geometry, wrappedSweep);
+    const auto wrappedTopology =
+        buildPlanarPressureRegionFragmentTopology(
+            geometry, wrappedSweep, wrappedFragments);
+    check(wrappedTopology.links.size()
+                  == 3 * wrappedFragments.fragments.size()
+              && wrappedTopology.components.size() == 2,
+          "positive periodic rebase preserves the regional fragment graph");
+
+    const std::vector<PlanarPressureJumpLayerDefinition> reverseWrapping{
+        {10, 1, 2,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 3, -1},
+         -2.8, 70.0},
+        {20, 2, 1,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 0, 0},
+         -2.2, -70.0},
+    };
+    const auto reverseWrapped = translatePlanarPressureJumpLayers(
+        geometry, reverseWrapping, -0.5).layers;
+    const auto reverseSweep = makePlanarPressureRegionSweepLedger(
+        geometry, reverseWrapping, reverseWrapped, 1.0);
+    const auto reverseFragments = buildPlanarPressureRegionFragments(
+        geometry, reverseSweep);
+    const auto reverseTopology =
+        buildPlanarPressureRegionFragmentTopology(
+            geometry, reverseSweep, reverseFragments);
+    check(reverseTopology.links.size()
+                  == 3 * reverseFragments.fragments.size()
+              && reverseTopology.components.size() == 2,
+          "negative periodic rebase preserves the regional fragment graph");
+
+    auto corrupt = topology;
+    corrupt.fingerprint = 0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentTopology(
+            corrupt, geometry, sweep, fragments); },
+        "regional fragment topology rejects fingerprint corruption");
+    corrupt = topology;
+    corrupt.links[0].areaSquareMeters += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentTopology(
+            corrupt, geometry, sweep, fragments); },
+        "regional fragment topology rejects face-link corruption");
+    corrupt = topology;
+    corrupt.fragments[0].incidentFaceCount += 1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentTopology(
+            corrupt, geometry, sweep, fragments); },
+        "regional fragment topology rejects incidence corruption");
+    corrupt = topology;
+    corrupt.components[0].volumeCubicMeters += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentTopology(
+            corrupt, geometry, sweep, fragments); },
+        "regional fragment topology rejects component corruption");
+
+    auto limits = PlanarPressureRegionFragmentTopologyLimits{};
+    limits.maximumLinks = topology.links.size() - 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, sweep, fragments, limits)); },
+        "regional fragment topology enforces the link limit");
+    limits = {};
+    limits.maximumComponents = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, sweep, fragments, limits)); },
+        "regional fragment topology enforces the component limit");
+    limits = {};
+    limits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, sweep, fragments, limits)); },
+        "regional fragment topology enforces the byte limit");
+    limits = {};
+    limits.fragmentLimits.maximumFragments = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, sweep, fragments, limits)); },
+        "regional fragment topology enforces nested source limits");
+    auto corruptSource = fragments;
+    corruptSource.fragments[0].stableId ^= 1U;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, sweep, corruptSource)); },
+        "regional fragment topology rejects mutated source geometry");
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -1987,6 +2300,8 @@ int main() {
     testRegionalOpeningPressurePower();
     testPlanarRegionalControlFragments();
     testPlanarRegionalFragmentsAllAxesAndRejection();
+    testPlanarRegionalFragmentTopology();
+    testPlanarRegionalFragmentTopologyAxesAndRejection();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {
