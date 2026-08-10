@@ -2369,6 +2369,17 @@ jump geometry work plus the correction geometry work within `5e-13 J`, and the
 sheet receives the exact opposite work. The immutable state still applies no
 traction or fluid impulse and owns no transport, topology rebase, or production
 continuation.
+`planar_region_fragment_surface_load.*` captures that accepted pressure state
+as the minimal future structural handoff. Every wall tile retains stable link
+and authored-surface identity, wrapped centroid, area, orientation, all three
+pressure tractions/forces, total impulse, and material work. Tiles remain
+individually visible while surface summaries are canonically sorted and reject
+mixed axes or region sides. The X canonical has eight tiles, two `4 m2`
+surfaces centered at `x=-0.8/-0.2 m`, and authored sheet resultants of
+`-280/+280 N`; moving X/Y/Z capture closes force, impulse, and work exactly to
+the composed pressure state. This is provenance-rich load data only. A later
+adapter must still distribute it conservatively to authored structural
+geometry and own transactional application.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

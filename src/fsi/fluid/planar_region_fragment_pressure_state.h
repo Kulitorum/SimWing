@@ -10,7 +10,7 @@
 namespace simwing::fsi::fluid {
 
 inline constexpr std::uint32_t
-    planarPressureRegionFragmentPressureStateVersion = 1;
+    planarPressureRegionFragmentPressureStateVersion = 2;
 
 struct PlanarPressureRegionFragmentPressureStateControl {
     std::size_t fragmentIndex = 0;
@@ -40,6 +40,7 @@ struct PlanarPressureRegionFragmentPressureStateWall {
     std::uint64_t minusRegionStableId = 0;
     std::uint64_t plusRegionStableId = 0;
     double areaSquareMeters = 0.0;
+    Vector3 wrappedCentroidMeters;
     Vector3 unitNormalMinusToPlus;
     double minusTotalPressurePascals = 0.0;
     double plusTotalPressurePascals = 0.0;
@@ -144,6 +145,9 @@ struct PlanarPressureRegionFragmentPressureState {
     bool operator==(
         const PlanarPressureRegionFragmentPressureState&) const = default;
 };
+
+void validatePlanarPressureRegionFragmentPressureStateIntegrity(
+    const PlanarPressureRegionFragmentPressureState& state);
 
 [[nodiscard]] PlanarPressureRegionFragmentPressureState
 composeStaticPlanarPressureRegionFragmentPressureState(

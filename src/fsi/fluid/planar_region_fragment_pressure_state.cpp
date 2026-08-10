@@ -192,6 +192,7 @@ std::uint64_t stateFingerprint(
         fingerprint.integer(wall.minusRegionStableId);
         fingerprint.integer(wall.plusRegionStableId);
         fingerprint.real(wall.areaSquareMeters);
+        fingerprintVector(fingerprint, wall.wrappedCentroidMeters);
         fingerprintVector(fingerprint, wall.unitNormalMinusToPlus);
         for (const double value : {
                  wall.minusTotalPressurePascals,
@@ -552,6 +553,7 @@ PlanarPressureRegionFragmentPressureState buildState(
             link.minusRegionStableId,
             link.plusRegionStableId,
             link.areaSquareMeters,
+            link.wrappedCentroidMeters,
             link.unitNormalMinusToPlus,
             minus.totalPressurePascals,
             plus.totalPressurePascals,
@@ -702,6 +704,23 @@ PlanarPressureRegionFragmentPressureState buildState(
 }
 
 } // namespace
+
+void validatePlanarPressureRegionFragmentPressureStateIntegrity(
+    const PlanarPressureRegionFragmentPressureState& state) {
+    if (state.version != planarPressureRegionFragmentPressureStateVersion
+        || state.fingerprint == 0 || !state.accepted
+        || state.sourceFragmentFingerprint == 0
+        || state.sourceTopologyFingerprint == 0
+        || state.sourceMetricFingerprint == 0
+        || state.sourceProjectionEnergyFingerprint == 0
+        || state.sourcePressureJumpEnergyFingerprint == 0
+        || !std::isfinite(state.timeStepSeconds)
+        || !(state.timeStepSeconds > 0.0)
+        || state.fingerprint != stateFingerprint(state)) {
+        throw std::invalid_argument(
+            "planar regional pressure-state integrity is invalid");
+    }
+}
 
 PlanarPressureRegionFragmentPressureState
 composeStaticPlanarPressureRegionFragmentPressureState(

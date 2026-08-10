@@ -9,6 +9,7 @@
 #include "fluid/planar_region_fragment_projection_energy.h"
 #include "fluid/planar_region_fragment_pressure_solve.h"
 #include "fluid/planar_region_fragment_pressure_state.h"
+#include "fluid/planar_region_fragment_surface_load.h"
 #include "fluid/planar_region_fragment_topology.h"
 #include "fluid/planar_region_fragment_velocity_metric.h"
 #include "fluid/planar_region_fragment_velocity_state.h"
@@ -4912,6 +4913,130 @@ void testPlanarRegionalFragmentProjectionEnergyAudit() {
         pressureState, geometry, sweep, fragments, topology, metric,
         before, after, audit, jumpAudit);
 
+    const auto surfaceLoads =
+        capturePlanarPressureRegionFragmentSurfaceLoads(pressureState);
+    const auto repeatedSurfaceLoads =
+        capturePlanarPressureRegionFragmentSurfaceLoads(pressureState);
+    check(surfaceLoads == repeatedSurfaceLoads
+              && surfaceLoads.version
+                  == planarPressureRegionFragmentSurfaceLoadVersion
+              && surfaceLoads.fingerprint != 0
+              && surfaceLoads.accepted
+              && surfaceLoads.sourcePressureStateFingerprint
+                  == pressureState.fingerprint
+              && surfaceLoads.sourceTopologyFingerprint
+                  == topology.fingerprint
+              && surfaceLoads.staticGeometry
+              && !surfaceLoads.usesMovingVolumeRates
+              && surfaceLoads.timeStepSeconds
+                  == projectionSettings.timeStepSeconds
+              && surfaceLoads.tiles.size() == 8
+              && surfaceLoads.surfaces.size() == 2
+              && surfaceLoads.totalAreaSquareMeters == 8.0
+              && surfaceLoads.ownedStorageBytes > 0
+              && surfaceLoads.workingStorageBytes
+                  == 2 * sizeof(std::uint64_t),
+          "static regional surface loads capture a deterministic authored handoff");
+    check(surfaceLoads.surfaces[0].surfaceStableId == 10
+              && surfaceLoads.surfaces[1].surfaceStableId == 20,
+          "regional surface loads sort stable authored surface identity");
+    for (std::size_t index = 0;
+         index < surfaceLoads.surfaces.size(); ++index) {
+        const auto& surface = surfaceLoads.surfaces[index];
+        const double sign = index == 0 ? -1.0 : 1.0;
+        const double coordinate = index == 0 ? -0.8 : -0.2;
+        check(surface.tileCount == 4
+                  && surface.areaSquareMeters == 4.0
+                  && surface.axis == GridFaceAxis::X,
+              "regional surface load aggregates every transverse tile");
+        checkNear(surface.areaWeightedCentroidMeters.x,
+                  coordinate, 2.0e-16,
+                  "regional surface load retains the authored plane centroid");
+        checkNear(surface.areaWeightedCentroidMeters.y, 0.0, 0.0,
+                  "regional surface load closes transverse Y centroid");
+        checkNear(surface.areaWeightedCentroidMeters.z, 0.0, 0.0,
+                  "regional surface load closes transverse Z centroid");
+        checkNear(surface.authoredPressureForceOnSheetNewtons.x,
+                  sign * 280.0, 0.0,
+                  "regional surface load sums authored sheet force");
+        check(surface.totalPressureWorkToSheetJoules == 0.0,
+              "static regional surface load does exact zero work");
+    }
+    for (const auto& tile : surfaceLoads.tiles) {
+        checkNear(
+            tile.totalPressureTractionOnSheetPascals.x
+                * tile.areaSquareMeters,
+            tile.totalPressureForceOnSheetNewtons.x, 3.0e-14,
+            "regional surface-load tile reconstructs force from traction");
+        checkNear(
+            tile.totalPressureImpulseOnSheetNewtonSeconds.x,
+            tile.totalPressureForceOnSheetNewtons.x
+                * surfaceLoads.timeStepSeconds,
+            3.0e-16,
+            "regional surface-load tile integrates pressure impulse");
+        check(tile.totalPressureWorkToSheetJoules == 0.0,
+              "static regional surface-load tile retains zero work");
+    }
+    check(surfaceLoads.authoredPressureForceOnSheetNewtons
+                  == pressureState.authoredPressureForceOnSheetNewtons
+              && surfaceLoads.correctionPressureForceOnSheetNewtons
+                  == pressureState.correctionPressureForceOnSheetNewtons
+              && surfaceLoads.totalPressureForceOnSheetNewtons
+                  == pressureState.totalPressureForceOnSheetNewtons
+              && surfaceLoads.totalPressureWorkToSheetJoules
+                  == pressureState.totalPressureWorkToSheetJoules
+              && surfaceLoads.sourceWorkResidualJoules == 0.0,
+          "regional surface-load handoff closes exactly to its pressure state");
+    validatePlanarPressureRegionFragmentSurfaceLoadLedgerIntegrity(
+        surfaceLoads);
+    validatePlanarPressureRegionFragmentSurfaceLoads(
+        surfaceLoads, pressureState);
+    auto corruptSurfaceLoads = surfaceLoads;
+    corruptSurfaceLoads.tiles[0].totalPressureForceOnSheetNewtons.x += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentSurfaceLoadLedgerIntegrity(
+                corruptSurfaceLoads);
+        },
+        "regional surface-load ledger rejects tile corruption");
+    auto surfaceLoadLimits =
+        PlanarPressureRegionFragmentSurfaceLoadLimits{};
+    surfaceLoadLimits.maximumTiles = surfaceLoads.tiles.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentSurfaceLoads(
+                    pressureState, surfaceLoadLimits));
+        },
+        "regional surface-load ledger enforces the tile limit");
+    surfaceLoadLimits = {};
+    surfaceLoadLimits.maximumSurfaces = surfaceLoads.surfaces.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentSurfaceLoads(
+                    pressureState, surfaceLoadLimits));
+        },
+        "regional surface-load ledger enforces the surface limit");
+    surfaceLoadLimits = {};
+    surfaceLoadLimits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentSurfaceLoads(
+                    pressureState, surfaceLoadLimits));
+        },
+        "regional surface-load ledger enforces the owned byte limit");
+    surfaceLoadLimits = {};
+    surfaceLoadLimits.maximumWorkingBytes = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentSurfaceLoads(
+                    pressureState, surfaceLoadLimits));
+        },
+        "regional surface-load ledger enforces the working byte limit");
+
     auto corruptPressureState = pressureState;
     corruptPressureState.fingerprint = 0;
     expectRejected(
@@ -5861,6 +5986,29 @@ void testPlanarRegionalMovingFragmentPressureProjection() {
     validateMovingPlanarPressureRegionFragmentPressureState(
         pressureState, geometry, sweep, fragments, topology, volumeRates,
         metric, beforeState, afterState, energy, jumpEnergy);
+    const auto surfaceLoads =
+        capturePlanarPressureRegionFragmentSurfaceLoads(pressureState);
+    check(surfaceLoads.accepted && !surfaceLoads.staticGeometry
+              && surfaceLoads.usesMovingVolumeRates
+              && surfaceLoads.sourcePressureStateFingerprint
+                  == pressureState.fingerprint
+              && surfaceLoads.surfaces.size() == 2
+              && surfaceLoads.tiles.size() == 8
+              && surfaceLoads.totalAreaSquareMeters == 8.0,
+          "moving regional surface loads retain pressure-state provenance");
+    checkNear(surfaceLoads.totalPressureWorkToSheetJoules,
+              pressureState.totalPressureWorkToSheetJoules, 0.0,
+              "moving regional surface loads retain exact sheet work");
+    checkNear(
+        surfaceLoads.totalPressureImpulseOnSheetNewtonSeconds.x,
+        surfaceLoads.totalPressureForceOnSheetNewtons.x
+            * surfaceLoads.timeStepSeconds,
+        3.0e-14,
+        "moving regional surface loads integrate total sheet impulse");
+    checkNear(surfaceLoads.sourceWorkResidualJoules, 0.0, 0.0,
+              "moving regional surface loads close source work exactly");
+    validatePlanarPressureRegionFragmentSurfaceLoads(
+        surfaceLoads, pressureState);
     auto corruptPressureState = pressureState;
     corruptPressureState.controls[0].totalPressurePascals += 0.1;
     expectRejected(
@@ -6184,6 +6332,8 @@ void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
             composeMovingPlanarPressureRegionFragmentPressureState(
                 geometry, sweep, fragments, topology, volumeRates, metric,
                 before, after, energy, jumpEnergy);
+        const auto surfaceLoads =
+            capturePlanarPressureRegionFragmentSurfaceLoads(pressureState);
         check(diagnostics.accepted
                   && diagnostics.usesMovingVolumeRates
                   && diagnostics
@@ -6201,8 +6351,11 @@ void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
                   && pressureState.accepted
                   && pressureState.usesMovingVolumeRates
                   && std::abs(pressureState.wallGeometryWorkResidualJoules)
-                      < 5.0e-13,
-              "moving regional projection, affine energy, and total pressure close on every axis");
+                      < 5.0e-13
+                  && surfaceLoads.accepted
+                  && surfaceLoads.surfaces.size() == 2
+                  && surfaceLoads.sourceWorkResidualJoules == 0.0,
+              "moving regional projection, total pressure, and surface loads close on every axis");
     }
 }
 

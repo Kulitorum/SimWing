@@ -1949,9 +1949,14 @@ makes this a certified aerodynamic solver.
 - `src/fsi/fluid/planar_region_fragment_pressure_state.{h,cpp}` composes those
   two accepted pressure owners only after validating both audits against the
   same after-state, epoch, metric, and time step. It publishes authored,
-  correction, and total fragment pressures, fabric jumps, sheet forces, and
-  moving work splits. It remains diagnostic and applies no structural load or
-  fluid momentum update.
+  correction, and total fragment pressures, fabric jumps, sheet forces,
+  centroids, and moving work splits. It remains diagnostic and applies no
+  structural load or fluid momentum update.
+- `src/fsi/fluid/planar_region_fragment_surface_load.{h,cpp}` captures that
+  accepted state as immutable per-tile pressure tractions and deterministic
+  per-authored-surface summaries. It retains stable link/surface identity,
+  centroid, area, normal, force, impulse, and work, but has no Structure or
+  worker dependency and applies nothing.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2436,6 +2441,19 @@ Reject corrupted controls/walls/fingerprints, mismatched sources or durations,
 and control/wall/component/owned/working/nested-audit limits. Do not infer
 momentum application, structural transfer, transport, topology rebase, or
 production ownership.
+
+For `planar_region_fragment_surface_load.*`, require an integrity-valid
+composed pressure state and preserve every pressure wall as one stable tile
+with its wrapped centroid, area, normal, authored/correction/total sheet
+traction, force, time-integrated impulse, and material work. Canonically sort
+surface summaries by nonzero authored stable ID and require consistent axis
+and region sides across all tiles of one surface. The canonical X pocket must
+retain 8 tiles, two 4-tile/4 m2 surfaces at `x=-0.8/-0.2 m`, total area `8 m2`,
+and authored sheet forces `-280/+280 N`. Static work is exact zero; moving
+X/Y/Z loads must close force, impulse, and work exactly back to the source
+pressure state. Reject corrupted state/ledger data and tile/surface/owned/
+working limits. Do not infer conservative nodal distribution, Structure load
+application, fluid momentum exchange, rebase, transport, or production use.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

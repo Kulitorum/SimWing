@@ -578,6 +578,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/planar_region_fragment_projection_energy.h
     src/fsi/fluid/planar_region_fragment_pressure_state.cpp
     src/fsi/fluid/planar_region_fragment_pressure_state.h
+    src/fsi/fluid/planar_region_fragment_surface_load.cpp
+    src/fsi/fluid/planar_region_fragment_surface_load.h
     src/fsi/fluid/planar_region_fragment_volume_rate.cpp
     src/fsi/fluid/planar_region_fragment_volume_rate.h
     src/fsi/fluid/planar_region_fragment_velocity_metric.cpp

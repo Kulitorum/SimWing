@@ -346,6 +346,14 @@ motion, total material-wall work closes per component and globally to authored
 jump work plus correction geometry work within `5e-13 J`. This is still a
 diagnostic endpoint: it neither applies the published sheet force nor advances
 fluid momentum, transport, rebase, or production state.
+That endpoint can now be captured as a minimal authored-surface load ledger.
+All eight canonical wall tiles retain stable link/surface identity, wrapped
+centroid, area, normal, authored/correction/total pressure traction, force,
+impulse, and work. Deterministic surface summaries recover the two `4 m2`
+planes at `x=-0.8/-0.2 m` and their authored `-280/+280 N` sheet forces; moving
+X/Y/Z ledgers close exactly back to the composed pressure state. This defines
+the future structural handoff data, but deliberately performs no nodal load
+distribution or XPBD/worker mutation.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.
