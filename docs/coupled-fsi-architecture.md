@@ -2655,6 +2655,21 @@ evaluation and requires every stable node ID, Structure node index, and applied
 force to equal that exact source. Sealed, moving, fully open, and partial-
 opening receipts revalidate; a valid receipt paired with a foreign accepted
 epoch and independent validation limits reject without mutation.
+`scene_fluid_regional_opening_load_epoch.*` now removes the remaining manual
+assembly gap for the active-aperture path. Given one accepted regional opening
+state, it privately composes the connected-gauge pressure, full-wall load,
+retained-solid partition, authoritative scene samples, and conservative nodal
+application. The outer immutable receipt binds every fluid, scene, quadrature,
+transfer, Structure-epoch, and settings fingerprint and retains all three
+nested ownership products under aggregate storage bounds. Full validation
+rebuilds the two immutable pre-application stages and re-evaluates every
+applied node load. A partial-opening oracle is deterministic across rebuilt
+targets; nested corruption and foreign sources/settings reject, and a
+deliberately late aggregate-limit rejection restores the exact Structure
+checkpoint even though the nested application had already succeeded. The
+transaction stops at pending loads: it does not step XPBD, transport fluid
+momentum, handle topology rebases, persist a coupled checkpoint, or select the
+production worker path.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

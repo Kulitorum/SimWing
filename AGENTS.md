@@ -2061,6 +2061,13 @@ makes this a certified aerodynamic solver.
   contained; full validation re-evaluates the sampled quadrature and requires
   every applied node load to match the exact source/transfer topology. It does
   not step Structure or select worker pressure ownership.
+- `src/fsi/scene_fluid_regional_opening_load_epoch.{h,cpp}` is the explicit
+  active-aperture composition boundary from one accepted regional flow state
+  through connected pressure, retained-solid surface load, authoritative scene
+  sampling, and conservative pending Structure loads. It owns the complete
+  immutable receipt and restores the pre-application Structure checkpoint if
+  any later validation or aggregate limit fails. It does not step Structure,
+  transport fluid momentum, rebase topology, or select a worker path.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2820,6 +2827,20 @@ corruption, stale epoch, and node/Structure/owned/working limits. Full receipt
 validation must re-evaluate the immutable transfer, compare every stable node
 ID/index/applied force, reject a valid receipt paired with a foreign source,
 and independently enforce validation bounds. Neither path enables a worker.
+
+For `scene_fluid_regional_opening_load_epoch.*`, privately rebuild the complete
+accepted-flow -> connected-pressure -> full-wall load -> retained-solid load ->
+scene samples chain before mutating Structure. Bind exact operator/opening/
+fragment/topology/volume-rate, scene/quadrature/transfer, Structure epoch, and
+pressure/transfer-settings fingerprints. The outer receipt must own and
+fingerprint the load state, samples, and applied-node receipt, and bound their
+aggregate owned and working storage. Full validation must deterministically
+rebuild both immutable pre-application products and re-evaluate every applied
+node load. If application succeeds but any outer check fails, restore the exact
+pre-application Structure checkpoint. Cover deterministic replay, partial-
+opening force delivery, nested corruption, foreign source/settings, nested
+limits, and late aggregate-limit rollback. Do not step or consume pending
+loads, persist the receipt, claim momentum transport/rebase, or enable a worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

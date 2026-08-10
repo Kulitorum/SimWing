@@ -7,6 +7,7 @@
 #include "fluid/planar_region_fragment_velocity_state.h"
 #include "fluid/planar_region_fragment_volume_rate.h"
 #include "scene_fluid_regional_pressure_sampling.h"
+#include "scene_fluid_regional_opening_load_epoch.h"
 
 #include <algorithm>
 #include <cmath>
@@ -583,6 +584,36 @@ SceneFluidRegionalPressureSampleSet sample(
         scene.state, scene.quadrature, {}, limits);
 }
 
+SceneFluidRegionalOpeningLoadEpoch applyOpeningLoadEpoch(
+    const OpeningRegionalEndpoint& endpoint,
+    SceneFixture& scene,
+    const SceneFluidRegionalOpeningLoadEpochSettings& settings = {},
+    const SceneFluidRegionalOpeningLoadEpochLimits& limits = {}) {
+    return applySceneFluidRegionalOpeningLoadEpoch(
+        endpoint.acceptedFlow, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, scene.surface.definition,
+        scene.state, scene.transfer, scene.quadrature, scene.structure,
+        settings, limits);
+}
+
+void validateOpeningLoadEpoch(
+    const SceneFluidRegionalOpeningLoadEpoch& result,
+    const OpeningRegionalEndpoint& endpoint,
+    const SceneFixture& scene,
+    const SceneFluidRegionalOpeningLoadEpochSettings& settings = {},
+    const SceneFluidRegionalOpeningLoadEpochLimits& limits = {}) {
+    validateSceneFluidRegionalOpeningLoadEpoch(
+        result, endpoint.acceptedFlow, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, scene.surface.definition,
+        scene.state, scene.transfer, scene.quadrature, settings, limits);
+}
+
 void testStaticSamplingAndTransfer() {
     const RegionalEndpoint endpoint(false);
     SceneFixture fixture(false);
@@ -1154,6 +1185,97 @@ void testApplicationRollbackAndLimits() {
           "regional application: stale epoch preserves exact current target state");
 }
 
+void testAtomicOpeningLoadEpoch() {
+    const OpeningRegionalEndpoint endpoint(false);
+    SceneFixture fixture(partialOpeningPressureScene(), false);
+    SceneFixture repeatedFixture(partialOpeningPressureScene(), false);
+    const auto before = fixture.structure.checkpoint();
+    const auto result = applyOpeningLoadEpoch(endpoint, fixture);
+    const auto repeated = applyOpeningLoadEpoch(
+        endpoint, repeatedFixture);
+    check(result == repeated
+              && result.version
+                  == sceneFluidRegionalOpeningLoadEpochVersion
+              && result.fingerprint != 0 && result.applied
+              && result.loadState == endpoint.loadState
+              && result.samples.openingAware
+              && result.samples.regionalOpeningLoadStateFingerprint
+                  == result.loadState.fingerprint
+              && result.application.sourceSamplingFingerprint
+                  == result.samples.fingerprint
+              && result.application.applied
+              && result.ownedStorageBytes > 0
+              && result.workingStorageBytes > 0,
+          "regional opening epoch: complete load transaction is deterministic and source-bound");
+    check(fixture.structure.checkpoint().pendingExternalForcesNewtons
+              != before.pendingExternalForcesNewtons
+              && fixture.structure.acceptedStepCount()
+                  == before.acceptedStepCount
+              && fixture.structure.simulationTimeSeconds()
+                  == before.simulationTimeSeconds,
+          "regional opening epoch: only pending Structure loads change");
+    validateSceneFluidRegionalOpeningLoadEpochIntegrity(result);
+    validateOpeningLoadEpoch(result, endpoint, fixture);
+
+    auto corrupt = result;
+    corrupt.samples.pressures[0].negativeSidePressurePascals += 1.0;
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningLoadEpochIntegrity(corrupt);
+        },
+        "regional opening epoch: nested sample corruption rejects");
+
+    auto foreignSettings =
+        SceneFluidRegionalOpeningLoadEpochSettings{};
+    foreignSettings.transfer.momentReferenceMeters.x = 0.25;
+    expectRejected(
+        [&] {
+            validateOpeningLoadEpoch(
+                result, endpoint, fixture, foreignSettings);
+        },
+        "regional opening epoch: transfer-settings provenance rejects");
+
+    const OpeningRegionalEndpoint foreignEndpoint(true);
+    expectRejected(
+        [&] {
+            validateOpeningLoadEpoch(
+                result, foreignEndpoint, fixture);
+        },
+        "regional opening epoch: foreign accepted-flow source rejects");
+
+    SceneFixture limitedFixture(partialOpeningPressureScene(), false);
+    const auto limitedBefore = limitedFixture.structure.checkpoint();
+    auto limits = SceneFluidRegionalOpeningLoadEpochLimits{};
+    limits.maximumOwnedBytes = result.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                applyOpeningLoadEpoch(endpoint, limitedFixture, {}, limits));
+        },
+        "regional opening epoch: late aggregate limit rejects");
+    check(samePublicCheckpoint(
+              limitedBefore, limitedFixture.structure.checkpoint()),
+          "regional opening epoch: late rejection restores the exact Structure checkpoint");
+
+    SceneFixture applicationLimited(
+        partialOpeningPressureScene(), false);
+    const auto applicationBefore =
+        applicationLimited.structure.checkpoint();
+    limits = {};
+    limits.application.maximumNodeLoads =
+        applicationLimited.transfer.nodes().size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(applyOpeningLoadEpoch(
+                endpoint, applicationLimited, {}, limits));
+        },
+        "regional opening epoch: nested application limit rejects");
+    check(samePublicCheckpoint(
+              applicationBefore,
+              applicationLimited.structure.checkpoint()),
+          "regional opening epoch: nested rejection preserves Structure");
+}
+
 void testRejectionAndLimits() {
     const RegionalEndpoint endpoint(false);
     SceneFixture fixture(false);
@@ -1225,6 +1347,7 @@ int main() {
         testTransactionalLoadApplication();
         testMovingLoadApplication();
         testApplicationRollbackAndLimits();
+        testAtomicOpeningLoadEpoch();
         testRejectionAndLimits();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
