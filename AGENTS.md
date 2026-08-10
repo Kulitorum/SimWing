@@ -645,12 +645,14 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   `[256,-512,1024] m` shift: intake area and normalized conductance change by
   only `5.93e-14 m^2` and `5.59e-12`, respectively. Non-finite translations
   reject before assembly.
-  Selected opt-in `64^3` probes give normalized responses `1.231094`,
-  `1.287761`, and `1.304594` for canonical phases 0, 1, and 2. Their latest
-  contraction ratios are `0.137572`, `1.266587`, and `0.189079`: phases 0 and
-  2 improve, but the formerly clean phase 1 becomes noncontracting. Five
-  unsampled phases preclude aggregate `64^3` statistics or a new convergence
-  decision.
+  The complete streamed opt-in `64^3` ensemble accepts `8/8`, with normalized
+  mean/CV `1.262883/0.03130` and range `1.215742`-`1.321663`. Over
+  `16^3 -> 32^3 -> 64^3`, mean-increment contraction is only `0.902325`,
+  apparent order is `0.148280`, and extrapolation gap is `0.555593`; all fail
+  the existing screen despite another CV contraction. Three phases reverse
+  direction and four are noncontracting. The compact streamed report does not
+  replace the immutable three-source assessment, and the production decision
+  remains `InsufficientEvidence`.
 - `scene_pressure_cell_mimetic_conductance_convergence_assessment.{h,cpp}`
   consumes the finest levels of three compatible immutable phase audits and
   screens aggregate Richardson evidence separately from every same-phase
@@ -1600,8 +1602,10 @@ makes this a certified aerodynamic solver.
   sibling viewer by default. `--no-viewer` must remain Qt-free and unthrottled.
 - `tools/simwing_mimetic_conductance_audit_main.cpp` is the opt-in Qt-free
   high-resolution evidence runner. It consumes the canonical offline profile
-  and grid phases owned by the mimetic conductance phase-audit boundary; it
-  must never select worker pressure ownership or apply structural loads.
+  and grid phases owned by the mimetic conductance phase-audit boundary. An
+  all-phase run validates and discards one nested product at a time before
+  compact deterministic aggregation; it must never select worker pressure
+  ownership or apply structural loads.
 - `src/fsi/hemisphere_case.{h,cpp}` is the larger structural/viewer canonical:
   a soft triangulated fabric hemisphere held at three equatorial points with a
   compliant rim, intrinsic membrane charts, signed rest-shape hinges, and a

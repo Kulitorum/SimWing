@@ -29,7 +29,12 @@ canonical grid phase (or all eight phases explicitly). It is an offline
 convergence-evidence runner and has no path to worker pressure or loads.
 For example, `simwing-mimetic-conductance-audit --resolution 64 --phase 0`
 runs one expensive selected trajectory; `--all-phases` is intentionally
-required for a complete ensemble.
+required for a complete ensemble and streams one validated phase product at a
+time to keep retained audit storage bounded.
+The current complete `64^3` developer run accepts all eight placements but
+still fails the established trend screen: mean drift barely contracts and
+three phase trajectories reverse direction. It remains evidence against a
+live pressure-owner switch, not authorization for one.
 
 The first remake foundations are now present: scene-v2 validation and bounded
 serialization, direct export from captured analytical wing geometry,

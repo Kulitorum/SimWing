@@ -1652,6 +1652,37 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
                   < audit.levels[2].meanNormalizedConductance,
           "graph-independent source exposes the complete phase spectrum across refinement");
 
+    auto rejectingSettings = settings;
+    rejectingSettings.traceSystem.localCell.algebraicConsistencyTolerance =
+        0.0;
+    const std::array<fsi::fluid::GridCellCounts, 1>
+        rejectedResolution{{{2, 2, 2}}};
+    const std::array<fsi::fluid::Vector3, 1> rejectedPhase{{
+        fsi::scenePressureCellMimeticConductanceCanonicalGridPhases[0],
+    }};
+    const auto rejectedOnlyAudit =
+        fsi::auditScenePressureCellMimeticConductancePhaseRefinement(
+            rejectedResolution, rejectedPhase, rejectingSettings);
+    fsi::validateScenePressureCellMimeticConductancePhaseRefinementAuditIntegrity(
+        rejectedOnlyAudit);
+    const auto& rejectedOnlyLevel = rejectedOnlyAudit.levels.front();
+    check(rejectedOnlyLevel.acceptedSampleCount == 0
+              && rejectedOnlyLevel
+                     .rejectedLocalCellLinearConsistencySampleCount == 1
+              && rejectedOnlyLevel.minimumNormalizedConductance == 0.0
+              && rejectedOnlyLevel.maximumNormalizedConductance == 0.0
+              && rejectedOnlyLevel.meanNormalizedConductance == 0.0
+              && rejectedOnlyLevel
+                     .normalizedConductanceCoefficientOfVariation == 0.0
+              && rejectedOnlyLevel.samples.front().status
+                  == fsi::ScenePressureCellMimeticConductancePhaseSampleStatus::
+                      RejectedLocalCellLinearConsistency
+              && rejectedOnlyLevel.samples.front()
+                     .localCellLinearConsistencyRejection.has_value()
+              && !rejectedOnlyLevel.samples.front()
+                      .conductanceAudit.has_value(),
+          "single-phase mimetic audit preserves an all-rejected level with zero conditional statistics");
+
     auto translatedSettings = settings;
     translatedSettings.geometryTranslationMeters = {
         256.0, -512.0, 1024.0};

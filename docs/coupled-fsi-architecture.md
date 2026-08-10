@@ -1425,6 +1425,12 @@ name a resolution in `2..64` and either one phase index or `--all-phases`.
 Its stable text report retains fingerprints, topology sizes, opening count,
 solve residual, normalized response, and any typed local-cell rejection. It
 constructs neither the graph pressure owner nor a structural load path.
+All-phase runs build, validate, report, and discard one heavy nested product at
+a time, retaining only eight normalized values for deterministic compensated
+mean/CV aggregation. A selection containing only local-cell rejections remains
+a valid immutable audit level with zero conditional statistics, so a
+single-phase diagnostic cannot lose its typed failure merely because no other
+phase was accepted.
 
 | Grid | Shadow terminal solves | Normalized range | Conditional mean / CV |
 |---|---:|---:|---:|
@@ -1433,21 +1439,33 @@ constructs neither the graph pressure owner nor a structural load path.
 | `8^3` | `8 / 8` | `0.293734` - `0.888671` | `0.521248 / 0.38828` |
 | `16^3` | `8 / 8` | `0.624544` - `1.141234` | `0.902570 / 0.20104` |
 | `32^3` | `8 / 8` | `0.956232` - `1.207995` | `1.091977 / 0.07436` |
+| `64^3` | `8 / 8` | `1.215742` - `1.321663` | `1.262883 / 0.03130` |
 
-The opt-in runner has also completed three deliberately selected `64^3`
-samples; these are trajectory probes, not a complete ensemble:
+The opt-in streamed runner completed the full `64^3` ensemble in about 29
+minutes on the primary Windows development machine:
 
-| Canonical phase | Opening traces | Normalized response | `16 -> 32` increment | `32 -> 64` increment | Latest contraction |
-|---:|---:|---:|---:|---:|---:|
-| `0` | `96` | `1.231094375584` | `0.533196890111` | `0.073353040231` | `0.137572` |
-| `1` | `92` | `1.287760771417` | `0.127305404953` | `0.161243330268` | `1.266587` |
-| `2` | `93` | `1.304594221258` | `0.510893181787` | `0.096599035578` | `0.189079` |
+| Canonical phase | Opening traces | Normalized response | `32 -> 64` increment | Latest contraction | Latest blocker |
+|---:|---:|---:|---:|---:|---|
+| `0` | `96` | `1.231094375584` | `0.073353040231` | `0.137572` | none |
+| `1` | `92` | `1.287760771417` | `0.161243330268` | `1.266587` | noncontracting |
+| `2` | `93` | `1.304594221258` | `0.096599035578` | `0.189079` | none |
+| `3` | `98` | `1.230172177719` | `0.136386149416` | `0.440183` | none |
+| `4` | `94` | `1.215742233756` | `0.232851769643` | `12.096400` | direction + noncontraction |
+| `5` | `96` | `1.289829440326` | `0.223719214104` | `2.977992` | direction + noncontraction |
+| `6` | `95` | `1.321662620053` | `0.177122935798` | `0.592195` | none |
+| `7` | `98` | `1.222206883469` | `0.265975175579` | `1.558100` | direction + noncontraction |
 
-Phases 0 and 2 now contract strongly, while the formerly clean phase 1 becomes
-noncontracting. Thus refinement moves the adverse trajectory instead of yet
-removing it. The missing five phases preclude `64^3` aggregate statistics or a
-four-level convergence decision, and the strict production gate remains
-`InsufficientEvidence`.
+For `16^3 -> 32^3 -> 64^3`, the mean-increment contraction is `0.902325`,
+apparent order only `0.148280`, and the corresponding extrapolation is
+`2.841728` with a `0.555593` relative fine gap. Those fail the same aggregate
+contraction, apparent-order, and extrapolation-gap thresholds even though CV
+contracts again by `0.420907`. Three phases reverse direction and four are
+noncontracting; phases 0, 2, 3, and 6 pass both phase screens. Applying the
+existing screen arithmetic therefore adds aggregate blockers rather than
+removing the phase blockers. The streamed report deliberately is not an
+invented replacement for the immutable three-source assessment product, so
+the published `8^3/16^3/32^3` strict decision remains the production gate and
+stays `InsufficientEvidence`.
 
 Thus the earlier `4/8` and `6/8` coarse graph yields really were censoring the
 shadow placement spectrum. The five former fine-grid rejections diagnosed a

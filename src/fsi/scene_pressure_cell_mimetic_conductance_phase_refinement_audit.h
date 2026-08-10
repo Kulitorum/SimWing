@@ -115,7 +115,9 @@ struct ScenePressureCellMimeticConductanceRefinementLevel {
 // observable when embedded graph opening ownership is incomplete. This is an
 // offline immutable evidence product and never changes worker arithmetic. A
 // settings-owned common scene/grid translation supplies a coordinate-origin
-// invariance oracle without changing relative geometry.
+// invariance oracle without changing relative geometry. A level containing
+// only typed local-cell rejections is valid and publishes zero conditional
+// statistics rather than losing the rejection evidence.
 struct ScenePressureCellMimeticConductancePhaseRefinementAudit {
     std::uint32_t version =
         scenePressureCellMimeticConductancePhaseRefinementAuditVersion;

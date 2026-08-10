@@ -1,7 +1,9 @@
 #include "scene_pressure_cell_mimetic_conductance_phase_refinement_audit.h"
 
+#include <algorithm>
 #include <array>
 #include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -11,7 +13,7 @@
 #include <limits>
 #include <locale>
 #include <optional>
-#include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -28,6 +30,80 @@ struct Options {
     bool help = false;
 };
 
+class CompensatedSum final {
+public:
+    void add(const double value) noexcept {
+        const double next = sum_ + value;
+        if (std::abs(sum_) >= std::abs(value)) {
+            correction_ += (sum_ - next) + value;
+        } else {
+            correction_ += (value - next) + sum_;
+        }
+        sum_ = next;
+    }
+
+    [[nodiscard]] double value() const noexcept {
+        return sum_ + correction_;
+    }
+
+private:
+    double sum_ = 0.0;
+    double correction_ = 0.0;
+};
+
+class CompactAggregate final {
+public:
+    void add(const simwing::fsi::
+                 ScenePressureCellMimeticConductancePhaseSample& sample) {
+        using Status = simwing::fsi::
+            ScenePressureCellMimeticConductancePhaseSampleStatus;
+        if (sample.status == Status::Accepted) {
+            accepted_.push_back(sample.normalizedConductance);
+            return;
+        }
+        if (sample.status == Status::RejectedLocalCellLinearConsistency) {
+            ++rejectedCount_;
+            return;
+        }
+        throw std::logic_error("mimetic conductance sample status is unknown");
+    }
+
+    void print() const {
+        double minimum = 0.0;
+        double maximum = 0.0;
+        double mean = 0.0;
+        double variation = 0.0;
+        if (!accepted_.empty()) {
+            minimum = *std::min_element(accepted_.begin(), accepted_.end());
+            maximum = *std::max_element(accepted_.begin(), accepted_.end());
+            CompensatedSum sum;
+            for (const double value : accepted_) {
+                sum.add(value);
+            }
+            mean = sum.value() / static_cast<double>(accepted_.size());
+            CompensatedSum variance;
+            for (const double value : accepted_) {
+                const double difference = value - mean;
+                variance.add(difference * difference);
+            }
+            variation = std::sqrt(std::max(
+                0.0,
+                variance.value() / static_cast<double>(accepted_.size())))
+                / mean;
+        }
+        std::cout << "summary accepted=" << accepted_.size()
+                  << " rejected=" << rejectedCount_
+                  << " minimum=" << minimum
+                  << " maximum=" << maximum
+                  << " mean=" << mean
+                  << " cv=" << variation << '\n';
+    }
+
+private:
+    std::vector<double> accepted_;
+    std::size_t rejectedCount_ = 0;
+};
+
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
@@ -40,8 +116,9 @@ void printUsage(FILE* stream) {
         "to 2..64;\n"
         "phase is one canonical half-cell translation index in 0..7. "
         "--all-phases\n"
-        "is deliberately explicit because fine-grid samples can take "
-        "minutes. The tool\n"
+        "runs sequentially with one heavy immutable product live at a time. "
+        "Fine-grid\n"
+        "samples can take minutes. The tool\n"
         "does not construct the graph pressure operator or alter worker "
         "arithmetic.\n");
 }
@@ -161,60 +238,51 @@ const char* statusName(
     return "unknown";
 }
 
-void printAudit(
+const simwing::fsi::ScenePressureCellMimeticConductancePhaseSample&
+printAuditSample(
     const simwing::fsi::
         ScenePressureCellMimeticConductancePhaseRefinementAudit& audit,
-    const std::span<const std::size_t> canonicalPhaseIndices) {
-    const auto& level = audit.levels.front();
-    std::cout.imbue(std::locale::classic());
-    std::cout << std::setprecision(std::numeric_limits<double>::max_digits10);
-    std::cout << "audit version=" << audit.version
-              << " resolution=" << level.cellCounts.x
-              << " phase-count=" << level.samples.size()
-              << " fingerprint=0x" << std::hex << audit.fingerprint
-              << " structure-fingerprint=0x"
-              << audit.structureDefinitionFingerprint << std::dec << '\n';
-    for (std::size_t index = 0; index < level.samples.size(); ++index) {
-        const auto& sample = level.samples[index];
-        const auto phase = sample.gridPhaseFraction;
-        std::cout << "sample phase=" << canonicalPhaseIndices[index]
-                  << " translation=(" << phase.x << ',' << phase.y << ','
-                  << phase.z << ')'
-                  << " status=" << statusName(sample.status)
-                  << " grid-cells=" << sample.gridCellCount
-                  << " controls=" << sample.controlVolumeCount
-                  << " full-traces=" << sample.fullTraceCount
-                  << " reduced-traces=" << sample.reducedTraceCount
-                  << " opening-traces=" << sample.openingTraceCount
-                  << " intake-area-m2=" << sample.intakeAreaSquareMeters
-                  << " conductance-m=" << sample.conductanceMeters
-                  << " normalized=" << sample.normalizedConductance;
-        if (sample.conductanceAudit.has_value()) {
-            const auto& solve = sample.conductanceAudit->solveDiagnostics
-                                    .reducedTraceSolve;
-            std::cout << " iterations=" << solve.iterationCount
-                      << " residual-l2-pa-m="
-                      << solve.finalResidualL2PascalsMeters;
-        } else if (sample.localCellLinearConsistencyRejection.has_value()) {
-            const auto& rejection =
-                *sample.localCellLinearConsistencyRejection;
-            std::cout << " rejected-control=" << rejection.controlCellIndex
-                      << " algebraic-error="
-                      << rejection.localCell
-                             .maximumAlgebraicConsistencyError
-                      << " algebraic-tolerance="
-                      << rejection.localCell.algebraicConsistencyTolerance;
-        }
-        std::cout << '\n';
+    const std::size_t canonicalPhaseIndex) {
+    if (audit.levels.size() != 1
+        || audit.levels.front().samples.size() != 1) {
+        throw std::logic_error(
+            "streamed mimetic conductance audit is not a single sample");
     }
-    std::cout << "summary accepted=" << level.acceptedSampleCount
-              << " rejected="
-              << level.rejectedLocalCellLinearConsistencySampleCount
-              << " minimum=" << level.minimumNormalizedConductance
-              << " maximum=" << level.maximumNormalizedConductance
-              << " mean=" << level.meanNormalizedConductance
-              << " cv="
-              << level.normalizedConductanceCoefficientOfVariation << '\n';
+    const auto& level = audit.levels.front();
+    const auto& sample = level.samples.front();
+    const auto phase = sample.gridPhaseFraction;
+    std::cout << "sample phase=" << canonicalPhaseIndex
+              << " translation=(" << phase.x << ',' << phase.y << ','
+              << phase.z << ')'
+              << " status=" << statusName(sample.status)
+              << " audit-fingerprint=0x" << std::hex << audit.fingerprint
+              << std::dec
+              << " owned-bytes=" << audit.ownedStorageBytes
+              << " grid-cells=" << sample.gridCellCount
+              << " controls=" << sample.controlVolumeCount
+              << " full-traces=" << sample.fullTraceCount
+              << " reduced-traces=" << sample.reducedTraceCount
+              << " opening-traces=" << sample.openingTraceCount
+              << " intake-area-m2=" << sample.intakeAreaSquareMeters
+              << " conductance-m=" << sample.conductanceMeters
+              << " normalized=" << sample.normalizedConductance;
+    if (sample.conductanceAudit.has_value()) {
+        const auto& solve = sample.conductanceAudit->solveDiagnostics
+                                .reducedTraceSolve;
+        std::cout << " iterations=" << solve.iterationCount
+                  << " residual-l2-pa-m="
+                  << solve.finalResidualL2PascalsMeters;
+    } else if (sample.localCellLinearConsistencyRejection.has_value()) {
+        const auto& rejection =
+            *sample.localCellLinearConsistencyRejection;
+        std::cout << " rejected-control=" << rejection.controlCellIndex
+                  << " algebraic-error="
+                  << rejection.localCell.maximumAlgebraicConsistencyError
+                  << " algebraic-tolerance="
+                  << rejection.localCell.algebraicConsistencyTolerance;
+    }
+    std::cout << std::endl;
+    return sample;
 }
 
 } // namespace
@@ -234,40 +302,62 @@ int main(const int argc, char* argv[]) {
 
     try {
         std::vector<std::size_t> canonicalPhaseIndices;
-        std::vector<simwing::fsi::fluid::Vector3> phases;
         if (options.allPhases) {
             canonicalPhaseIndices.reserve(
                 simwing::fsi::
                     scenePressureCellMimeticConductanceCanonicalGridPhases
                         .size());
-            phases.reserve(canonicalPhaseIndices.capacity());
             for (std::size_t index = 0;
                  index < simwing::fsi::
                      scenePressureCellMimeticConductanceCanonicalGridPhases
                          .size();
                  ++index) {
                 canonicalPhaseIndices.push_back(index);
-                phases.push_back(simwing::fsi::
-                    scenePressureCellMimeticConductanceCanonicalGridPhases[
-                        index]);
             }
         } else {
             canonicalPhaseIndices.push_back(*options.phaseIndex);
-            phases.push_back(simwing::fsi::
-                scenePressureCellMimeticConductanceCanonicalGridPhases[
-                    *options.phaseIndex]);
         }
         const std::array<simwing::fsi::fluid::GridCellCounts, 1>
             resolutions{{{
                 options.resolution, options.resolution,
                 options.resolution,
             }}};
-        const auto audit = simwing::fsi::
-            auditScenePressureCellMimeticConductancePhaseRefinement(
-                resolutions, phases,
+        const auto settings = simwing::fsi::
+            makeScenePressureCellMimeticConductanceOfflineAuditSettings();
+        std::cout.imbue(std::locale::classic());
+        std::cout << std::setprecision(
+            std::numeric_limits<double>::max_digits10);
+        std::cout << "run audit-version="
+                  << simwing::fsi::
+                         scenePressureCellMimeticConductancePhaseRefinementAuditVersion
+                  << " resolution=" << options.resolution
+                  << " phase-count=" << canonicalPhaseIndices.size()
+                  << " execution=sequential" << std::endl;
+        CompactAggregate aggregate;
+        std::uint64_t structureFingerprint = 0;
+        for (const std::size_t canonicalPhaseIndex
+             : canonicalPhaseIndices) {
+            const std::array<simwing::fsi::fluid::Vector3, 1> phases{{
                 simwing::fsi::
-                    makeScenePressureCellMimeticConductanceOfflineAuditSettings());
-        printAudit(audit, canonicalPhaseIndices);
+                    scenePressureCellMimeticConductanceCanonicalGridPhases[
+                        canonicalPhaseIndex],
+            }};
+            const auto audit = simwing::fsi::
+                auditScenePressureCellMimeticConductancePhaseRefinement(
+                    resolutions, phases, settings);
+            if (structureFingerprint == 0) {
+                structureFingerprint =
+                    audit.structureDefinitionFingerprint;
+            } else if (audit.structureDefinitionFingerprint
+                       != structureFingerprint) {
+                throw std::logic_error(
+                    "streamed mimetic conductance structure changed");
+            }
+            aggregate.add(printAuditSample(audit, canonicalPhaseIndex));
+        }
+        std::cout << "structure-fingerprint=0x" << std::hex
+                  << structureFingerprint << std::dec << '\n';
+        aggregate.print();
         return 0;
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "error: audit failed: %s\n", exception.what());

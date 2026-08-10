@@ -490,8 +490,11 @@ void summarize(
         sum.add(sample.normalizedConductance);
     }
     if (level.acceptedSampleCount == 0) {
-        throw std::invalid_argument(
-            "scene pressure-cell mimetic conductance level has no accepted samples");
+        level.minimumNormalizedConductance = 0.0;
+        level.maximumNormalizedConductance = 0.0;
+        level.meanNormalizedConductance = 0.0;
+        level.normalizedConductanceCoefficientOfVariation = 0.0;
+        return;
     }
     level.meanNormalizedConductance = sum.value()
         / static_cast<double>(level.acceptedSampleCount);
