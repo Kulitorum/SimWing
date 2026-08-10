@@ -2887,6 +2887,19 @@ reject before publication. This adapter therefore supplies trusted input to a
 later shared-kernel transaction but does not yet apply shear, alter the
 transport used by next-pressure prediction, mutate Structure, or select a
 worker.
+`scene_fluid_regional_opening_momentum_wall_exchange.*` now executes that
+shared kernel as an isolated immutable diagnostic. The receipt retains the
+complete zero-exchange ownership input, adjusted collocated controls,
+two-sided sample impulses, equal-and-opposite Structure traction, and the
+existing wall work/dissipation/conservation diagnostics. Integrity reruns the
+kernel from the nested input and requires bit-identical output. The translating
+partial-opening oracle loses kinetic energy under nonzero viscosity while
+closing global action/reaction and keeping every traction tangential; zero
+viscosity preserves all controls exactly, and an unsafe explicit step retains
+its source but publishes no adjusted state. A foreign time step, output
+corruption, and aggregate limits reject. This proves numerical reuse without
+yet changing the transported controls used by consecutive pressure prediction,
+applying shear to Structure, or selecting production ownership.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

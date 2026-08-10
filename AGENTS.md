@@ -2173,6 +2173,14 @@ makes this a certified aerodynamic solver.
   impulse/zero-traction descriptors. It deliberately does not consume the
   staggered cycle's consecutive next-pressure endpoint, run wall exchange,
   mutate Structure/fluid state, rebase, or select a worker.
+- `src/fsi/scene_fluid_regional_opening_momentum_wall_exchange.{h,cpp}` runs
+  the shared tangential wall kernel on one such same-epoch input. Its immutable
+  receipt retains the complete zero-exchange source beside adjusted controls,
+  two-sided sample impulses, Structure tractions, and the existing wall
+  conservation/energy diagnostics; integrity reruns the kernel from the nested
+  source. Rejected explicit subcycling retains provenance but publishes no
+  adjusted controls. The result is not yet fed into next-pressure prediction
+  or applied to Structure, and it does not commit a cycle or worker.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -3118,6 +3126,16 @@ zero. Cover nonzero tangential flow, deterministic rebuilt-scene capture,
 entity/storage limits. Do not use the consecutive accepted-pressure half of
 the cycle as if it shared the transport geometry, invoke the wall kernel,
 mutate either solver, or enable a worker.
+
+For `scene_fluid_regional_opening_momentum_wall_exchange.*`, require the wall
+time step to equal the nested same-epoch input and execute only the shared
+kernel. Retain the complete zero-exchange input so integrity can independently
+rerun and compare diagnostics, adjusted controls, sample impulses, and
+tractions bit-exactly. Cover nonzero tangential dissipation/action-reaction,
+purely tangential traction, zero-viscosity identity, unsafe-substep rejection,
+corruption, foreign time steps, and aggregate limits. Do not feed adjusted
+momentum into the next pressure prediction, apply traction to Structure,
+commit the cycle owner, or enable a worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

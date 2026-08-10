@@ -16,6 +16,8 @@ struct SceneFluidWallExchangeKernelResult {
     SceneFluidRegionWallDiagnostics diagnostics;
     std::vector<SceneFluidRegionWallControlVolume> controlVolumes;
     std::vector<SceneFluidRegionWallSample> samples;
+
+    bool operator==(const SceneFluidWallExchangeKernelResult&) const = default;
 };
 
 [[nodiscard]] SceneFluidWallExchangeKernelResult

@@ -14,6 +14,7 @@
 #include "scene_fluid_regional_pressure_sampling.h"
 #include "scene_fluid_regional_opening_load_epoch.h"
 #include "scene_fluid_regional_opening_momentum_load_epoch.h"
+#include "scene_fluid_regional_opening_momentum_wall_exchange.h"
 #include "scene_fluid_regional_opening_momentum_wall_input.h"
 
 #include <algorithm>
@@ -1642,6 +1643,112 @@ void testOpeningMomentumWallInput() {
         "regional opening wall input: foreign current transported flow rejects");
 }
 
+void testOpeningMomentumWallExchange() {
+    const OpeningRegionalEndpoint endpoint(
+        false, Vector3{0.0, 0.4, -0.2});
+    SceneFixture fixture(partialOpeningPressureScene(), false);
+    const auto input = captureOpeningMomentumWallInput(
+        endpoint.momentumCycle.transport, endpoint, fixture);
+    SceneFluidRegionWallSettings settings;
+    settings.timeStepSeconds = input.timeStepSeconds;
+
+    const auto exchange = exchangeSceneFluidRegionalOpeningMomentumWall(
+        input, settings);
+    const auto repeated = exchangeSceneFluidRegionalOpeningMomentumWall(
+        input, settings);
+    bool tangentialTractions = true;
+    bool nonzeroTraction = false;
+    for (const auto& sample : exchange.samples) {
+        const auto& traction = sample.structureTraction.tractionPascals;
+        const auto& normal = sample.unitNormalNegativeToPositive;
+        tangentialTractions = tangentialTractions
+            && std::abs(
+                traction.x * normal.x + traction.y * normal.y
+                + traction.z * normal.z) < 1.0e-12;
+        nonzeroTraction = nonzeroTraction
+            || traction != StructureVector3{};
+    }
+    check(exchange == repeated
+              && exchange.version
+                  == sceneFluidRegionalOpeningMomentumWallExchangeVersion
+              && exchange.fingerprint != 0
+              && exchange.sourceWallInputFingerprint == input.fingerprint
+              && exchange.sourceInput == input
+              && exchange.diagnostics.accepted
+              && exchange.diagnostics.finite
+              && exchange.diagnostics.controlVolumeCount
+                  == input.controlVolumes.size()
+              && exchange.diagnostics.quadraturePointCount
+                  == input.samples.size()
+              && exchange.diagnostics
+                     .maximumRelativeTangentialSpeedMetersPerSecond > 0.4
+              && exchange.diagnostics.viscousDissipationJoules > 0.0
+              && exchange.diagnostics.kineticEnergyAfterJoules
+                  < exchange.diagnostics.kineticEnergyBeforeJoules
+              && exchange.diagnostics
+                     .momentumResidualNormKilogramMetersPerSecond < 1.0e-12
+              && exchange.controlVolumes != input.controlVolumes
+              && tangentialTractions && nonzeroTraction,
+          "regional opening wall exchange: shared kernel publishes deterministic dissipative tangential action/reaction");
+    validateSceneFluidRegionalOpeningMomentumWallExchangeIntegrity(exchange);
+    validateSceneFluidRegionalOpeningMomentumWallExchange(
+        exchange, input, settings);
+
+    auto zeroSettings = settings;
+    zeroSettings.kinematicViscositySquareMetersPerSecond = 0.0;
+    const auto zeroExchange = exchangeSceneFluidRegionalOpeningMomentumWall(
+        input, zeroSettings);
+    check(zeroExchange.diagnostics.accepted
+              && zeroExchange.controlVolumes == input.controlVolumes
+              && zeroExchange.diagnostics
+                     .fluidImpulseKilogramMetersPerSecond == Vector3{}
+              && zeroExchange.diagnostics
+                     .structureImpulseKilogramMetersPerSecond == Vector3{}
+              && zeroExchange.diagnostics.viscousDissipationJoules == 0.0,
+          "regional opening wall exchange: zero viscosity preserves the mapped transport exactly");
+
+    auto limitedSettings = settings;
+    limitedSettings.kinematicViscositySquareMetersPerSecond = 100.0;
+    limitedSettings.maximumSubsteps = 1;
+    const auto limited = exchangeSceneFluidRegionalOpeningMomentumWall(
+        input, limitedSettings);
+    check(!limited.diagnostics.accepted
+              && limited.diagnostics.failureStage
+                  == SceneFluidRegionWallFailureStage::SubstepLimit
+              && limited.controlVolumes.empty() && limited.samples.empty()
+              && limited.sourceInput == input,
+          "regional opening wall exchange: unsafe explicit step retains source but publishes no adjusted state");
+
+    auto corrupt = exchange;
+    corrupt.samples.front().structureTraction.tractionPascals.y += 1.0;
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningMomentumWallExchangeIntegrity(
+                corrupt);
+        },
+        "regional opening wall exchange: corrupt traction rejects by independent kernel replay");
+
+    auto limits = SceneFluidRegionalOpeningMomentumWallExchangeLimits{};
+    limits.maximumOwnedBytes = exchange.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                exchangeSceneFluidRegionalOpeningMomentumWall(
+                    input, settings, limits));
+        },
+        "regional opening wall exchange: aggregate owned limit rejects after private kernel execution");
+
+    auto foreignSettings = settings;
+    foreignSettings.timeStepSeconds *= 2.0;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                exchangeSceneFluidRegionalOpeningMomentumWall(
+                    input, foreignSettings));
+        },
+        "regional opening wall exchange: foreign time step rejects");
+}
+
 void testRejectionAndLimits() {
     const RegionalEndpoint endpoint(false);
     SceneFixture fixture(false);
@@ -1715,6 +1822,7 @@ int main() {
         testApplicationRollbackAndLimits();
         testAtomicOpeningLoadEpoch();
         testOpeningMomentumWallInput();
+        testOpeningMomentumWallExchange();
         testRejectionAndLimits();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
