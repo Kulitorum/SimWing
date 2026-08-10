@@ -1957,6 +1957,11 @@ makes this a certified aerodynamic solver.
   per-authored-surface summaries. It retains stable link/surface identity,
   centroid, area, normal, force, impulse, and work, but has no Structure or
   worker dependency and applies nothing.
+- `src/fsi/fluid/planar_region_fragment_accepted_state.{h,cpp}` atomically
+  retains the projected velocity state, composed pressure state, and surface-
+  load ledger after recursively validating exact fragment/topology/metric and
+  after-state identity. It is a rollback-safe continuation snapshot, not a
+  transport step or production commit.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2454,6 +2459,16 @@ X/Y/Z loads must close force, impulse, and work exactly back to the source
 pressure state. Reject corrupted state/ledger data and tile/surface/owned/
 working limits. Do not infer conservative nodal distribution, Structure load
 application, fluid momentum exchange, rebase, transport, or production use.
+
+For `planar_region_fragment_accepted_state.*`, require the pressure state to
+name the exact projected after-state and require all three nested products to
+share fragment, topology, metric, static/moving, and `dt` identity. Capture
+owned immutable copies plus fluid momentum/kinetic energy and sheet force/
+impulse/work summaries; recursively validate every nested fingerprint before
+acceptance. Cover static and moving X/Y/Z endpoints, nested corruption, a
+foreign velocity endpoint, aggregate byte limits, and nested velocity/load
+limits. Do not infer momentum transport, topology rebase, Structure load
+application, checkpoint persistence, or production worker commitment.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

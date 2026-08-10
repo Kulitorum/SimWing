@@ -354,6 +354,14 @@ planes at `x=-0.8/-0.2 m` and their authored `-280/+280 N` sheet forces; moving
 X/Y/Z ledgers close exactly back to the composed pressure state. This defines
 the future structural handoff data, but deliberately performs no nodal load
 distribution or XPBD/worker mutation.
+The projected velocity, composed pressure, and surface-load ledger can now be
+captured atomically as one accepted regional endpoint. Capture recursively
+validates every nested fingerprint and requires the pressure state to name the
+exact projected after-state; foreign or partially corrupted products reject.
+The immutable snapshot retains fluid momentum/kinetic energy and sheet force,
+impulse, and work summaries across static and moving X/Y/Z cases. It is
+rollback-safe continuation data only, with no transport, rebase, checkpoint, or
+worker commit yet.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

@@ -427,6 +427,20 @@ PlanarPressureRegionFragmentVelocityState buildState(
 
 } // namespace
 
+void validatePlanarPressureRegionFragmentVelocityStateIntegrity(
+    const PlanarPressureRegionFragmentVelocityState& state) {
+    if (state.version != planarPressureRegionFragmentVelocityStateVersion
+        || state.fingerprint == 0 || state.sourceMetricFingerprint == 0
+        || state.sourceFragmentFingerprint == 0
+        || state.sourceTopologyFingerprint == 0
+        || !std::isfinite(state.densityKgPerCubicMeter)
+        || !(state.densityKgPerCubicMeter > 0.0)
+        || state.fingerprint != stateFingerprint(state)) {
+        throw std::invalid_argument(
+            "planar regional velocity-state integrity is invalid");
+    }
+}
+
 PlanarPressureRegionFragmentVelocityState
 buildPlanarPressureRegionFragmentVelocityState(
     const PeriodicCartesianGrid& grid,

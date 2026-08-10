@@ -2380,6 +2380,17 @@ surfaces centered at `x=-0.8/-0.2 m`, and authored sheet resultants of
 the composed pressure state. This is provenance-rich load data only. A later
 adapter must still distribute it conservatively to authored structural
 geometry and own transactional application.
+`planar_region_fragment_accepted_state.*` packages the first rollback-safe
+regional continuation endpoint. It recursively integrity-checks and owns the
+projected after-velocity, composed total pressure, and authored-surface load
+ledger. The pressure state explicitly names that exact after-state, while all
+three products must agree on fragment, topology, metric, static/moving mode,
+and epoch duration. Fluid momentum/kinetic energy and sheet force/impulse/work
+summaries remain visible at the outer boundary. Static and moving X/Y/Z
+fixtures capture deterministically; nested corruption, foreign velocity, and
+storage-limit violations reject without a partial endpoint. No transport,
+rebase, structural application, persistence, or production commit follows from
+acceptance.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

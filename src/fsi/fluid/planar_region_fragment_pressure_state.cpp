@@ -153,6 +153,7 @@ std::uint64_t stateFingerprint(
     fingerprint.integer(state.sourceFragmentFingerprint);
     fingerprint.integer(state.sourceTopologyFingerprint);
     fingerprint.integer(state.sourceMetricFingerprint);
+    fingerprint.integer(state.sourceAfterVelocityStateFingerprint);
     fingerprint.integer(state.sourceProjectionEnergyFingerprint);
     fingerprint.integer(state.sourcePressureJumpEnergyFingerprint);
     fingerprint.integer(state.volumeRateFingerprint);
@@ -337,6 +338,7 @@ PlanarPressureRegionFragmentPressureState buildState(
     result.sourceFragmentFingerprint = fragments.fingerprint;
     result.sourceTopologyFingerprint = topology.fingerprint;
     result.sourceMetricFingerprint = metric.fingerprint;
+    result.sourceAfterVelocityStateFingerprint = after.fingerprint;
     result.sourceProjectionEnergyFingerprint = projection.fingerprint;
     result.sourcePressureJumpEnergyFingerprint = pressureJump.fingerprint;
     result.volumeRateFingerprint = projection.volumeRateFingerprint;
@@ -712,6 +714,7 @@ void validatePlanarPressureRegionFragmentPressureStateIntegrity(
         || state.sourceFragmentFingerprint == 0
         || state.sourceTopologyFingerprint == 0
         || state.sourceMetricFingerprint == 0
+        || state.sourceAfterVelocityStateFingerprint == 0
         || state.sourceProjectionEnergyFingerprint == 0
         || state.sourcePressureJumpEnergyFingerprint == 0
         || !std::isfinite(state.timeStepSeconds)

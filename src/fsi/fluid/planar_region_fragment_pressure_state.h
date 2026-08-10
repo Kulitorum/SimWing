@@ -10,7 +10,7 @@
 namespace simwing::fsi::fluid {
 
 inline constexpr std::uint32_t
-    planarPressureRegionFragmentPressureStateVersion = 2;
+    planarPressureRegionFragmentPressureStateVersion = 3;
 
 struct PlanarPressureRegionFragmentPressureStateControl {
     std::size_t fragmentIndex = 0;
@@ -112,6 +112,7 @@ struct PlanarPressureRegionFragmentPressureState {
     std::uint64_t sourceFragmentFingerprint = 0;
     std::uint64_t sourceTopologyFingerprint = 0;
     std::uint64_t sourceMetricFingerprint = 0;
+    std::uint64_t sourceAfterVelocityStateFingerprint = 0;
     std::uint64_t sourceProjectionEnergyFingerprint = 0;
     std::uint64_t sourcePressureJumpEnergyFingerprint = 0;
     std::uint64_t volumeRateFingerprint = 0;

@@ -3,6 +3,7 @@
 #include "fluid/planar_region_opening_flow.h"
 #include "fluid/planar_region_opening_power.h"
 #include "fluid/planar_region_fragment.h"
+#include "fluid/planar_region_fragment_accepted_state.h"
 #include "fluid/planar_region_fragment_pressure_operator.h"
 #include "fluid/planar_region_fragment_pressure_jump_energy.h"
 #include "fluid/planar_region_fragment_pressure_projection.h"
@@ -4991,6 +4992,113 @@ void testPlanarRegionalFragmentProjectionEnergyAudit() {
         surfaceLoads);
     validatePlanarPressureRegionFragmentSurfaceLoads(
         surfaceLoads, pressureState);
+    const auto acceptedState =
+        capturePlanarPressureRegionFragmentAcceptedState(
+            geometry, sweep, fragments, topology, metric, after,
+            pressureState, surfaceLoads);
+    const auto repeatedAcceptedState =
+        capturePlanarPressureRegionFragmentAcceptedState(
+            geometry, sweep, fragments, topology, metric, after,
+            pressureState, surfaceLoads);
+    check(acceptedState == repeatedAcceptedState
+              && acceptedState.version
+                  == planarPressureRegionFragmentAcceptedStateVersion
+              && acceptedState.fingerprint != 0
+              && acceptedState.accepted
+              && acceptedState.staticGeometry
+              && !acceptedState.usesMovingVolumeRates
+              && acceptedState.sourceVelocityStateFingerprint
+                  == after.fingerprint
+              && acceptedState.sourcePressureStateFingerprint
+                  == pressureState.fingerprint
+              && acceptedState.sourceSurfaceLoadFingerprint
+                  == surfaceLoads.fingerprint
+              && acceptedState.velocity == after
+              && acceptedState.pressure == pressureState
+              && acceptedState.surfaceLoads == surfaceLoads
+              && acceptedState.fluidMomentumKilogramMetersPerSecond
+                  == after.momentumKilogramMetersPerSecond
+              && acceptedState.fluidKineticEnergyJoules
+                  == after.kineticEnergyJoules
+              && acceptedState.pressureForceOnSheetNewtons
+                  == surfaceLoads.totalPressureForceOnSheetNewtons
+              && acceptedState.pressureImpulseOnSheetNewtonSeconds
+                  == surfaceLoads.totalPressureImpulseOnSheetNewtonSeconds
+              && acceptedState.pressureWorkToSheetJoules == 0.0
+              && acceptedState.ownedStorageBytes
+                  == after.ownedStorageBytes
+                     + pressureState.ownedStorageBytes
+                     + surfaceLoads.ownedStorageBytes,
+          "static regional accepted state atomically retains all continuation products");
+    validatePlanarPressureRegionFragmentAcceptedStateIntegrity(
+        acceptedState);
+    validatePlanarPressureRegionFragmentAcceptedState(
+        acceptedState, geometry, sweep, fragments, topology, metric);
+    auto corruptAcceptedState = acceptedState;
+    corruptAcceptedState.velocity.samples[0]
+        .normalVelocityMetersPerSecond += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentAcceptedStateIntegrity(
+                corruptAcceptedState);
+        },
+        "regional accepted state rejects nested velocity corruption");
+    corruptAcceptedState = acceptedState;
+    corruptAcceptedState.pressure.controls[0].totalPressurePascals += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentAcceptedStateIntegrity(
+                corruptAcceptedState);
+        },
+        "regional accepted state rejects nested pressure corruption");
+    corruptAcceptedState = acceptedState;
+    corruptAcceptedState.surfaceLoads.tiles[0]
+        .totalPressureWorkToSheetJoules += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentAcceptedStateIntegrity(
+                corruptAcceptedState);
+        },
+        "regional accepted state rejects nested load corruption");
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentAcceptedState(
+                    geometry, sweep, fragments, topology, metric, before,
+                    pressureState, surfaceLoads));
+        },
+        "regional accepted state rejects a foreign velocity endpoint");
+    auto acceptedLimits =
+        PlanarPressureRegionFragmentAcceptedStateLimits{};
+    acceptedLimits.maximumOwnedBytes = acceptedState.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentAcceptedState(
+                    geometry, sweep, fragments, topology, metric, after,
+                    pressureState, surfaceLoads, acceptedLimits));
+        },
+        "regional accepted state enforces its aggregate byte limit");
+    acceptedLimits = {};
+    acceptedLimits.velocityStateLimits.maximumSamples = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentAcceptedState(
+                    geometry, sweep, fragments, topology, metric, after,
+                    pressureState, surfaceLoads, acceptedLimits));
+        },
+        "regional accepted state enforces nested velocity limits");
+    acceptedLimits = {};
+    acceptedLimits.surfaceLoadLimits.maximumTiles = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentAcceptedState(
+                    geometry, sweep, fragments, topology, metric, after,
+                    pressureState, surfaceLoads, acceptedLimits));
+        },
+        "regional accepted state enforces nested surface-load limits");
     auto corruptSurfaceLoads = surfaceLoads;
     corruptSurfaceLoads.tiles[0].totalPressureForceOnSheetNewtons.x += 0.1;
     expectRejected(
@@ -6009,6 +6117,21 @@ void testPlanarRegionalMovingFragmentPressureProjection() {
               "moving regional surface loads close source work exactly");
     validatePlanarPressureRegionFragmentSurfaceLoads(
         surfaceLoads, pressureState);
+    const auto acceptedState =
+        capturePlanarPressureRegionFragmentAcceptedState(
+            geometry, sweep, fragments, topology, metric, afterState,
+            pressureState, surfaceLoads);
+    check(acceptedState.accepted && !acceptedState.staticGeometry
+              && acceptedState.usesMovingVolumeRates
+              && acceptedState.sourceVelocityStateFingerprint
+                  == afterState.fingerprint
+              && acceptedState.pressureWorkToSheetJoules
+                  == surfaceLoads.totalPressureWorkToSheetJoules
+              && acceptedState.pressureImpulseOnSheetNewtonSeconds
+                  == surfaceLoads.totalPressureImpulseOnSheetNewtonSeconds,
+          "moving regional accepted state retains the projected endpoint and sheet reaction");
+    validatePlanarPressureRegionFragmentAcceptedState(
+        acceptedState, geometry, sweep, fragments, topology, metric);
     auto corruptPressureState = pressureState;
     corruptPressureState.controls[0].totalPressurePascals += 0.1;
     expectRejected(
@@ -6334,6 +6457,10 @@ void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
                 before, after, energy, jumpEnergy);
         const auto surfaceLoads =
             capturePlanarPressureRegionFragmentSurfaceLoads(pressureState);
+        const auto acceptedState =
+            capturePlanarPressureRegionFragmentAcceptedState(
+                geometry, sweep, fragments, topology, metric, after,
+                pressureState, surfaceLoads);
         check(diagnostics.accepted
                   && diagnostics.usesMovingVolumeRates
                   && diagnostics
@@ -6354,8 +6481,10 @@ void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
                       < 5.0e-13
                   && surfaceLoads.accepted
                   && surfaceLoads.surfaces.size() == 2
-                  && surfaceLoads.sourceWorkResidualJoules == 0.0,
-              "moving regional projection, total pressure, and surface loads close on every axis");
+                  && surfaceLoads.sourceWorkResidualJoules == 0.0
+                  && acceptedState.accepted
+                  && acceptedState.usesMovingVolumeRates,
+              "moving regional projection and accepted endpoint close on every axis");
     }
 }
 

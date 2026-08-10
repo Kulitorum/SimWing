@@ -110,6 +110,9 @@ struct PlanarPressureRegionFragmentVelocityState {
         const PlanarPressureRegionFragmentVelocityState&) const = default;
 };
 
+void validatePlanarPressureRegionFragmentVelocityStateIntegrity(
+    const PlanarPressureRegionFragmentVelocityState& state);
+
 [[nodiscard]] PlanarPressureRegionFragmentVelocityState
 buildPlanarPressureRegionFragmentVelocityState(
     const PeriodicCartesianGrid& grid,
