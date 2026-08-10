@@ -352,8 +352,21 @@ equals the loss of aperture kinetic energy per patch and in aggregate. A
 zero/zero coefficient is an explicit bit-exact inviscid identity, so no loss
 is invented when material/intake data is absent. Samples and their rebuilt
 immutable flux state commit together after the passive-energy check. This is
-still an isolated split operator: it is not yet composed around projection,
-authored by scene-v2, applied to fabric traction, or selected by the worker.
+still an isolated split operator: it is not authored by scene-v2, applied to
+fabric traction, or selected by the worker.
+A transactional composed aperture step now applies that resistance to the
+predicted samples before invoking the active augmented projection. Resistance
+therefore creates the physically expected continuity deficit, and pressure
+restores the accepted endpoint instead of publishing a damped, divergent
+state. Starting from the compatible `1.6 m³/s` breathing flow, an active loss
+reduces the predicted intake and the following pressure correction restores
+the complete flow; the combined ledger closes `deltaK = geometry pressure work
+- correction kinetic energy - resistance dissipation`. Zero resistance is
+bit-exact with direct projection, while a truncated nested solve rolls back
+topology velocity, aperture samples, flux state, and pressure together. This
+is the first complete opt-in intake substep, but it still lacks scene-authored
+coefficients, topology rebases, open-area traction correction, and worker
+integration.
 A first diagonal face-inertia metric now closes the missing geometric mass
 ownership without yet creating a velocity state. Each same-region Cartesian
 link has one shared normal-velocity degree of freedom with dual volume `area *

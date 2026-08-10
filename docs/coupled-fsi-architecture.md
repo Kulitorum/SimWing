@@ -502,6 +502,7 @@ src/fsi/
         planar_region_fragment_opening_pressure_operator.* aperture graph Laplacian
         planar_region_fragment_opening_pressure_projection.* active aperture projection
         planar_region_fragment_opening_resistance.* passive aperture loss
+        planar_region_fragment_opening_pressure_step.* constrained loss+projection step
         planar_region_fragment_pressure_solve.* correction-only CG oracle
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
@@ -2381,7 +2382,22 @@ authored definition order do not change the canonical result. Samples and the
 rebuilt immutable opening-flux state commit together, with bounded storage and
 source fingerprints. The coefficients must be supplied by authoritative
 intake/material data; this step does not invent them, add driving pressure,
-compose the projection split, modify traction, or enter production.
+modify traction, or enter production by itself.
+`planar_region_fragment_opening_pressure_step.*` composes the accepted order:
+passive resistance updates the predicted aperture samples, then the augmented
+projection corrects Cartesian and opening velocities together. Ending with
+projection is load-bearing: resistance alone creates a continuity deficit,
+whereas the published endpoint must remain constrained. In the canonical
+breathing state, active resistance first reduces the compatible `1.6 m^3/s`
+intake and the pressure stage restores the full required flow and local/
+component continuity. The combined kinetic-energy ledger closes
+`deltaK = geometryPressureWork - correctionKineticEnergy - dissipation`.
+Zero resistance reproduces direct projection bit-for-bit. Candidate topology
+velocities, opening samples, flux state, and pressure live off to the side
+through both stages and commit only after nested and aggregate acceptance, so
+a truncated pressure solve rolls back the already-computed resistance update.
+The composition is bounded and opt-in; it still has no scene coefficient
+mapping, rebase ownership, open-area load correction, or worker selection.
 `planar_region_fragment_velocity_metric.*` adds the corresponding immutable
 diagonal face geometry for a future velocity state. A same-region Cartesian
 link owns one shared normal degree of freedom with dual volume equal to face

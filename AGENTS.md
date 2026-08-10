@@ -1946,7 +1946,13 @@ makes this a certified aerodynamic solver.
   It reuses the implicit-midpoint porous plug with patch area/center distance,
   permits an explicit zero-loss identity, closes passive momentum/energy, and
   commits samples plus rebuilt flux together. It does not invent coefficients,
-  driving pressure, projection composition, traction, or production state.
+  driving pressure, traction, or production state by itself.
+- `src/fsi/fluid/planar_region_fragment_opening_pressure_step.{h,cpp}` applies
+  resistance to the predicted aperture samples, then ends with the augmented
+  pressure projection so the accepted endpoint remains continuous. It closes
+  the combined geometry-work/correction-energy/dissipation identity and owns
+  the outer four-field transaction, but no scene mapping, traction, rebase, or
+  production path.
 - `src/fsi/fluid/planar_region_fragment_volume_rate.{h,cpp}` reconstructs
   topology-stable previous volume and constant geometry `dV/dt` for every
   current regional fragment from its layer-boundary displacements. It closes
@@ -2490,6 +2496,21 @@ coefficients, corrupt flux, invalid density/time, and patch/owned/working/
 nested-flux limits. Do not infer resistance values without authoritative
 intake/material data, driving pressure, projection splitting, traction,
 rebase, or production ownership.
+
+For `planar_region_fragment_opening_pressure_step.*`, resistance must advance
+the predicted opening samples before the augmented projection; never publish a
+resistance-only endpoint with broken incompressibility. Starting from the
+canonical compatible `1.6 m3/s` breathing flow, active resistance must create
+a nonzero predicted continuity deficit and the pressure stage must restore the
+complete aperture flow plus local/connected-component closure. Require the
+aggregate identity `deltaK = geometryPressureWork -
+correctionKineticEnergy - resistanceDissipation`. A zero-resistance definition
+must reproduce direct projection bit-for-bit. Copy topology-link velocity,
+opening samples, immutable flux, and pressure before either nested stage and
+commit all four only after nested and aggregate acceptance; truncated pressure
+solve after successful resistance must roll back all four. Enforce outer and
+nested storage limits. Do not infer scene coefficient mapping, topology
+rebase, open-area traction correction, or production ownership.
 
 For `planar_region_fragment_volume_rate.*`, require canonical breathing to
 publish `+1.6/-1.6 m3/s` pocket/exterior component rates while every fixed

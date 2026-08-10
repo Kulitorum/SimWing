@@ -8,6 +8,7 @@
 #include "fluid/planar_region_fragment_opening_flux.h"
 #include "fluid/planar_region_fragment_opening_pressure_operator.h"
 #include "fluid/planar_region_fragment_opening_pressure_projection.h"
+#include "fluid/planar_region_fragment_opening_pressure_step.h"
 #include "fluid/planar_region_fragment_opening_resistance.h"
 #include "fluid/planar_region_fragment_pressure_operator.h"
 #include "fluid/planar_region_fragment_pressure_jump_energy.h"
@@ -8284,6 +8285,225 @@ void testPlanarRegionalOpeningResistance() {
           "opening resistance rejection preserves samples and flux");
 }
 
+void testPlanarRegionalResistedOpeningPressureStep() {
+    const auto geometry = grid();
+    const auto previous = pocketLayers();
+    auto current = previous;
+    current[0].physicalPlaneCoordinateMeters -= 0.1;
+    current[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, previous, current, 0.5);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto base = buildPlanarPressureRegionFragmentPressureOperator(
+        geometry, sweep, fragments, topology);
+    const auto volumeRates = buildPlanarPressureRegionFragmentVolumeRates(
+        geometry, sweep, fragments, topology);
+    const auto wall = std::ranges::find_if(
+        topology.links,
+        [](const auto& link) {
+            return link.kind
+                    == PlanarPressureRegionFragmentFaceKind::PressureLayerWall
+                && link.surfaceStableId == 10;
+        });
+    check(wall != topology.links.end(),
+          "resisted opening pressure step finds its intake wall");
+    if (wall == topology.links.end()) return;
+    const double patchArea = 0.5 * wall->areaSquareMeters;
+    const std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition>
+        definitions{{100, 1000, wall->surfaceStableId, wall->axis,
+            wall->i, wall->j, wall->k, wall->minusRegionStableId,
+            wall->plusRegionStableId, patchArea}};
+    const auto openings = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, definitions);
+    const auto pressureOperator =
+        buildPlanarPressureRegionFragmentOpeningPressureOperator(
+            base, geometry, sweep, fragments, topology, definitions,
+            openings);
+    const double requiredFlow =
+        -volumeRates.components[wall->minusComponentIndex]
+             .geometryVolumeChangeRateCubicMetersPerSecond;
+    std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+        initialSamples{{100, requiredFlow / patchArea}};
+    auto initialFlux = buildPlanarPressureRegionFragmentOpeningFluxState(
+        geometry, sweep, fragments, topology, definitions, openings,
+        initialSamples);
+    std::vector<double> initialVelocity(topology.links.size(), 0.0);
+    std::vector<double> initialPressure(base.rows.size(), 0.0);
+    PlanarPressureRegionFragmentPressureProjectionSettings seedSettings;
+    seedSettings.densityKgPerCubicMeter = 1.2;
+    seedSettings.timeStepSeconds = 0.5;
+    seedSettings.absoluteContinuityToleranceCubicMetersPerSecond = 2.0e-11;
+    seedSettings.relativeContinuityTolerance = 1.0e-10;
+    seedSettings.pressureSolve.absoluteResidualTolerancePascalsMeters =
+        1.0e-13;
+    seedSettings.pressureSolve.relativeResidualTolerance = 0.0;
+    seedSettings.pressureSolve.maximumIterations = 300;
+    const auto seeded =
+        projectMovingPlanarPressureRegionFragmentFaceVelocitiesWithOpenings(
+            base, geometry, sweep, fragments, topology, volumeRates,
+            definitions, openings, initialFlux, initialSamples,
+            initialVelocity, initialPressure, seedSettings);
+    check(seeded.accepted,
+          "resisted opening pressure step starts from a compatible state");
+    if (!seeded.accepted) return;
+
+    PlanarPressureRegionFragmentOpeningPressureStepSettings settings;
+    settings.projection.densityKgPerCubicMeter = 1.2;
+    settings.projection.timeStepSeconds = 0.5;
+    settings.projection.absoluteContinuityToleranceCubicMetersPerSecond =
+        2.0e-11;
+    settings.projection.relativeContinuityTolerance = 1.0e-10;
+    settings.projection.absoluteMomentumResidualToleranceKilogramMetersPerSecond =
+        2.0e-12;
+    settings.projection.relativeMomentumResidualTolerance = 1.0e-10;
+    settings.projection.absoluteEnergyResidualToleranceJoules = 2.0e-11;
+    settings.projection.relativeEnergyResidualTolerance = 1.0e-10;
+    settings.projection.pressureSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-13;
+    settings.projection.pressureSolve.relativeResidualTolerance = 0.0;
+    settings.projection.pressureSolve.maximumIterations = 300;
+    const std::vector<
+        PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        resistance{{100, {8.0, 3.0}}};
+    auto velocity = initialVelocity;
+    auto samples = initialSamples;
+    auto flux = initialFlux;
+    auto pressure = initialPressure;
+    auto repeatedVelocity = initialVelocity;
+    auto repeatedSamples = initialSamples;
+    auto repeatedFlux = initialFlux;
+    auto repeatedPressure = initialPressure;
+    const auto diagnostics =
+        advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            volumeRates, definitions, openings, resistance, velocity, samples,
+            flux, pressure, settings);
+    const auto repeated =
+        advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            volumeRates, definitions, openings, resistance,
+            repeatedVelocity, repeatedSamples, repeatedFlux,
+            repeatedPressure, settings);
+    check(diagnostics == repeated && velocity == repeatedVelocity
+              && samples == repeatedSamples && flux == repeatedFlux
+              && pressure == repeatedPressure
+              && diagnostics.accepted && diagnostics.finite
+              && diagnostics.energyAccepted
+              && diagnostics.resistance.accepted
+              && diagnostics.projection.accepted
+              && diagnostics.sourceOpeningFluxFingerprint
+                  == initialFlux.fingerprint
+              && diagnostics.resultOpeningFluxFingerprint == flux.fingerprint,
+          "resisted opening pressure step is deterministic and transactional");
+    check(diagnostics.resistance.dissipatedEnergyJoules > 0.0
+              && diagnostics.resistance.patches[0]
+                     .plugFlow.velocityAfterMetersPerSecond
+                  < initialSamples[0]
+                        .relativeNormalVelocityMetersPerSecond
+              && diagnostics.projection
+                     .predictedContinuityResidualMaximumCubicMetersPerSecond
+                  > 0.0
+              && diagnostics.projection
+                     .correctedContinuityResidualMaximumCubicMetersPerSecond
+                  <= diagnostics.projection
+                         .continuityToleranceCubicMetersPerSecond,
+          "resistance creates a deficit that pressure restores to continuity");
+    checkNear(samples[0].relativeNormalVelocityMetersPerSecond,
+              initialSamples[0].relativeNormalVelocityMetersPerSecond,
+              4.0e-11,
+              "resisted pressure step restores the required intake flow");
+    checkNear(flux.patches[0].relativeVolumeFlowRateCubicMetersPerSecond,
+              requiredFlow, 4.0e-11,
+              "resisted pressure step publishes the required aperture flux");
+    check(diagnostics.dissipatedEnergyJoules > 0.0
+              && diagnostics.correctionKineticEnergyJoules > 0.0
+              && std::abs(diagnostics.energyResidualJoules)
+                  <= diagnostics.energyToleranceJoules,
+          "resisted pressure step closes loss plus projection energy");
+    for (const auto& link : topology.links) {
+        if (link.kind
+            == PlanarPressureRegionFragmentFaceKind::PressureLayerWall) {
+            check(velocity[link.linkIndex] == 0.0,
+                  "resisted pressure step retains solid-wall zero flow");
+        }
+    }
+
+    const std::vector<
+        PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        zeroResistance{{100, {0.0, 0.0}}};
+    auto zeroVelocity = initialVelocity;
+    auto zeroSamples = initialSamples;
+    auto zeroFlux = initialFlux;
+    auto zeroPressure = initialPressure;
+    const auto zero =
+        advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            volumeRates, definitions, openings, zeroResistance, zeroVelocity,
+            zeroSamples, zeroFlux, zeroPressure, settings);
+    auto directVelocity = initialVelocity;
+    auto directSamples = initialSamples;
+    auto directFlux = initialFlux;
+    auto directPressure = initialPressure;
+    const auto direct =
+        projectMovingPlanarPressureRegionFragmentVelocitiesWithPressureOpenings(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            volumeRates, definitions, openings, directVelocity, directSamples,
+            directFlux, directPressure, settings.projection);
+    check(zero.accepted && direct.accepted
+              && zero.resistance.zeroResistancePatchCount == 1
+              && zero.resistance.dissipatedEnergyJoules == 0.0
+              && zero.projection == direct
+              && zeroVelocity == directVelocity
+              && zeroSamples == directSamples
+              && zeroFlux == directFlux
+              && zeroPressure == directPressure,
+          "zero-loss composed step is bit-exact with direct projection");
+
+    auto truncatedSettings = settings;
+    truncatedSettings.projection.pressureSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-16;
+    truncatedSettings.projection.pressureSolve.relativeResidualTolerance = 0.0;
+    truncatedSettings.projection.pressureSolve.maximumIterations = 1;
+    auto rejectedVelocity = initialVelocity;
+    auto rejectedSamples = initialSamples;
+    auto rejectedFlux = initialFlux;
+    auto rejectedPressure = initialPressure;
+    const auto rejected =
+        advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            volumeRates, definitions, openings, resistance, rejectedVelocity,
+            rejectedSamples, rejectedFlux, rejectedPressure,
+            truncatedSettings);
+    check(!rejected.accepted && rejected.finite
+              && rejected.resistance.accepted
+              && !rejected.projection.accepted
+              && rejected.projection.pressureSolve.compatible
+              && !rejected.projection.pressureSolve.converged
+              && rejectedVelocity == initialVelocity
+              && rejectedSamples == initialSamples
+              && rejectedFlux == initialFlux
+              && rejectedPressure == initialPressure,
+          "failed resisted projection rolls back all composed fields");
+
+    auto limits = PlanarPressureRegionFragmentOpeningPressureStepLimits{};
+    limits.maximumWorkingBytes = 1;
+    expectRejected([&] {
+        auto candidateVelocity = initialVelocity;
+        auto candidateSamples = initialSamples;
+        auto candidateFlux = initialFlux;
+        auto candidatePressure = initialPressure;
+        static_cast<void>(
+            advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
+                pressureOperator, base, geometry, sweep, fragments, topology,
+                volumeRates, definitions, openings, resistance,
+                candidateVelocity, candidateSamples, candidateFlux,
+                candidatePressure, settings, limits));
+    }, "resisted opening pressure step enforces its working limit");
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -8459,6 +8679,7 @@ int main() {
     testPlanarRegionalOpeningFluxPressureProjection();
     testPlanarRegionalPressureDrivenOpeningProjection();
     testPlanarRegionalOpeningResistance();
+    testPlanarRegionalResistedOpeningPressureStep();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {
