@@ -12,6 +12,7 @@
 #include "fluid/planar_region_fragment_opening_velocity_state.h"
 #include "fluid/planar_region_fragment_opening_load_state.h"
 #include "fluid/planar_region_fragment_opening_momentum_transport.h"
+#include "fluid/planar_region_fragment_opening_momentum_prediction.h"
 #include "fluid/planar_region_fragment_opening_pressure_state.h"
 #include "fluid/planar_region_fragment_opening.h"
 #include "fluid/planar_region_fragment_opening_flux.h"
@@ -9302,6 +9303,122 @@ void testPlanarRegionalOpeningMomentumTransport() {
             targetMetric, geometry, targetSweep, targetFragments,
             targetTopology, targetVolumeRates);
 
+        auto predictionCurrent = current;
+        predictionCurrent[0].physicalPlaneCoordinateMeters += 0.05;
+        predictionCurrent[1].physicalPlaneCoordinateMeters += 0.05;
+        const auto predictionSweep = makePlanarPressureRegionSweepLedger(
+            geometry, current, predictionCurrent, 0.5);
+        const auto predictionFragments =
+            buildPlanarPressureRegionFragments(geometry, predictionSweep);
+        const auto predictionTopology =
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, predictionSweep, predictionFragments);
+        const auto predictionVolumeRates =
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, predictionSweep, predictionFragments,
+                predictionTopology);
+        const auto predictionOpenings =
+            buildPlanarPressureRegionFragmentOpenings(
+                geometry, predictionSweep, predictionFragments,
+                predictionTopology, definitions);
+        const auto predictionBaseMetric =
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, predictionSweep, predictionFragments,
+                predictionTopology);
+        const auto predictionMetric =
+            buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+                geometry, predictionSweep, predictionFragments,
+                predictionTopology, predictionBaseMetric, definitions,
+                predictionOpenings);
+        const auto prediction =
+            predictPlanarPressureRegionFragmentOpeningMomentum(
+                transport, targetMetric, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates, definitions, predictionOpenings,
+                predictionBaseMetric, predictionMetric);
+        const auto repeatedPrediction =
+            predictPlanarPressureRegionFragmentOpeningMomentum(
+                transport, targetMetric, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates, definitions, predictionOpenings,
+                predictionBaseMetric, predictionMetric);
+        check(prediction == repeatedPrediction
+                  && prediction.diagnostics.finite
+                  && prediction.diagnostics.fragmentCount
+                      == predictionFragments.fragments.size()
+                  && prediction.diagnostics.dofCount
+                      == predictionMetric.dofs.size()
+                  && prediction.diagnostics.openingDofCount == 1
+                  && prediction.diagnostics
+                         .maximumAbsoluteVolumeChangeCubicMeters
+                      > 0.0
+                  && prediction.diagnostics
+                         .maximumEndpointNormalVelocityJumpMetersPerSecond
+                      < 5.0e-14
+                  && prediction.diagnostics
+                         .maximumAbsolutePredictedOpeningRelativeVelocityMetersPerSecond
+                      < 5.0e-14
+                  && prediction.predictedVelocityState
+                         .staggeringKineticEnergyJoules
+                      < 5.0e-13,
+              "transported momentum predicts the consecutive moving uniform state on every axis");
+        for (const auto& sample
+             : prediction.predictedVelocityState.samples) {
+            const double expected = sample.axis == GridFaceAxis::X
+                ? uniformVelocity.x
+                : sample.axis == GridFaceAxis::Y
+                ? uniformVelocity.y : uniformVelocity.z;
+            checkNear(sample.normalVelocityMetersPerSecond, expected,
+                      3.0e-14,
+                      "momentum prediction preserves uniform absolute velocity");
+            if (sample.kind
+                == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                    SharedRegionGrid) {
+                check(sample.materialNormalVelocityMetersPerSecond == 0.0,
+                      "momentum prediction keeps fixed-grid material velocity zero");
+            } else if (sample.kind
+                       != PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                           OpeningPatch) {
+                check(sample.relativeNormalVelocityMetersPerSecond == 0.0,
+                      "momentum prediction keeps solid relative velocity zero");
+            }
+        }
+        checkNear(
+            prediction.diagnostics
+                .geometricMomentumChangeKilogramMetersPerSecond.x,
+            0.0, 3.0e-13,
+            "uniform momentum prediction has no global geometric X impulse");
+        checkNear(
+            prediction.diagnostics
+                .geometricMomentumChangeKilogramMetersPerSecond.y,
+            0.0, 3.0e-13,
+            "uniform momentum prediction has no global geometric Y impulse");
+        checkNear(
+            prediction.diagnostics
+                .geometricMomentumChangeKilogramMetersPerSecond.z,
+            0.0, 3.0e-13,
+            "uniform momentum prediction has no global geometric Z impulse");
+        checkNear(
+            prediction.diagnostics
+                .reconstructionMomentumChangeKilogramMetersPerSecond.x,
+            0.0, 3.0e-13,
+            "uniform momentum prediction has no reconstruction X impulse");
+        checkNear(
+            prediction.diagnostics
+                .reconstructionMomentumChangeKilogramMetersPerSecond.y,
+            0.0, 3.0e-13,
+            "uniform momentum prediction has no reconstruction Y impulse");
+        checkNear(
+            prediction.diagnostics
+                .reconstructionMomentumChangeKilogramMetersPerSecond.z,
+            0.0, 3.0e-13,
+            "uniform momentum prediction has no reconstruction Z impulse");
+        validatePlanarPressureRegionFragmentOpeningMomentumPrediction(
+            prediction, transport, targetMetric, geometry,
+            predictionSweep, predictionFragments, predictionTopology,
+            predictionVolumeRates, definitions, predictionOpenings,
+            predictionBaseMetric, predictionMetric);
+
         if (axis != GridFaceAxis::X) continue;
         std::vector<double> nonuniformNormal(
             sourceMetric.dofs.size(), 0.0);
@@ -9348,6 +9465,25 @@ void testPlanarRegionalOpeningMomentumTransport() {
             mixed, nonuniformSource, sourceMetric, targetFlowState,
             targetMetric, geometry, targetSweep, targetFragments,
             targetTopology, targetVolumeRates);
+        const auto mixedPrediction =
+            predictPlanarPressureRegionFragmentOpeningMomentum(
+                mixed, targetMetric, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates, definitions, predictionOpenings,
+                predictionBaseMetric, predictionMetric);
+        check(mixedPrediction.diagnostics.finite
+                  && mixedPrediction.diagnostics
+                         .maximumEndpointNormalVelocityJumpMetersPerSecond
+                      > 0.0
+                  && mixedPrediction.predictedVelocityState
+                         .maximumCollocatedSpeedMetersPerSecond
+                      > 0.0,
+              "nonuniform transported momentum predicts a finite current face state");
+        validatePlanarPressureRegionFragmentOpeningMomentumPrediction(
+            mixedPrediction, mixed, targetMetric, geometry,
+            predictionSweep, predictionFragments, predictionTopology,
+            predictionVolumeRates, definitions, predictionOpenings,
+            predictionBaseMetric, predictionMetric);
 
         auto breathingCurrent = previous;
         breathingCurrent[0].physicalPlaneCoordinateMeters -= 0.1;
@@ -9486,6 +9622,81 @@ void testPlanarRegionalOpeningMomentumTransport() {
                 breathingFlowState, breathingMetric, geometry,
                 breathingSweep, breathingFragments, breathingTopology,
                 breathingVolumeRates);
+
+            auto breathingPredictionCurrent = breathingCurrent;
+            breathingPredictionCurrent[0]
+                .physicalPlaneCoordinateMeters -= 0.05;
+            breathingPredictionCurrent[1]
+                .physicalPlaneCoordinateMeters += 0.05;
+            const auto breathingPredictionSweep =
+                makePlanarPressureRegionSweepLedger(
+                    geometry, breathingCurrent,
+                    breathingPredictionCurrent, 0.5);
+            const auto breathingPredictionFragments =
+                buildPlanarPressureRegionFragments(
+                    geometry, breathingPredictionSweep);
+            const auto breathingPredictionTopology =
+                buildPlanarPressureRegionFragmentTopology(
+                    geometry, breathingPredictionSweep,
+                    breathingPredictionFragments);
+            const auto breathingPredictionVolumeRates =
+                buildPlanarPressureRegionFragmentVolumeRates(
+                    geometry, breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology);
+            const auto breathingPredictionOpenings =
+                buildPlanarPressureRegionFragmentOpenings(
+                    geometry, breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology, definitions);
+            const auto breathingPredictionBaseMetric =
+                buildPlanarPressureRegionFragmentVelocityMetric(
+                    geometry, breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology);
+            const auto breathingPredictionMetric =
+                buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+                    geometry, breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology,
+                    breathingPredictionBaseMetric, definitions,
+                    breathingPredictionOpenings);
+            const auto breathingPrediction =
+                predictPlanarPressureRegionFragmentOpeningMomentum(
+                    breathingTransport, breathingMetric, geometry,
+                    breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology,
+                    breathingPredictionVolumeRates, definitions,
+                    breathingPredictionOpenings,
+                    breathingPredictionBaseMetric,
+                    breathingPredictionMetric);
+            const auto predictedAperture = std::ranges::find(
+                breathingPrediction.predictedVelocityState.samples,
+                PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                    OpeningPatch,
+                &PlanarPressureRegionFragmentOpeningVelocityStateSample::
+                    kind);
+            check(breathingPrediction.diagnostics.finite
+                      && breathingPrediction.diagnostics
+                             .maximumAbsolutePredictedOpeningRelativeVelocityMetersPerSecond
+                          > 0.0
+                      && predictedAperture
+                          != breathingPrediction
+                                 .predictedVelocityState.samples.end()
+                      && predictedAperture
+                             ->relativeNormalVelocityMetersPerSecond
+                          != 0.0,
+                  "transported breathing momentum predicts a live material-relative aperture flow");
+            validatePlanarPressureRegionFragmentOpeningMomentumPrediction(
+                breathingPrediction, breathingTransport, breathingMetric,
+                geometry, breathingPredictionSweep,
+                breathingPredictionFragments,
+                breathingPredictionTopology,
+                breathingPredictionVolumeRates, definitions,
+                breathingPredictionOpenings,
+                breathingPredictionBaseMetric,
+                breathingPredictionMetric);
         }
 
         auto substepSettings =
@@ -9581,6 +9792,56 @@ void testPlanarRegionalOpeningMomentumTransport() {
                         transportLimits));
             },
             "opening momentum transport enforces its working-storage limit before allocation");
+
+        auto corruptPrediction = prediction;
+        corruptPrediction.predictedVelocityState.samples[0]
+            .normalVelocityMetersPerSecond += 0.1;
+        expectRejected(
+            [&] {
+                validatePlanarPressureRegionFragmentOpeningMomentumPredictionIntegrity(
+                    corruptPrediction);
+            },
+            "opening momentum prediction rejects nested state corruption");
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    predictPlanarPressureRegionFragmentOpeningMomentum(
+                        transport, sourceMetric, geometry, predictionSweep,
+                        predictionFragments, predictionTopology,
+                        predictionVolumeRates, definitions,
+                        predictionOpenings, predictionBaseMetric,
+                        predictionMetric));
+            },
+            "opening momentum prediction rejects a foreign transport endpoint metric");
+        auto predictionLimits =
+            PlanarPressureRegionFragmentOpeningMomentumPredictionLimits{};
+        predictionLimits.maximumOwnedBytes =
+            prediction.ownedStorageBytes - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    predictPlanarPressureRegionFragmentOpeningMomentum(
+                        transport, targetMetric, geometry, predictionSweep,
+                        predictionFragments, predictionTopology,
+                        predictionVolumeRates, definitions,
+                        predictionOpenings, predictionBaseMetric,
+                        predictionMetric, predictionLimits));
+            },
+            "opening momentum prediction enforces its owned-storage limit before allocation");
+        predictionLimits = {};
+        predictionLimits.maximumWorkingBytes =
+            prediction.workingStorageBytes - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    predictPlanarPressureRegionFragmentOpeningMomentum(
+                        transport, targetMetric, geometry, predictionSweep,
+                        predictionFragments, predictionTopology,
+                        predictionVolumeRates, definitions,
+                        predictionOpenings, predictionBaseMetric,
+                        predictionMetric, predictionLimits));
+            },
+            "opening momentum prediction enforces its working-storage limit before allocation");
     }
 }
 

@@ -2001,6 +2001,13 @@ makes this a certified aerodynamic solver.
   volumes move linearly. It requires local continuity, non-increasing kinetic
   energy, and global internal-momentum closure, but applies no pressure,
   viscosity, wall shear, rebase, or production-worker mutation.
+- `src/fsi/fluid/planar_region_fragment_opening_momentum_prediction.{h,cpp}`
+  maps accepted transported fragment vectors onto one consecutive current
+  opening-aware metric. It retains velocity through the geometric volume
+  remap, arithmetic-averages adjacent vectors onto shared/aperture normals,
+  assigns exact solid material motion, and subtracts material speed from
+  aperture flow. Its nested velocity state is a pressure seed, not a pressure
+  solve, wall-shear step, topology rebase, or worker selection.
 - `src/fsi/fluid/planar_region_fragment_opening_pressure_epoch.{h,cpp}`
   privately composes that continuation with resistance, augmented projection,
   and accepted-state capture. Numerical rejection publishes a typed stage and
@@ -2704,6 +2711,26 @@ a genuinely nonzero aperture-flow transfer, substep-limit rejection,
 continuity rejection, corruption, foreign endpoints, and owned/working limits.
 Do not apply pressure, viscosity, wall shear, topology rebase, or select the
 production worker.
+
+For `planar_region_fragment_opening_momentum_prediction.*`, require an
+accepted transport, its exact target metric, and a fully validated consecutive
+current metric/volume-rate/opening epoch. Preserve the complete stable degree,
+fragment, component, face-link, and aperture identity; reject any topology
+change or endpoint-volume mismatch beyond scaled floating-point roundoff. Map
+transported fragments by stable ID, retain their vector velocity while
+diagnosing momentum and kinetic energy on current physical volumes, and use
+the arithmetic mean of adjacent vector components as each shared-grid or
+aperture absolute normal predictor. Fixed-grid material velocity is zero,
+solid traces are exact wall material motion with zero relative flow, and every
+aperture stores `relative = averaged absolute - material`. Build one immutable
+opening-aware velocity state and explicitly diagnose geometric and face-
+reconstruction momentum changes without treating either as a pressure force.
+The translating uniform X/Y/Z oracle must remain roundoff-exact through the
+consecutive volume remap and reconstruction; nonuniform and breathing cases
+must retain finite state and genuinely nonzero material-relative aperture
+flow. Reject nested corruption, foreign transport metrics, and owned/working
+limits. Do not project pressure, apply viscosity or wall shear, repair a
+topology rebase, or select production ownership.
 
 For `planar_region_fragment_opening_pressure_epoch.*`, build continuation
 fields privately and pass them through the complete resistance-plus-projection

@@ -507,6 +507,7 @@ src/fsi/
         planar_region_fragment_opening_velocity_metric.* aperture-aware inertia geometry
         planar_region_fragment_opening_velocity_state.* fragment vector momentum state
         planar_region_fragment_opening_momentum_transport.* conservative ALE donor transport
+        planar_region_fragment_opening_momentum_prediction.* consecutive face/aperture predictor
         planar_region_fragment_opening_pressure_state.* opening-connected total pressure
         planar_region_fragment_surface_load.* sealed/opening full-wall load ledger
         planar_region_fragment_opening_surface_load.* aperture/solid load partition
@@ -2521,6 +2522,22 @@ vector transfer through a genuinely nonzero aperture flow. Continuity and
 substep-limit failures publish typed empty results. This remains an opt-in
 transport artifact: it adds no pressure, viscosity, wall shear, topology
 rebase, endpoint face reconstruction, or worker selection.
+`planar_region_fragment_opening_momentum_prediction.*` now supplies that
+endpoint reconstruction for one consecutive topology-stable epoch. It retains
+each transported fragment vector while diagnosing the momentum and kinetic-
+energy change caused by evaluating it on current physical volume. Each current
+same-region or aperture normal receives the arithmetic mean of its two endpoint
+vector components. Fixed Cartesian faces keep that value as relative flow;
+solid traces take exact material motion with zero relative flow; aperture flow
+subtracts exact material speed from the averaged absolute fluid velocity. The
+result is a bounded immutable opening-aware velocity state with explicit
+geometric-remap and face-reconstruction momentum diagnostics. Consecutive
+translating uniform flow remains roundoff-exact on X/Y/Z, nonuniform transport
+produces a finite resolved predictor, and a breathing continuation retains a
+genuinely nonzero material-relative aperture velocity. Exact stable degree and
+fragment identity forbids using this boundary as a topology rebase. It still
+does not invoke pressure projection, viscosity, wall shear, persistence, or
+worker selection.
 `planar_region_fragment_opening_pressure_epoch.*` composes that warm product
 with the existing resistance-plus-augmented-projection transaction. It builds
 all four mutable fields privately, advances them together, and captures a new
