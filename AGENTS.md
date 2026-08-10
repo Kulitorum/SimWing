@@ -858,6 +858,13 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   wall work, nonnegative dissipation, and exact accepted endpoint provenance
   gate publication; pressure remains the sole owner of normal traction. This
   is a coarse wall closure, not a resolved boundary layer.
+- `scene_fluid_wall_exchange_kernel.{h,cpp}` owns the source-neutral numerical
+  part of that closure: bounded tangential impulse, wall work, dissipation,
+  and action/reaction arithmetic over already-proven collocated controls and
+  quadrature-side ownership. Topology/provenance adapters must prepare and
+  validate those inputs before calling it. The legacy scene-region adapter
+  still owns its existing identities and publishes bit-identical products;
+  the kernel is not a worker selector or a second wall law.
 - `scene_fluid_region_link_flow.{h,cpp}` remaps an accepted fixed-epoch
   transport candidate onto the next topology-stable moving pressure epoch. It
   preserves stable cell/region velocity while current physical volume changes,

@@ -1,4 +1,5 @@
 #include "scene_fluid_region_wall.h"
+#include "scene_fluid_wall_exchange_kernel.h"
 
 #include <algorithm>
 #include <bit>
@@ -320,10 +321,6 @@ fluid::Vector3 triangleNormal(
     return scale(cross, 1.0 / length);
 }
 
-struct WorkingSample {
-    SceneFluidRegionWallSample sample;
-};
-
 } // namespace
 
 static SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentumImpl(
@@ -421,11 +418,6 @@ static SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentumImpl(
     result.lowerMeters = grid.lowerMeters();
     result.upperMeters = grid.upperMeters();
     result.settings = settings;
-    auto& diagnostics = result.diagnostics;
-    diagnostics.controlVolumeCount =
-        currentPressureVolumes.controlVolumes.size();
-    diagnostics.quadraturePointCount = quadrature.points.size();
-
     std::vector<SceneFluidRegionWallControlVolume> controls;
     controls.reserve(currentPressureVolumes.controlVolumes.size());
     std::map<std::pair<std::size_t, StableId>, std::size_t> controlByOwner;
@@ -462,8 +454,8 @@ static SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentumImpl(
 
     const auto kinematics = sampleSceneFluidQuadratureKinematics(
         surface, currentState, quadrature);
-    std::vector<WorkingSample> workingSamples;
-    workingSamples.reserve(quadrature.points.size());
+    std::vector<SceneFluidRegionWallSample> samples;
+    samples.reserve(quadrature.points.size());
     for (std::size_t index = 0; index < quadrature.points.size(); ++index) {
         const auto& point = quadrature.points[index];
         const auto& motion = kinematics[index];
@@ -480,241 +472,34 @@ static SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentumImpl(
         }
         const auto normal = triangleNormal(
             surface, currentState, point.triangleId);
-        WorkingSample working;
-        working.sample.sampleIndex = index;
-        working.sample.stableId = point.stableId;
-        working.sample.triangleId = point.triangleId;
-        working.sample.negativeSideControlVolumeIndex = negative->second;
-        working.sample.positiveSideControlVolumeIndex = positive->second;
-        working.sample.areaSquareMeters = point.areaSquareMeters;
-        working.sample.unitNormalNegativeToPositive = normal;
-        working.sample.wallVelocityMetersPerSecond = {
+        SceneFluidRegionWallSample sample;
+        sample.sampleIndex = index;
+        sample.stableId = point.stableId;
+        sample.triangleId = point.triangleId;
+        sample.negativeSideControlVolumeIndex = negative->second;
+        sample.positiveSideControlVolumeIndex = positive->second;
+        sample.areaSquareMeters = point.areaSquareMeters;
+        sample.unitNormalNegativeToPositive = normal;
+        sample.wallVelocityMetersPerSecond = {
             motion.velocityMetersPerSecond.x,
             motion.velocityMetersPerSecond.y,
             motion.velocityMetersPerSecond.z,
         };
-        working.sample.structureTraction.stableId = point.stableId;
-        workingSamples.push_back(working);
+        sample.structureTraction.stableId = point.stableId;
+        samples.push_back(sample);
         controls[negative->second].incidentWallAreaSquareMeters +=
             point.areaSquareMeters;
         controls[positive->second].incidentWallAreaSquareMeters +=
             point.areaSquareMeters;
     }
 
-    std::vector<double> distances(controls.size(), 0.0);
-    std::vector<double> viscousRows(controls.size(), 0.0);
-    for (std::size_t index = 0; index < controls.size(); ++index) {
-        if (!(controls[index].incidentWallAreaSquareMeters > 0.0)) {
-            continue;
-        }
-        distances[index] = std::max(
-            settings.minimumWallDistanceMeters,
-            0.5 * controls[index].volumeCubicMeters
-                / controls[index].incidentWallAreaSquareMeters);
-        diagnostics.maximumWallDistanceMeters = std::max(
-            diagnostics.maximumWallDistanceMeters, distances[index]);
-    }
-    for (const auto& working : workingSamples) {
-        const auto& sample = working.sample;
-        for (const std::size_t controlIndex : {
-                 sample.negativeSideControlVolumeIndex,
-                 sample.positiveSideControlVolumeIndex}) {
-            viscousRows[controlIndex] +=
-                settings.kinematicViscositySquareMetersPerSecond
-                * sample.areaSquareMeters
-                / (controls[controlIndex].volumeCubicMeters
-                   * distances[controlIndex]);
-        }
-    }
-    for (const double row : viscousRows) {
-        diagnostics.maximumFullStepViscousNumber = std::max(
-            diagnostics.maximumFullStepViscousNumber,
-            settings.timeStepSeconds * row);
-    }
-    const double requiredSubsteps = std::ceil(
-        diagnostics.maximumFullStepViscousNumber
-        / settings.maximumViscousNumber);
-    if (!std::isfinite(requiredSubsteps)) {
-        throw std::overflow_error(
-            "scene fluid region wall substep count is non-finite");
-    }
-    const double maximumRepresentableSubsteps = static_cast<double>(
-        std::numeric_limits<std::size_t>::max());
-    if (requiredSubsteps >= maximumRepresentableSubsteps
-        || requiredSubsteps
-            > static_cast<double>(settings.maximumSubsteps)) {
-        diagnostics.substepCount = settings.maximumSubsteps;
-        diagnostics.failureStage =
-            SceneFluidRegionWallFailureStage::SubstepLimit;
-    } else {
-        diagnostics.substepCount = std::max<std::size_t>(
-            1, static_cast<std::size_t>(requiredSubsteps));
-        if (diagnostics.substepCount > settings.maximumSubsteps) {
-            diagnostics.substepCount = settings.maximumSubsteps;
-            diagnostics.failureStage =
-                SceneFluidRegionWallFailureStage::SubstepLimit;
-        }
-    }
-    diagnostics.maximumAcceptedSubstepViscousNumber =
-        diagnostics.maximumFullStepViscousNumber
-        / static_cast<double>(diagnostics.substepCount);
-    diagnostics.fluidMomentumBeforeKilogramMetersPerSecond =
-        totalMomentum(controls);
-    diagnostics.kineticEnergyBeforeJoules = kineticEnergy(
-        controls, result.densityKgPerCubicMeter);
-    if (diagnostics.failureStage != SceneFluidRegionWallFailureStage::None) {
-        diagnostics.fluidMomentumAfterKilogramMetersPerSecond =
-            diagnostics.fluidMomentumBeforeKilogramMetersPerSecond;
-        diagnostics.kineticEnergyAfterJoules =
-            diagnostics.kineticEnergyBeforeJoules;
-        diagnostics.finite = true;
-        result.fingerprint = exchangeFingerprint(result);
-        validateSceneFluidRegionWallExchangeIntegrity(result);
-        return result;
-    }
-
-    const double substepSeconds = settings.timeStepSeconds
-        / static_cast<double>(diagnostics.substepCount);
-    std::vector<fluid::Vector3> impulses(controls.size());
-    for (std::size_t substep = 0;
-         substep < diagnostics.substepCount; ++substep) {
-        std::ranges::fill(impulses, fluid::Vector3{});
-        double wallWork = 0.0;
-        const double energyBefore = kineticEnergy(
-            controls, result.densityKgPerCubicMeter);
-        for (auto& working : workingSamples) {
-            auto& sample = working.sample;
-            const auto exchangeSide = [&](
-                const std::size_t controlIndex,
-                fluid::Vector3& accumulatedSampleImpulse) {
-                const auto relative = subtract(
-                    controls[controlIndex].velocityMetersPerSecond,
-                    sample.wallVelocityMetersPerSecond);
-                const auto tangential = subtract(
-                    relative,
-                    scale(sample.unitNormalNegativeToPositive,
-                          dot(relative,
-                              sample.unitNormalNegativeToPositive)));
-                diagnostics.maximumRelativeTangentialSpeedMetersPerSecond =
-                    std::max(
-                        diagnostics
-                            .maximumRelativeTangentialSpeedMetersPerSecond,
-                        norm(tangential));
-                const double coefficient = result.densityKgPerCubicMeter
-                    * settings.kinematicViscositySquareMetersPerSecond
-                    * sample.areaSquareMeters / distances[controlIndex];
-                const auto impulse = scale(
-                    tangential, -coefficient * substepSeconds);
-                impulses[controlIndex] = add(
-                    impulses[controlIndex], impulse);
-                accumulatedSampleImpulse = add(
-                    accumulatedSampleImpulse, impulse);
-                wallWork += dot(
-                    impulse, sample.wallVelocityMetersPerSecond);
-            };
-            exchangeSide(
-                sample.negativeSideControlVolumeIndex,
-                sample.negativeSideFluidImpulseKilogramMetersPerSecond);
-            exchangeSide(
-                sample.positiveSideControlVolumeIndex,
-                sample.positiveSideFluidImpulseKilogramMetersPerSecond);
-        }
-        if (settings.kinematicViscositySquareMetersPerSecond > 0.0) {
-            for (std::size_t index = 0; index < controls.size(); ++index) {
-                controls[index].momentumKilogramMetersPerSecond = add(
-                    controls[index].momentumKilogramMetersPerSecond,
-                    impulses[index]);
-                controls[index].velocityMetersPerSecond = scale(
-                    controls[index].momentumKilogramMetersPerSecond,
-                    1.0 / (result.densityKgPerCubicMeter
-                           * controls[index].volumeCubicMeters));
-            }
-        }
-        const double energyAfter = kineticEnergy(
-            controls, result.densityKgPerCubicMeter);
-        const double dissipation = energyBefore + wallWork - energyAfter;
-        const double energyTolerance = tolerance(
-            settings.absoluteEnergyToleranceJoules,
-            settings.relativeEnergyTolerance,
-            std::max({energyBefore, energyAfter, std::abs(wallWork)}));
-        if (!std::isfinite(energyAfter) || !std::isfinite(wallWork)
-            || !std::isfinite(dissipation)
-            || dissipation < -energyTolerance) {
-            diagnostics.failureStage = SceneFluidRegionWallFailureStage::Energy;
-            break;
-        }
-        diagnostics.wallWorkOnFluidJoules += wallWork;
-        diagnostics.viscousDissipationJoules += std::max(0.0, dissipation);
-    }
-
-    diagnostics.fluidMomentumAfterKilogramMetersPerSecond =
-        totalMomentum(controls);
-    diagnostics.fluidImpulseKilogramMetersPerSecond = subtract(
-        diagnostics.fluidMomentumAfterKilogramMetersPerSecond,
-        diagnostics.fluidMomentumBeforeKilogramMetersPerSecond);
-    diagnostics.kineticEnergyAfterJoules = kineticEnergy(
-        controls, result.densityKgPerCubicMeter);
-    for (auto& working : workingSamples) {
-        auto& sample = working.sample;
-        const auto fluidImpulse = add(
-            sample.negativeSideFluidImpulseKilogramMetersPerSecond,
-            sample.positiveSideFluidImpulseKilogramMetersPerSecond);
-        const auto structureImpulse = scale(fluidImpulse, -1.0);
-        diagnostics.structureImpulseKilogramMetersPerSecond = add(
-            diagnostics.structureImpulseKilogramMetersPerSecond,
-            structureImpulse);
-        const auto traction = scale(
-            structureImpulse,
-            1.0 / (sample.areaSquareMeters * settings.timeStepSeconds));
-        sample.structureTraction.tractionPascals = {
-            traction.x, traction.y, traction.z};
-    }
-    diagnostics.momentumResidualKilogramMetersPerSecond = add(
-        diagnostics.fluidImpulseKilogramMetersPerSecond,
-        diagnostics.structureImpulseKilogramMetersPerSecond);
-    diagnostics.momentumResidualNormKilogramMetersPerSecond = norm(
-        diagnostics.momentumResidualKilogramMetersPerSecond);
-    const double momentumReference = std::max(
-        norm(diagnostics.fluidImpulseKilogramMetersPerSecond),
-        norm(diagnostics.structureImpulseKilogramMetersPerSecond));
-    if (diagnostics.failureStage == SceneFluidRegionWallFailureStage::None
-        && diagnostics.momentumResidualNormKilogramMetersPerSecond
-            > tolerance(
-                settings.absoluteMomentumToleranceKilogramMetersPerSecond,
-                settings.relativeMomentumTolerance, momentumReference)) {
-        diagnostics.failureStage =
-            SceneFluidRegionWallFailureStage::Conservation;
-    }
-    diagnostics.finite = finite(
-            diagnostics.fluidMomentumBeforeKilogramMetersPerSecond)
-        && finite(diagnostics.fluidMomentumAfterKilogramMetersPerSecond)
-        && finite(diagnostics.fluidImpulseKilogramMetersPerSecond)
-        && finite(diagnostics.structureImpulseKilogramMetersPerSecond)
-        && finite(diagnostics.momentumResidualKilogramMetersPerSecond)
-        && std::isfinite(
-            diagnostics.momentumResidualNormKilogramMetersPerSecond)
-        && std::isfinite(diagnostics.kineticEnergyBeforeJoules)
-        && std::isfinite(diagnostics.kineticEnergyAfterJoules)
-        && std::isfinite(diagnostics.wallWorkOnFluidJoules)
-        && std::isfinite(diagnostics.viscousDissipationJoules)
-        && std::ranges::all_of(controls, [](const auto& control) {
-            return finite(control.velocityMetersPerSecond)
-                && finite(control.momentumKilogramMetersPerSecond);
-        });
-    if (!diagnostics.finite
-        && diagnostics.failureStage == SceneFluidRegionWallFailureStage::None) {
-        diagnostics.failureStage = SceneFluidRegionWallFailureStage::NonFinite;
-    }
-    if (diagnostics.finite
-        && diagnostics.failureStage == SceneFluidRegionWallFailureStage::None) {
-        diagnostics.accepted = true;
-        result.ownedStorageBytes = storageBytes;
-        result.controlVolumes = std::move(controls);
-        result.samples.reserve(workingSamples.size());
-        for (auto& working : workingSamples) {
-            result.samples.push_back(std::move(working.sample));
-        }
-    }
+    auto kernel = detail::exchangeSceneFluidWallMomentumKernel(
+        result.densityKgPerCubicMeter, std::move(controls),
+        std::move(samples), settings, storageBytes);
+    result.ownedStorageBytes = kernel.ownedStorageBytes;
+    result.diagnostics = std::move(kernel.diagnostics);
+    result.controlVolumes = std::move(kernel.controlVolumes);
+    result.samples = std::move(kernel.samples);
     result.fingerprint = exchangeFingerprint(result);
     validateSceneFluidRegionWallExchangeIntegrity(result);
     return result;

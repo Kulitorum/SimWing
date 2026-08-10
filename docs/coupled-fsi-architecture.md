@@ -433,7 +433,8 @@ src/fsi/
     scene_fluid_region_momentum.* accepted collocated region momentum
     scene_fluid_region_transport.* conservative region-momentum advance
     scene_fluid_region_rebase.* bounded mapped current-topology rebase
-    scene_fluid_region_wall.* two-sided material-wall momentum exchange
+    scene_fluid_region_wall.* legacy scene-region wall ownership adapter
+    scene_fluid_wall_exchange_kernel.* shared tangential wall arithmetic
     scene_fluid_region_link_flow.* current-link region predictor
     scene_fluid_pressure_coupling.* strong pressure/shear feedback
     scene_pressure_cell_geometry.* shared visible/refinement tetrahedra
@@ -903,7 +904,11 @@ projection then
 consumes the wall-adjusted link predictor, and the existing conservative
 transfer applies the combined pressure-plus-shear load to XPBD. This is a
 local cut-region wall closure, not a resolved immersed-boundary boundary
-layer. The
+layer. The tangential impulse, energy, and action/reaction arithmetic now
+lives in one source-neutral internal kernel. `scene_fluid_region_wall.*`
+continues to prove the existing cell/region or rebase ownership before calling
+it, so this refactor neither changes the legacy product nor authorizes another
+topology to bypass its own exact mapping contract. The
 first composite in-memory checkpoint stores Structure and the accepted sparse
 pressure projection. Restore uses a temporary Structure, rebuilds the entire
 pressure epoch, resamples the validated projection, and reconstructs the
