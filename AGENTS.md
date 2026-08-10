@@ -2008,6 +2008,13 @@ makes this a certified aerodynamic solver.
   assigns exact solid material motion, and subtracts material speed from
   aperture flow. Its nested velocity state is a pressure seed, not a pressure
   solve, wall-shear step, topology rebase, or worker selection.
+- `src/fsi/fluid/planar_region_fragment_opening_momentum_pressure_epoch.{h,cpp}`
+  extracts pressure-facing same-region and aperture-relative fields from that
+  immutable prediction, rebuilds exact opening flux, and cold-starts the
+  existing resistance-plus-augmented-projection transaction. It publishes an
+  accepted opening state only after complete pressure/energy acceptance and
+  otherwise exposes a typed empty rollback result. It carries no pressure warm
+  start yet and does not apply loads or select production state.
 - `src/fsi/fluid/planar_region_fragment_opening_pressure_epoch.{h,cpp}`
   privately composes that continuation with resistance, augmented projection,
   and accepted-state capture. Numerical rejection publishes a typed stage and
@@ -2731,6 +2738,23 @@ must retain finite state and genuinely nonzero material-relative aperture
 flow. Reject nested corruption, foreign transport metrics, and owned/working
 limits. Do not project pressure, apply viscosity or wall shear, repair a
 topology rebase, or select production ownership.
+
+For `planar_region_fragment_opening_momentum_pressure_epoch.*`, require a
+fully valid transported prediction bound to the exact current opening-aware
+metric and volume-rate epoch. Extract every same-region sample exactly once
+into its topology link, keep all pressure-wall topology velocities zero,
+extract every aperture sample exactly once by patch identity, and rebuild the
+immutable opening-flux ledger before pressure. Start correction pressure at
+the explicit zero connected gauge; do not pretend that a prior warm pressure
+was carried. Run the existing resistance then augmented projection on private
+copies and capture an accepted state only after nested and aggregate energy
+acceptance. A numerical resistance, projection, or aggregate failure returns
+the corresponding typed stage and an empty endpoint without changing the
+prediction. Require deterministic uniform X/Y/Z acceptance, nontrivial
+breathing acceptance, deliberately truncated pressure rollback, nested
+corruption rejection, and aggregate owned/working limits. Do not modify the
+pressure solver, add viscosity/wall shear, apply traction, persist a restart,
+rebase topology, or select the production worker.
 
 For `planar_region_fragment_opening_pressure_epoch.*`, build continuation
 fields privately and pass them through the complete resistance-plus-projection

@@ -13,6 +13,7 @@
 #include "fluid/planar_region_fragment_opening_load_state.h"
 #include "fluid/planar_region_fragment_opening_momentum_transport.h"
 #include "fluid/planar_region_fragment_opening_momentum_prediction.h"
+#include "fluid/planar_region_fragment_opening_momentum_pressure_epoch.h"
 #include "fluid/planar_region_fragment_opening_pressure_state.h"
 #include "fluid/planar_region_fragment_opening.h"
 #include "fluid/planar_region_fragment_opening_flux.h"
@@ -9419,6 +9420,75 @@ void testPlanarRegionalOpeningMomentumTransport() {
             predictionVolumeRates, definitions, predictionOpenings,
             predictionBaseMetric, predictionMetric);
 
+        const auto predictionBasePressureOperator =
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, predictionSweep, predictionFragments,
+                predictionTopology);
+        const auto predictionPressureOperator =
+            buildPlanarPressureRegionFragmentOpeningPressureOperator(
+                predictionBasePressureOperator, geometry, predictionSweep,
+                predictionFragments, predictionTopology, definitions,
+                predictionOpenings);
+        const std::vector<
+            PlanarPressureRegionFragmentOpeningResistanceDefinition>
+            zeroResistance{{100, {0.0, 0.0}}};
+        PlanarPressureRegionFragmentOpeningPressureStepSettings
+            momentumPressureSettings;
+        momentumPressureSettings.projection.densityKgPerCubicMeter = 1.2;
+        momentumPressureSettings.projection.timeStepSeconds = 0.5;
+        momentumPressureSettings.projection.pressureSolve
+            .absoluteResidualTolerancePascalsMeters = 1.0e-13;
+        momentumPressureSettings.projection.pressureSolve
+            .relativeResidualTolerance = 1.0e-12;
+        momentumPressureSettings.projection.pressureSolve
+            .maximumIterations = 300;
+        const auto momentumPressureEpoch =
+            acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+                prediction, predictionPressureOperator,
+                predictionBasePressureOperator, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates, definitions, predictionOpenings,
+                zeroResistance, predictionBaseMetric, predictionMetric,
+                momentumPressureSettings);
+        const auto repeatedMomentumPressureEpoch =
+            acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+                prediction, predictionPressureOperator,
+                predictionBasePressureOperator, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates, definitions, predictionOpenings,
+                zeroResistance, predictionBaseMetric, predictionMetric,
+                momentumPressureSettings);
+        check(momentumPressureEpoch == repeatedMomentumPressureEpoch
+                  && momentumPressureEpoch.diagnostics.accepted
+                  && momentumPressureEpoch.diagnostics
+                         .usedTransportedPrediction
+                  && momentumPressureEpoch.diagnostics
+                         .usedColdPressureStart
+                  && momentumPressureEpoch.diagnostics.failureStage
+                      == PlanarPressureRegionFragmentOpeningMomentumPressureEpochFailureStage::
+                          None
+                  && momentumPressureEpoch.acceptedState.accepted
+                  && momentumPressureEpoch.acceptedState
+                         .sourcePressureOperatorFingerprint
+                      == predictionPressureOperator.fingerprint
+                  && momentumPressureEpoch.acceptedState
+                         .sourceOpeningFluxFingerprint
+                      == momentumPressureEpoch
+                             .sourcePredictedOpeningFluxFingerprint,
+              "transported uniform predictor reaches a deterministic accepted pressure endpoint on every axis");
+        checkNear(
+            momentumPressureEpoch.diagnostics.pressureStep
+                .kineticEnergyChangeJoules,
+            0.0, 8.0e-13,
+            "uniform transported pressure epoch has no spurious kinetic-energy change");
+        validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResult(
+            momentumPressureEpoch, prediction, predictionPressureOperator,
+            predictionBasePressureOperator, geometry, predictionSweep,
+            predictionFragments, predictionTopology,
+            predictionVolumeRates, definitions, predictionOpenings,
+            zeroResistance, predictionBaseMetric, predictionMetric,
+            momentumPressureSettings);
+
         if (axis != GridFaceAxis::X) continue;
         std::vector<double> nonuniformNormal(
             sourceMetric.dofs.size(), 0.0);
@@ -9697,6 +9767,101 @@ void testPlanarRegionalOpeningMomentumTransport() {
                 breathingPredictionOpenings,
                 breathingPredictionBaseMetric,
                 breathingPredictionMetric);
+            const auto breathingPredictionBasePressureOperator =
+                buildPlanarPressureRegionFragmentPressureOperator(
+                    geometry, breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology);
+            const auto breathingPredictionPressureOperator =
+                buildPlanarPressureRegionFragmentOpeningPressureOperator(
+                    breathingPredictionBasePressureOperator, geometry,
+                    breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology, definitions,
+                    breathingPredictionOpenings);
+            const auto breathingMomentumPressureEpoch =
+                acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+                    breathingPrediction,
+                    breathingPredictionPressureOperator,
+                    breathingPredictionBasePressureOperator, geometry,
+                    breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology,
+                    breathingPredictionVolumeRates, definitions,
+                    breathingPredictionOpenings, zeroResistance,
+                    breathingPredictionBaseMetric,
+                    breathingPredictionMetric, momentumPressureSettings);
+            check(breathingMomentumPressureEpoch.diagnostics.accepted
+                      && breathingMomentumPressureEpoch.diagnostics
+                             .pressureStep.projection.pressureSolve
+                             .iterationCount
+                          > 0
+                      && breathingMomentumPressureEpoch.acceptedState.accepted
+                      && breathingMomentumPressureEpoch.acceptedState
+                             .correctedContinuityResidualMaximumCubicMetersPerSecond
+                          <= breathingMomentumPressureEpoch
+                                 .acceptedState
+                                 .continuityToleranceCubicMetersPerSecond,
+                  "transported breathing predictor reaches a constrained pressure endpoint");
+            validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResult(
+                breathingMomentumPressureEpoch, breathingPrediction,
+                breathingPredictionPressureOperator,
+                breathingPredictionBasePressureOperator, geometry,
+                breathingPredictionSweep,
+                breathingPredictionFragments,
+                breathingPredictionTopology,
+                breathingPredictionVolumeRates, definitions,
+                breathingPredictionOpenings, zeroResistance,
+                breathingPredictionBaseMetric,
+                breathingPredictionMetric, momentumPressureSettings);
+
+            auto truncatedMomentumPressureSettings =
+                momentumPressureSettings;
+            truncatedMomentumPressureSettings.projection.pressureSolve
+                .absoluteResidualTolerancePascalsMeters = 1.0e-16;
+            truncatedMomentumPressureSettings.projection.pressureSolve
+                .relativeResidualTolerance = 0.0;
+            truncatedMomentumPressureSettings.projection.pressureSolve
+                .maximumIterations = 1;
+            const auto retainedBreathingPrediction = breathingPrediction;
+            const auto rejectedMomentumPressureEpoch =
+                acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+                    breathingPrediction,
+                    breathingPredictionPressureOperator,
+                    breathingPredictionBasePressureOperator, geometry,
+                    breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology,
+                    breathingPredictionVolumeRates, definitions,
+                    breathingPredictionOpenings, zeroResistance,
+                    breathingPredictionBaseMetric,
+                    breathingPredictionMetric,
+                    truncatedMomentumPressureSettings);
+            check(!rejectedMomentumPressureEpoch.diagnostics.accepted
+                      && rejectedMomentumPressureEpoch.diagnostics.failureStage
+                          == PlanarPressureRegionFragmentOpeningMomentumPressureEpochFailureStage::
+                              PressureProjection
+                      && rejectedMomentumPressureEpoch.diagnostics
+                             .pressureStep.resistance.accepted
+                      && !rejectedMomentumPressureEpoch.acceptedState.accepted
+                      && rejectedMomentumPressureEpoch.acceptedState
+                             .fingerprint
+                          == 0
+                      && breathingPrediction
+                          == retainedBreathingPrediction,
+                  "truncated transported pressure epoch publishes no partial endpoint");
+            validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResult(
+                rejectedMomentumPressureEpoch, breathingPrediction,
+                breathingPredictionPressureOperator,
+                breathingPredictionBasePressureOperator, geometry,
+                breathingPredictionSweep,
+                breathingPredictionFragments,
+                breathingPredictionTopology,
+                breathingPredictionVolumeRates, definitions,
+                breathingPredictionOpenings, zeroResistance,
+                breathingPredictionBaseMetric,
+                breathingPredictionMetric,
+                truncatedMomentumPressureSettings);
         }
 
         auto substepSettings =
@@ -9842,6 +10007,49 @@ void testPlanarRegionalOpeningMomentumTransport() {
                         predictionMetric, predictionLimits));
             },
             "opening momentum prediction enforces its working-storage limit before allocation");
+
+        auto corruptMomentumPressureEpoch = momentumPressureEpoch;
+        corruptMomentumPressureEpoch.acceptedState
+            .pressureCorrectionPascals[0] += 0.1;
+        expectRejected(
+            [&] {
+                validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResultIntegrity(
+                    corruptMomentumPressureEpoch);
+            },
+            "opening momentum pressure epoch rejects accepted-state corruption");
+        auto momentumPressureLimits =
+            PlanarPressureRegionFragmentOpeningMomentumPressureEpochLimits{};
+        momentumPressureLimits.maximumOwnedBytes =
+            momentumPressureEpoch.ownedStorageBytes - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+                        prediction, predictionPressureOperator,
+                        predictionBasePressureOperator, geometry,
+                        predictionSweep, predictionFragments,
+                        predictionTopology, predictionVolumeRates,
+                        definitions, predictionOpenings, zeroResistance,
+                        predictionBaseMetric, predictionMetric,
+                        momentumPressureSettings, momentumPressureLimits));
+            },
+            "opening momentum pressure epoch enforces its owned-storage limit");
+        momentumPressureLimits = {};
+        momentumPressureLimits.maximumWorkingBytes =
+            momentumPressureEpoch.workingStorageBytes - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+                        prediction, predictionPressureOperator,
+                        predictionBasePressureOperator, geometry,
+                        predictionSweep, predictionFragments,
+                        predictionTopology, predictionVolumeRates,
+                        definitions, predictionOpenings, zeroResistance,
+                        predictionBaseMetric, predictionMetric,
+                        momentumPressureSettings, momentumPressureLimits));
+            },
+            "opening momentum pressure epoch enforces its working-storage limit");
     }
 }
 
