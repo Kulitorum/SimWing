@@ -508,7 +508,8 @@ src/fsi/
         planar_region_fragment_opening_velocity_state.* fragment vector momentum state
         planar_region_fragment_opening_momentum_transport.* conservative ALE donor transport
         planar_region_fragment_opening_momentum_prediction.* consecutive face/aperture predictor
-        planar_region_fragment_opening_momentum_pressure_epoch.* transported cold-start pressure transaction
+        planar_region_fragment_opening_pressure_warm_start.* pressure-only consecutive gauge map
+        planar_region_fragment_opening_momentum_pressure_epoch.* transported cold/warm pressure transaction
         planar_region_fragment_opening_pressure_state.* opening-connected total pressure
         planar_region_fragment_surface_load.* sealed/opening full-wall load ledger
         planar_region_fragment_opening_surface_load.* aperture/solid load partition
@@ -2543,21 +2544,31 @@ genuinely nonzero material-relative aperture velocity. Exact stable degree and
 fragment identity forbids using this boundary as a topology rebase. It still
 does not invoke pressure projection, viscosity, wall shear, persistence, or
 worker selection.
-`planar_region_fragment_opening_momentum_pressure_epoch.*` now closes the
-first transported predictor-to-pressure transaction. It extracts each
+`planar_region_fragment_opening_pressure_warm_start.*` separates the only
+valid history from the older direct continuation. It fully validates one
+accepted aperture endpoint and a consecutive current pressure epoch, maps each
+correction sample by stable fragment/row/component identity, and shifts it to
+the current opening-connected volume gauge. The bounded fingerprinted result
+contains only component gauge shifts and correction pressure: no carried
+Cartesian velocity, aperture velocity, opening flux, momentum, or accepted
+endpoint can leak into transported arithmetic. Uniform translation maps the
+zero field exactly, breathing retains nonzero pressure history, and changed
+identity, foreign current geometry, corruption, or storage limits reject.
+`planar_region_fragment_opening_momentum_pressure_epoch.*` now closes cold and
+warm transported predictor-to-pressure transactions. It extracts each
 same-region relative link velocity and each aperture-relative sample exactly
 once from the immutable prediction, keeps retained pressure-wall topology
-links at zero, rebuilds the exact opening-flux ledger, and uses an explicit
-zero correction-pressure gauge. The established resistance-plus-augmented-
-projection step then runs privately and only a fully pressure/energy-accepted
-result is captured as the next immutable opening state. Uniform translating
-flow accepts deterministically on X/Y/Z without spurious kinetic-energy
-change; a transported breathing predictor requires and reaches a nontrivial
-constrained solve; a deliberately truncated solve returns its typed pressure
-stage with an empty endpoint and leaves the prediction bit-exact. This first
-composition deliberately cold-starts pressure rather than claiming a warm
-pressure continuation. It adds no viscosity, wall shear, traction,
-persistence, topology rebase, or worker selection.
+links at zero, and rebuilds the exact opening-flux ledger. Correction pressure
+comes from exactly one explicit policy: a zero connected gauge for the first
+epoch, or the pressure-only warm artifact thereafter. The established
+resistance-plus-augmented-projection step runs privately and only a fully
+pressure/energy-accepted result is captured as the next immutable opening
+state. Re-entrant uniform flow accepts deterministically through a warm third
+geometry on X/Y/Z without spurious kinetic-energy change. Expanding breathing
+flow retains nonzero warm pressure and reaches another constrained endpoint;
+deliberately truncated cold and warm solves publish typed empty results while
+leaving both prediction and warm history bit-exact. It adds no viscosity, wall
+shear, traction, persistence, topology rebase, or worker selection.
 `planar_region_fragment_opening_pressure_epoch.*` composes that warm product
 with the existing resistance-plus-augmented-projection transaction. It builds
 all four mutable fields privately, advances them together, and captures a new

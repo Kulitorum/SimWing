@@ -9467,6 +9467,8 @@ void testPlanarRegionalOpeningMomentumTransport() {
                          .usedTransportedPrediction
                   && momentumPressureEpoch.diagnostics
                          .usedColdPressureStart
+                  && !momentumPressureEpoch.diagnostics
+                          .usedWarmPressureStart
                   && momentumPressureEpoch.diagnostics.failureStage
                       == PlanarPressureRegionFragmentOpeningMomentumPressureEpochFailureStage::
                           None
@@ -9547,6 +9549,113 @@ void testPlanarRegionalOpeningMomentumTransport() {
             acceptedPressureFlow, predictionMetric, geometry,
             predictionSweep, predictionFragments, predictionTopology,
             predictionVolumeRates);
+
+        auto warmCurrent = predictionCurrent;
+        warmCurrent[0].physicalPlaneCoordinateMeters += 0.05;
+        warmCurrent[1].physicalPlaneCoordinateMeters += 0.05;
+        const auto warmSweep = makePlanarPressureRegionSweepLedger(
+            geometry, predictionCurrent, warmCurrent, 0.5);
+        const auto warmFragments = buildPlanarPressureRegionFragments(
+            geometry, warmSweep);
+        const auto warmTopology =
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, warmSweep, warmFragments);
+        const auto warmVolumeRates =
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, warmSweep, warmFragments, warmTopology);
+        const auto warmOpenings =
+            buildPlanarPressureRegionFragmentOpenings(
+                geometry, warmSweep, warmFragments, warmTopology,
+                definitions);
+        const auto warmBaseMetric =
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, warmSweep, warmFragments, warmTopology);
+        const auto warmMetric =
+            buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+                geometry, warmSweep, warmFragments, warmTopology,
+                warmBaseMetric, definitions, warmOpenings);
+        const auto warmPrediction =
+            predictPlanarPressureRegionFragmentOpeningMomentum(
+                secondTransport, predictionMetric, geometry, warmSweep,
+                warmFragments, warmTopology, warmVolumeRates,
+                definitions, warmOpenings, warmBaseMetric, warmMetric);
+        const auto warmBasePressureOperator =
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, warmSweep, warmFragments, warmTopology);
+        const auto warmPressureOperator =
+            buildPlanarPressureRegionFragmentOpeningPressureOperator(
+                warmBasePressureOperator, geometry, warmSweep,
+                warmFragments, warmTopology, definitions, warmOpenings);
+        const auto pressureWarmStart =
+            buildPlanarPressureRegionFragmentOpeningPressureWarmStart(
+                momentumPressureEpoch.acceptedState,
+                predictionPressureOperator,
+                predictionBasePressureOperator, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates, definitions, predictionOpenings,
+                zeroResistance, warmPressureOperator,
+                warmBasePressureOperator, warmSweep, warmFragments,
+                warmTopology, warmVolumeRates, definitions, warmOpenings);
+        const auto repeatedPressureWarmStart =
+            buildPlanarPressureRegionFragmentOpeningPressureWarmStart(
+                momentumPressureEpoch.acceptedState,
+                predictionPressureOperator,
+                predictionBasePressureOperator, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates, definitions, predictionOpenings,
+                zeroResistance, warmPressureOperator,
+                warmBasePressureOperator, warmSweep, warmFragments,
+                warmTopology, warmVolumeRates, definitions, warmOpenings);
+        check(pressureWarmStart == repeatedPressureWarmStart
+                  && pressureWarmStart.sourceAcceptedStateFingerprint
+                      == momentumPressureEpoch.acceptedState.fingerprint
+                  && pressureWarmStart.currentPressureOperatorFingerprint
+                      == warmPressureOperator.fingerprint
+                  && pressureWarmStart.pressureCorrectionPascals.size()
+                      == warmFragments.fragments.size(),
+              "transported pressure history maps deterministically without stale velocity state");
+        validatePlanarPressureRegionFragmentOpeningPressureWarmStart(
+            pressureWarmStart, momentumPressureEpoch.acceptedState,
+            predictionPressureOperator,
+            predictionBasePressureOperator, geometry, predictionSweep,
+            predictionFragments, predictionTopology,
+            predictionVolumeRates, definitions, predictionOpenings,
+            zeroResistance, warmPressureOperator,
+            warmBasePressureOperator, warmSweep, warmFragments,
+            warmTopology, warmVolumeRates, definitions, warmOpenings);
+        const auto warmMomentumPressureEpoch =
+            acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+                warmPrediction, pressureWarmStart, warmPressureOperator,
+                warmBasePressureOperator, geometry, warmSweep,
+                warmFragments, warmTopology, warmVolumeRates, definitions,
+                warmOpenings, zeroResistance, warmBaseMetric, warmMetric,
+                momentumPressureSettings);
+        const auto repeatedWarmMomentumPressureEpoch =
+            acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+                warmPrediction, pressureWarmStart, warmPressureOperator,
+                warmBasePressureOperator, geometry, warmSweep,
+                warmFragments, warmTopology, warmVolumeRates, definitions,
+                warmOpenings, zeroResistance, warmBaseMetric, warmMetric,
+                momentumPressureSettings);
+        check(warmMomentumPressureEpoch
+                      == repeatedWarmMomentumPressureEpoch
+                  && warmMomentumPressureEpoch.diagnostics.accepted
+                  && warmMomentumPressureEpoch.diagnostics
+                         .usedTransportedPrediction
+                  && warmMomentumPressureEpoch.diagnostics
+                         .usedWarmPressureStart
+                  && !warmMomentumPressureEpoch.diagnostics
+                          .usedColdPressureStart
+                  && warmMomentumPressureEpoch
+                         .sourcePressureWarmStartFingerprint
+                      == pressureWarmStart.fingerprint,
+              "re-entrant uniform momentum reaches a deterministic warm pressure epoch on every axis");
+        validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResult(
+            warmMomentumPressureEpoch, warmPrediction, pressureWarmStart,
+            warmPressureOperator, warmBasePressureOperator, geometry,
+            warmSweep, warmFragments, warmTopology, warmVolumeRates,
+            definitions, warmOpenings, zeroResistance, warmBaseMetric,
+            warmMetric, momentumPressureSettings);
 
         if (axis != GridFaceAxis::X) continue;
         std::vector<double> nonuniformNormal(
@@ -9922,6 +10031,135 @@ void testPlanarRegionalOpeningMomentumTransport() {
                 breathingPredictionTopology,
                 breathingPredictionVolumeRates);
 
+            auto breathingWarmCurrent = breathingPredictionCurrent;
+            breathingWarmCurrent[0]
+                .physicalPlaneCoordinateMeters -= 0.02;
+            breathingWarmCurrent[1]
+                .physicalPlaneCoordinateMeters += 0.02;
+            const auto breathingWarmSweep =
+                makePlanarPressureRegionSweepLedger(
+                    geometry, breathingPredictionCurrent,
+                    breathingWarmCurrent, 0.5);
+            const auto breathingWarmFragments =
+                buildPlanarPressureRegionFragments(
+                    geometry, breathingWarmSweep);
+            const auto breathingWarmTopology =
+                buildPlanarPressureRegionFragmentTopology(
+                    geometry, breathingWarmSweep,
+                    breathingWarmFragments);
+            const auto breathingWarmVolumeRates =
+                buildPlanarPressureRegionFragmentVolumeRates(
+                    geometry, breathingWarmSweep,
+                    breathingWarmFragments,
+                    breathingWarmTopology);
+            const auto breathingWarmOpenings =
+                buildPlanarPressureRegionFragmentOpenings(
+                    geometry, breathingWarmSweep,
+                    breathingWarmFragments,
+                    breathingWarmTopology, definitions);
+            const auto breathingWarmBaseMetric =
+                buildPlanarPressureRegionFragmentVelocityMetric(
+                    geometry, breathingWarmSweep,
+                    breathingWarmFragments,
+                    breathingWarmTopology);
+            const auto breathingWarmMetric =
+                buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+                    geometry, breathingWarmSweep,
+                    breathingWarmFragments,
+                    breathingWarmTopology, breathingWarmBaseMetric,
+                    definitions, breathingWarmOpenings);
+            const auto breathingWarmPrediction =
+                predictPlanarPressureRegionFragmentOpeningMomentum(
+                    breathingSecondTransport,
+                    breathingPredictionMetric, geometry,
+                    breathingWarmSweep, breathingWarmFragments,
+                    breathingWarmTopology, breathingWarmVolumeRates,
+                    definitions, breathingWarmOpenings,
+                    breathingWarmBaseMetric, breathingWarmMetric);
+            const auto breathingWarmBasePressureOperator =
+                buildPlanarPressureRegionFragmentPressureOperator(
+                    geometry, breathingWarmSweep,
+                    breathingWarmFragments,
+                    breathingWarmTopology);
+            const auto breathingWarmPressureOperator =
+                buildPlanarPressureRegionFragmentOpeningPressureOperator(
+                    breathingWarmBasePressureOperator, geometry,
+                    breathingWarmSweep, breathingWarmFragments,
+                    breathingWarmTopology, definitions,
+                    breathingWarmOpenings);
+            const auto breathingPressureWarmStart =
+                buildPlanarPressureRegionFragmentOpeningPressureWarmStart(
+                    breathingMomentumPressureEpoch.acceptedState,
+                    breathingPredictionPressureOperator,
+                    breathingPredictionBasePressureOperator, geometry,
+                    breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology,
+                    breathingPredictionVolumeRates, definitions,
+                    breathingPredictionOpenings, zeroResistance,
+                    breathingWarmPressureOperator,
+                    breathingWarmBasePressureOperator,
+                    breathingWarmSweep, breathingWarmFragments,
+                    breathingWarmTopology, breathingWarmVolumeRates,
+                    definitions, breathingWarmOpenings);
+            check(breathingPressureWarmStart
+                          .maximumAbsolutePressureCorrectionPascals
+                      > 0.0
+                      && breathingPressureWarmStart
+                             .sourceAcceptedStateFingerprint
+                          == breathingMomentumPressureEpoch
+                                 .acceptedState.fingerprint,
+                  "breathing pressure history retains a nonzero transported warm gauge");
+            validatePlanarPressureRegionFragmentOpeningPressureWarmStart(
+                breathingPressureWarmStart,
+                breathingMomentumPressureEpoch.acceptedState,
+                breathingPredictionPressureOperator,
+                breathingPredictionBasePressureOperator, geometry,
+                breathingPredictionSweep,
+                breathingPredictionFragments,
+                breathingPredictionTopology,
+                breathingPredictionVolumeRates, definitions,
+                breathingPredictionOpenings, zeroResistance,
+                breathingWarmPressureOperator,
+                breathingWarmBasePressureOperator,
+                breathingWarmSweep, breathingWarmFragments,
+                breathingWarmTopology, breathingWarmVolumeRates,
+                definitions, breathingWarmOpenings);
+            const auto breathingWarmMomentumPressureEpoch =
+                acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+                    breathingWarmPrediction,
+                    breathingPressureWarmStart,
+                    breathingWarmPressureOperator,
+                    breathingWarmBasePressureOperator, geometry,
+                    breathingWarmSweep, breathingWarmFragments,
+                    breathingWarmTopology, breathingWarmVolumeRates,
+                    definitions, breathingWarmOpenings, zeroResistance,
+                    breathingWarmBaseMetric, breathingWarmMetric,
+                    momentumPressureSettings);
+            check(breathingWarmMomentumPressureEpoch.diagnostics.accepted
+                      && breathingWarmMomentumPressureEpoch.diagnostics
+                             .usedWarmPressureStart
+                      && !breathingWarmMomentumPressureEpoch.diagnostics
+                              .usedColdPressureStart
+                      && breathingWarmMomentumPressureEpoch.acceptedState
+                             .accepted
+                      && breathingWarmMomentumPressureEpoch.acceptedState
+                             .correctedContinuityResidualMaximumCubicMetersPerSecond
+                          <= breathingWarmMomentumPressureEpoch
+                                 .acceptedState
+                                 .continuityToleranceCubicMetersPerSecond,
+                  "re-entrant breathing momentum reaches a constrained warm pressure epoch");
+            validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResult(
+                breathingWarmMomentumPressureEpoch,
+                breathingWarmPrediction, breathingPressureWarmStart,
+                breathingWarmPressureOperator,
+                breathingWarmBasePressureOperator, geometry,
+                breathingWarmSweep, breathingWarmFragments,
+                breathingWarmTopology, breathingWarmVolumeRates,
+                definitions, breathingWarmOpenings, zeroResistance,
+                breathingWarmBaseMetric, breathingWarmMetric,
+                momentumPressureSettings);
+
             auto truncatedMomentumPressureSettings =
                 momentumPressureSettings;
             truncatedMomentumPressureSettings.projection.pressureSolve
@@ -9968,6 +10206,49 @@ void testPlanarRegionalOpeningMomentumTransport() {
                 breathingPredictionOpenings, zeroResistance,
                 breathingPredictionBaseMetric,
                 breathingPredictionMetric,
+                truncatedMomentumPressureSettings);
+
+            const auto retainedBreathingWarmPrediction =
+                breathingWarmPrediction;
+            const auto retainedBreathingPressureWarmStart =
+                breathingPressureWarmStart;
+            const auto rejectedWarmMomentumPressureEpoch =
+                acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+                    breathingWarmPrediction,
+                    breathingPressureWarmStart,
+                    breathingWarmPressureOperator,
+                    breathingWarmBasePressureOperator, geometry,
+                    breathingWarmSweep, breathingWarmFragments,
+                    breathingWarmTopology, breathingWarmVolumeRates,
+                    definitions, breathingWarmOpenings, zeroResistance,
+                    breathingWarmBaseMetric, breathingWarmMetric,
+                    truncatedMomentumPressureSettings);
+            check(!rejectedWarmMomentumPressureEpoch.diagnostics.accepted
+                      && rejectedWarmMomentumPressureEpoch.diagnostics
+                             .usedWarmPressureStart
+                      && rejectedWarmMomentumPressureEpoch.diagnostics
+                             .failureStage
+                          == PlanarPressureRegionFragmentOpeningMomentumPressureEpochFailureStage::
+                              PressureProjection
+                      && !rejectedWarmMomentumPressureEpoch.acceptedState
+                              .accepted
+                      && rejectedWarmMomentumPressureEpoch.acceptedState
+                             .fingerprint
+                          == 0
+                      && breathingWarmPrediction
+                          == retainedBreathingWarmPrediction
+                      && breathingPressureWarmStart
+                          == retainedBreathingPressureWarmStart,
+                  "truncated transported warm pressure epoch rolls back without mutating either source");
+            validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResult(
+                rejectedWarmMomentumPressureEpoch,
+                breathingWarmPrediction, breathingPressureWarmStart,
+                breathingWarmPressureOperator,
+                breathingWarmBasePressureOperator, geometry,
+                breathingWarmSweep, breathingWarmFragments,
+                breathingWarmTopology, breathingWarmVolumeRates,
+                definitions, breathingWarmOpenings, zeroResistance,
+                breathingWarmBaseMetric, breathingWarmMetric,
                 truncatedMomentumPressureSettings);
         }
 
@@ -10190,6 +10471,83 @@ void testPlanarRegionalOpeningMomentumTransport() {
                         momentumPressureSettings, momentumPressureLimits));
             },
             "opening momentum pressure epoch enforces its working-storage limit");
+
+        auto corruptPressureWarmStart = pressureWarmStart;
+        corruptPressureWarmStart.pressureCorrectionPascals[0] += 0.1;
+        expectRejected(
+            [&] {
+                validatePlanarPressureRegionFragmentOpeningPressureWarmStartIntegrity(
+                    corruptPressureWarmStart);
+            },
+            "opening pressure warm start rejects correction corruption");
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+                        prediction, pressureWarmStart,
+                        predictionPressureOperator,
+                        predictionBasePressureOperator, geometry,
+                        predictionSweep, predictionFragments,
+                        predictionTopology, predictionVolumeRates,
+                        definitions, predictionOpenings, zeroResistance,
+                        predictionBaseMetric, predictionMetric,
+                        momentumPressureSettings));
+            },
+            "transported pressure epoch rejects a warm start bound to a foreign current epoch");
+        auto pressureWarmStartLimits =
+            PlanarPressureRegionFragmentOpeningPressureWarmStartLimits{};
+        pressureWarmStartLimits.maximumOwnedBytes =
+            pressureWarmStart.ownedStorageBytes - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    buildPlanarPressureRegionFragmentOpeningPressureWarmStart(
+                        momentumPressureEpoch.acceptedState,
+                        predictionPressureOperator,
+                        predictionBasePressureOperator, geometry,
+                        predictionSweep, predictionFragments,
+                        predictionTopology, predictionVolumeRates,
+                        definitions, predictionOpenings, zeroResistance,
+                        warmPressureOperator, warmBasePressureOperator,
+                        warmSweep, warmFragments, warmTopology,
+                        warmVolumeRates, definitions, warmOpenings,
+                        pressureWarmStartLimits));
+            },
+            "opening pressure warm start enforces its owned-storage limit");
+        pressureWarmStartLimits = {};
+        pressureWarmStartLimits.maximumWorkingBytes =
+            pressureWarmStart.workingStorageBytes - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    buildPlanarPressureRegionFragmentOpeningPressureWarmStart(
+                        momentumPressureEpoch.acceptedState,
+                        predictionPressureOperator,
+                        predictionBasePressureOperator, geometry,
+                        predictionSweep, predictionFragments,
+                        predictionTopology, predictionVolumeRates,
+                        definitions, predictionOpenings, zeroResistance,
+                        warmPressureOperator, warmBasePressureOperator,
+                        warmSweep, warmFragments, warmTopology,
+                        warmVolumeRates, definitions, warmOpenings,
+                        pressureWarmStartLimits));
+            },
+            "opening pressure warm start enforces its working-storage limit before allocation");
+        momentumPressureLimits = {};
+        momentumPressureLimits.warmStartLimits.maximumOwnedBytes =
+            pressureWarmStart.ownedStorageBytes - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+                        warmPrediction, pressureWarmStart,
+                        warmPressureOperator, warmBasePressureOperator,
+                        geometry, warmSweep, warmFragments, warmTopology,
+                        warmVolumeRates, definitions, warmOpenings,
+                        zeroResistance, warmBaseMetric, warmMetric,
+                        momentumPressureSettings, momentumPressureLimits));
+            },
+            "transported warm pressure epoch enforces its source-artifact limit");
     }
 }
 

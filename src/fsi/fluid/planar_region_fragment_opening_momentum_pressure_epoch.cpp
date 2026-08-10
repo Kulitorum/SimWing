@@ -78,6 +78,7 @@ bool emptyAcceptedState(
 
 PlanarPressureRegionFragmentOpeningMomentumPressureEpochResult acceptEpoch(
     const PlanarPressureRegionFragmentOpeningMomentumPrediction& prediction,
+    const PlanarPressureRegionFragmentOpeningPressureWarmStart* warmStart,
     const PlanarPressureRegionFragmentOpeningPressureOperator& pressureOperator,
     const PlanarPressureRegionFragmentPressureOperator& basePressureOperator,
     const PeriodicCartesianGrid& grid,
@@ -119,6 +120,45 @@ PlanarPressureRegionFragmentOpeningMomentumPressureEpochResult acceptEpoch(
             != metric.dofs.size()) {
         throw std::invalid_argument(
             "opening momentum pressure-epoch prediction is foreign");
+    }
+    if (warmStart != nullptr) {
+        validatePlanarPressureRegionFragmentOpeningPressureWarmStartIntegrity(
+            *warmStart);
+        const auto& warmLimits = limits.warmStartLimits;
+        if (warmLimits.maximumPressureCorrections == 0
+            || warmLimits.maximumComponents == 0
+            || warmLimits.maximumOwnedBytes == 0
+            || warmLimits.maximumWorkingBytes == 0) {
+            throw std::invalid_argument(
+                "opening momentum pressure-epoch warm-start limits are invalid");
+        }
+        if (warmStart->pressureCorrectionCount
+                > warmLimits.maximumPressureCorrections
+            || warmStart->connectedComponentCount
+                > warmLimits.maximumComponents
+            || warmStart->ownedStorageBytes
+                > warmLimits.maximumOwnedBytes
+            || warmStart->workingStorageBytes
+                > warmLimits.maximumWorkingBytes) {
+            throw std::length_error(
+                "opening momentum pressure-epoch warm start exceeds limits");
+        }
+        if (warmStart->currentPressureOperatorFingerprint
+                != pressureOperator.fingerprint
+            || warmStart->currentBasePressureOperatorFingerprint
+                != basePressureOperator.fingerprint
+            || warmStart->currentOpeningFingerprint != openings.fingerprint
+            || warmStart->currentFragmentFingerprint != fragments.fingerprint
+            || warmStart->currentTopologyFingerprint != topology.fingerprint
+            || warmStart->currentVolumeRateFingerprint
+                != volumeRates.fingerprint
+            || warmStart->pressureCorrectionPascals.size()
+                != fragments.fragments.size()
+            || warmStart->connectedComponentCount
+                != pressureOperator.components.size()) {
+            throw std::invalid_argument(
+                "opening momentum pressure-epoch warm start is foreign");
+        }
     }
 
     const std::size_t baseWorkingBytes = checkedAdd(
@@ -209,14 +249,17 @@ PlanarPressureRegionFragmentOpeningMomentumPressureEpochResult acceptEpoch(
         throw std::length_error(
             "opening momentum pressure-epoch aggregate working storage exceeded");
     }
-    std::vector<double> pressureCorrection(
-        fragments.fragments.size(), 0.0);
+    std::vector<double> pressureCorrection = warmStart == nullptr
+        ? std::vector<double>(fragments.fragments.size(), 0.0)
+        : warmStart->pressureCorrectionPascals;
 
     PlanarPressureRegionFragmentOpeningMomentumPressureEpochResult result;
     result.sourcePredictionFingerprint = prediction.fingerprint;
     result.sourcePredictedVelocityStateFingerprint =
         prediction.predictedVelocityState.fingerprint;
     result.sourcePredictedOpeningFluxFingerprint = openingFlux.fingerprint;
+    result.sourcePressureWarmStartFingerprint = warmStart == nullptr
+        ? 0 : warmStart->fingerprint;
     result.currentPressureOperatorFingerprint = pressureOperator.fingerprint;
     result.currentBasePressureOperatorFingerprint =
         basePressureOperator.fingerprint;
@@ -227,7 +270,8 @@ PlanarPressureRegionFragmentOpeningMomentumPressureEpochResult acceptEpoch(
     result.settings = settings;
     result.workingStorageBytes = workingBytes;
     result.diagnostics.usedTransportedPrediction = true;
-    result.diagnostics.usedColdPressureStart = true;
+    result.diagnostics.usedColdPressureStart = warmStart == nullptr;
+    result.diagnostics.usedWarmPressureStart = warmStart != nullptr;
     result.diagnostics.pressureStep =
         advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
             pressureOperator, basePressureOperator, grid, sweep, fragments,
@@ -286,9 +330,39 @@ acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
     const PlanarPressureRegionFragmentOpeningMomentumPressureEpochLimits&
         limits) {
     return acceptEpoch(
-        prediction, pressureOperator, basePressureOperator, grid, sweep,
+        prediction, nullptr, pressureOperator, basePressureOperator, grid, sweep,
         fragments, topology, volumeRates, openingDefinitions, openings,
         resistanceDefinitions, baseMetric, metric, settings, limits);
+}
+
+PlanarPressureRegionFragmentOpeningMomentumPressureEpochResult
+acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+    const PlanarPressureRegionFragmentOpeningMomentumPrediction& prediction,
+    const PlanarPressureRegionFragmentOpeningPressureWarmStart& warmStart,
+    const PlanarPressureRegionFragmentOpeningPressureOperator& pressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator& basePressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        resistanceDefinitions,
+    const PlanarPressureRegionFragmentVelocityMetric& baseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& metric,
+    const PlanarPressureRegionFragmentOpeningPressureStepSettings& settings,
+    const PlanarPressureRegionFragmentOpeningMomentumPressureEpochLimits&
+        limits) {
+    return acceptEpoch(
+        prediction, &warmStart, pressureOperator, basePressureOperator, grid,
+        sweep, fragments, topology, volumeRates, openingDefinitions,
+        openings, resistanceDefinitions, baseMetric, metric, settings,
+        limits);
 }
 
 void validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResultIntegrity(
@@ -312,7 +386,10 @@ void validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResultInteg
         || result.currentVolumeRateFingerprint == 0
         || result.currentResistanceDefinitionFingerprint == 0
         || !result.diagnostics.usedTransportedPrediction
-        || !result.diagnostics.usedColdPressureStart
+        || result.diagnostics.usedColdPressureStart
+            == result.diagnostics.usedWarmPressureStart
+        || result.diagnostics.usedColdPressureStart
+            != (result.sourcePressureWarmStartFingerprint == 0)
         || result.diagnostics.accepted
             != result.diagnostics.pressureStep.accepted
         || result.diagnostics.failureStage != expectedFailureStage
@@ -392,9 +469,45 @@ void validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResult(
     validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResultIntegrity(
         result);
     if (result != acceptEpoch(
-            prediction, pressureOperator, basePressureOperator, grid, sweep,
+            prediction, nullptr, pressureOperator, basePressureOperator, grid,
+            sweep,
             fragments, topology, volumeRates, openingDefinitions, openings,
             resistanceDefinitions, baseMetric, metric, settings, limits)) {
+        throw std::invalid_argument(
+            "opening momentum pressure-epoch result is foreign");
+    }
+}
+
+void validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResult(
+    const PlanarPressureRegionFragmentOpeningMomentumPressureEpochResult& result,
+    const PlanarPressureRegionFragmentOpeningMomentumPrediction& prediction,
+    const PlanarPressureRegionFragmentOpeningPressureWarmStart& warmStart,
+    const PlanarPressureRegionFragmentOpeningPressureOperator& pressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator& basePressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        resistanceDefinitions,
+    const PlanarPressureRegionFragmentVelocityMetric& baseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& metric,
+    const PlanarPressureRegionFragmentOpeningPressureStepSettings& settings,
+    const PlanarPressureRegionFragmentOpeningMomentumPressureEpochLimits&
+        limits) {
+    validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResultIntegrity(
+        result);
+    if (result != acceptEpoch(
+            prediction, &warmStart, pressureOperator, basePressureOperator,
+            grid, sweep, fragments, topology, volumeRates,
+            openingDefinitions, openings, resistanceDefinitions, baseMetric,
+            metric, settings, limits)) {
         throw std::invalid_argument(
             "opening momentum pressure-epoch result is foreign");
     }

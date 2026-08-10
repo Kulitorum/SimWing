@@ -2,6 +2,7 @@
 
 #include "fluid/planar_region_fragment_opening_momentum_prediction.h"
 #include "fluid/planar_region_fragment_opening_pressure_step.h"
+#include "fluid/planar_region_fragment_opening_pressure_warm_start.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -10,7 +11,7 @@
 namespace simwing::fsi::fluid {
 
 inline constexpr std::uint32_t
-    planarPressureRegionFragmentOpeningMomentumPressureEpochVersion = 1;
+    planarPressureRegionFragmentOpeningMomentumPressureEpochVersion = 2;
 
 enum class
     PlanarPressureRegionFragmentOpeningMomentumPressureEpochFailureStage
@@ -23,6 +24,7 @@ enum class
 
 struct PlanarPressureRegionFragmentOpeningMomentumPressureEpochLimits {
     PlanarPressureRegionFragmentOpeningVelocityStateLimits stateLimits;
+    PlanarPressureRegionFragmentOpeningPressureWarmStartLimits warmStartLimits;
     PlanarPressureRegionFragmentOpeningFluxLimits openingFluxLimits;
     PlanarPressureRegionFragmentOpeningPressureStepLimits pressureStepLimits;
     PlanarPressureRegionFragmentOpeningAcceptedStateLimits acceptedStateLimits;
@@ -34,6 +36,7 @@ struct PlanarPressureRegionFragmentOpeningMomentumPressureEpochDiagnostics {
     bool accepted = false;
     bool usedTransportedPrediction = false;
     bool usedColdPressureStart = false;
+    bool usedWarmPressureStart = false;
     PlanarPressureRegionFragmentOpeningMomentumPressureEpochFailureStage
         failureStage =
             PlanarPressureRegionFragmentOpeningMomentumPressureEpochFailureStage::
@@ -48,20 +51,22 @@ struct PlanarPressureRegionFragmentOpeningMomentumPressureEpochDiagnostics {
 // Atomic pressure transaction seeded from one transported consecutive
 // predictor. Same-region relative velocities and aperture-relative samples
 // are extracted from the predictor's immutable opening-aware state; retained
-// pressure-layer links remain zero. The exact opening flux is rebuilt, a zero
-// correction-pressure gauge is used as an explicit cold start, and resistance
-// plus augmented projection run privately. Only a completely accepted step
-// publishes an immutable accepted endpoint.
+// pressure-layer links remain zero. The exact opening flux is rebuilt, and the
+// correction pressure comes either from an explicit zero cold start or from a
+// pressure-only stable-ID/gauge-mapped warm artifact. Resistance plus augmented
+// projection run privately. Only a completely accepted step publishes an
+// immutable accepted endpoint.
 //
-// This opt-in composition does not yet carry a pressure warm start, apply
-// traction, perform viscosity/wall shear, rebase topology, or select the
-// production worker.
+// Warm start never carries the obsolete continuation velocity/flux fields.
+// This opt-in composition does not apply traction, perform viscosity/wall
+// shear, rebase topology, or select the production worker.
 struct PlanarPressureRegionFragmentOpeningMomentumPressureEpochResult {
     std::uint32_t version =
         planarPressureRegionFragmentOpeningMomentumPressureEpochVersion;
     std::uint64_t sourcePredictionFingerprint = 0;
     std::uint64_t sourcePredictedVelocityStateFingerprint = 0;
     std::uint64_t sourcePredictedOpeningFluxFingerprint = 0;
+    std::uint64_t sourcePressureWarmStartFingerprint = 0;
     std::uint64_t currentPressureOperatorFingerprint = 0;
     std::uint64_t currentBasePressureOperatorFingerprint = 0;
     std::uint64_t currentOpeningFingerprint = 0;
@@ -103,6 +108,29 @@ acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
     const PlanarPressureRegionFragmentOpeningMomentumPressureEpochLimits&
         limits = {});
 
+[[nodiscard]]
+PlanarPressureRegionFragmentOpeningMomentumPressureEpochResult
+acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+    const PlanarPressureRegionFragmentOpeningMomentumPrediction& prediction,
+    const PlanarPressureRegionFragmentOpeningPressureWarmStart& warmStart,
+    const PlanarPressureRegionFragmentOpeningPressureOperator& pressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator& basePressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
+    std::span<const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        resistanceDefinitions,
+    const PlanarPressureRegionFragmentVelocityMetric& baseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& metric,
+    const PlanarPressureRegionFragmentOpeningPressureStepSettings& settings = {},
+    const PlanarPressureRegionFragmentOpeningMomentumPressureEpochLimits&
+        limits = {});
+
 void validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResultIntegrity(
     const PlanarPressureRegionFragmentOpeningMomentumPressureEpochResult&
         result);
@@ -110,6 +138,28 @@ void validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResultInteg
 void validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResult(
     const PlanarPressureRegionFragmentOpeningMomentumPressureEpochResult& result,
     const PlanarPressureRegionFragmentOpeningMomentumPrediction& prediction,
+    const PlanarPressureRegionFragmentOpeningPressureOperator& pressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator& basePressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
+    std::span<const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        resistanceDefinitions,
+    const PlanarPressureRegionFragmentVelocityMetric& baseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& metric,
+    const PlanarPressureRegionFragmentOpeningPressureStepSettings& settings = {},
+    const PlanarPressureRegionFragmentOpeningMomentumPressureEpochLimits&
+        limits = {});
+
+void validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResult(
+    const PlanarPressureRegionFragmentOpeningMomentumPressureEpochResult& result,
+    const PlanarPressureRegionFragmentOpeningMomentumPrediction& prediction,
+    const PlanarPressureRegionFragmentOpeningPressureWarmStart& warmStart,
     const PlanarPressureRegionFragmentOpeningPressureOperator& pressureOperator,
     const PlanarPressureRegionFragmentPressureOperator& basePressureOperator,
     const PeriodicCartesianGrid& grid,
