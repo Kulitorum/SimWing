@@ -496,6 +496,7 @@ src/fsi/
         planar_region_opening_power.* midpoint pressure-power audit
         planar_region_fragment.* layer-split Cartesian control geometry
         planar_region_fragment_topology.* paired grid/wall control faces
+        planar_region_fragment_pressure_operator.* regional graph Laplacian
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
         porous_topology.*   compatibility API over planar face topology
@@ -2221,6 +2222,19 @@ and component identity survives motion inside one topology segment, while
 X/Y/Z and positive/negative periodic rebases rebuild closed candidates. The
 graph does not yet assign face velocity, opening conductance, momentum mass,
 or a mimetic pressure operator.
+`planar_region_fragment_pressure_operator.*` assembles the corresponding
+orthogonal integrated graph Laplacian while preserving that wall exclusion.
+Each same-region link contributes `area / center distance` to both endpoint
+diagonals and one negative directed entry in each row; all layer walls
+contribute exactly zero entries. The canonical artifact has 24 rows, 128
+directed entries, two gauges, `160/3 m` unique geometry weight, and `320/3 m`
+total diagonal weight. Its exterior/pocket component weights are `728/15 m`
+and `4.8 m`. The regional 70 Pa pressure field is an exact component-null
+mode, arbitrary fields close symmetry and positive link energy, and each
+component's integrated action sums to zero. Row, entry, and gauge identities
+remain stable during motion inside one topology segment even as geometric
+weights update. The operator is deliberately ungauged and owns no source,
+linear solve, velocity correction, opening edge, or production state.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

@@ -1899,6 +1899,11 @@ makes this a certified aerodynamic solver.
   pressure-layer pairs retain two-sided wall geometry and signed static jump
   with zero conductance. The graph assigns deterministic connected components
   but owns no velocity, momentum, opening link, or pressure solve.
+- `src/fsi/fluid/planar_region_fragment_pressure_operator.{h,cpp}` assembles
+  an ungauged symmetric integrated graph Laplacian from only the same-region
+  fragment links. Layer walls create no entries. It retains one deterministic
+  gauge per component but owns no RHS, solve, velocity correction, or
+  production pressure state.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2243,6 +2248,20 @@ periodic rebase closure, and deep rejection of mutated link/fragment/component/
 fingerprint products plus link/component/byte/nested-source limits. Do not
 infer a regional face velocity, opening conductance, momentum operator,
 mimetic pressure acceptance, or production wiring.
+
+For `planar_region_fragment_pressure_operator.*`, require 24 rows and 128
+directed entries from the 64 same-region links, with all eight layer walls
+excluded. Require two deterministic component gauges, exact regional-pressure
+null action, zero integrated action per component, symmetric arbitrary-vector
+action, and nonnegative energy equal to the link sum. The canonical unique and
+diagonal geometry weights must be `160/3 m` and `320/3 m`; exterior/pocket
+component weights must be `728/15 m` and `4.8 m`. Require X/Y/Z closure and
+stable row/entry/component identity during within-segment motion while metric
+fingerprints update. Reject mutated operator/row/entry/component/member/source
+products, wrong-sized or non-finite pressure fields, and row/entry/component/
+byte/nested-topology limit violations. Do not infer a pressure RHS or solve,
+regional velocity correction, opening link, mimetic acceptance, or production
+ownership.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

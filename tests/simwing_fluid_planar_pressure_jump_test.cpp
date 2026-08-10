@@ -3,6 +3,7 @@
 #include "fluid/planar_region_opening_flow.h"
 #include "fluid/planar_region_opening_power.h"
 #include "fluid/planar_region_fragment.h"
+#include "fluid/planar_region_fragment_pressure_operator.h"
 #include "fluid/planar_region_fragment_topology.h"
 #include "fluid/planar_region_sweep.h"
 #include "fluid/projection.h"
@@ -169,6 +170,26 @@ const PlanarPressureRegionFragmentComponent* findFragmentComponent(
         topology.components, regionStableId,
         &PlanarPressureRegionFragmentComponent::regionStableId);
     return found == topology.components.end() ? nullptr : &*found;
+}
+
+const PlanarPressureRegionFragmentPressureOperatorComponent*
+findFragmentOperatorComponent(
+    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const std::uint64_t regionStableId) {
+    const auto found = std::ranges::find(
+        pressureOperator.components, regionStableId,
+        &PlanarPressureRegionFragmentPressureOperatorComponent::
+            regionStableId);
+    return found == pressureOperator.components.end() ? nullptr : &*found;
+}
+
+double dotProduct(const std::vector<double>& first,
+                  const std::vector<double>& second) {
+    double result = 0.0;
+    for (std::size_t index = 0; index < first.size(); ++index) {
+        result += first[index] * second[index];
+    }
+    return result;
 }
 
 void testCanonicalAssemblyAndSameFacePocket() {
@@ -2152,6 +2173,334 @@ void testPlanarRegionalFragmentTopologyAxesAndRejection() {
         "regional fragment topology rejects mutated source geometry");
 }
 
+void testPlanarRegionalFragmentPressureOperator() {
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto pressureOperator =
+        buildPlanarPressureRegionFragmentPressureOperator(
+            geometry, sweep, fragments, topology);
+    const auto repeated =
+        buildPlanarPressureRegionFragmentPressureOperator(
+            geometry, sweep, fragments, topology);
+    check(pressureOperator == repeated
+              && pressureOperator.version
+                  == planarPressureRegionFragmentPressureOperatorVersion
+              && pressureOperator.fingerprint != 0
+              && pressureOperator.sourceFragmentFingerprint
+                  == fragments.fingerprint
+              && pressureOperator.sourceTopologyFingerprint
+                  == topology.fingerprint
+              && pressureOperator.rows.size() == 24
+              && pressureOperator.entries.size() == 128
+              && pressureOperator.components.size() == 2
+              && pressureOperator.componentFragmentIndices.size() == 24
+              && pressureOperator.includedSameRegionGridLinkCount == 64
+              && pressureOperator.excludedPressureLayerWallLinkCount == 8
+              && pressureOperator.ownedStorageBytes > 0,
+          "regional fragment pressure operator retains the complete conductive graph");
+    checkNear(pressureOperator.totalGeometryWeightMeters,
+              160.0 / 3.0, 2.0e-13,
+              "regional fragment pressure operator retains unique graph weight");
+    checkNear(pressureOperator.totalDiagonalGeometryWeightMeters,
+              320.0 / 3.0, 4.0e-13,
+              "regional fragment pressure operator closes two-sided diagonal weight");
+
+    const auto* exterior = findFragmentOperatorComponent(
+        pressureOperator, 1);
+    const auto* pocket = findFragmentOperatorComponent(
+        pressureOperator, 2);
+    check(exterior != nullptr && pocket != nullptr,
+          "regional fragment pressure operator retains both gauges");
+    if (exterior != nullptr && pocket != nullptr) {
+        check(exterior->fragmentCount == 20
+                  && pocket->fragmentCount == 4
+                  && pressureOperator.rows[
+                      exterior->gaugeFragmentIndex].isGauge
+                  && pressureOperator.rows[
+                      pocket->gaugeFragmentIndex].isGauge,
+              "regional fragment pressure operator retains one gauge per component");
+        checkNear(exterior->totalVolumeCubicMeters,
+                  13.6, 4.0e-14,
+                  "regional fragment pressure operator retains exterior volume");
+        checkNear(pocket->totalVolumeCubicMeters,
+                  2.4, 4.0e-14,
+                  "regional fragment pressure operator retains pocket volume");
+        checkNear(exterior->totalGeometryWeightMeters,
+                  728.0 / 15.0, 2.0e-13,
+                  "regional fragment pressure operator retains exterior graph weight");
+        checkNear(pocket->totalGeometryWeightMeters,
+                  4.8, 4.0e-14,
+                  "regional fragment pressure operator retains pocket graph weight");
+    }
+
+    std::vector<double> regionalPressure;
+    regionalPressure.reserve(fragments.fragments.size());
+    for (const auto& fragment : fragments.fragments) {
+        regionalPressure.push_back(fragment.pressurePascals);
+    }
+    const auto regionalAction =
+        applyPlanarPressureRegionFragmentPressureOperator(
+            pressureOperator, regionalPressure);
+    for (const double value : regionalAction) {
+        checkNear(value, 0.0, 0.0,
+                  "regional static pressure is an exact component-null mode");
+    }
+
+    std::vector<double> first(pressureOperator.rows.size());
+    std::vector<double> second(pressureOperator.rows.size());
+    for (std::size_t index = 0; index < first.size(); ++index) {
+        const double sample = static_cast<double>(index + 1);
+        first[index] = std::sin(0.37 * sample) + 0.05 * sample;
+        second[index] = std::cos(0.23 * sample) - 0.03 * sample;
+    }
+    const auto firstAction =
+        applyPlanarPressureRegionFragmentPressureOperator(
+            pressureOperator, first);
+    const auto secondAction =
+        applyPlanarPressureRegionFragmentPressureOperator(
+            pressureOperator, second);
+    checkNear(dotProduct(first, secondAction),
+              dotProduct(second, firstAction), 3.0e-13,
+              "regional fragment pressure operator is symmetric");
+    double expectedEnergy = 0.0;
+    for (const auto& link : topology.links) {
+        if (link.kind
+            != PlanarPressureRegionFragmentFaceKind::SameRegionGrid) {
+            continue;
+        }
+        const double difference = first[link.minusFragmentIndex]
+            - first[link.plusFragmentIndex];
+        expectedEnergy += link.sameRegionGeometryWeightMeters
+            * difference * difference;
+    }
+    check(expectedEnergy > 0.0,
+          "nonconstant regional fragment pressure has positive energy");
+    checkNear(dotProduct(first, firstAction), expectedEnergy, 4.0e-13,
+              "regional fragment pressure energy equals its link sum");
+    for (const auto& component : pressureOperator.components) {
+        double actionSum = 0.0;
+        for (std::size_t offset = 0;
+             offset < component.fragmentCount; ++offset) {
+            actionSum += firstAction[
+                pressureOperator.componentFragmentIndices[
+                    component.firstFragmentMember + offset]];
+        }
+        checkNear(actionSum, 0.0, 4.0e-14,
+                  "regional fragment pressure component conserves row sum");
+    }
+
+    std::set<std::uint64_t> rowIds;
+    std::set<std::uint64_t> entryIds;
+    for (const auto& row : pressureOperator.rows) {
+        rowIds.insert(row.stableId);
+        check(row.fragmentStableId
+                  == fragments.fragments[row.fragmentIndex].stableId
+                  && row.diagonalGeometryWeightMeters > 0.0,
+              "regional pressure row remains bound to its fragment");
+    }
+    for (const auto& entry : pressureOperator.entries) {
+        entryIds.insert(entry.stableId);
+        const auto& link = topology.links[entry.sourceFaceLinkIndex];
+        check(link.kind
+                  == PlanarPressureRegionFragmentFaceKind::SameRegionGrid
+                  && entry.sourceFaceLinkStableId == link.stableId
+                  && entry.geometryWeightMeters
+                      == link.sameRegionGeometryWeightMeters,
+              "regional pressure entry excludes every fabric wall");
+    }
+    check(rowIds.size() == pressureOperator.rows.size()
+              && entryIds.size() == pressureOperator.entries.size(),
+          "regional pressure rows and directed entries have unique identity");
+    validatePlanarPressureRegionFragmentPressureOperator(
+        pressureOperator, geometry, sweep, fragments, topology);
+
+    const auto translatedLayers = translatePlanarPressureJumpLayers(
+        geometry, layers, 0.1).layers;
+    const auto translatedSweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, translatedLayers, 1.0);
+    const auto translatedFragments = buildPlanarPressureRegionFragments(
+        geometry, translatedSweep);
+    const auto translatedTopology =
+        buildPlanarPressureRegionFragmentTopology(
+            geometry, translatedSweep, translatedFragments);
+    const auto translatedOperator =
+        buildPlanarPressureRegionFragmentPressureOperator(
+            geometry, translatedSweep, translatedFragments,
+            translatedTopology);
+    std::set<std::uint64_t> translatedRowIds;
+    std::set<std::uint64_t> translatedEntryIds;
+    for (const auto& row : translatedOperator.rows) {
+        translatedRowIds.insert(row.stableId);
+    }
+    for (const auto& entry : translatedOperator.entries) {
+        translatedEntryIds.insert(entry.stableId);
+    }
+    check(translatedRowIds == rowIds
+              && translatedEntryIds == entryIds
+              && translatedOperator.components[0].stableId
+                  == pressureOperator.components[0].stableId
+              && translatedOperator.components[1].stableId
+                  == pressureOperator.components[1].stableId
+              && translatedOperator.fingerprint
+                  != pressureOperator.fingerprint,
+          "within-segment motion preserves operator identity while updating metrics");
+}
+
+void testPlanarRegionalFragmentPressureOperatorAxesAndRejection() {
+    const auto geometry = grid();
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> layers{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        const auto sweep = makePlanarPressureRegionSweepLedger(
+            geometry, layers, layers, 1.0);
+        const auto fragments = buildPlanarPressureRegionFragments(
+            geometry, sweep);
+        const auto topology = buildPlanarPressureRegionFragmentTopology(
+            geometry, sweep, fragments);
+        const auto pressureOperator =
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, sweep, fragments, topology);
+        std::vector<double> regionalPressure;
+        for (const auto& fragment : fragments.fragments) {
+            regionalPressure.push_back(fragment.pressurePascals);
+        }
+        const auto action =
+            applyPlanarPressureRegionFragmentPressureOperator(
+                pressureOperator, regionalPressure);
+        check(pressureOperator.rows.size() == fragments.fragments.size()
+                  && pressureOperator.entries.size()
+                      == 2 * topology.sameRegionGridLinkCount
+                  && pressureOperator.components.size() == 2
+                  && pressureOperator.excludedPressureLayerWallLinkCount
+                      == topology.pressureLayerWallLinkCount
+                  && pressureOperator.totalGeometryWeightMeters > 0.0,
+              "regional fragment pressure operator closes on every axis");
+        for (const double value : action) {
+            checkNear(value, 0.0, 0.0,
+                      "regional pressure jump remains a null mode on every axis");
+        }
+    }
+
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto pressureOperator =
+        buildPlanarPressureRegionFragmentPressureOperator(
+            geometry, sweep, fragments, topology);
+
+    auto corrupt = pressureOperator;
+    corrupt.fingerprint = 0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentPressureOperator(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional pressure operator rejects fingerprint corruption");
+    corrupt = pressureOperator;
+    corrupt.rows[0].diagonalGeometryWeightMeters += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentPressureOperator(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional pressure operator rejects row corruption");
+    corrupt = pressureOperator;
+    corrupt.entries[0].geometryWeightMeters += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentPressureOperator(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional pressure operator rejects entry corruption");
+    corrupt = pressureOperator;
+    corrupt.components[0].totalVolumeCubicMeters += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentPressureOperator(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional pressure operator rejects component corruption");
+    corrupt = pressureOperator;
+    corrupt.componentFragmentIndices[0] =
+        corrupt.componentFragmentIndices[1];
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentPressureOperator(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional pressure operator rejects member corruption");
+    expectRejected(
+        [&] { static_cast<void>(
+            applyPlanarPressureRegionFragmentPressureOperator(
+                corrupt, std::vector<double>(fragments.fragments.size()))); },
+        "regional pressure application rejects a corrupted operator");
+    expectRejected(
+        [&] { static_cast<void>(
+            applyPlanarPressureRegionFragmentPressureOperator(
+                pressureOperator, std::vector<double>(1))); },
+        "regional pressure application rejects a wrong-sized field");
+    auto nonfinite = std::vector<double>(fragments.fragments.size(), 0.0);
+    nonfinite[0] = std::numeric_limits<double>::quiet_NaN();
+    expectRejected(
+        [&] { static_cast<void>(
+            applyPlanarPressureRegionFragmentPressureOperator(
+                pressureOperator, nonfinite)); },
+        "regional pressure application rejects non-finite values");
+
+    auto limits =
+        PlanarPressureRegionFragmentPressureOperatorLimits{};
+    limits.maximumRows = pressureOperator.rows.size() - 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional pressure operator enforces the row limit");
+    limits = {};
+    limits.maximumEntries = pressureOperator.entries.size() - 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional pressure operator enforces the entry limit");
+    limits = {};
+    limits.maximumComponents = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional pressure operator enforces the component limit");
+    limits = {};
+    limits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional pressure operator enforces the byte limit");
+    limits = {};
+    limits.topologyLimits.maximumLinks = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional pressure operator enforces nested topology limits");
+    auto corruptTopology = topology;
+    corruptTopology.links[0].stableId ^= 1U;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, sweep, fragments, corruptTopology)); },
+        "regional pressure operator rejects mutated topology");
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -2302,6 +2651,8 @@ int main() {
     testPlanarRegionalFragmentsAllAxesAndRejection();
     testPlanarRegionalFragmentTopology();
     testPlanarRegionalFragmentTopologyAxesAndRejection();
+    testPlanarRegionalFragmentPressureOperator();
+    testPlanarRegionalFragmentPressureOperatorAxesAndRejection();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {

@@ -235,6 +235,15 @@ exactly zero conductance. All six face incidences and boundary area close per
 fragment through X/Y/Z, rigid in-segment motion, and signed periodic rebases.
 This is connectivity evidence only; it still owns no regional velocity or
 pressure solve.
+A bounded symmetric pressure operator now acts on that graph without crossing
+fabric. Its 24 rows contain 128 directed entries from the 64 same-region links;
+the eight layer walls contribute no entry. The canonical regional pressure is
+therefore an exact two-component null mode while arbitrary fields satisfy
+symmetry, nonnegative link energy, and zero integrated row sum per component.
+The unique `area / distance` weight is `160/3 m` and the two-sided diagonal sum
+is `320/3 m`. Stable row/entry/gauge identity survives motion within one
+topology segment. This remains an ungauged offline operator with no RHS, solve,
+velocity update, or production pressure ownership.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.
