@@ -2428,6 +2428,19 @@ flow endpoint only. The following pressure state composes total authored-plus-
 correction pressure on that opening-connected gauge, so the open-area load
 partition can later bind without falsely mixing it with the sealed pressure
 certificate. Structure traction, rebases, and worker selection remain outside.
+`planar_region_fragment_opening_accepted_state_persistence.*` gives that
+endpoint a bounded deterministic `SWRO` restart envelope. It serializes exact
+lineage, pressure-step settings, acceptance certificates, stable aperture
+samples, topology-link velocities, and correction pressure in little-endian
+form with a payload checksum. Derived opening-flux rows are deliberately not
+duplicated: decode rebuilds them from trusted current geometry and aperture
+definitions, requires their fingerprint to match the wire, and then runs the
+complete accepted-state source validator before transactionally replacing the
+destination. Round trip and the following accepted epoch are bit-exact.
+Foreign sources, unsupported versions, malformed reserved fields, truncation,
+trailing bytes, checksum and recomputed-checksum corruption, and record/byte
+limits all reject without changing the prior destination. This is an isolated
+state codec, not a worker checkpoint or mode selector.
 `planar_region_fragment_opening_continuation.*` now provides a strict handoff
 from that endpoint into one consecutive topology-stable geometric epoch. It
 fully revalidates the previous accepted state and both source epochs, requires

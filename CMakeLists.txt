@@ -582,6 +582,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/planar_region_fragment_opening_pressure_step.h
     src/fsi/fluid/planar_region_fragment_opening_accepted_state.cpp
     src/fsi/fluid/planar_region_fragment_opening_accepted_state.h
+    src/fsi/fluid/planar_region_fragment_opening_accepted_state_persistence.cpp
+    src/fsi/fluid/planar_region_fragment_opening_accepted_state_persistence.h
     src/fsi/fluid/planar_region_fragment_opening_continuation.cpp
     src/fsi/fluid/planar_region_fragment_opening_continuation.h
     src/fsi/fluid/planar_region_fragment_opening_pressure_epoch.cpp

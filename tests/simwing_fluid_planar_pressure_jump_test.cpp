@@ -5,6 +5,7 @@
 #include "fluid/planar_region_fragment.h"
 #include "fluid/planar_region_fragment_accepted_state.h"
 #include "fluid/planar_region_fragment_opening_accepted_state.h"
+#include "fluid/planar_region_fragment_opening_accepted_state_persistence.h"
 #include "fluid/planar_region_fragment_opening_continuation.h"
 #include "fluid/planar_region_fragment_opening_load_state.h"
 #include "fluid/planar_region_fragment_opening_pressure_state.h"
@@ -62,6 +63,23 @@ void checkNear(const double actual,
                      "FAIL: %s (actual %.17g, expected %.17g)\n",
                      message, actual, expected);
         ++failures;
+    }
+}
+
+void refreshOpeningAcceptedStatePersistenceChecksum(
+    std::vector<std::uint8_t>& bytes) {
+    constexpr std::size_t envelopeBytes = 24;
+    constexpr std::size_t checksumOffset = 16;
+    constexpr std::uint64_t offsetBasis = 14695981039346656037ULL;
+    constexpr std::uint64_t prime = 1099511628211ULL;
+    std::uint64_t value = offsetBasis;
+    for (std::size_t index = envelopeBytes; index < bytes.size(); ++index) {
+        value ^= bytes[index];
+        value *= prime;
+    }
+    for (std::size_t byte = 0; byte < sizeof(value); ++byte) {
+        bytes[checksumOffset + byte] = static_cast<std::uint8_t>(
+            value >> (8U * byte));
     }
 }
 
@@ -9517,6 +9535,168 @@ void testPlanarRegionalResistedOpeningPressureStep() {
         resistance, nextPressureOperator, nextBase, nextSweep,
         nextFragments, nextTopology, nextVolumeRates, definitions,
         nextOpenings, resistance, settings);
+
+    PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceError
+        persistenceError;
+    std::vector<std::uint8_t> persistentStateBytes;
+    std::vector<std::uint8_t> repeatedPersistentStateBytes;
+    check(serializePlanarPressureRegionFragmentOpeningAcceptedState(
+              pressureEpoch.acceptedState, nextPressureOperator, nextBase,
+              geometry, nextSweep, nextFragments, nextTopology,
+              nextVolumeRates, definitions, nextOpenings, resistance,
+              persistentStateBytes, &persistenceError)
+              && persistenceError.code
+                  == PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode::
+                      None
+              && serializePlanarPressureRegionFragmentOpeningAcceptedState(
+                  pressureEpoch.acceptedState, nextPressureOperator,
+                  nextBase, geometry, nextSweep, nextFragments,
+                  nextTopology, nextVolumeRates, definitions, nextOpenings,
+                  resistance, repeatedPersistentStateBytes,
+                  &persistenceError)
+              && persistentStateBytes == repeatedPersistentStateBytes,
+          "opening accepted-state persistence encodes deterministically");
+    PlanarPressureRegionFragmentOpeningAcceptedState restoredPressureState;
+    const bool restoredPressureStateAccepted =
+        deserializePlanarPressureRegionFragmentOpeningAcceptedState(
+            persistentStateBytes, nextPressureOperator, nextBase, geometry,
+            nextSweep, nextFragments, nextTopology, nextVolumeRates,
+            definitions, nextOpenings, resistance, restoredPressureState,
+            &persistenceError);
+    std::vector<std::uint8_t> restoredPersistentStateBytes;
+    check(restoredPressureStateAccepted
+              && persistenceError.code
+                  == PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode::
+                      None
+              && restoredPressureState == pressureEpoch.acceptedState
+              && serializePlanarPressureRegionFragmentOpeningAcceptedState(
+                  restoredPressureState, nextPressureOperator, nextBase,
+                  geometry, nextSweep, nextFragments, nextTopology,
+                  nextVolumeRates, definitions, nextOpenings, resistance,
+                  restoredPersistentStateBytes, &persistenceError)
+              && restoredPersistentStateBytes == persistentStateBytes,
+          "opening accepted-state persistence rebuilds flux and round trips bit-exactly");
+
+    const auto expectPersistenceRejected =
+        [&](const std::vector<std::uint8_t>& candidateBytes,
+            const PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode
+                expectedCode,
+            const PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceLimits&
+                persistenceLimits = {}) {
+            auto retainedState = acceptedState;
+            const auto before = retainedState;
+            PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceError
+                rejectedError;
+            const bool decoded =
+                deserializePlanarPressureRegionFragmentOpeningAcceptedState(
+                    candidateBytes, nextPressureOperator, nextBase, geometry,
+                    nextSweep, nextFragments, nextTopology, nextVolumeRates,
+                    definitions, nextOpenings, resistance, retainedState,
+                    &rejectedError, persistenceLimits);
+            return !decoded && rejectedError.code == expectedCode
+                && retainedState == before;
+        };
+    auto corruptPersistentStateBytes = persistentStateBytes;
+    corruptPersistentStateBytes[0] ^= 0x01U;
+    check(expectPersistenceRejected(
+              corruptPersistentStateBytes,
+              PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode::
+                  InvalidMagic),
+          "opening accepted-state persistence rejects foreign magic transactionally");
+    corruptPersistentStateBytes = persistentStateBytes;
+    corruptPersistentStateBytes[4] = 2;
+    corruptPersistentStateBytes[5] = 0;
+    check(expectPersistenceRejected(
+              corruptPersistentStateBytes,
+              PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode::
+                  UnsupportedVersion),
+          "opening accepted-state persistence rejects unsupported protocol transactionally");
+    corruptPersistentStateBytes = persistentStateBytes;
+    corruptPersistentStateBytes[6] = 1;
+    check(expectPersistenceRejected(
+              corruptPersistentStateBytes,
+              PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode::
+                  InvalidData),
+          "opening accepted-state persistence rejects reserved envelope bits");
+    corruptPersistentStateBytes = persistentStateBytes;
+    corruptPersistentStateBytes.back() ^= 0x01U;
+    check(expectPersistenceRejected(
+              corruptPersistentStateBytes,
+              PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode::
+                  ChecksumMismatch),
+          "opening accepted-state persistence detects payload corruption");
+    corruptPersistentStateBytes = persistentStateBytes;
+    constexpr std::size_t encodedStateFingerprintOffset = 40;
+    corruptPersistentStateBytes[encodedStateFingerprintOffset] ^= 0x01U;
+    refreshOpeningAcceptedStatePersistenceChecksum(
+        corruptPersistentStateBytes);
+    check(expectPersistenceRejected(
+              corruptPersistentStateBytes,
+              PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode::
+                  InvalidData),
+          "opening accepted-state persistence rejects recomputed-checksum state corruption");
+    corruptPersistentStateBytes = persistentStateBytes;
+    corruptPersistentStateBytes.pop_back();
+    check(expectPersistenceRejected(
+              corruptPersistentStateBytes,
+              PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode::
+                  Truncated),
+          "opening accepted-state persistence rejects truncation transactionally");
+    corruptPersistentStateBytes = persistentStateBytes;
+    corruptPersistentStateBytes.push_back(0);
+    check(expectPersistenceRejected(
+              corruptPersistentStateBytes,
+              PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode::
+                  TrailingData),
+          "opening accepted-state persistence rejects trailing bytes transactionally");
+    auto persistenceLimits =
+        PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceLimits{};
+    persistenceLimits.maximumTopologyLinkVelocities =
+        nextTopology.links.size() - 1;
+    check(expectPersistenceRejected(
+              persistentStateBytes,
+              PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode::
+                  LimitExceeded,
+              persistenceLimits),
+          "opening accepted-state persistence enforces decode record limits");
+    auto foreignDecodedState = acceptedState;
+    const auto retainedForeignDecodedState = foreignDecodedState;
+    check(!deserializePlanarPressureRegionFragmentOpeningAcceptedState(
+              persistentStateBytes, pressureOperator, base, geometry, sweep,
+              fragments, topology, volumeRates, definitions, openings,
+              resistance, foreignDecodedState, &persistenceError)
+              && persistenceError.code
+                  == PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode::
+                      SourceMismatch
+              && foreignDecodedState == retainedForeignDecodedState,
+          "opening accepted-state persistence rejects a foreign source epoch transactionally");
+    persistenceLimits = {};
+    persistenceLimits.maximumEncodedBytes = persistentStateBytes.size() - 1;
+    std::vector<std::uint8_t> retainedEncoding{1, 2, 3};
+    const auto retainedEncodingBefore = retainedEncoding;
+    check(!serializePlanarPressureRegionFragmentOpeningAcceptedState(
+              pressureEpoch.acceptedState, nextPressureOperator, nextBase,
+              geometry, nextSweep, nextFragments, nextTopology,
+              nextVolumeRates, definitions, nextOpenings, resistance,
+              retainedEncoding, &persistenceError, persistenceLimits)
+              && persistenceError.code
+                  == PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode::
+                      LimitExceeded
+              && retainedEncoding == retainedEncodingBefore,
+          "opening accepted-state persistence enforces encode limits transactionally");
+    auto corruptPersistentState = pressureEpoch.acceptedState;
+    corruptPersistentState.pressureCorrectionPascals[0] += 0.1;
+    retainedEncoding = retainedEncodingBefore;
+    check(!serializePlanarPressureRegionFragmentOpeningAcceptedState(
+              corruptPersistentState, nextPressureOperator, nextBase,
+              geometry, nextSweep, nextFragments, nextTopology,
+              nextVolumeRates, definitions, nextOpenings, resistance,
+              retainedEncoding, &persistenceError)
+              && persistenceError.code
+                  == PlanarPressureRegionFragmentOpeningAcceptedStatePersistenceErrorCode::
+                      InvalidData
+              && retainedEncoding == retainedEncodingBefore,
+          "opening accepted-state persistence rejects corrupt source state transactionally");
     auto corruptPressureEpoch = pressureEpoch;
     corruptPressureEpoch.acceptedState.pressureCorrectionPascals[0] += 0.1;
     expectRejected(
@@ -9591,7 +9771,8 @@ void testPlanarRegionalResistedOpeningPressureStep() {
         },
         "opening pressure epoch enforces its aggregate owned-storage limit");
 
-    if (pressureEpoch.diagnostics.accepted) {
+    if (pressureEpoch.diagnostics.accepted
+        && restoredPressureStateAccepted) {
         auto thirdLayers = nextLayers;
         thirdLayers[0].physicalPlaneCoordinateMeters -= 0.02;
         thirdLayers[1].physicalPlaneCoordinateMeters += 0.02;
@@ -9624,7 +9805,16 @@ void testPlanarRegionalResistedOpeningPressureStep() {
                 thirdPressureOperator, thirdBase, thirdSweep,
                 thirdFragments, thirdTopology, thirdVolumeRates,
                 definitions, thirdOpenings, resistance, settings);
-        check(thirdPressureEpoch.diagnostics.accepted
+        const auto restoredThirdPressureEpoch =
+            acceptPlanarPressureRegionFragmentOpeningPressureEpoch(
+                restoredPressureState, nextPressureOperator, nextBase,
+                geometry, nextSweep, nextFragments, nextTopology,
+                nextVolumeRates, definitions, nextOpenings, resistance,
+                thirdPressureOperator, thirdBase, thirdSweep,
+                thirdFragments, thirdTopology, thirdVolumeRates,
+                definitions, thirdOpenings, resistance, settings);
+        check(thirdPressureEpoch == restoredThirdPressureEpoch
+                  && thirdPressureEpoch.diagnostics.accepted
                   && thirdPressureEpoch.sourceAcceptedStateFingerprint
                       == pressureEpoch.acceptedState.fingerprint
                   && thirdPressureEpoch.acceptedState
@@ -9632,7 +9822,7 @@ void testPlanarRegionalResistedOpeningPressureStep() {
                       == thirdPressureOperator.fingerprint
                   && thirdPressureEpoch.acceptedState.fingerprint
                       != pressureEpoch.acceptedState.fingerprint,
-              "opening pressure epochs chain through two consecutive accepted transitions");
+              "restored opening state continues with bit-exact consecutive acceptance");
         validatePlanarPressureRegionFragmentOpeningPressureEpochResult(
             thirdPressureEpoch, pressureEpoch.acceptedState,
             nextPressureOperator, nextBase, geometry, nextSweep,

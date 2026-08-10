@@ -1965,6 +1965,10 @@ makes this a certified aerodynamic solver.
   resistance/settings lineage, and independently reconstructs final
   continuity, connected pressure gauges, and diagonal kinetic energy before
   publication. It does not itself compose total regional pressure or loads.
+- `src/fsi/fluid/planar_region_fragment_opening_accepted_state_persistence.{h,cpp}`
+  provides the bounded checksummed `SWRO` codec for that endpoint. It stores
+  primary fields and certificates, rebuilds derived opening flux from trusted
+  sources on decode, and publishes only after full source validation.
 - `src/fsi/fluid/planar_region_fragment_opening_continuation.{h,cpp}` maps
   that endpoint into one exactly consecutive topology-stable epoch by
   one-to-one link, patch, fragment, and connected-component stable identity.
@@ -2585,6 +2589,18 @@ aggregate count/owned/working limits, and reject foreign coefficients,
 unaccepted steps, corrupted fields, and mismatched source epochs. This state
 does not certify total regional pressure, open-area pressure-load subtraction,
 Structure traction, rebase, or worker ownership.
+
+For `planar_region_fragment_opening_accepted_state_persistence.*`, encode only
+a fully source-validated accepted state in deterministic little-endian `SWRO`
+form with explicit protocol/payload versions, zero reserved fields, bounded
+record counts/bytes, and a checksum. Retain all primary fields, lineage,
+settings, and scalar acceptance certificates; do not duplicate derived
+opening-flux rows. Decode into a private candidate, rebuild opening flux from
+trusted current geometry/definitions, require its stored fingerprint, then run
+the complete accepted-state validator before replacing the destination.
+Reject magic/version/reserved/checksum/truncation/trailing corruption, foreign
+sources, recomputed-checksum state corruption, and allocation/record limits
+transactionally. A restored state must produce bit-exact following acceptance.
 
 For `planar_region_fragment_opening_continuation.*`, fully validate the prior
 accepted state and both epochs, require `previous.currentProfile ==
