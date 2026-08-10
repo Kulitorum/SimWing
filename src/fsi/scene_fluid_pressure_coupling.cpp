@@ -155,7 +155,12 @@ bool finite(const SceneFluidPressureCouplingStepDiagnostics& diagnostics) {
             || (diagnostics.mimeticPressureAudit.accepted
                 && diagnostics.mimeticPressureAudit.pressureSolve
                     .reducedTraceSolve.finite
-                && diagnostics.mimeticPressureComparison.finite))
+                && diagnostics.mimeticPressureComparison.finite
+                && diagnostics.mimeticPressureOwnerTransition.fingerprint
+                    != 0
+                && diagnostics.mimeticPressureOwnerTransition
+                       .comparisonFingerprint
+                    == diagnostics.mimeticPressureComparisonFingerprint))
         && diagnostics.pressureTransfer.finite
         && diagnostics.totalFluidTransfer.finite
         && std::isfinite(diagnostics.interfaceForceClosureNewtons)
@@ -294,6 +299,10 @@ SceneFluidPressureCoupling::SceneFluidPressureCoupling(
         throw std::invalid_argument(
             "scene pressure coupling graph and mimetic time steps differ");
     }
+    if (mimeticPressureAuditConfiguration_.enabled) {
+        validateSceneFluidPressureOwnerTransitionPolicy(
+            mimeticPressureAuditConfiguration_.ownerTransitionPolicy);
+    }
     if (transfer_.nodes().size() > limits_.maximumCouplingNodes
         || couplingInterfaceBytes(transfer_.nodes().size())
             > limits_.maximumInterfaceBytes) {
@@ -363,6 +372,13 @@ SceneFluidPressureCoupling::acceptedMimeticPressureComparison()
     const noexcept {
     return acceptedMimeticPressureComparison_
         ? &*acceptedMimeticPressureComparison_ : nullptr;
+}
+
+const SceneFluidPressureOwnerTransitionDecision*
+SceneFluidPressureCoupling::acceptedMimeticPressureOwnerTransition()
+    const noexcept {
+    return acceptedMimeticPressureOwnerTransition_
+        ? &*acceptedMimeticPressureOwnerTransition_ : nullptr;
 }
 
 std::uint64_t
@@ -843,6 +859,7 @@ void SceneFluidPressureCoupling::restore(
     acceptedMimeticPressureAuditWarmState_ =
         std::move(restoredMimeticPressureWarmState);
     acceptedMimeticPressureComparison_.reset();
+    acceptedMimeticPressureOwnerTransition_.reset();
 }
 
 SceneFluidPressureCouplingStepDiagnostics
@@ -1100,6 +1117,8 @@ SceneFluidPressureCoupling::advanceImpl(
                 mimeticPressureAuditCandidate;
             std::optional<SceneFluidPressureShadowComparison>
                 mimeticPressureComparisonCandidate;
+            std::optional<SceneFluidPressureOwnerTransitionDecision>
+                mimeticPressureOwnerTransitionCandidate;
             if (iterationResult.status
                     == StrongCouplingIterationStatus::Converged
                 && mimeticPressureAuditConfiguration_.enabled) {
@@ -1182,6 +1201,13 @@ SceneFluidPressureCoupling::advanceImpl(
                     mimeticPressureComparisonCandidate->fingerprint;
                 diagnostics.mimeticPressureComparison =
                     mimeticPressureComparisonCandidate->diagnostics;
+                mimeticPressureOwnerTransitionCandidate.emplace(
+                    decideSceneFluidPressureOwnerTransition(
+                        *mimeticPressureComparisonCandidate,
+                        mimeticPressureAuditConfiguration_
+                            .ownerTransitionPolicy));
+                diagnostics.mimeticPressureOwnerTransition =
+                    *mimeticPressureOwnerTransitionCandidate;
             }
             diagnostics.finite = finite(diagnostics);
             if (!diagnostics.finite) {
@@ -1207,6 +1233,8 @@ SceneFluidPressureCoupling::advanceImpl(
                     acceptedMimeticPressureAuditWarmState_.reset();
                     acceptedMimeticPressureComparison_ =
                         std::move(mimeticPressureComparisonCandidate);
+                    acceptedMimeticPressureOwnerTransition_ =
+                        std::move(mimeticPressureOwnerTransitionCandidate);
                 }
                 return diagnostics;
             }

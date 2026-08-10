@@ -3,6 +3,7 @@
 #include "coupling.h"
 #include "scene_fluid_mimetic_pressure_audit.h"
 #include "scene_fluid_pressure_epoch.h"
+#include "scene_fluid_pressure_owner_transition.h"
 #include "scene_fluid_pressure_sampling.h"
 #include "scene_fluid_pressure_shadow_comparison.h"
 #include "scene_fluid_pressure_topology_transition.h"
@@ -15,7 +16,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidPressureCouplingVersion = 1;
+inline constexpr std::uint32_t sceneFluidPressureCouplingVersion = 2;
 inline constexpr std::uint32_t
     sceneFluidPressureCouplingCheckpointVersion = 3;
 inline constexpr std::uint32_t
@@ -56,6 +57,7 @@ struct SceneFluidMimeticPressureAuditConfiguration {
     SceneFluidMimeticPressureAuditSettings settings;
     SceneFluidMimeticPressureAuditLimits limits;
     SceneFluidPressureShadowComparisonLimits comparisonLimits;
+    SceneFluidPressureOwnerTransitionPolicy ownerTransitionPolicy;
 };
 
 struct SceneFluidPressureCouplingStepDiagnostics {
@@ -77,6 +79,8 @@ struct SceneFluidPressureCouplingStepDiagnostics {
     std::uint64_t mimeticPressureComparisonFingerprint = 0;
     SceneFluidPressureShadowComparisonDiagnostics
         mimeticPressureComparison;
+    SceneFluidPressureOwnerTransitionDecision
+        mimeticPressureOwnerTransition;
     ConservativeTransferDiagnostics pressureTransfer;
     ConservativeTransferDiagnostics totalFluidTransfer;
     double interfaceForceClosureNewtons = 0.0;
@@ -198,6 +202,8 @@ public:
     acceptedMimeticPressureAudit() const noexcept;
     [[nodiscard]] const SceneFluidPressureShadowComparison*
     acceptedMimeticPressureComparison() const noexcept;
+    [[nodiscard]] const SceneFluidPressureOwnerTransitionDecision*
+    acceptedMimeticPressureOwnerTransition() const noexcept;
     // Rebuilds trusted topology for decoding the compact persistent SWMP
     // state. It does not mutate Structure or this accepted owner.
     [[nodiscard]] SceneFluidMimeticPressureAuditTopology
@@ -265,6 +271,8 @@ private:
         acceptedMimeticPressureAuditWarmState_;
     std::optional<SceneFluidPressureShadowComparison>
         acceptedMimeticPressureComparison_;
+    std::optional<SceneFluidPressureOwnerTransitionDecision>
+        acceptedMimeticPressureOwnerTransition_;
 };
 
 } // namespace simwing::fsi

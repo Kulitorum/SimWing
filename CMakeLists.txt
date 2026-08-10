@@ -2160,7 +2160,7 @@ add_test(NAME simwing_fsi_pressure_cell_mimetic_audit_headless
         --checkpoint-every 2)
 set_tests_properties(simwing_fsi_pressure_cell_mimetic_audit_headless PROPERTIES
     PASS_REGULAR_EXPRESSION
-        "mimetic-pressure-audit accepted.*consecutive=1, wall-predictor=1")
+        "mimetic-pressure-audit accepted.*owner=graph, owner-rejections=0xeb00.*consecutive=1, wall-predictor=1")
 add_test(NAME simwing_fsi_pressure_cell_mimetic_audit_checkpoint_resume
     COMMAND simwing-fsi
         --case pressure-cell
@@ -2175,7 +2175,7 @@ set_tests_properties(
     simwing_fsi_pressure_cell_mimetic_audit_checkpoint_resume PROPERTIES
     DEPENDS simwing_fsi_pressure_cell_mimetic_audit_headless
     PASS_REGULAR_EXPRESSION
-        "mimetic-pressure-audit accepted.*consecutive=1, wall-predictor=1")
+        "mimetic-pressure-audit accepted.*owner=graph, owner-rejections=0xeb00.*consecutive=1, wall-predictor=1")
 add_test(NAME simwing_fsi_pressure_cell_checkpoint_write
     COMMAND simwing-fsi
         --case pressure-cell

@@ -78,6 +78,8 @@ public:
     acceptedMimeticPressureAudit() const noexcept;
     [[nodiscard]] const SceneFluidPressureShadowComparison*
     acceptedMimeticPressureComparison() const noexcept;
+    [[nodiscard]] const SceneFluidPressureOwnerTransitionDecision*
+    acceptedMimeticPressureOwnerTransition() const noexcept;
     [[nodiscard]] SceneFluidMimeticPressureAuditTopology
     rebuildMimeticPressureAuditTopology(
         const StructureCheckpoint& structureCheckpoint) const;

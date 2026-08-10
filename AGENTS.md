@@ -542,8 +542,15 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   self-comparison exercises the positive branch with source evidence explicitly
   waived, while the live pressure-cell records pressure magnitude, pressure
   scale, nodal-force scale, and net-force rejections and therefore retains graph
-  loads. This is an agreement gate, not a claim that the graph operator is a
-  continuum oracle, and no worker consumes the decision to apply loads yet.
+  loads. The opt-in coupling transaction now owns that decision only after the
+  comparison succeeds, publishes it through diagnostics and the pressure-cell
+  accessor, and reports `owner=graph` with rejection mask `0xeb00` at step 4
+  and `0x6b00` after 600 steps, where the transient power-delta rejection has
+  cleared. A deliberately permissive zero-rejection policy selects the mimetic
+  candidate while leaving the production frame byte-identical, proving that
+  selection is still diagnostic. This is an agreement gate, not a claim that
+  the graph operator is a continuum oracle, and no worker consumes the
+  decision to apply loads yet.
 - `scene_fluid_pressure_operator_response_audit.{h,cpp}` is the offline
   bounded inverse-response discriminator for that remaining question. It runs
   the accepted source plus six deterministic component-compatible coordinate,

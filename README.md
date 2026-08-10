@@ -814,7 +814,13 @@ positive path when source evidence is explicitly waived, while the live cell
 fails pressure magnitude/scale, nodal-force scale, and net-force checks. The
 decision is diagnostic only: no worker uses it to apply mimetic loads, and
 agreement with the current graph path is not presented as a continuum-truth
-criterion.
+criterion. The opt-in coupling now publishes this decision atomically beside
+the accepted comparison. Its CLI line reports `owner=graph` with rejection
+mask `0xeb00` at step 4 (pressure magnitude/scale, nodal-force scale, net
+force, moment, and power) and `0x6b00` after 600 steps, when the power-delta
+check has cleared but the other five blockers remain. Even a deliberately
+permissive policy that selects the mimetic candidate leaves the production
+frame byte-identical; the selection is not yet a load-application command.
 The mismatch has now been narrowed further. The graph and mimetic source
 vectors agree to relative roundoff (`5.3e-16` at step 4 and `1.7e-16` after
 600 steps), while the shadow pressure and every transferred nodal load are

@@ -1654,7 +1654,10 @@ int main(int argc, char* argv[]) {
                             simulation.acceptedMimeticPressureAudit();
                         const auto* comparison =
                             simulation.acceptedMimeticPressureComparison();
-                        if (audit == nullptr || comparison == nullptr) {
+                        const auto* ownerTransition = simulation
+                            .acceptedMimeticPressureOwnerTransition();
+                        if (audit == nullptr || comparison == nullptr
+                            || ownerTransition == nullptr) {
                             std::printf(
                                 "simwing-fsi mimetic-pressure-audit not run\n");
                         } else {
@@ -1672,6 +1675,7 @@ int main(int argc, char* argv[]) {
                                 "nodal-force-shape-residual=%.6g, "
                                 "source-relative-delta=%.6g, "
                                 "source-max-delta=%.6g Pa*m, "
+                                "owner=%s, owner-rejections=0x%llx, "
                                 "consecutive=%u, wall-predictor=%u\n",
                                 audit->controlCells.controlCells.size(),
                                 audit->condensedTraceSystem.traces.size(),
@@ -1698,6 +1702,14 @@ int main(int argc, char* argv[]) {
                                     .relativeDeltaL2,
                                 comparison->sourceDiagnostics.integratedSource
                                     .maximumAbsoluteDelta,
+                                ownerTransition->selectedOwner
+                                        == simwing::fsi::
+                                            SceneFluidPressureOwner::
+                                                ShadowMimetic
+                                    ? "mimetic"
+                                    : "graph",
+                                static_cast<unsigned long long>(
+                                    ownerTransition->rejectionMask),
                                 audit->usesConsecutiveWarmStart ? 1U : 0U,
                                 audit->usesRegionWallPrediction ? 1U : 0U);
                         }

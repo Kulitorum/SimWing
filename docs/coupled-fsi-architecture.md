@@ -1257,7 +1257,17 @@ explicitly allowed. The live pressure-cell fails pressure-difference,
 pressure-scale, nodal-force-scale, and net-force checks while its source rows
 pass, so the typed result retains graph loads. This closes the software
 decision boundary but does not turn graph agreement into a physical continuum
-oracle, and no worker consumes the decision to apply the candidate field.
+oracle. `SceneFluidPressureCoupling` now constructs and owns this decision in
+the same accepted-only transaction as the shadow endpoint and comparison,
+publishes it through step diagnostics and the pressure-cell accessor, and
+clears it with the other transient diagnostics on checkpoint restore. The
+headless audit line reports `owner=graph, owner-rejections=0xeb00` at step 4;
+those bits identify pressure magnitude/scale, nodal-force scale, net force,
+moment, and power. After 600 steps it reports `0x6b00`: the transient power
+delta has fallen below policy while the other five blockers remain. A
+deliberately permissive policy produces a zero-rejection mimetic candidate
+decision while the resulting frame remains byte-identical to the graph-only
+worker. No worker consumes the decision to apply the candidate field.
 
 The comparison also retains every upstream control source row. On the live
 cell, graph and mimetic geometry rates are exact and their predicted-flow,

@@ -571,6 +571,12 @@ ScenePressureCellCase::acceptedMimeticPressureComparison() const noexcept {
     return coupling_.acceptedMimeticPressureComparison();
 }
 
+const SceneFluidPressureOwnerTransitionDecision*
+ScenePressureCellCase::acceptedMimeticPressureOwnerTransition()
+    const noexcept {
+    return coupling_.acceptedMimeticPressureOwnerTransition();
+}
+
 SceneFluidMimeticPressureAuditTopology
 ScenePressureCellCase::rebuildMimeticPressureAuditTopology(
     const StructureCheckpoint& structureCheckpoint) const {

@@ -517,6 +517,8 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
         const auto* endpoint = audited.acceptedMimeticPressureAudit();
         const auto* comparison =
             audited.acceptedMimeticPressureComparison();
+        const auto* ownerTransition =
+            audited.acceptedMimeticPressureOwnerTransition();
         const auto productionCheckpoint = production.checkpoint();
         const auto auditedCheckpoint = audited.checkpoint();
         auto auditedGraphOnly = auditedCheckpoint;
@@ -539,9 +541,17 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
                       == endpoint->fingerprint
                   && endpoint->pressureEpoch.diagnostics.accepted
                   && comparison != nullptr
+                  && ownerTransition != nullptr
                   && audited.diagnostics().coupling
                          .mimeticPressureComparisonFingerprint
                       == comparison->fingerprint
+                  && audited.diagnostics().coupling
+                         .mimeticPressureOwnerTransition
+                      == *ownerTransition
+                  && ownerTransition->comparisonFingerprint
+                      == comparison->fingerprint
+                  && ownerTransition->selectedOwner
+                      == fsi::SceneFluidPressureOwner::ReferenceGraph
                   && comparison->diagnostics.finite
                   && comparison->includesSourceComparison
                   && comparison->sourceDiagnostics.finite
@@ -583,11 +593,14 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
                              .acceptedPressureSamples.bindings.size()
                       == endpoint->controlCells.materialWallHalfFaceCount,
               "opt-in mimetic audit publishes one complete endpoint with roundoff-equivalent graph and shadow sources after graph convergence");
-        if (endpoint != nullptr && comparison != nullptr) {
+        if (endpoint != nullptr && comparison != nullptr
+            && ownerTransition != nullptr) {
             fsi::validateSceneFluidMimeticPressureAuditEndpointIntegrity(
                 *endpoint);
             fsi::validateSceneFluidPressureShadowComparisonIntegrity(
                 *comparison);
+            fsi::validateSceneFluidPressureOwnerTransitionDecisionIntegrity(
+                *ownerTransition, *comparison);
             check(endpoint->usesConsecutiveWarmStart == (step != 0)
                       && endpoint->usesRegionWallPrediction == (step != 0)
                       && endpoint->pressureEpoch
@@ -606,38 +619,42 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
     }
     const auto& acceptedComparison =
         *audited.acceptedMimeticPressureComparison();
-    const auto transition =
+    const auto& acceptedTransition =
+        *audited.acceptedMimeticPressureOwnerTransition();
+    const auto expectedTransition =
         fsi::decideSceneFluidPressureOwnerTransition(acceptedComparison);
     const auto repeatedTransition =
         fsi::decideSceneFluidPressureOwnerTransition(acceptedComparison);
     fsi::validateSceneFluidPressureOwnerTransitionDecisionIntegrity(
-        transition, acceptedComparison);
-    check(transition == repeatedTransition
-              && transition.selectedOwner
+        acceptedTransition, acceptedComparison);
+    check(acceptedTransition == expectedTransition
+              && acceptedTransition == repeatedTransition
+              && acceptedTransition.selectedOwner
                   == fsi::SceneFluidPressureOwner::ReferenceGraph
-              && transition.rejectionCount >= 4
+              && acceptedTransition.rejectionMask == 0xeb00ULL
+              && acceptedTransition.rejectionCount == 6
               && fsi::sceneFluidPressureOwnerTransitionRejectedFor(
-                  transition,
+                  acceptedTransition,
                   fsi::SceneFluidPressureOwnerTransitionRejection::
                       PressureDifferenceMismatch)
               && fsi::sceneFluidPressureOwnerTransitionRejectedFor(
-                  transition,
+                  acceptedTransition,
                   fsi::SceneFluidPressureOwnerTransitionRejection::
                       PressureScaleMismatch)
               && fsi::sceneFluidPressureOwnerTransitionRejectedFor(
-                  transition,
+                  acceptedTransition,
                   fsi::SceneFluidPressureOwnerTransitionRejection::
                       NodalForceScaleMismatch)
               && fsi::sceneFluidPressureOwnerTransitionRejectedFor(
-                  transition,
+                  acceptedTransition,
                   fsi::SceneFluidPressureOwnerTransitionRejection::
                       NetForceMismatch)
               && !fsi::sceneFluidPressureOwnerTransitionRejectedFor(
-                  transition,
+                  acceptedTransition,
                   fsi::SceneFluidPressureOwnerTransitionRejection::
                       IntegratedSourceMismatch),
           "pressure-owner transition gate retains graph loads for the live mimetic pressure and force mismatch while accepting roundoff-equivalent sources");
-    auto corruptedTransition = transition;
+    auto corruptedTransition = acceptedTransition;
     corruptedTransition.selectedOwner =
         fsi::SceneFluidPressureOwner::ShadowMimetic;
     bool rejected = false;
@@ -649,7 +666,7 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
     }
     check(rejected,
           "pressure-owner transition decision rejects selected-owner corruption");
-    auto invalidPolicy = transition.policy;
+    auto invalidPolicy = acceptedTransition.policy;
     invalidPolicy.maximumRelativeNetForceDelta =
         -std::numeric_limits<double>::epsilon();
     rejected = false;
@@ -661,6 +678,49 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
     }
     check(rejected,
           "pressure-owner transition rejects invalid policy before selection");
+    fsi::SceneFluidMimeticPressureAuditConfiguration invalidConfiguration;
+    invalidConfiguration.enabled = true;
+    invalidConfiguration.ownerTransitionPolicy = invalidPolicy;
+    rejected = false;
+    try {
+        fsi::ScenePressureCellCase invalid(invalidConfiguration);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected,
+          "pressure coupling rejects an invalid owner-transition policy during construction");
+
+    fsi::SceneFluidMimeticPressureAuditConfiguration
+        permissiveConfiguration;
+    permissiveConfiguration.enabled = true;
+    permissiveConfiguration.ownerTransitionPolicy
+        .maximumRelativePressureDifferenceDeltaL2 = 1.0;
+    permissiveConfiguration.ownerTransitionPolicy
+        .maximumAbsolutePressureScaleDeviation = 2.0;
+    permissiveConfiguration.ownerTransitionPolicy
+        .maximumRelativePressureShapeResidualL2 = 1.0;
+    permissiveConfiguration.ownerTransitionPolicy
+        .maximumAbsoluteNodalForceScaleDeviation = 2.0;
+    permissiveConfiguration.ownerTransitionPolicy
+        .maximumRelativeNodalForceShapeResidualL2 = 1.0;
+    permissiveConfiguration.ownerTransitionPolicy
+        .maximumRelativeNetForceDelta = 1.0;
+    permissiveConfiguration.ownerTransitionPolicy
+        .maximumRelativeNetMomentDelta = 1.0;
+    permissiveConfiguration.ownerTransitionPolicy
+        .maximumAbsolutePowerDeltaWatts = 100.0;
+    fsi::ScenePressureCellCase permissive(permissiveConfiguration);
+    fsi::ScenePressureCellCase permissiveReference;
+    const auto permissiveFrame = permissive.advance();
+    const auto referenceFrame = permissiveReference.advance();
+    const auto* permissiveTransition =
+        permissive.acceptedMimeticPressureOwnerTransition();
+    check(serialized(permissiveFrame) == serialized(referenceFrame)
+              && permissiveTransition != nullptr
+              && permissiveTransition->selectedOwner
+                  == fsi::SceneFluidPressureOwner::ShadowMimetic
+              && permissiveTransition->rejectionMask == 0,
+          "a permissive zero-rejection owner decision remains diagnostic and leaves graph-owned production frames byte-identical");
 
     auto corrupted = *audited.acceptedMimeticPressureAudit();
     ++corrupted.pressureEpoch.diagnostics.pressureSolve
@@ -716,6 +776,7 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
     }
     check(rejected
               && limited.acceptedMimeticPressureAudit() == nullptr
+              && limited.acceptedMimeticPressureOwnerTransition() == nullptr
               && serializedCheckpoint(limited.checkpoint())
                   == beforeRejection,
           "mimetic pressure-audit limit failure rolls Structure and graph pressure back transactionally");
@@ -742,6 +803,9 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
               && comparisonLimited.acceptedMimeticPressureAudit() == nullptr
               && comparisonLimited.acceptedMimeticPressureComparison()
                   == nullptr
+              && comparisonLimited
+                     .acceptedMimeticPressureOwnerTransition()
+                  == nullptr
               && serializedCheckpoint(comparisonLimited.checkpoint())
                   == beforeComparisonRejection,
           "mimetic pressure-comparison limit failure rolls Structure and every accepted owner back transactionally");
@@ -764,6 +828,9 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
     check(rejected
               && sourceCountLimited.acceptedMimeticPressureAudit() == nullptr
               && sourceCountLimited.acceptedMimeticPressureComparison()
+                  == nullptr
+              && sourceCountLimited
+                     .acceptedMimeticPressureOwnerTransition()
                   == nullptr
               && serializedCheckpoint(sourceCountLimited.checkpoint())
                   == beforeSourceCountRejection,
@@ -1760,6 +1827,7 @@ void testPersistentMimeticPressureAuditRestart() {
     restored.restore(decoded);
     check(restored.acceptedMimeticPressureAudit() == nullptr
               && restored.acceptedMimeticPressureComparison() == nullptr
+              && restored.acceptedMimeticPressureOwnerTransition() == nullptr
               && serializedCheckpoint(restored.checkpoint()) == bytes,
           "audited restore retains rebuilt warm topology without fabricating transient endpoint diagnostics");
     const auto expectedFrame = source.advance();
@@ -1767,16 +1835,22 @@ void testPersistentMimeticPressureAuditRestart() {
     const auto expectedEndpoint = *source.acceptedMimeticPressureAudit();
     const auto expectedComparison =
         *source.acceptedMimeticPressureComparison();
+    const auto expectedOwnerTransition =
+        *source.acceptedMimeticPressureOwnerTransition();
     const auto replayFrame = restored.advance();
     const auto* replayEndpoint = restored.acceptedMimeticPressureAudit();
     const auto* replayComparison =
         restored.acceptedMimeticPressureComparison();
+    const auto* replayOwnerTransition =
+        restored.acceptedMimeticPressureOwnerTransition();
     check(serialized(replayFrame) == serialized(expectedFrame)
               && restored.diagnostics() == expectedDiagnostics
               && replayEndpoint != nullptr
               && *replayEndpoint == expectedEndpoint
               && replayComparison != nullptr
               && *replayComparison == expectedComparison
+              && replayOwnerTransition != nullptr
+              && *replayOwnerTransition == expectedOwnerTransition
               && replayEndpoint->usesConsecutiveWarmStart
               && replayEndpoint->usesRegionWallPrediction,
           "restored compact SWMP state reproduces the exact next consecutive wall-predicted endpoint");
