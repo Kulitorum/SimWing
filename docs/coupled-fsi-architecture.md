@@ -2588,7 +2588,26 @@ also bootstraps. Re-entrant uniform and expanding breathing cases reproduce the
 separately assembled pipeline, while forced subcycle and truncated-pressure
 failures prove rollback at both numerical stages. The opt-in cycle aggregates
 bounded temporary storage but adds no viscosity, wall shear, traction, topology
-rebase, persistence, or production-worker selection.
+rebase, or production-worker selection.
+`planar_region_fragment_opening_momentum_cycle_state.*` now seals the accepted
+staggered endpoint pair for restart without retaining rejected-attempt or
+temporary predictor objects. It owns exact collocated transport controls at
+the cycle's current metric, the accepted pressure endpoint at its next metric,
+and only the intervening prediction/warm-pressure/aperture-flux fingerprints
+needed to prove they came from one atomic commit. Live validation binds every
+transport control's stable fragment identity, connected component, and current
+volume to the exact volume-rate and opening-aware metric epoch; the accepted
+metric must bind the pressure endpoint's fragment, topology, and opening
+sources. The companion persistence codec writes a bounded deterministic
+checksummed little-endian `SWRM` envelope. Transport controls are encoded
+directly, while the pressure half is an embedded `SWRO` artifact whose derived
+opening-flux ledger is rebuilt from trusted next-geometry sources during
+decode. Unsupported versions, foreign epochs, truncation, trailing data,
+checksum or recomputed-checksum corruption, and record/byte limits reject
+without replacing the destination. A restored bootstrap pair feeds the next
+re-entrant fourth geometry bit-exactly. This remains an isolated opt-in restart
+artifact, not a production case checkpoint, topology-rebase owner, or worker
+mode selector.
 `planar_region_fragment_opening_pressure_epoch.*` composes that warm product
 with the existing resistance-plus-augmented-projection transaction. It builds
 all four mutable fields privately, advances them together, and captures a new

@@ -14,6 +14,8 @@
 #include "fluid/planar_region_fragment_opening_momentum_transport.h"
 #include "fluid/planar_region_fragment_opening_momentum_prediction.h"
 #include "fluid/planar_region_fragment_opening_momentum_cycle.h"
+#include "fluid/planar_region_fragment_opening_momentum_cycle_state.h"
+#include "fluid/planar_region_fragment_opening_momentum_cycle_state_persistence.h"
 #include "fluid/planar_region_fragment_opening_momentum_pressure_epoch.h"
 #include "fluid/planar_region_fragment_opening_pressure_state.h"
 #include "fluid/planar_region_fragment_opening.h"
@@ -74,6 +76,23 @@ void checkNear(const double actual,
 }
 
 void refreshOpeningAcceptedStatePersistenceChecksum(
+    std::vector<std::uint8_t>& bytes) {
+    constexpr std::size_t envelopeBytes = 24;
+    constexpr std::size_t checksumOffset = 16;
+    constexpr std::uint64_t offsetBasis = 14695981039346656037ULL;
+    constexpr std::uint64_t prime = 1099511628211ULL;
+    std::uint64_t value = offsetBasis;
+    for (std::size_t index = envelopeBytes; index < bytes.size(); ++index) {
+        value ^= bytes[index];
+        value *= prime;
+    }
+    for (std::size_t byte = 0; byte < sizeof(value); ++byte) {
+        bytes[checksumOffset + byte] = static_cast<std::uint8_t>(
+            value >> (8U * byte));
+    }
+}
+
+void refreshOpeningMomentumCycleStatePersistenceChecksum(
     std::vector<std::uint8_t>& bytes) {
     constexpr std::size_t envelopeBytes = 24;
     constexpr std::size_t checksumOffset = 16;
@@ -9762,6 +9781,204 @@ void testPlanarRegionalOpeningMomentumTransport() {
             warmOpenings, zeroResistance, warmBaseMetric, warmMetric);
 
         if (axis != GridFaceAxis::X) continue;
+        const auto bootstrapCycleState =
+            capturePlanarPressureRegionFragmentOpeningMomentumCycleState(
+                bootstrapMomentumCycle, predictionMetric, warmMetric);
+        validatePlanarPressureRegionFragmentOpeningMomentumCycleState(
+            bootstrapCycleState, predictionVolumeRates,
+            predictionMetric, warmPressureOperator,
+            warmBasePressureOperator, geometry, warmSweep, warmFragments,
+            warmTopology, warmVolumeRates, definitions, warmOpenings,
+            zeroResistance, warmMetric);
+        check(bootstrapCycleState.transport
+                      == bootstrapMomentumCycle.transport
+                  && bootstrapCycleState.acceptedState
+                      == bootstrapMomentumCycle.acceptedState
+                  && bootstrapCycleState.transportMetricFingerprint
+                      == predictionMetric.fingerprint
+                  && bootstrapCycleState.acceptedMetricFingerprint
+                      == warmMetric.fingerprint
+                  && bootstrapCycleState.predictedOpeningFluxFingerprint
+                      == bootstrapCycleState.acceptedState
+                             .sourceOpeningFluxFingerprint,
+              "accepted cycle capture retains the exact staggered restart pair");
+
+        PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceError
+            cyclePersistenceError;
+        std::vector<std::uint8_t> cycleStateBytes;
+        std::vector<std::uint8_t> repeatedCycleStateBytes;
+        check(serializePlanarPressureRegionFragmentOpeningMomentumCycleState(
+                  bootstrapCycleState, predictionVolumeRates,
+                  predictionMetric, warmPressureOperator,
+                  warmBasePressureOperator, geometry, warmSweep,
+                  warmFragments, warmTopology, warmVolumeRates,
+                  definitions, warmOpenings, zeroResistance, warmMetric,
+                  cycleStateBytes, &cyclePersistenceError)
+                  && cyclePersistenceError.code
+                      == PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode::
+                          None
+                  && serializePlanarPressureRegionFragmentOpeningMomentumCycleState(
+                      bootstrapCycleState, predictionVolumeRates,
+                      predictionMetric, warmPressureOperator,
+                      warmBasePressureOperator, geometry, warmSweep,
+                      warmFragments, warmTopology, warmVolumeRates,
+                      definitions, warmOpenings, zeroResistance, warmMetric,
+                      repeatedCycleStateBytes, &cyclePersistenceError)
+                  && cycleStateBytes == repeatedCycleStateBytes,
+              "opening momentum-cycle state persistence encodes deterministically");
+        PlanarPressureRegionFragmentOpeningMomentumCycleState
+            restoredBootstrapCycleState;
+        const bool restoredBootstrapState =
+            deserializePlanarPressureRegionFragmentOpeningMomentumCycleState(
+                cycleStateBytes, predictionVolumeRates, predictionMetric,
+                warmPressureOperator, warmBasePressureOperator, geometry,
+                warmSweep, warmFragments, warmTopology, warmVolumeRates,
+                definitions, warmOpenings, zeroResistance, warmMetric,
+                restoredBootstrapCycleState, &cyclePersistenceError);
+        std::vector<std::uint8_t> restoredCycleStateBytes;
+        check(restoredBootstrapState
+                  && cyclePersistenceError.code
+                      == PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode::
+                          None
+                  && restoredBootstrapCycleState == bootstrapCycleState
+                  && serializePlanarPressureRegionFragmentOpeningMomentumCycleState(
+                      restoredBootstrapCycleState, predictionVolumeRates,
+                      predictionMetric, warmPressureOperator,
+                      warmBasePressureOperator, geometry, warmSweep,
+                      warmFragments, warmTopology, warmVolumeRates,
+                      definitions, warmOpenings, zeroResistance, warmMetric,
+                      restoredCycleStateBytes, &cyclePersistenceError)
+                  && restoredCycleStateBytes == cycleStateBytes,
+              "opening momentum-cycle restart round trips bit-exactly");
+
+        const auto expectCycleStatePersistenceRejected =
+            [&](const std::vector<std::uint8_t>& candidateBytes,
+                const PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode
+                    expectedCode,
+                const PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceLimits&
+                    persistenceLimits = {}) {
+                auto retainedState = bootstrapCycleState;
+                const auto before = retainedState;
+                PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceError
+                    rejectedError;
+                const bool decoded =
+                    deserializePlanarPressureRegionFragmentOpeningMomentumCycleState(
+                        candidateBytes, predictionVolumeRates,
+                        predictionMetric, warmPressureOperator,
+                        warmBasePressureOperator, geometry, warmSweep,
+                        warmFragments, warmTopology, warmVolumeRates,
+                        definitions, warmOpenings, zeroResistance,
+                        warmMetric, retainedState, &rejectedError,
+                        persistenceLimits);
+                return !decoded && rejectedError.code == expectedCode
+                    && retainedState == before;
+            };
+        auto corruptCycleStateBytes = cycleStateBytes;
+        corruptCycleStateBytes[0] ^= 0x01U;
+        check(expectCycleStatePersistenceRejected(
+                  corruptCycleStateBytes,
+                  PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode::
+                      InvalidMagic),
+              "opening momentum-cycle persistence rejects foreign magic transactionally");
+        corruptCycleStateBytes = cycleStateBytes;
+        corruptCycleStateBytes[4] = 2;
+        corruptCycleStateBytes[5] = 0;
+        check(expectCycleStatePersistenceRejected(
+                  corruptCycleStateBytes,
+                  PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode::
+                      UnsupportedVersion),
+              "opening momentum-cycle persistence rejects unsupported protocol transactionally");
+        corruptCycleStateBytes = cycleStateBytes;
+        corruptCycleStateBytes.back() ^= 0x01U;
+        check(expectCycleStatePersistenceRejected(
+                  corruptCycleStateBytes,
+                  PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode::
+                      ChecksumMismatch),
+              "opening momentum-cycle persistence detects payload corruption");
+        corruptCycleStateBytes = cycleStateBytes;
+        constexpr std::size_t encodedCycleStateFingerprintOffset = 40;
+        corruptCycleStateBytes[encodedCycleStateFingerprintOffset] ^= 0x01U;
+        refreshOpeningMomentumCycleStatePersistenceChecksum(
+            corruptCycleStateBytes);
+        check(expectCycleStatePersistenceRejected(
+                  corruptCycleStateBytes,
+                  PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode::
+                      InvalidData),
+              "opening momentum-cycle persistence rejects recomputed-checksum state corruption");
+        corruptCycleStateBytes = cycleStateBytes;
+        corruptCycleStateBytes.pop_back();
+        check(expectCycleStatePersistenceRejected(
+                  corruptCycleStateBytes,
+                  PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode::
+                      Truncated),
+              "opening momentum-cycle persistence rejects truncation transactionally");
+        corruptCycleStateBytes = cycleStateBytes;
+        corruptCycleStateBytes.push_back(0);
+        check(expectCycleStatePersistenceRejected(
+                  corruptCycleStateBytes,
+                  PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode::
+                      TrailingData),
+              "opening momentum-cycle persistence rejects trailing bytes transactionally");
+        auto cyclePersistenceLimits =
+            PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceLimits{};
+        cyclePersistenceLimits.maximumTransportControls =
+            bootstrapCycleState.transport.controls.size() - 1;
+        check(expectCycleStatePersistenceRejected(
+                  cycleStateBytes,
+                  PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode::
+                      LimitExceeded,
+                  cyclePersistenceLimits),
+              "opening momentum-cycle persistence enforces transport record limits");
+        auto foreignCycleState = bootstrapCycleState;
+        const auto retainedForeignCycleState = foreignCycleState;
+        check(!deserializePlanarPressureRegionFragmentOpeningMomentumCycleState(
+                  cycleStateBytes, predictionVolumeRates,
+                  predictionMetric, predictionPressureOperator,
+                  predictionBasePressureOperator, geometry,
+                  predictionSweep, predictionFragments,
+                  predictionTopology, predictionVolumeRates, definitions,
+                  predictionOpenings, zeroResistance, warmMetric,
+                  foreignCycleState, &cyclePersistenceError)
+                  && cyclePersistenceError.code
+                      == PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode::
+                          SourceMismatch
+                  && foreignCycleState == retainedForeignCycleState,
+              "opening momentum-cycle persistence rejects foreign pressure sources transactionally");
+        cyclePersistenceLimits = {};
+        cyclePersistenceLimits.maximumEncodedBytes =
+            cycleStateBytes.size() - 1;
+        std::vector<std::uint8_t> retainedCycleEncoding{1, 2, 3};
+        const auto retainedCycleEncodingBefore = retainedCycleEncoding;
+        check(!serializePlanarPressureRegionFragmentOpeningMomentumCycleState(
+                  bootstrapCycleState, predictionVolumeRates,
+                  predictionMetric, warmPressureOperator,
+                  warmBasePressureOperator, geometry, warmSweep,
+                  warmFragments, warmTopology, warmVolumeRates,
+                  definitions, warmOpenings, zeroResistance, warmMetric,
+                  retainedCycleEncoding, &cyclePersistenceError,
+                  cyclePersistenceLimits)
+                  && cyclePersistenceError.code
+                      == PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode::
+                          LimitExceeded
+                  && retainedCycleEncoding == retainedCycleEncodingBefore,
+              "opening momentum-cycle persistence enforces encode limits transactionally");
+        auto corruptCycleState = bootstrapCycleState;
+        corruptCycleState.transport.controls[0]
+            .velocityMetersPerSecond.x += 0.1;
+        retainedCycleEncoding = retainedCycleEncodingBefore;
+        check(!serializePlanarPressureRegionFragmentOpeningMomentumCycleState(
+                  corruptCycleState, predictionVolumeRates,
+                  predictionMetric, warmPressureOperator,
+                  warmBasePressureOperator, geometry, warmSweep,
+                  warmFragments, warmTopology, warmVolumeRates,
+                  definitions, warmOpenings, zeroResistance, warmMetric,
+                  retainedCycleEncoding, &cyclePersistenceError)
+                  && cyclePersistenceError.code
+                      == PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode::
+                          InvalidData
+                  && retainedCycleEncoding == retainedCycleEncodingBefore,
+              "opening momentum-cycle persistence rejects corrupt in-memory transport transactionally");
+
         auto fourthCurrent = warmCurrent;
         fourthCurrent[0].physicalPlaneCoordinateMeters += 0.02;
         fourthCurrent[1].physicalPlaneCoordinateMeters += 0.02;
@@ -9796,8 +10013,8 @@ void testPlanarRegionalOpeningMomentumTransport() {
                 fourthOpenings);
         const auto postBootstrapCycle =
             advancePlanarPressureRegionFragmentOpeningMomentumCycle(
-                bootstrapMomentumCycle.transport, predictionMetric,
-                bootstrapMomentumCycle.acceptedState,
+                restoredBootstrapCycleState.transport, predictionMetric,
+                restoredBootstrapCycleState.acceptedState,
                 warmPressureOperator, warmBasePressureOperator, geometry,
                 warmSweep, warmFragments, warmTopology, warmVolumeRates,
                 definitions, warmOpenings, zeroResistance, warmBaseMetric,
@@ -9812,7 +10029,7 @@ void testPlanarRegionalOpeningMomentumTransport() {
                   && !postBootstrapCycle.diagnostics
                           .usedInitialStateTransport
                   && postBootstrapCycle.sourceTransportFingerprint
-                      == bootstrapMomentumCycle.transport.fingerprint
+                      == restoredBootstrapCycleState.transport.fingerprint
                   && postBootstrapCycle.acceptedState.accepted,
               "bootstrap endpoint pair feeds the next re-entrant atomic cycle");
         for (const auto& control : postBootstrapCycle.transport.controls) {
@@ -9827,8 +10044,8 @@ void testPlanarRegionalOpeningMomentumTransport() {
                       "post-bootstrap cycle preserves uniform Z velocity");
         }
         validatePlanarPressureRegionFragmentOpeningMomentumCycleResult(
-            postBootstrapCycle, bootstrapMomentumCycle.transport,
-            predictionMetric, bootstrapMomentumCycle.acceptedState,
+            postBootstrapCycle, restoredBootstrapCycleState.transport,
+            predictionMetric, restoredBootstrapCycleState.acceptedState,
             warmPressureOperator, warmBasePressureOperator, geometry,
             warmSweep, warmFragments, warmTopology, warmVolumeRates,
             definitions, warmOpenings, zeroResistance, warmBaseMetric,
@@ -10936,6 +11153,35 @@ void testPlanarRegionalOpeningMomentumTransport() {
                     ambiguousBootstrapMomentumCycle);
             },
             "atomic momentum bootstrap rejects ambiguous source lineage");
+        auto corruptCapturedCycleState = bootstrapCycleState;
+        corruptCapturedCycleState.acceptedState
+            .pressureCorrectionPascals[0] += 0.1;
+        expectRejected(
+            [&] {
+                validatePlanarPressureRegionFragmentOpeningMomentumCycleStateIntegrity(
+                    corruptCapturedCycleState);
+            },
+            "opening momentum-cycle restart state rejects nested endpoint corruption");
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    capturePlanarPressureRegionFragmentOpeningMomentumCycleState(
+                        rejectedTransportMomentumCycle,
+                        predictionMetric, warmMetric));
+            },
+            "opening momentum-cycle restart capture rejects an unaccepted cycle");
+        auto cycleStateLimits =
+            PlanarPressureRegionFragmentOpeningMomentumCycleStateLimits{};
+        cycleStateLimits.maximumOwnedBytes =
+            bootstrapCycleState.ownedStorageBytes - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    capturePlanarPressureRegionFragmentOpeningMomentumCycleState(
+                        bootstrapMomentumCycle, predictionMetric,
+                        warmMetric, cycleStateLimits));
+            },
+            "opening momentum-cycle restart capture enforces endpoint storage limits");
         expectRejected(
             [&] {
                 static_cast<void>(

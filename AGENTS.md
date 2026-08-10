@@ -2030,7 +2030,19 @@ makes this a certified aerodynamic solver.
   state for bootstrap, or the prior accepted transport for repeated cycles. It
   publishes the next staggered transport/pressure endpoint pair together or
   neither, retaining typed scalar attempt diagnostics on rollback. It remains
-  opt-in and owns no viscosity, rebase, persistence, or worker mode.
+  opt-in and owns no viscosity, rebase, or worker mode.
+- `src/fsi/fluid/planar_region_fragment_opening_momentum_cycle_state.{h,cpp}`
+  captures only a successfully accepted staggered cycle pair: collocated
+  transport controls at the current metric and the accepted pressure endpoint
+  at the next metric. It binds the intervening prediction, pressure-only warm
+  start, and predicted aperture flux, and validates transport controls against
+  their exact live volume-rate epoch before a restart can feed another cycle.
+  `planar_region_fragment_opening_momentum_cycle_state_persistence.{h,cpp}`
+  owns its bounded checksummed `SWRM` little-endian envelope. Transport controls
+  are primary wire data; the pressure half remains a nested `SWRO` artifact, so
+  decode rebuilds opening-flux rows from trusted next-geometry sources and
+  transactionally publishes only after both endpoint epochs validate. This is
+  an opt-in state codec, not a production checkpoint selector.
 - `src/fsi/fluid/planar_region_fragment_opening_pressure_epoch.{h,cpp}`
   privately composes that continuation with resistance, augmented projection,
   and accepted-state capture. Numerical rejection publishes a typed stage and
