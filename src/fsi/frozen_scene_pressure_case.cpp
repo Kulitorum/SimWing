@@ -3,6 +3,7 @@
 #include "scene_fluid_capped_face_partition.h"
 #include "scene_fluid_cell_volume.h"
 #include "scene_fluid_mimetic_pressure_audit.h"
+#include "scene_fluid_mimetic_pressure_flow.h"
 #include "scene_fluid_mimetic_pressure_sampling.h"
 #include "scene_fluid_opening_cap.h"
 #include "scene_fluid_opening_face_crossing.h"
@@ -145,6 +146,8 @@ struct BuiltCase {
     fluid::PeriodicCartesianGrid grid;
     SceneFluidGridEpoch gridEpoch;
     SceneFluidMimeticPressureAuditEndpoint pressure;
+    SceneFluidMimeticCorrectedTraceFlow correctedFlow;
+    SceneFluidMimeticMacVelocityCollapse correctedMac;
     ConservativeTransferResult pressureTransfer;
     viewer::StructureFrameMapping frameMapping;
 };
@@ -226,6 +229,13 @@ BuiltCase buildCase(
         throw std::runtime_error(
             "frozen scene mimetic pressure solve was not accepted");
     }
+    auto correctedFlow = correctSceneFluidMimeticTraceFlows(pressure);
+    if (!correctedFlow.accepted) {
+        throw std::runtime_error(
+            "frozen scene mimetic pressure correction was not accepted");
+    }
+    auto correctedMac = collapseSceneFluidMimeticCorrectedMacVelocity(
+        correctedFlow, pressureFaceLinks, openingPatches, grid);
     auto pressureTransfer = evaluateSceneFluidMimeticPressureQuadrature(
         surface.definition, state, transfer, gridEpoch.quadrature,
         pressure.pressureEpoch.acceptedPressureSamples);
@@ -235,6 +245,7 @@ BuiltCase buildCase(
         std::move(scene), std::move(surface), std::move(assembly),
         std::move(structure), std::move(state), std::move(transfer),
         std::move(grid), std::move(gridEpoch), std::move(pressure),
+        std::move(correctedFlow), std::move(correctedMac),
         std::move(pressureTransfer), std::move(frameMapping),
     };
 }
@@ -254,6 +265,20 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond =
         built.pressure.pressureSources
             .maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond;
+    result.maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond =
+        built.correctedFlow
+            .maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond;
+    result.correctedContinuityToleranceCubicMetersPerSecond =
+        built.correctedFlow
+            .correctedContinuityToleranceCubicMetersPerSecond;
+    result.maximumCollapsedMacVelocityMetersPerSecond =
+        built.correctedMac.diagnostics
+            .maximumAbsoluteVelocityMetersPerSecond;
+    result.maximumCollapsedSubfaceVelocityDeviationMetersPerSecond =
+        built.correctedMac.diagnostics
+            .maximumSubfaceVelocityDeviationMetersPerSecond;
+    result.embeddedOpeningTraceCount =
+        built.correctedMac.diagnostics.embeddedOpeningTraceCount;
     const auto& transfer = built.pressureTransfer.diagnostics();
     result.pressureForceNewtons = transfer.transferredNodalForceNewtons;
     result.pressureMomentNewtonMeters =
@@ -262,10 +287,19 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.transferMomentResidualNewtonMeters =
         transfer.momentResidualNormNewtonMeters;
     result.finite = built.pressure.pressureEpoch.diagnostics.accepted
+        && built.correctedFlow.accepted
+        && built.correctedMac.diagnostics.finite
         && transfer.finite
         && std::isfinite(result.maximumAbsolutePressureDifferencePascals)
         && std::isfinite(
             result.maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond)
+        && std::isfinite(
+            result.maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond)
+        && std::isfinite(
+            result.correctedContinuityToleranceCubicMetersPerSecond)
+        && std::isfinite(result.maximumCollapsedMacVelocityMetersPerSecond)
+        && std::isfinite(
+            result.maximumCollapsedSubfaceVelocityDeviationMetersPerSecond)
         && std::isfinite(result.transferForceResidualNewtons)
         && std::isfinite(result.transferMomentResidualNewtonMeters);
     return result;
@@ -411,6 +445,33 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
         viewer::FieldAssociation::Global,
         {state.diagnostics
              .maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.corrected_continuity_residual", "m^3/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics
+             .maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.corrected_continuity_tolerance", "m^3/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.correctedContinuityToleranceCubicMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.maximum_collapsed_mac_velocity", "m/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.maximumCollapsedMacVelocityMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.maximum_subface_velocity_deviation", "m/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics
+             .maximumCollapsedSubfaceVelocityDeviationMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.embedded_opening_traces", "1",
+        viewer::FieldAssociation::Global,
+        {static_cast<double>(state.diagnostics.embeddedOpeningTraceCount)},
     });
 
     std::vector<viewer::Vec3d> nodalPressureForces(

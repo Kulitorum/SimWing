@@ -33,6 +33,12 @@ struct FrozenScenePressureCaseDiagnostics {
     double maximumAbsolutePressureDifferencePascals = 0.0;
     double maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond =
         0.0;
+    double maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond =
+        0.0;
+    double correctedContinuityToleranceCubicMetersPerSecond = 0.0;
+    double maximumCollapsedMacVelocityMetersPerSecond = 0.0;
+    double maximumCollapsedSubfaceVelocityDeviationMetersPerSecond = 0.0;
+    std::size_t embeddedOpeningTraceCount = 0;
     StructureVector3 pressureForceNewtons;
     StructureVector3 pressureMomentNewtonMeters;
     double transferForceResidualNewtons = 0.0;

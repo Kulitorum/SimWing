@@ -272,7 +272,10 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
 - `simwing_frozen_scene_pressure_case`: input-driven fixed-geometry integration
   probe. It loads scene-v2, assembles the exact Structure/fluid surface, runs
   one prescribed-flow mixed-hybrid mimetic pressure projection, conservatively
-  transfers pressure loads, and publishes immutable pressure/load fields. It
+  transfers pressure loads, reconstructs conservative pressure-corrected
+  shared-trace flow, area-collapses only Cartesian traces to a continuation
+  MAC field, and publishes immutable pressure/load/continuity fields. Embedded
+  opening traces remain explicit rather than being smeared onto the grid. It
   is not a time-resolved external-flow, wake, polar, or two-way FSI solver.
 - `simwing_scene_fluid_surface`: deterministic compact ownership of the
   authoritative scene-v2 fluid regions, porous fabric, oriented surface
@@ -1418,6 +1421,12 @@ makes this a certified aerodynamic solver.
    across one accepted topology transition into an exact-gauge reduced-trace
    warm start. Stronger preconditioning and production integration remain open.
    The production operator and subsequent worker path are unchanged.
+   The accepted mimetic endpoint can now reconstruct pressure-corrected shared
+   trace flows in physical volume-rate units. Per-control continuity is checked
+   against the accepted full-system residual; Cartesian subfaces area-collapse
+   to one bounded continuation MAC velocity, while cell-owned opening traces
+   remain explicit diagnostics. The frozen-scene worker exercises this result,
+   but does not yet advance or retain that velocity between frames.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
   loads/state, trusted constraint/membrane/bending assembly, explicit optional
   fabric self-contact, rigid-pilot suspension, diagnostics, and composite

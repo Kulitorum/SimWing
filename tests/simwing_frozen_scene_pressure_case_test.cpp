@@ -116,6 +116,10 @@ void testFrozenScenePressureCase() {
               && diagnostics.sharedTraceCount > 0
               && diagnostics.pressureIterationCount > 0
               && diagnostics.maximumAbsolutePressureDifferencePascals > 0.0
+              && diagnostics
+                     .maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond
+                  <= diagnostics.correctedContinuityToleranceCubicMetersPerSecond
+              && diagnostics.maximumCollapsedMacVelocityMetersPerSecond > 0.0
               && diagnostics.transferForceResidualNewtons < 1.0e-8
               && diagnostics.transferMomentResidualNewtonMeters < 1.0e-8,
           "frozen scene pressure solve and conservative transfer are accepted");

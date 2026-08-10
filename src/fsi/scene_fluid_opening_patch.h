@@ -127,6 +127,12 @@ buildSceneFluidOpeningGridPatches(
     const SceneFluidOpeningGridPatchSettings& settings = {},
     const SceneFluidOpeningGridPatchLimits& limits = {});
 
+// Lightweight immutable-product check for downstream adapters that already
+// received the accepted geometry chain and need to reject accidental payload
+// mutation without rebuilding the complete clipping result.
+void validateSceneFluidOpeningGridPatchIntegrity(
+    const SceneFluidOpeningGridPatchSet& patches);
+
 void validateSceneFluidOpeningGridPatches(
     const SceneFluidOpeningGridPatchSet& patches,
     const SceneFluidSurfaceDefinition& surface,

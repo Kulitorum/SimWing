@@ -799,6 +799,29 @@ SceneFluidOpeningGridPatchSet buildSceneFluidOpeningGridPatches(
     return result;
 }
 
+void validateSceneFluidOpeningGridPatchIntegrity(
+    const SceneFluidOpeningGridPatchSet& patches) {
+    validateSettings(patches.settings);
+    if (patches.version != sceneFluidOpeningGridPatchVersion
+        || patches.fingerprint == 0
+        || patches.surfaceDefinitionFingerprint == 0
+        || patches.surfaceStateFingerprint == 0
+        || patches.openingCapFingerprint == 0
+        || patches.openingQuadratureFingerprint == 0
+        || patches.structureDefinitionFingerprint == 0
+        || !std::isfinite(patches.simulationTimeSeconds)
+        || patches.simulationTimeSeconds < 0.0
+        || !std::isfinite(patches.totalAreaSquareMeters)
+        || patches.totalAreaSquareMeters < 0.0
+        || !std::isfinite(
+            patches.totalSurfaceSweepRateCubicMetersPerSecond)
+        || patches.ownedStorageBytes != storageBytes(patches)
+        || patches.fingerprint != patchFingerprint(patches)) {
+        throw std::invalid_argument(
+            "scene fluid opening-patch immutable payload is invalid");
+    }
+}
+
 void validateSceneFluidOpeningGridPatches(
     const SceneFluidOpeningGridPatchSet& patches,
     const SceneFluidSurfaceDefinition& surface,
@@ -808,9 +831,8 @@ void validateSceneFluidOpeningGridPatches(
     const fluid::PeriodicCartesianGrid& grid) {
     validateSceneFluidOpeningQuadrature(
         quadrature, surface, state, caps);
-    validateSettings(patches.settings);
+    validateSceneFluidOpeningGridPatchIntegrity(patches);
     if (patches.version != sceneFluidOpeningGridPatchVersion
-        || patches.fingerprint == 0
         || patches.surfaceDefinitionFingerprint != surface.fingerprint
         || patches.surfaceStateFingerprint != state.fingerprint
         || patches.openingCapFingerprint != caps.fingerprint
@@ -832,9 +854,7 @@ void validateSceneFluidOpeningGridPatches(
     const auto expected = buildPatches(
         surface, state, caps, quadrature, grid,
         patches.settings, unlimited);
-    if (patches != expected
-        || patches.ownedStorageBytes != storageBytes(patches)
-        || patches.fingerprint != patchFingerprint(patches)) {
+    if (patches != expected) {
         throw std::invalid_argument(
             "scene fluid opening-patch payload is invalid");
     }

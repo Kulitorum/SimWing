@@ -1825,7 +1825,9 @@ int main(int argc, char* argv[]) {
                     "simwing-fsi completed %llu frozen-scene sample(s), "
                     "t=%.9g s, controls=%zu, traces=%zu, iterations=%zu, "
                     "max-pressure-jump=%.6g Pa, pressure-force="
-                    "[%.6g %.6g %.6g] N, transfer-residual=%.3g N, "
+                    "[%.6g %.6g %.6g] N, corrected-continuity=%.3g m^3/s, "
+                    "collapsed-speed=%.6g m/s, embedded-openings=%zu, "
+                    "transfer-residual=%.3g N, "
                     "trace=%s\n",
                     static_cast<unsigned long long>(
                         simulation.acceptedStepCount()),
@@ -1837,6 +1839,10 @@ int main(int argc, char* argv[]) {
                     diagnostics.pressureForceNewtons.x,
                     diagnostics.pressureForceNewtons.y,
                     diagnostics.pressureForceNewtons.z,
+                    diagnostics
+                        .maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond,
+                    diagnostics.maximumCollapsedMacVelocityMetersPerSecond,
+                    diagnostics.embeddedOpeningTraceCount,
                     diagnostics.transferForceResidualNewtons,
                     options.tracePath.string().c_str());
             } else if constexpr (std::is_same_v<
