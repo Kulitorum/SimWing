@@ -1977,6 +1977,12 @@ makes this a certified aerodynamic solver.
   solid tile remainder. Opening patches currently inherit the wall-tile
   centroid, so sub-tile moment arms are deliberately not invented. It mutates
   neither Structure nor worker state.
+- `src/fsi/fluid/planar_region_fragment_opening_load_state.{h,cpp}` atomically
+  owns the accepted aperture-flow continuation, opening-connected pressure,
+  full-wall loads, and opening/solid load partition after recursively
+  validating their exact lineage. It exposes bounded full/removed/solid area,
+  force, impulse, origin moment, and material-work totals but performs no scene
+  mapping, Structure mutation, or worker selection.
 - `src/fsi/fluid/planar_region_fragment_volume_rate.{h,cpp}` reconstructs
   topology-stable previous volume and constant geometry `dV/dt` for every
   current regional fragment from its layer-boundary displacements. It closes
@@ -2708,6 +2714,17 @@ is authored; never invent a moment arm. Reject corrupt/foreign nested sources
 and tile/surface/owned/working/nested-opening limits. Do not infer sub-tile
 traction variation, Structure mutation, accepted-state replacement, rebase,
 or production selection.
+
+For `planar_region_fragment_opening_load_state.*`, require recursive integrity
+and full validation of its accepted-flow, connected-pressure, full-wall-load,
+and opening-partition children. Every source fingerprint, opening/fragment/
+topology/volume-rate epoch, static/moving mode, and duration must agree exactly.
+Expose full-wall, removed-opening, and retained-solid area/force/impulse/origin-
+moment/work totals bit-exactly from the partition ledger; include all nested
+owned bytes in one overflow-safe aggregate limit. Reject nested or aggregate
+corruption, mixed accepted-flow/pressure lineage, foreign sources, and nested
+limits. Do not infer scene quadrature mapping, Structure application,
+checkpoint persistence, rebase, or production ownership.
 
 For `planar_region_fragment_accepted_state.*`, require the pressure state to
 name the exact projected after-state and require all three nested products to

@@ -5,6 +5,7 @@
 #include "fluid/planar_region_fragment.h"
 #include "fluid/planar_region_fragment_accepted_state.h"
 #include "fluid/planar_region_fragment_opening_accepted_state.h"
+#include "fluid/planar_region_fragment_opening_load_state.h"
 #include "fluid/planar_region_fragment_opening_pressure_state.h"
 #include "fluid/planar_region_fragment_opening.h"
 #include "fluid/planar_region_fragment_opening_flux.h"
@@ -9307,6 +9308,123 @@ void testPlanarRegionalResistedOpeningPressureStep() {
         openingAdjustedSurfaceLoads, openingSurfaceLoads,
         openingPressureState, geometry, sweep, fragments, topology,
         definitions, openings);
+    const auto openingLoadState =
+        capturePlanarPressureRegionFragmentOpeningLoadState(
+            acceptedState, openingPressureState, openingSurfaceLoads,
+            openingAdjustedSurfaceLoads, pressureOperator, base, geometry,
+            sweep, fragments, topology, volumeRates, definitions, openings,
+            resistance);
+    const auto repeatedOpeningLoadState =
+        capturePlanarPressureRegionFragmentOpeningLoadState(
+            acceptedState, openingPressureState, openingSurfaceLoads,
+            openingAdjustedSurfaceLoads, pressureOperator, base, geometry,
+            sweep, fragments, topology, volumeRates, definitions, openings,
+            resistance);
+    check(openingLoadState == repeatedOpeningLoadState
+              && openingLoadState.version
+                  == planarPressureRegionFragmentOpeningLoadStateVersion
+              && openingLoadState.fingerprint != 0
+              && openingLoadState.accepted
+              && openingLoadState.sourceAcceptedStateFingerprint
+                  == acceptedState.fingerprint
+              && openingLoadState.sourcePressureStateFingerprint
+                  == openingPressureState.fingerprint
+              && openingLoadState.sourceSurfaceLoadFingerprint
+                  == openingSurfaceLoads.fingerprint
+              && openingLoadState.sourceOpeningSurfaceLoadFingerprint
+                  == openingAdjustedSurfaceLoads.fingerprint
+              && openingLoadState.acceptedFlow == acceptedState
+              && openingLoadState.pressure == openingPressureState
+              && openingLoadState.surfaceLoads == openingSurfaceLoads
+              && openingLoadState.openingSurfaceLoads
+                  == openingAdjustedSurfaceLoads
+              && openingLoadState.ownedStorageBytes
+                  == acceptedState.ownedStorageBytes
+                      + openingPressureState.ownedStorageBytes
+                      + openingSurfaceLoads.ownedStorageBytes
+                      + openingAdjustedSurfaceLoads.ownedStorageBytes,
+          "opening load state atomically owns the complete aperture endpoint");
+    check(openingLoadState.fullWallAreaSquareMeters
+              == openingAdjustedSurfaceLoads.totalWallAreaSquareMeters
+              && openingLoadState.openingAreaSquareMeters
+                  == openingAdjustedSurfaceLoads.totalOpeningAreaSquareMeters
+              && openingLoadState.solidAreaSquareMeters
+                  == openingAdjustedSurfaceLoads.totalSolidAreaSquareMeters
+              && openingLoadState.fullWallPressureForceOnSheetNewtons
+                  == openingAdjustedSurfaceLoads
+                         .sourceTotalPressureForceOnSheetNewtons
+              && openingLoadState.openingRemovedPressureForceOnSheetNewtons
+                  == openingAdjustedSurfaceLoads
+                         .openingRemovedTotalPressureForceOnSheetNewtons
+              && openingLoadState.solidPressureForceOnSheetNewtons
+                  == openingAdjustedSurfaceLoads
+                         .solidTotalPressureForceOnSheetNewtons
+              && openingLoadState.solidPressureImpulseOnSheetNewtonSeconds
+                  == openingAdjustedSurfaceLoads
+                         .solidTotalPressureImpulseOnSheetNewtonSeconds
+              && openingLoadState.solidPressureMomentOnSheetNewtonMeters
+                  == openingAdjustedSurfaceLoads
+                         .solidTotalPressureMomentOnSheetNewtonMeters
+              && openingLoadState.solidPressureWorkToSheetJoules
+                  == openingAdjustedSurfaceLoads
+                         .solidTotalPressureWorkToSheetJoules,
+          "opening load state exposes exact full, removed, and retained ledgers");
+    validatePlanarPressureRegionFragmentOpeningLoadStateIntegrity(
+        openingLoadState);
+    validatePlanarPressureRegionFragmentOpeningLoadState(
+        openingLoadState, pressureOperator, base, geometry, sweep, fragments,
+        topology, volumeRates, definitions, openings, resistance);
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningLoadState(
+                openingLoadState, pressureOperator, base, geometry, sweep,
+                fragments, topology, volumeRates, definitions, openings,
+                foreignResistance);
+        },
+        "opening load state rejects foreign resistance provenance");
+    auto corruptOpeningLoadState = openingLoadState;
+    corruptOpeningLoadState.openingSurfaceLoads.tiles[0]
+        .solidAreaSquareMeters += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningLoadStateIntegrity(
+                corruptOpeningLoadState);
+        },
+        "opening load-state integrity rejects nested load corruption");
+    corruptOpeningLoadState = openingLoadState;
+    corruptOpeningLoadState.solidPressureForceOnSheetNewtons.x += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningLoadStateIntegrity(
+                corruptOpeningLoadState);
+        },
+        "opening load-state integrity rejects aggregate corruption");
+    auto openingLoadStateLimits =
+        PlanarPressureRegionFragmentOpeningLoadStateLimits{};
+    openingLoadStateLimits.maximumOwnedBytes =
+        openingLoadState.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentOpeningLoadState(
+                    acceptedState, openingPressureState,
+                    openingSurfaceLoads, openingAdjustedSurfaceLoads,
+                    pressureOperator, base, geometry, sweep, fragments,
+                    topology, volumeRates, definitions, openings,
+                    resistance, openingLoadStateLimits));
+        },
+        "opening load state enforces its aggregate owned-byte limit");
+    openingLoadStateLimits = {};
+    openingLoadStateLimits.surfaceLoadLimits.maximumTiles =
+        openingAdjustedSurfaceLoads.tiles.size() - 1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningLoadState(
+                openingLoadState, pressureOperator, base, geometry, sweep,
+                fragments, topology, volumeRates, definitions, openings,
+                resistance, openingLoadStateLimits);
+        },
+        "opening load state enforces nested load limits");
     auto corruptOpeningSurfaceLoads = openingSurfaceLoads;
     corruptOpeningSurfaceLoads.tiles[0]
         .totalPressureForceOnSheetNewtons.x += 0.1;
@@ -9553,6 +9671,29 @@ void testPlanarRegionalResistedOpeningPressureStep() {
                   != openingAdjustedSurfaceLoads
                          .solidCorrectionPressureForceOnSheetNewtons,
           "authored aperture drive reaches the retained-solid load ledger");
+    const auto authoredDriveLoadState =
+        capturePlanarPressureRegionFragmentOpeningLoadState(
+            authoredDriveState, authoredDrivePressureState,
+            authoredDriveSurfaceLoads, authoredDriveOpeningAdjustedLoads,
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            volumeRates, definitions, openings, resistance);
+    check(authoredDriveLoadState.accepted
+              && authoredDriveLoadState.fingerprint
+                  != openingLoadState.fingerprint
+              && authoredDriveLoadState.solidPressureForceOnSheetNewtons
+                  != openingLoadState.solidPressureForceOnSheetNewtons,
+          "opening load state distinguishes authored-drive retained loads");
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentOpeningLoadState(
+                    acceptedState, authoredDrivePressureState,
+                    authoredDriveSurfaceLoads,
+                    authoredDriveOpeningAdjustedLoads, pressureOperator,
+                    base, geometry, sweep, fragments, topology, volumeRates,
+                    definitions, openings, resistance));
+        },
+        "opening load state rejects mixed accepted-flow lineage");
     expectRejected(
         [&] {
             validatePlanarPressureRegionFragmentOpeningSurfaceLoads(

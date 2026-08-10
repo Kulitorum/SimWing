@@ -507,6 +507,7 @@ src/fsi/
         planar_region_fragment_opening_pressure_state.* opening-connected total pressure
         planar_region_fragment_surface_load.* sealed/opening full-wall load ledger
         planar_region_fragment_opening_surface_load.* aperture/solid load partition
+        planar_region_fragment_opening_load_state.* atomic aperture load endpoint
         planar_region_fragment_pressure_solve.* correction-only CG oracle
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
@@ -2456,6 +2457,16 @@ wall-tile centroid rather than inventing a moment arm. The ledger is immutable
 and completes the accepted-flow -> connected-pressure -> full-wall-load ->
 retained-solid-load transaction. It does not apply Structure loads, replace the
 accepted regional endpoint, handle rebases, or enter a production worker.
+`planar_region_fragment_opening_load_state.*` supplies the atomic ownership
+boundary for that transaction. It recursively validates and copies the accepted
+aperture-flow continuation, connected-gauge pressure, full-wall load ledger,
+and opening/solid partition only when all source fingerprints, topology and
+volume-rate epochs, static/moving flags, and duration agree exactly. The outer
+state publishes the full, removed, and retained area, total force, impulse,
+origin moment, and material work and bounds the sum of all nested owned storage.
+Nested/aggregate corruption, mixed accepted-flow lineage, foreign sources, and
+nested limits reject before publication. This is the prerequisite for later
+scene quadrature sampling, not the sampling or Structure application itself.
 `planar_region_fragment_velocity_metric.*` adds the corresponding immutable
 diagonal face geometry for a future velocity state. A same-region Cartesian
 link owns one shared normal degree of freedom with dual volume equal to face

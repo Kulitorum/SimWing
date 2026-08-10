@@ -409,6 +409,13 @@ opt-in aperture transaction therefore now has one complete immutable endpoint:
 accepted flow -> opening-connected total pressure -> full-wall load -> removed-
 aperture/retained-solid load. It does not yet distribute the retained load to
 Structure.
+Those four artifacts can now be captured as one bounded immutable opening-load
+endpoint. Recursive validation prevents an accepted flow, connected pressure,
+full-wall ledger, or aperture partition from a different source epoch being
+mixed into the handoff. Full/removed/solid area, force, impulse, origin moment,
+and material work remain visible at the outer boundary, and nested storage is
+accounted once under an aggregate limit. This supplies the atomic prerequisite
+for a future authoritative scene-quadrature bridge; it still applies no load.
 A first diagonal face-inertia metric now closes the missing geometric mass
 ownership without yet creating a velocity state. Each same-region Cartesian
 link has one shared normal-velocity degree of freedom with dual volume `area *
