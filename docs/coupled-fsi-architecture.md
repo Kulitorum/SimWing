@@ -2484,6 +2484,23 @@ The bounded fingerprinted artifact still owns geometry only. Material and
 aperture velocity assignment, collocated vector momentum, swept-volume
 transport, pressure acceptance, topology rebase, and worker selection remain
 separate later contracts.
+`planar_region_fragment_opening_velocity_state.*` now places physical velocity
+and momentum on that basis. Each degree retains an exact split
+`absolute = material + relative`: fixed Cartesian links have zero material
+motion, retained solid traces have zero relative flow, and aperture patches
+combine their layer velocity with accepted negative-to-positive relative flow.
+Density times each dual volume gives diagonal mass and scalar normal momentum;
+the distinct half-volumes then reconstruct one face-volume-weighted vector
+momentum and velocity per fragment. Diagonal kinetic energy remains explicit
+beside the collocated transport energy and their nonnegative staggering excess.
+For the uniform `[2,-0.5,0.25] m/s` oracle at `rho=1.2 kg/m3`, partial and
+fully open metrics both retain `19.2 kg`, `[38.4,-9.6,4.8] kg*m/s`, and
+`41.4 J`; every fragment reconstructs the same vector and the staggering
+excess is roundoff zero through X/Y/Z. A separate accepted-endpoint adapter
+fully validates the pressure flow and volume-rate epoch before mapping solid
+material motion and material-plus-relative aperture velocity. The immutable
+state is the source representation for later ALE transport; it does not yet
+advect momentum, project pressure, rebase topology, or enter the worker.
 `planar_region_fragment_opening_pressure_epoch.*` composes that warm product
 with the existing resistance-plus-augmented-projection transaction. It builds
 all four mutable fields privately, advances them together, and captures a new

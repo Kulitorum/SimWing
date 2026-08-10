@@ -1988,6 +1988,12 @@ makes this a certified aerodynamic solver.
   patch owns one shared two-half-volume degree. Fragment and opening-connected
   component volumes close independently on X/Y/Z. It owns geometry only, not
   velocity, momentum transport, pressure acceptance, or worker state.
+- `src/fsi/fluid/planar_region_fragment_opening_velocity_state.{h,cpp}`
+  assigns absolute normal velocity as material plus relative flow on that
+  metric and reconstructs one face-volume-weighted vector momentum per
+  fragment. Its accepted-endpoint adapter maps fixed-grid, solid-wall, and
+  aperture velocities from validated pressure state and geometry motion. It
+  owns no transport, projection, rebase, or worker selection.
 - `src/fsi/fluid/planar_region_fragment_opening_pressure_epoch.{h,cpp}`
   privately composes that continuation with resistance, augmented projection,
   and accepted-state capture. Numerical rejection publishes a typed stage and
@@ -2657,6 +2663,22 @@ inertia. Cover partial and fully open walls, moving topology-stable identity,
 X/Y/Z, corruption, foreign endpoints, and owned/working limits. This product
 does not assign material or fluid velocity, density, momentum, energy,
 transport, pressure acceptance, topology rebase, or production ownership.
+
+For `planar_region_fragment_opening_velocity_state.*`, require one finite
+absolute/material/relative velocity triple per exact opening-aware metric DOF.
+Fixed-grid links have zero material velocity, retained solid traces have zero
+relative velocity, and apertures satisfy exact `absolute = material +
+relative`. Apply `rho*dualVolume` inertia, distribute each shared half-volume
+to its fragment, and reconstruct one collocated vector momentum per fragment.
+Close physical versus axis-diagonal mass, component/global momentum, diagonal
+and collocated kinetic energy, and the roundoff-bounded nonnegative staggering
+excess. The canonical uniform `[2,-0.5,0.25] m/s` state at `rho=1.2 kg/m3`
+must retain `19.2 kg`, `[38.4,-9.6,4.8] kg*m/s`, and `41.4 J` with zero
+staggering excess across partial/full openings and X/Y/Z. Accepted capture must
+fully validate pressure/volume-rate/metric sources and map fixed-grid flow,
+material solid-wall motion, and material-plus-relative aperture flow. Reject
+composition/source corruption, foreign endpoints, and owned/working limits
+before allocation. Do not advance transport, pressure, topology, or a worker.
 
 For `planar_region_fragment_opening_pressure_epoch.*`, build continuation
 fields privately and pass them through the complete resistance-plus-projection

@@ -9,6 +9,7 @@
 #include "fluid/planar_region_fragment_opening_continuation.h"
 #include "fluid/planar_region_fragment_opening_continuation_momentum_audit.h"
 #include "fluid/planar_region_fragment_opening_velocity_metric.h"
+#include "fluid/planar_region_fragment_opening_velocity_state.h"
 #include "fluid/planar_region_fragment_opening_load_state.h"
 #include "fluid/planar_region_fragment_opening_pressure_state.h"
 #include "fluid/planar_region_fragment_opening.h"
@@ -8394,6 +8395,46 @@ void testPlanarRegionalPressureDrivenOpeningProjection() {
         validatePlanarPressureRegionFragmentOpeningVelocityMetric(
             openingVelocityMetric, geometry, sweep, fragments, topology,
             baseVelocityMetric, definitions, openings);
+        const Vector3 uniformVelocity{0.3, -0.2, 0.1};
+        std::vector<double> uniformNormal(
+            openingVelocityMetric.dofs.size(), 0.0);
+        std::vector<double> uniformMaterial(
+            openingVelocityMetric.dofs.size(), 0.0);
+        std::vector<double> uniformRelative(
+            openingVelocityMetric.dofs.size(), 0.0);
+        for (const auto& dof : openingVelocityMetric.dofs) {
+            const double component = dof.axis == GridFaceAxis::X
+                ? uniformVelocity.x
+                : dof.axis == GridFaceAxis::Y
+                ? uniformVelocity.y : uniformVelocity.z;
+            uniformNormal[dof.dofIndex] = component;
+            if (dof.kind
+                == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                    SharedRegionGrid) {
+                uniformRelative[dof.dofIndex] = component;
+            } else {
+                uniformMaterial[dof.dofIndex] = component;
+            }
+        }
+        const auto uniformState =
+            buildPlanarPressureRegionFragmentOpeningVelocityState(
+                openingVelocityMetric, uniformNormal, uniformMaterial,
+                uniformRelative, 1.2);
+        const double uniformMass = 1.2
+            * geometry.cellVolumeCubicMeters()
+            * static_cast<double>(geometry.cellCount());
+        checkNear(uniformState.momentumKilogramMetersPerSecond.x,
+                  uniformMass * uniformVelocity.x, 2.0e-13,
+                  "all-axis opening metric preserves uniform X momentum");
+        checkNear(uniformState.momentumKilogramMetersPerSecond.y,
+                  uniformMass * uniformVelocity.y, 2.0e-13,
+                  "all-axis opening metric preserves uniform Y momentum");
+        checkNear(uniformState.momentumKilogramMetersPerSecond.z,
+                  uniformMass * uniformVelocity.z, 2.0e-13,
+                  "all-axis opening metric preserves uniform Z momentum");
+        checkNear(uniformState.staggeringKineticEnergyJoules,
+                  0.0, 3.0e-13,
+                  "all-axis uniform opening flow has zero staggering energy");
         const auto pressureOperator =
             buildPlanarPressureRegionFragmentOpeningPressureOperator(
                 base, geometry, sweep, fragments, topology, definitions,
@@ -9258,6 +9299,177 @@ void testPlanarRegionalResistedOpeningPressureStep() {
                     definitions, openings, openingVelocityMetricLimits));
         },
         "opening velocity metric enforces its owned-storage limit");
+    constexpr double manufacturedDensity = 1.2;
+    const Vector3 manufacturedVelocity{2.0, -0.5, 0.25};
+    std::vector<double> manufacturedNormal(
+        openingVelocityMetric.dofs.size(), 0.0);
+    std::vector<double> manufacturedMaterial(
+        openingVelocityMetric.dofs.size(), 0.0);
+    std::vector<double> manufacturedRelative(
+        openingVelocityMetric.dofs.size(), 0.0);
+    for (const auto& dof : openingVelocityMetric.dofs) {
+        const double component = dof.axis == GridFaceAxis::X
+            ? manufacturedVelocity.x
+            : dof.axis == GridFaceAxis::Y
+            ? manufacturedVelocity.y : manufacturedVelocity.z;
+        manufacturedNormal[dof.dofIndex] = component;
+        if (dof.kind
+            == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                SharedRegionGrid) {
+            manufacturedRelative[dof.dofIndex] = component;
+        } else {
+            manufacturedMaterial[dof.dofIndex] = component;
+        }
+    }
+    const auto manufacturedOpeningVelocityState =
+        buildPlanarPressureRegionFragmentOpeningVelocityState(
+            openingVelocityMetric, manufacturedNormal,
+            manufacturedMaterial, manufacturedRelative,
+            manufacturedDensity);
+    const auto repeatedManufacturedOpeningVelocityState =
+        buildPlanarPressureRegionFragmentOpeningVelocityState(
+            openingVelocityMetric, manufacturedNormal,
+            manufacturedMaterial, manufacturedRelative,
+            manufacturedDensity);
+    const double manufacturedMass = manufacturedDensity * domainVolume;
+    check(manufacturedOpeningVelocityState
+                  == repeatedManufacturedOpeningVelocityState
+              && manufacturedOpeningVelocityState.version
+                  == planarPressureRegionFragmentOpeningVelocityStateVersion
+              && manufacturedOpeningVelocityState.fingerprint != 0
+              && !manufacturedOpeningVelocityState
+                      .mappedFromAcceptedEndpoint
+              && manufacturedOpeningVelocityState
+                     .sourceAcceptedStateFingerprint == 0
+              && manufacturedOpeningVelocityState
+                     .sourceVolumeRateFingerprint == 0
+              && manufacturedOpeningVelocityState.samples.size()
+                  == openingVelocityMetric.dofs.size()
+              && manufacturedOpeningVelocityState.fragments.size()
+                  == openingVelocityMetric.fragments.size()
+              && manufacturedOpeningVelocityState.components.size()
+                  == openingVelocityMetric.components.size()
+              && manufacturedOpeningVelocityState
+                     .sharedRegionGridSampleCount
+                  == openingVelocityMetric.sharedRegionGridDofCount
+              && manufacturedOpeningVelocityState
+                     .solidWallTraceSampleCount
+                  == openingVelocityMetric.solidWallTraceDofCount
+              && manufacturedOpeningVelocityState.openingPatchSampleCount
+                  == openingVelocityMetric.openingPatchDofCount,
+          "opening velocity state deterministically owns the complete partitioned inertia basis");
+    checkNear(
+        manufacturedOpeningVelocityState.physicalMassKilograms,
+        manufacturedMass, 2.0e-13,
+        "opening velocity state closes physical mass once");
+    checkNear(
+        manufacturedOpeningVelocityState.diagonalMassByAxisKilograms.x,
+        manufacturedMass, 2.0e-13,
+        "opening velocity state closes X diagonal mass");
+    checkNear(
+        manufacturedOpeningVelocityState.diagonalMassByAxisKilograms.y,
+        manufacturedMass, 2.0e-13,
+        "opening velocity state closes Y diagonal mass");
+    checkNear(
+        manufacturedOpeningVelocityState.diagonalMassByAxisKilograms.z,
+        manufacturedMass, 2.0e-13,
+        "opening velocity state closes Z diagonal mass");
+    checkNear(
+        manufacturedOpeningVelocityState
+            .momentumKilogramMetersPerSecond.x,
+        manufacturedMass * manufacturedVelocity.x, 4.0e-13,
+        "opening velocity state preserves uniform X momentum");
+    checkNear(
+        manufacturedOpeningVelocityState
+            .momentumKilogramMetersPerSecond.y,
+        manufacturedMass * manufacturedVelocity.y, 2.0e-13,
+        "opening velocity state preserves uniform Y momentum");
+    checkNear(
+        manufacturedOpeningVelocityState
+            .momentumKilogramMetersPerSecond.z,
+        manufacturedMass * manufacturedVelocity.z, 1.0e-13,
+        "opening velocity state preserves uniform Z momentum");
+    const double manufacturedEnergy = 0.5 * manufacturedMass
+        * (manufacturedVelocity.x * manufacturedVelocity.x
+           + manufacturedVelocity.y * manufacturedVelocity.y
+           + manufacturedVelocity.z * manufacturedVelocity.z);
+    checkNear(
+        manufacturedOpeningVelocityState.diagonalKineticEnergyJoules,
+        manufacturedEnergy, 6.0e-13,
+        "opening velocity state preserves uniform diagonal energy");
+    checkNear(
+        manufacturedOpeningVelocityState.collocatedKineticEnergyJoules,
+        manufacturedEnergy, 6.0e-13,
+        "opening velocity state reconstructs uniform collocated energy");
+    checkNear(
+        manufacturedOpeningVelocityState.staggeringKineticEnergyJoules,
+        0.0, 8.0e-13,
+        "uniform opening flow has zero staggering energy");
+    for (const auto& fragmentState
+         : manufacturedOpeningVelocityState.fragments) {
+        checkNear(fragmentState.collocatedVelocityMetersPerSecond.x,
+                  manufacturedVelocity.x, 2.0e-14,
+                  "uniform opening flow reconstructs fragment X velocity");
+        checkNear(fragmentState.collocatedVelocityMetersPerSecond.y,
+                  manufacturedVelocity.y, 2.0e-14,
+                  "uniform opening flow reconstructs fragment Y velocity");
+        checkNear(fragmentState.collocatedVelocityMetersPerSecond.z,
+                  manufacturedVelocity.z, 2.0e-14,
+                  "uniform opening flow reconstructs fragment Z velocity");
+    }
+    validatePlanarPressureRegionFragmentOpeningVelocityStateIntegrity(
+        manufacturedOpeningVelocityState);
+    validatePlanarPressureRegionFragmentOpeningVelocityState(
+        manufacturedOpeningVelocityState, openingVelocityMetric);
+    auto corruptOpeningVelocityState = manufacturedOpeningVelocityState;
+    corruptOpeningVelocityState.samples[0]
+        .normalMomentumKilogramMetersPerSecond += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningVelocityStateIntegrity(
+                corruptOpeningVelocityState);
+        },
+        "opening velocity state rejects sample corruption");
+    auto openingVelocityStateLimits =
+        PlanarPressureRegionFragmentOpeningVelocityStateLimits{};
+    openingVelocityStateLimits.maximumOwnedBytes =
+        manufacturedOpeningVelocityState.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                buildPlanarPressureRegionFragmentOpeningVelocityState(
+                    openingVelocityMetric, manufacturedNormal,
+                    manufacturedMaterial, manufacturedRelative,
+                    manufacturedDensity, openingVelocityStateLimits));
+        },
+        "opening velocity state enforces its owned-storage limit before allocation");
+    auto invalidNormal = manufacturedNormal;
+    auto invalidRelative = manufacturedRelative;
+    const auto solidDof = std::ranges::find_if(
+        openingVelocityMetric.dofs,
+        [](const auto& dof) {
+            return dof.kind
+                    == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                        SolidWallMinusTrace
+                || dof.kind
+                    == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                        SolidWallPlusTrace;
+        });
+    check(solidDof != openingVelocityMetric.dofs.end(),
+          "opening velocity-state composition test finds a solid trace");
+    if (solidDof != openingVelocityMetric.dofs.end()) {
+        invalidNormal[solidDof->dofIndex] += 0.1;
+        invalidRelative[solidDof->dofIndex] += 0.1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    buildPlanarPressureRegionFragmentOpeningVelocityState(
+                        openingVelocityMetric, invalidNormal,
+                        manufacturedMaterial, invalidRelative,
+                        manufacturedDensity));
+            },
+            "opening velocity state rejects relative flow through retained solid area");
+    }
     auto fullOpeningDefinitions = definitions;
     fullOpeningDefinitions[0].areaSquareMeters = wall->areaSquareMeters;
     const auto fullOpenings = buildPlanarPressureRegionFragmentOpenings(
@@ -9293,6 +9505,44 @@ void testPlanarRegionalResistedOpeningPressureStep() {
                 .maximumAbsoluteComponentVolumeClosureResidualCubicMeters}),
         0.0, 2.0e-13,
         "fully open velocity metric loses no fragment or component inertia");
+    std::vector<double> fullOpeningNormal(
+        fullOpeningVelocityMetric.dofs.size(), 0.0);
+    std::vector<double> fullOpeningMaterial(
+        fullOpeningVelocityMetric.dofs.size(), 0.0);
+    std::vector<double> fullOpeningRelative(
+        fullOpeningVelocityMetric.dofs.size(), 0.0);
+    for (const auto& dof : fullOpeningVelocityMetric.dofs) {
+        const double component = dof.axis == GridFaceAxis::X
+            ? manufacturedVelocity.x
+            : dof.axis == GridFaceAxis::Y
+            ? manufacturedVelocity.y : manufacturedVelocity.z;
+        fullOpeningNormal[dof.dofIndex] = component;
+        if (dof.kind
+            == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                SharedRegionGrid) {
+            fullOpeningRelative[dof.dofIndex] = component;
+        } else {
+            fullOpeningMaterial[dof.dofIndex] = component;
+        }
+    }
+    const auto fullOpeningUniformState =
+        buildPlanarPressureRegionFragmentOpeningVelocityState(
+            fullOpeningVelocityMetric, fullOpeningNormal,
+            fullOpeningMaterial, fullOpeningRelative,
+            manufacturedDensity);
+    checkNear(fullOpeningUniformState.physicalMassKilograms,
+              manufacturedOpeningVelocityState.physicalMassKilograms,
+              2.0e-13,
+              "fully open velocity state preserves physical mass");
+    checkNear(
+        fullOpeningUniformState.momentumKilogramMetersPerSecond.x,
+        manufacturedOpeningVelocityState
+            .momentumKilogramMetersPerSecond.x,
+        4.0e-13,
+        "fully open velocity state preserves uniform momentum");
+    checkNear(fullOpeningUniformState.staggeringKineticEnergyJoules,
+              0.0, 8.0e-13,
+              "fully open velocity state preserves the uniform free stream");
     const double requiredFlow =
         -volumeRates.components[wall->minusComponentIndex]
              .geometryVolumeChangeRateCubicMetersPerSecond;
@@ -9457,6 +9707,92 @@ void testPlanarRegionalResistedOpeningPressureStep() {
     validatePlanarPressureRegionFragmentOpeningAcceptedState(
         acceptedState, pressureOperator, base, geometry, sweep, fragments,
         topology, volumeRates, definitions, openings, resistance);
+    const auto mappedOpeningVelocityState =
+        capturePlanarPressureRegionFragmentOpeningVelocityState(
+            acceptedState, pressureOperator, base, geometry, sweep,
+            fragments, topology, volumeRates, definitions, openings,
+            resistance, velocityMetric, openingVelocityMetric);
+    const auto repeatedMappedOpeningVelocityState =
+        capturePlanarPressureRegionFragmentOpeningVelocityState(
+            acceptedState, pressureOperator, base, geometry, sweep,
+            fragments, topology, volumeRates, definitions, openings,
+            resistance, velocityMetric, openingVelocityMetric);
+    check(mappedOpeningVelocityState == repeatedMappedOpeningVelocityState
+              && mappedOpeningVelocityState.mappedFromAcceptedEndpoint
+              && mappedOpeningVelocityState.sourceMetricFingerprint
+                  == openingVelocityMetric.fingerprint
+              && mappedOpeningVelocityState
+                     .sourceAcceptedStateFingerprint
+                  == acceptedState.fingerprint
+              && mappedOpeningVelocityState.sourceVolumeRateFingerprint
+                  == volumeRates.fingerprint
+              && mappedOpeningVelocityState.densityKgPerCubicMeter
+                  == settings.projection.densityKgPerCubicMeter
+              && mappedOpeningVelocityState
+                     .maximumAbsoluteVelocityCompositionResidualMetersPerSecond
+                  == 0.0
+              && mappedOpeningVelocityState.staggeringKineticEnergyJoules
+                  >= -2.0e-13,
+          "opening velocity state maps the accepted pressure endpoint into absolute fragment momentum");
+    const auto mappedApertureSample = std::ranges::find_if(
+        mappedOpeningVelocityState.samples,
+        [](const auto& sample) {
+            return sample.kind
+                == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                    OpeningPatch;
+        });
+    check(mappedApertureSample
+                  != mappedOpeningVelocityState.samples.end(),
+          "mapped opening velocity state retains its aperture sample");
+    if (mappedApertureSample
+        != mappedOpeningVelocityState.samples.end()) {
+        const double expectedMaterialVelocity = volumeRates
+            .fragments[wall->minusFragmentIndex]
+            .upperBoundaryVelocityMetersPerSecond;
+        check(mappedApertureSample
+                      ->materialNormalVelocityMetersPerSecond
+                  == expectedMaterialVelocity
+                  && mappedApertureSample
+                         ->relativeNormalVelocityMetersPerSecond
+                      == acceptedState.openingFlux.patches[0]
+                             .relativeNormalVelocityMetersPerSecond
+                  && mappedApertureSample->normalVelocityMetersPerSecond
+                      == mappedApertureSample
+                                 ->materialNormalVelocityMetersPerSecond
+                          + mappedApertureSample
+                                 ->relativeNormalVelocityMetersPerSecond,
+              "mapped aperture velocity is material motion plus accepted relative flow");
+    }
+    for (const auto& sample : mappedOpeningVelocityState.samples) {
+        if (sample.kind
+            == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                SharedRegionGrid) {
+            check(sample.materialNormalVelocityMetersPerSecond == 0.0,
+                  "fixed-grid regional flow has zero material velocity");
+        } else if (sample.kind
+                   != PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                       OpeningPatch) {
+            check(sample.relativeNormalVelocityMetersPerSecond == 0.0,
+                  "retained solid traces have zero relative flow");
+        }
+    }
+    validatePlanarPressureRegionFragmentOpeningAcceptedVelocityState(
+        mappedOpeningVelocityState, acceptedState, pressureOperator, base,
+        geometry, sweep, fragments, topology, volumeRates, definitions,
+        openings, resistance, velocityMetric, openingVelocityMetric);
+    openingVelocityStateLimits = {};
+    openingVelocityStateLimits.maximumWorkingBytes =
+        mappedOpeningVelocityState.workingStorageBytes - 1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningAcceptedVelocityState(
+                mappedOpeningVelocityState, acceptedState,
+                pressureOperator, base, geometry, sweep, fragments,
+                topology, volumeRates, definitions, openings, resistance,
+                velocityMetric, openingVelocityMetric,
+                openingVelocityStateLimits);
+        },
+        "mapped opening velocity state enforces validation working storage");
     auto corruptAcceptedState = acceptedState;
     corruptAcceptedState.openingFlux.patches[0]
         .relativeNormalVelocityMetersPerSecond += 0.1;
@@ -9597,6 +9933,16 @@ void testPlanarRegionalResistedOpeningPressureStep() {
                 openingVelocityMetricLimits);
         },
         "opening velocity metric enforces validation working storage");
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningAcceptedVelocityState(
+                mappedOpeningVelocityState, acceptedState,
+                nextPressureOperator, nextBase, geometry, nextSweep,
+                nextFragments, nextTopology, nextVolumeRates, definitions,
+                nextOpenings, resistance, nextVelocityMetric,
+                nextOpeningVelocityMetric);
+        },
+        "mapped opening velocity state rejects a foreign accepted endpoint geometry");
     const auto continuation =
         buildPlanarPressureRegionFragmentOpeningContinuation(
             acceptedState, pressureOperator, base, geometry, sweep,
@@ -10975,6 +11321,13 @@ void testPlanarRegionalOpeningPressureStateAxes() {
             }};
         const auto openings = buildPlanarPressureRegionFragmentOpenings(
             geometry, sweep, fragments, topology, definitions);
+        const auto baseVelocityMetric =
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, sweep, fragments, topology);
+        const auto openingVelocityMetric =
+            buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+                geometry, sweep, fragments, topology,
+                baseVelocityMetric, definitions, openings);
         const auto pressureOperator =
             buildPlanarPressureRegionFragmentOpeningPressureOperator(
                 base, geometry, sweep, fragments, topology, definitions,
@@ -11036,6 +11389,33 @@ void testPlanarRegionalOpeningPressureStateAxes() {
                 pressureOperator, base, geometry, sweep, fragments,
                 topology, volumeRates, definitions, openings, resistance,
                 diagnostics, velocity, samples, flux, pressure, settings);
+        const auto acceptedVelocityState =
+            capturePlanarPressureRegionFragmentOpeningVelocityState(
+                accepted, pressureOperator, base, geometry, sweep,
+                fragments, topology, volumeRates, definitions, openings,
+                resistance, baseVelocityMetric, openingVelocityMetric);
+        const auto acceptedAperture = std::ranges::find_if(
+            acceptedVelocityState.samples,
+            [](const auto& sample) {
+                return sample.kind
+                    == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                        OpeningPatch;
+            });
+        check(acceptedVelocityState.mappedFromAcceptedEndpoint
+                  && acceptedVelocityState.sourceAcceptedStateFingerprint
+                      == accepted.fingerprint
+                  && acceptedAperture
+                      != acceptedVelocityState.samples.end()
+                  && acceptedAperture->axis == axis
+                  && acceptedVelocityState
+                         .maximumAbsoluteVelocityCompositionResidualMetersPerSecond
+                      == 0.0,
+              "accepted opening velocity state maps material and relative flow on every axis");
+        validatePlanarPressureRegionFragmentOpeningAcceptedVelocityState(
+            acceptedVelocityState, accepted, pressureOperator, base,
+            geometry, sweep, fragments, topology, volumeRates,
+            definitions, openings, resistance, baseVelocityMetric,
+            openingVelocityMetric);
         const auto state =
             composePlanarPressureRegionFragmentOpeningPressureState(
                 accepted, pressureOperator, base, geometry, sweep,
