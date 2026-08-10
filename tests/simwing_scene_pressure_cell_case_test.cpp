@@ -516,6 +516,8 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
         const auto productionFrame = production.advance();
         const auto auditedFrame = audited.advance();
         const auto* endpoint = audited.acceptedMimeticPressureAudit();
+        const auto* epochTransition =
+            audited.acceptedMimeticPressureEpochTransition();
         const auto* comparison =
             audited.acceptedMimeticPressureComparison();
         const auto* ownerTransition =
@@ -527,6 +529,8 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
             .mimeticPressureAuditSettingsFingerprint = 0;
         auditedGraphOnly.coupling.mimeticPressureState.reset();
         check(serialized(auditedFrame) == serialized(productionFrame)
+                  && production.acceptedMimeticPressureEpochTransition()
+                      == nullptr
                   && auditedCheckpoint.coupling
                          .mimeticPressureAuditSettingsFingerprint != 0
                   && auditedCheckpoint.coupling
@@ -535,6 +539,7 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
                       == serializedCheckpoint(productionCheckpoint),
               "opt-in mimetic audit leaves frames and the graph-pressure portion of its composite checkpoint byte-identical");
         check(endpoint != nullptr
+                  && epochTransition != nullptr
                   && audited.diagnostics().coupling
                       .usesMimeticPressureAudit
                   && audited.diagnostics().coupling
@@ -551,6 +556,16 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
                       == *ownerTransition
                   && ownerTransition->comparisonFingerprint
                       == comparison->fingerprint
+                  && epochTransition->currentPressureEpoch
+                      == audited.acceptedPressureEpoch()
+                  && epochTransition->currentPressureEpochFingerprint
+                      == endpoint->scenePressureEpochFingerprint
+                  && epochTransition->topologyTransitionFingerprint
+                      == endpoint
+                             ->pressureTopologyTransitionFingerprint
+                  && epochTransition->acceptedCurrentGridEpochFingerprint
+                      == audited.acceptedPressureEpoch()
+                             .gridEpoch.fingerprint
                   && ownerTransition->selectedOwner
                       == fsi::SceneFluidPressureOwner::ReferenceGraph
                   && comparison->diagnostics.finite
@@ -595,7 +610,9 @@ void testOptInMimeticPressureAuditIsShadowOnly() {
                       == endpoint->controlCells.materialWallHalfFaceCount,
               "opt-in mimetic audit publishes one complete endpoint with roundoff-equivalent graph and shadow sources after graph convergence");
         if (endpoint != nullptr && comparison != nullptr
-            && ownerTransition != nullptr) {
+            && ownerTransition != nullptr && epochTransition != nullptr) {
+            fsi::validateSceneFluidPressureEpochTransitionIntegrity(
+                *epochTransition);
             fsi::validateSceneFluidMimeticPressureAuditEndpointIntegrity(
                 *endpoint);
             fsi::validateSceneFluidPressureShadowComparisonIntegrity(
@@ -2126,6 +2143,8 @@ void testPersistentMimeticPressureAuditRestart() {
     fsi::ScenePressureCellCase restored(true);
     restored.restore(decoded);
     check(restored.acceptedMimeticPressureAudit() == nullptr
+              && restored.acceptedMimeticPressureEpochTransition()
+                  == nullptr
               && restored.acceptedMimeticPressureComparison() == nullptr
               && restored.acceptedMimeticPressureOwnerTransition() == nullptr
               && serializedCheckpoint(restored.checkpoint()) == bytes,
@@ -2133,12 +2152,16 @@ void testPersistentMimeticPressureAuditRestart() {
     const auto expectedFrame = source.advance();
     const auto expectedDiagnostics = source.diagnostics();
     const auto expectedEndpoint = *source.acceptedMimeticPressureAudit();
+    const auto expectedEpochTransition =
+        *source.acceptedMimeticPressureEpochTransition();
     const auto expectedComparison =
         *source.acceptedMimeticPressureComparison();
     const auto expectedOwnerTransition =
         *source.acceptedMimeticPressureOwnerTransition();
     const auto replayFrame = restored.advance();
     const auto* replayEndpoint = restored.acceptedMimeticPressureAudit();
+    const auto* replayEpochTransition =
+        restored.acceptedMimeticPressureEpochTransition();
     const auto* replayComparison =
         restored.acceptedMimeticPressureComparison();
     const auto* replayOwnerTransition =
@@ -2147,6 +2170,8 @@ void testPersistentMimeticPressureAuditRestart() {
               && restored.diagnostics() == expectedDiagnostics
               && replayEndpoint != nullptr
               && *replayEndpoint == expectedEndpoint
+              && replayEpochTransition != nullptr
+              && *replayEpochTransition == expectedEpochTransition
               && replayComparison != nullptr
               && *replayComparison == expectedComparison
               && replayOwnerTransition != nullptr

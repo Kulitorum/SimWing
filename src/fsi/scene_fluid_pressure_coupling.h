@@ -3,6 +3,7 @@
 #include "coupling.h"
 #include "scene_fluid_mimetic_pressure_audit.h"
 #include "scene_fluid_pressure_epoch.h"
+#include "scene_fluid_pressure_epoch_transition.h"
 #include "scene_fluid_pressure_owner_transition.h"
 #include "scene_fluid_pressure_sampling.h"
 #include "scene_fluid_pressure_shadow_comparison.h"
@@ -200,6 +201,11 @@ public:
     acceptedWallTractions() const noexcept;
     [[nodiscard]] const SceneFluidMimeticPressureAuditEndpoint*
     acceptedMimeticPressureAudit() const noexcept;
+    // Present only after a live opt-in mimetic audit step. This independently
+    // rebuilds the accepted graph epoch and its consecutive topology mapping;
+    // it is observational and never supplies an iterate load.
+    [[nodiscard]] const SceneFluidPressureEpochTransition*
+    acceptedMimeticPressureEpochTransition() const noexcept;
     [[nodiscard]] const SceneFluidPressureShadowComparison*
     acceptedMimeticPressureComparison() const noexcept;
     [[nodiscard]] const SceneFluidPressureOwnerTransitionDecision*
@@ -267,6 +273,8 @@ private:
     std::optional<SceneFluidAcceptedWallTractionSet> acceptedWallTractions_;
     std::optional<SceneFluidMimeticPressureAuditEndpoint>
         acceptedMimeticPressureAudit_;
+    std::optional<SceneFluidPressureEpochTransition>
+        acceptedMimeticPressureEpochTransition_;
     std::optional<SceneFluidMimeticPressureAuditWarmState>
         acceptedMimeticPressureAuditWarmState_;
     std::optional<SceneFluidPressureShadowComparison>

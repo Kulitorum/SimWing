@@ -566,6 +566,12 @@ ScenePressureCellCase::acceptedMimeticPressureAudit() const noexcept {
     return coupling_.acceptedMimeticPressureAudit();
 }
 
+const SceneFluidPressureEpochTransition*
+ScenePressureCellCase::acceptedMimeticPressureEpochTransition()
+    const noexcept {
+    return coupling_.acceptedMimeticPressureEpochTransition();
+}
+
 const SceneFluidPressureShadowComparison*
 ScenePressureCellCase::acceptedMimeticPressureComparison() const noexcept {
     return coupling_.acceptedMimeticPressureComparison();

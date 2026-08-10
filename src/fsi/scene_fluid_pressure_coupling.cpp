@@ -367,6 +367,13 @@ SceneFluidPressureCoupling::acceptedMimeticPressureAudit() const noexcept {
         ? &*acceptedMimeticPressureAudit_ : nullptr;
 }
 
+const SceneFluidPressureEpochTransition*
+SceneFluidPressureCoupling::acceptedMimeticPressureEpochTransition()
+    const noexcept {
+    return acceptedMimeticPressureEpochTransition_
+        ? &*acceptedMimeticPressureEpochTransition_ : nullptr;
+}
+
 const SceneFluidPressureShadowComparison*
 SceneFluidPressureCoupling::acceptedMimeticPressureComparison()
     const noexcept {
@@ -856,6 +863,7 @@ void SceneFluidPressureCoupling::restore(
     acceptedPressureSamples_ = std::move(restoredSamples);
     acceptedWallTractions_ = std::move(restoredWallTractions);
     acceptedMimeticPressureAudit_.reset();
+    acceptedMimeticPressureEpochTransition_.reset();
     acceptedMimeticPressureAuditWarmState_ =
         std::move(restoredMimeticPressureWarmState);
     acceptedMimeticPressureComparison_.reset();
@@ -1115,6 +1123,8 @@ SceneFluidPressureCoupling::advanceImpl(
                 currentEpoch.fingerprint;
             std::optional<SceneFluidMimeticPressureAuditEndpoint>
                 mimeticPressureAuditCandidate;
+            std::optional<SceneFluidPressureEpochTransition>
+                mimeticPressureEpochTransitionCandidate;
             std::optional<SceneFluidPressureShadowComparison>
                 mimeticPressureComparisonCandidate;
             std::optional<SceneFluidPressureOwnerTransitionDecision>
@@ -1126,6 +1136,25 @@ SceneFluidPressureCoupling::advanceImpl(
                     mimeticPressureAuditConfiguration_.settings;
                 const auto& auditLimits =
                     mimeticPressureAuditConfiguration_.limits;
+                SceneFluidPressureEpochTransitionLimits transitionLimits;
+                transitionLimits.pressureEpoch = limits_.pressureEpoch;
+                transitionLimits.topologyTransition =
+                    limits_.topologyTransition;
+                mimeticPressureEpochTransitionCandidate.emplace(
+                    buildSceneFluidPressureEpochTransition(
+                        acceptedPressureEpoch_, surface_,
+                        acceptedSurfaceState_, currentState, grid_,
+                        transfer_, connectivity_, currentEpoch.gridEpoch,
+                        settings_.pressureEpoch, transitionLimits));
+                if (mimeticPressureEpochTransitionCandidate
+                            ->currentPressureEpoch
+                        != currentEpoch
+                    || mimeticPressureEpochTransitionCandidate
+                            ->topologyTransition
+                        != topologyTransition) {
+                    throw std::logic_error(
+                        "scene pressure coupling audit transition differs from the converged graph epoch");
+                }
                 if (acceptedMimeticPressureAudit_) {
                     if (wallExchange) {
                         mimeticPressureAuditCandidate.emplace(
@@ -1230,6 +1259,9 @@ SceneFluidPressureCoupling::advanceImpl(
                 if (mimeticPressureAuditCandidate) {
                     acceptedMimeticPressureAudit_ =
                         std::move(mimeticPressureAuditCandidate);
+                    acceptedMimeticPressureEpochTransition_ =
+                        std::move(
+                            mimeticPressureEpochTransitionCandidate);
                     acceptedMimeticPressureAuditWarmState_.reset();
                     acceptedMimeticPressureComparison_ =
                         std::move(mimeticPressureComparisonCandidate);

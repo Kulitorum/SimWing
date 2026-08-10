@@ -1164,6 +1164,11 @@ samples but never applies those samples to Structure; default frames and graph
 checkpoints remain byte-identical. The same endpoint crosses the coarse real
 wing's 138 controls and 42,927 shared traces without requiring the old graph
 operator to accept inadmissible embedded-opening coefficients. The bounded
+audit also retains a read-only consecutive graph pressure-epoch receipt. It
+independently rebuilds the converged epoch against the accepted grid geometry
+and verifies the exact topology transition consumed by the shadow solve;
+checkpoint restore leaves this transient receipt absent until the next live
+accepted step. The bounded
 `SWPCELL10` checkpoint now composes the compact accepted `SWMP` rows with the
 graph restart. Restore rebuilds trusted control/full/condensed topology from
 the Structure payload before decoding those rows, then resumes the exact

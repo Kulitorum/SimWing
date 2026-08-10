@@ -845,6 +845,16 @@ stationary accepted step retains every row, while the apex-crossing oracle
 publishes the existing one-row appearance and exact donor map through the same
 atomic receipt. Foreign current geometry, nested corruption, and aggregate
 bounds reject. No fluid state is rebased and no pressure is solved or applied.
+The compatible first consumer is the existing closed-volume pressure-coupling
+owner, not the planar regional-wall harness: the latter's periodic pressure
+tile planes intentionally do not form a finite closed scene region. After
+graph convergence, and only when the mimetic audit is enabled, the coupling
+builds this receipt against the converged epoch's independently accepted grid
+geometry and requires both the rebuilt epoch and shared topology transition to
+equal the products already used by the graph and shadow solves. The accepted
+receipt is read-only and transient; restoring the compact pressure checkpoint
+rebuilds warm topology but does not fabricate a historical transition receipt.
+The default worker does not construct or retain it.
 A
 strong feedback owner now uses that atomic input in a real
 load-based fixed point. Each iteration rewinds Structure to the accepted

@@ -814,6 +814,12 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   reports them without smearing their flow, while accepted region momentum
   retains their explicit-normal state. This is a continuation primitive; it
   does not yet own cut-cell advection, viscosity, or topology rebase/remap.
+  After graph convergence, the explicit mimetic-audit mode also retains one
+  `SceneFluidPressureEpochTransition` rebuilt against the independently
+  accepted current grid epoch and requires its complete epoch and topology map
+  to equal the graph products already used by the solve. The receipt is
+  observational, absent from the default path, and deliberately reset to an
+  unreported warm state on checkpoint restore.
 - `scene_fluid_pressure_link_flow.{h,cpp}` owns the explicit topology-stable
   inverse of that collapse. It restores previous opening-cap sweep, carries
   absolute per-link velocity deviations, recentres them under current link

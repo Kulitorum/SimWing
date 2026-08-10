@@ -76,6 +76,8 @@ public:
         const noexcept;
     [[nodiscard]] const SceneFluidMimeticPressureAuditEndpoint*
     acceptedMimeticPressureAudit() const noexcept;
+    [[nodiscard]] const SceneFluidPressureEpochTransition*
+    acceptedMimeticPressureEpochTransition() const noexcept;
     [[nodiscard]] const SceneFluidPressureShadowComparison*
     acceptedMimeticPressureComparison() const noexcept;
     [[nodiscard]] const SceneFluidPressureOwnerTransitionDecision*
