@@ -2377,9 +2377,8 @@ individually visible while surface summaries are canonically sorted and reject
 mixed axes or region sides. The X canonical has eight tiles, two `4 m2`
 surfaces centered at `x=-0.8/-0.2 m`, and authored sheet resultants of
 `-280/+280 N`; moving X/Y/Z capture closes force, impulse, and work exactly to
-the composed pressure state. This is provenance-rich load data only. A later
-adapter must still distribute it conservatively to authored structural
-geometry and own transactional application.
+the composed pressure state. This is provenance-rich load data only and owns
+no structural mutation.
 `planar_region_fragment_accepted_state.*` packages the first rollback-safe
 regional continuation endpoint. It recursively integrity-checks and owns the
 projected after-velocity, composed total pressure, and authored-surface load
@@ -2391,6 +2390,19 @@ fixtures capture deterministically; nested corruption, foreign velocity, and
 storage-limit violations reject without a partial endpoint. No transport,
 rebase, structural application, persistence, or production commit follows from
 acceptance.
+`scene_fluid_regional_pressure_sampling.*` provides the first read-only bridge
+from that endpoint to authoritative scene-v2 structural geometry. Regional
+surface stable IDs bind to scene sheet IDs; each clipped quadrature patch must
+resolve to one subcell pressure-wall tile with identical side regions, current
+plane, normal, and material-normal velocity. Per-tile sampled area must recover
+the complete source area, and the independently summed force, moment, and power
+must close to the accepted surface-load ledger before publication. The
+canonical two-plane scene covers all eight tiles, transfers the separate
+`-280/+280 N` resultants through the existing barycentric node topology, and
+under rigid translation reproduces accepted sheet work as quadrature power.
+Evaluation returns an immutable `ConservativeTransferResult`; it deliberately
+does not call `addLoadsTo`, advance XPBD, persist the regional state, or change
+worker pressure ownership.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

@@ -362,6 +362,15 @@ The immutable snapshot retains fluid momentum/kinetic energy and sheet force,
 impulse, and work summaries across static and moving X/Y/Z cases. It is
 rollback-safe continuation data only, with no transport, rebase, checkpoint, or
 worker commit yet.
+A source-bound scene adapter now maps that accepted endpoint onto the existing
+authored surface quadrature by requiring each regional surface ID to equal its
+scene sheet ID. Every clipped triangle patch must match one subcell tile's
+region sides, current plane, normal, and material velocity, while every tile's
+area is covered exactly once. Static two-sheet transfer recovers the separate
+`-280/+280 N` nodal resultants; rigid motion also closes quadrature power to
+the accepted sheet work. The result uses the established conservative
+barycentric Structure transfer, but remains read-only: it neither adds pending
+XPBD loads nor selects the regional solver for a worker.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.
