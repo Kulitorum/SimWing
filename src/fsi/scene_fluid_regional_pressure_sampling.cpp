@@ -170,6 +170,7 @@ std::uint64_t samplingFingerprint(
     Fingerprint fingerprint;
     fingerprint.integer(samples.version);
     fingerprint.integer(samples.regionalAcceptedStateFingerprint);
+    fingerprint.integer(samples.regionalOpeningLoadStateFingerprint);
     fingerprint.integer(samples.regionalPressureStateFingerprint);
     fingerprint.integer(samples.regionalSurfaceLoadFingerprint);
     fingerprint.integer(samples.regionalTopologyFingerprint);
@@ -179,6 +180,7 @@ std::uint64_t samplingFingerprint(
     fingerprint.integer(samples.structureDefinitionFingerprint);
     fingerprint.integer(samples.acceptedStepCount);
     fingerprint.real(samples.simulationTimeSeconds);
+    fingerprint.boolean(samples.openingAware);
     fingerprint.boolean(samples.staticGeometry);
     fingerprint.boolean(samples.usesMovingVolumeRates);
     fingerprint.real(samples.timeStepSeconds);
@@ -376,22 +378,16 @@ StructureVector3 currentTriangleNormal(
     return scaled(raw, 1.0 / magnitude);
 }
 
-void validateSources(
-    const fluid::PlanarPressureRegionFragmentAcceptedState& acceptedState,
-    const fluid::PeriodicCartesianGrid& grid,
-    const fluid::PlanarPressureRegionSweepLedger& sweep,
-    const fluid::PlanarPressureRegionFragmentSet& fragments,
+void validateSceneSources(
+    const std::uint64_t sourceTopologyFingerprint,
     const fluid::PlanarPressureRegionFragmentTopology& topology,
-    const fluid::PlanarPressureRegionFragmentVelocityMetric& metric,
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& surfaceState,
     const SceneFluidQuadratureDefinition& quadrature) {
-    fluid::validatePlanarPressureRegionFragmentAcceptedState(
-        acceptedState, grid, sweep, fragments, topology, metric);
     validateSceneFluidSurfaceDefinition(surface);
     validateSceneFluidSurfaceState(surface, surfaceState);
     validateSceneFluidQuadratureDefinition(quadrature);
-    if (acceptedState.sourceTopologyFingerprint != topology.fingerprint
+    if (sourceTopologyFingerprint != topology.fingerprint
         || quadrature.surfaceDefinitionFingerprint != surface.fingerprint
         || quadrature.surfaceStateFingerprint != surfaceState.fingerprint
         || quadrature.structureDefinitionFingerprint
@@ -404,8 +400,81 @@ void validateSources(
     }
 }
 
-SceneFluidRegionalPressureSampleSet buildSamples(
+void validateSources(
     const fluid::PlanarPressureRegionFragmentAcceptedState& acceptedState,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::PlanarPressureRegionSweepLedger& sweep,
+    const fluid::PlanarPressureRegionFragmentSet& fragments,
+    const fluid::PlanarPressureRegionFragmentTopology& topology,
+    const fluid::PlanarPressureRegionFragmentVelocityMetric& metric,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& surfaceState,
+    const SceneFluidQuadratureDefinition& quadrature) {
+    fluid::validatePlanarPressureRegionFragmentAcceptedState(
+        acceptedState, grid, sweep, fragments, topology, metric);
+    validateSceneSources(
+        acceptedState.sourceTopologyFingerprint, topology, surface,
+        surfaceState, quadrature);
+}
+
+void validateOpeningSources(
+    const fluid::PlanarPressureRegionFragmentOpeningLoadState& loadState,
+    const fluid::PlanarPressureRegionFragmentOpeningPressureOperator&
+        pressureOperator,
+    const fluid::PlanarPressureRegionFragmentPressureOperator&
+        basePressureOperator,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::PlanarPressureRegionSweepLedger& sweep,
+    const fluid::PlanarPressureRegionFragmentSet& fragments,
+    const fluid::PlanarPressureRegionFragmentTopology& topology,
+    const fluid::PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    const std::span<
+        const fluid::PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const fluid::PlanarPressureRegionFragmentOpeningSet& openings,
+    const std::span<
+        const fluid::PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        resistanceDefinitions,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& surfaceState,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const fluid::PlanarPressureRegionFragmentOpeningLoadStateLimits& limits) {
+    fluid::validatePlanarPressureRegionFragmentOpeningLoadState(
+        loadState, pressureOperator, basePressureOperator, grid, sweep,
+        fragments, topology, volumeRates, openingDefinitions, openings,
+        resistanceDefinitions, limits);
+    validateSceneSources(
+        loadState.sourceTopologyFingerprint, topology, surface, surfaceState,
+        quadrature);
+}
+
+StructureVector3 fullWallMoment(
+    const fluid::PlanarPressureRegionFragmentSurfaceLoadLedger& surfaceLoads) {
+    StructureVector3 result;
+    for (const auto& tile : surfaceLoads.tiles) {
+        result = add(
+            result,
+            cross(converted(tile.wrappedCentroidMeters),
+                  converted(tile.totalPressureForceOnSheetNewtons)));
+    }
+    return result;
+}
+
+template<typename PressureState>
+SceneFluidRegionalPressureSampleSet buildSamples(
+    const std::uint64_t acceptedStateFingerprint,
+    const std::uint64_t openingLoadStateFingerprint,
+    const PressureState& pressureState,
+    const fluid::PlanarPressureRegionFragmentSurfaceLoadLedger& surfaceLoads,
+    const fluid::PlanarPressureRegionFragmentOpeningSurfaceLoadLedger*
+        openingSurfaceLoads,
+    const bool staticGeometry,
+    const bool usesMovingVolumeRates,
+    const double timeStepSeconds,
+    const StructureVector3& sourceForce,
+    const StructureVector3& sourceMoment,
+    const double sourceWorkToSheetJoules,
+    const double sourceAreaSquareMeters,
     const fluid::PeriodicCartesianGrid& grid,
     const fluid::PlanarPressureRegionFragmentTopology& topology,
     const SceneFluidSurfaceDefinition& surface,
@@ -414,7 +483,7 @@ SceneFluidRegionalPressureSampleSet buildSamples(
     const SceneFluidRegionalPressureSamplingLimits& limits) {
     validateLimits(limits);
     const std::size_t sampleCount = quadrature.points.size();
-    const std::size_t tileCount = acceptedState.surfaceLoads.tiles.size();
+    const std::size_t tileCount = surfaceLoads.tiles.size();
     if (sampleCount == 0 || tileCount == 0
         || sampleCount > limits.maximumSamples
         || tileCount > limits.maximumTiles) {
@@ -440,10 +509,11 @@ SceneFluidRegionalPressureSampleSet buildSamples(
     }
 
     SceneFluidRegionalPressureSampleSet result;
-    result.regionalAcceptedStateFingerprint = acceptedState.fingerprint;
-    result.regionalPressureStateFingerprint = acceptedState.pressure.fingerprint;
-    result.regionalSurfaceLoadFingerprint =
-        acceptedState.surfaceLoads.fingerprint;
+    result.regionalAcceptedStateFingerprint = acceptedStateFingerprint;
+    result.regionalOpeningLoadStateFingerprint =
+        openingLoadStateFingerprint;
+    result.regionalPressureStateFingerprint = pressureState.fingerprint;
+    result.regionalSurfaceLoadFingerprint = surfaceLoads.fingerprint;
     result.regionalTopologyFingerprint = topology.fingerprint;
     result.quadratureFingerprint = quadrature.fingerprint;
     result.surfaceDefinitionFingerprint = surface.fingerprint;
@@ -452,9 +522,10 @@ SceneFluidRegionalPressureSampleSet buildSamples(
         surfaceState.structureDefinitionFingerprint;
     result.acceptedStepCount = surfaceState.acceptedStepCount;
     result.simulationTimeSeconds = surfaceState.simulationTimeSeconds;
-    result.staticGeometry = acceptedState.staticGeometry;
-    result.usesMovingVolumeRates = acceptedState.usesMovingVolumeRates;
-    result.timeStepSeconds = acceptedState.timeStepSeconds;
+    result.openingAware = openingSurfaceLoads != nullptr;
+    result.staticGeometry = staticGeometry;
+    result.usesMovingVolumeRates = usesMovingVolumeRates;
+    result.timeStepSeconds = timeStepSeconds;
     result.bindings.reserve(sampleCount);
     result.pressures.reserve(sampleCount);
     result.tiles.resize(tileCount);
@@ -462,17 +533,17 @@ SceneFluidRegionalPressureSampleSet buildSamples(
     std::vector<std::pair<TileKey, std::size_t>> tileByKey;
     tileByKey.reserve(tileCount);
     for (std::size_t index = 0; index < tileCount; ++index) {
-        const auto& tile = acceptedState.surfaceLoads.tiles[index];
+        const auto& tile = surfaceLoads.tiles[index];
         if (tile.tileIndex != index
             || tile.sourceFaceLinkIndex >= topology.links.size()
             || tile.sourcePressureWallIndex
-                >= acceptedState.pressure.walls.size()) {
+                >= pressureState.walls.size()) {
             throw std::invalid_argument(
                 "scene fluid regional pressure tile provenance is invalid");
         }
         const auto& link = topology.links[tile.sourceFaceLinkIndex];
         const auto& wall =
-            acceptedState.pressure.walls[tile.sourcePressureWallIndex];
+            pressureState.walls[tile.sourcePressureWallIndex];
         if (link.kind
                 != fluid::PlanarPressureRegionFragmentFaceKind::
                     PressureLayerWall
@@ -485,12 +556,25 @@ SceneFluidRegionalPressureSampleSet buildSamples(
                 "scene fluid regional pressure tile is foreign to topology");
         }
         tileByKey.emplace_back(tileKey(tile, link), index);
+        double sourceTileArea = tile.areaSquareMeters;
+        if (openingSurfaceLoads != nullptr) {
+            const auto& openingTile = openingSurfaceLoads->tiles[index];
+            if (openingTile.tileIndex != index
+                || openingTile.sourceSurfaceLoadTileIndex != index
+                || openingTile.sourceFaceLinkStableId
+                    != tile.sourceFaceLinkStableId
+                || openingTile.surfaceStableId != tile.surfaceStableId) {
+                throw std::invalid_argument(
+                    "scene fluid regional opening load tile is foreign");
+            }
+            sourceTileArea = openingTile.solidAreaSquareMeters;
+        }
         result.tiles[index] = {
             index,
             tile.sourceFaceLinkStableId,
             tile.surfaceStableId,
             0,
-            tile.areaSquareMeters,
+            sourceTileArea,
             0.0,
             0.0,
         };
@@ -536,9 +620,9 @@ SceneFluidRegionalPressureSampleSet buildSamples(
                 "scene fluid regional quadrature patch has no pressure tile");
         }
         const std::size_t tileIndex = found->second;
-        const auto& tile = acceptedState.surfaceLoads.tiles[tileIndex];
+        const auto& tile = surfaceLoads.tiles[tileIndex];
         const auto& wall =
-            acceptedState.pressure.walls[tile.sourcePressureWallIndex];
+            pressureState.walls[tile.sourcePressureWallIndex];
         if (point.negativeSideRegionId != tile.minusRegionStableId
             || point.positiveSideRegionId != tile.plusRegionStableId) {
             throw std::invalid_argument(
@@ -618,7 +702,6 @@ SceneFluidRegionalPressureSampleSet buildSamples(
             dot(force, motion.velocityMetersPerSecond);
     }
 
-    StructureVector3 sourceMoment;
     for (std::size_t index = 0; index < tileCount; ++index) {
         auto& coverage = result.tiles[index];
         coverage.areaResidualSquareMeters =
@@ -630,24 +713,23 @@ SceneFluidRegionalPressureSampleSet buildSamples(
         const double areaScale = std::max({
             coverage.sampledAreaSquareMeters,
             coverage.sourceAreaSquareMeters, 1.0});
-        if (coverage.sampleCount == 0
+        const bool zeroSolidOpeningTile = result.openingAware
+            && coverage.sourceAreaSquareMeters == 0.0;
+        if ((zeroSolidOpeningTile
+             && (coverage.sampleCount != 0
+                 || coverage.sampledAreaSquareMeters != 0.0))
+            || (!zeroSolidOpeningTile
+                && (coverage.sampleCount == 0
+                    || !(coverage.sourceAreaSquareMeters > 0.0)))
             || std::abs(coverage.areaResidualSquareMeters)
                 > tolerance(areaScale)) {
             throw std::invalid_argument(
                 "scene fluid regional pressure tile coverage is incomplete");
         }
-        const auto& tile = acceptedState.surfaceLoads.tiles[index];
-        sourceMoment = add(
-            sourceMoment,
-            cross(converted(tile.wrappedCentroidMeters),
-                  converted(tile.totalPressureForceOnSheetNewtons)));
     }
 
-    const StructureVector3 sourceForce = converted(
-        acceptedState.pressureForceOnSheetNewtons);
     const double sourcePower =
-        acceptedState.pressureWorkToSheetJoules
-        / acceptedState.timeStepSeconds;
+        sourceWorkToSheetJoules / timeStepSeconds;
     result.sourceForceResidualNewtons = subtract(
         result.sampledPressureForceOnSheetNewtons, sourceForce);
     result.sourceMomentResidualNewtonMeters = subtract(
@@ -664,10 +746,10 @@ SceneFluidRegionalPressureSampleSet buildSamples(
         std::abs(result.sampledPressurePowerToSheetWatts),
         std::abs(sourcePower), 1.0});
     if (std::abs(result.sampledAreaSquareMeters
-                 - acceptedState.surfaceLoads.totalAreaSquareMeters)
+                 - sourceAreaSquareMeters)
             > tolerance(std::max({
                 result.sampledAreaSquareMeters,
-                acceptedState.surfaceLoads.totalAreaSquareMeters, 1.0}))
+                sourceAreaSquareMeters, 1.0}))
         || maximumAbsolute(result.sourceForceResidualNewtons)
             > tolerance(forceScale)
         || maximumAbsolute(result.sourceMomentResidualNewtonMeters)
@@ -706,8 +788,58 @@ sampleSceneFluidRegionalAcceptedPressure(
         acceptedState, grid, sweep, fragments, topology, metric,
         surface, surfaceState, quadrature);
     auto result = buildSamples(
-        acceptedState, grid, topology, surface, surfaceState, quadrature,
-        limits);
+        acceptedState.fingerprint, 0, acceptedState.pressure,
+        acceptedState.surfaceLoads, nullptr, acceptedState.staticGeometry,
+        acceptedState.usesMovingVolumeRates, acceptedState.timeStepSeconds,
+        converted(acceptedState.pressureForceOnSheetNewtons),
+        fullWallMoment(acceptedState.surfaceLoads),
+        acceptedState.pressureWorkToSheetJoules,
+        acceptedState.surfaceLoads.totalAreaSquareMeters, grid, topology,
+        surface, surfaceState, quadrature, limits);
+    validateSceneFluidRegionalPressureSampleIntegrity(result);
+    return result;
+}
+
+SceneFluidRegionalPressureSampleSet
+sampleSceneFluidRegionalOpeningPressure(
+    const fluid::PlanarPressureRegionFragmentOpeningLoadState& loadState,
+    const fluid::PlanarPressureRegionFragmentOpeningPressureOperator&
+        pressureOperator,
+    const fluid::PlanarPressureRegionFragmentPressureOperator&
+        basePressureOperator,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::PlanarPressureRegionSweepLedger& sweep,
+    const fluid::PlanarPressureRegionFragmentSet& fragments,
+    const fluid::PlanarPressureRegionFragmentTopology& topology,
+    const fluid::PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    const std::span<
+        const fluid::PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const fluid::PlanarPressureRegionFragmentOpeningSet& openings,
+    const std::span<
+        const fluid::PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        resistanceDefinitions,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& surfaceState,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const fluid::PlanarPressureRegionFragmentOpeningLoadStateLimits&
+        loadStateLimits,
+    const SceneFluidRegionalPressureSamplingLimits& limits) {
+    validateOpeningSources(
+        loadState, pressureOperator, basePressureOperator, grid, sweep,
+        fragments, topology, volumeRates, openingDefinitions, openings,
+        resistanceDefinitions, surface, surfaceState, quadrature,
+        loadStateLimits);
+    auto result = buildSamples(
+        0, loadState.fingerprint, loadState.pressure,
+        loadState.surfaceLoads, &loadState.openingSurfaceLoads,
+        loadState.staticGeometry, loadState.usesMovingVolumeRates,
+        loadState.timeStepSeconds,
+        converted(loadState.solidPressureForceOnSheetNewtons),
+        converted(loadState.solidPressureMomentOnSheetNewtonMeters),
+        loadState.solidPressureWorkToSheetJoules,
+        loadState.solidAreaSquareMeters, grid, topology, surface,
+        surfaceState, quadrature, limits);
     validateSceneFluidRegionalPressureSampleIntegrity(result);
     return result;
 }
@@ -716,7 +848,11 @@ void validateSceneFluidRegionalPressureSampleIntegrity(
     const SceneFluidRegionalPressureSampleSet& samples) {
     if (samples.version != sceneFluidRegionalPressureSamplingVersion
         || samples.fingerprint == 0
-        || samples.regionalAcceptedStateFingerprint == 0
+        || (samples.openingAware
+                ? samples.regionalAcceptedStateFingerprint != 0
+                    || samples.regionalOpeningLoadStateFingerprint == 0
+                : samples.regionalAcceptedStateFingerprint == 0
+                    || samples.regionalOpeningLoadStateFingerprint != 0)
         || samples.regionalPressureStateFingerprint == 0
         || samples.regionalSurfaceLoadFingerprint == 0
         || samples.regionalTopologyFingerprint == 0
@@ -727,7 +863,9 @@ void validateSceneFluidRegionalPressureSampleIntegrity(
         || !std::isfinite(samples.simulationTimeSeconds)
         || !std::isfinite(samples.timeStepSeconds)
         || !(samples.timeStepSeconds > 0.0)
-        || samples.staticGeometry == samples.usesMovingVolumeRates
+        || (!samples.openingAware
+            && samples.staticGeometry == samples.usesMovingVolumeRates)
+        || (samples.openingAware && !samples.usesMovingVolumeRates)
         || samples.bindings.empty()
         || samples.bindings.size() != samples.pressures.size()
         || samples.tiles.empty()
@@ -793,13 +931,18 @@ void validateSceneFluidRegionalPressureSampleIntegrity(
     double maximumAreaResidual = 0.0;
     for (std::size_t index = 0; index < samples.tiles.size(); ++index) {
         const auto& tile = samples.tiles[index];
+        const bool zeroSolidOpeningTile = samples.openingAware
+            && tile.sourceAreaSquareMeters == 0.0;
         if (tile.tileIndex != index || tile.sourceFaceLinkStableId == 0
             || tile.surfaceStableId == invalidStableId
-            || tile.sampleCount == 0
             || !std::isfinite(tile.sourceAreaSquareMeters)
-            || !(tile.sourceAreaSquareMeters > 0.0)
             || !std::isfinite(tile.sampledAreaSquareMeters)
-            || !(tile.sampledAreaSquareMeters > 0.0)
+            || (zeroSolidOpeningTile
+                    ? tile.sampleCount != 0
+                        || tile.sampledAreaSquareMeters != 0.0
+                    : tile.sampleCount == 0
+                        || !(tile.sourceAreaSquareMeters > 0.0)
+                        || !(tile.sampledAreaSquareMeters > 0.0))
             || !std::isfinite(tile.areaResidualSquareMeters)
             || tile.areaResidualSquareMeters
                 != tile.sampledAreaSquareMeters
@@ -840,10 +983,69 @@ void validateSceneFluidRegionalAcceptedPressureSamples(
         surface, surfaceState, quadrature);
     validateSceneFluidRegionalPressureSampleIntegrity(samples);
     if (samples != buildSamples(
-                       acceptedState, grid, topology, surface, surfaceState,
-                       quadrature, limits)) {
+                       acceptedState.fingerprint, 0, acceptedState.pressure,
+                       acceptedState.surfaceLoads, nullptr,
+                       acceptedState.staticGeometry,
+                       acceptedState.usesMovingVolumeRates,
+                       acceptedState.timeStepSeconds,
+                       converted(acceptedState.pressureForceOnSheetNewtons),
+                       fullWallMoment(acceptedState.surfaceLoads),
+                       acceptedState.pressureWorkToSheetJoules,
+                       acceptedState.surfaceLoads.totalAreaSquareMeters,
+                       grid, topology, surface, surfaceState, quadrature,
+                       limits)) {
         throw std::invalid_argument(
             "scene fluid regional pressure sample payload is invalid");
+    }
+}
+
+void validateSceneFluidRegionalOpeningPressureSamples(
+    const SceneFluidRegionalPressureSampleSet& samples,
+    const fluid::PlanarPressureRegionFragmentOpeningLoadState& loadState,
+    const fluid::PlanarPressureRegionFragmentOpeningPressureOperator&
+        pressureOperator,
+    const fluid::PlanarPressureRegionFragmentPressureOperator&
+        basePressureOperator,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::PlanarPressureRegionSweepLedger& sweep,
+    const fluid::PlanarPressureRegionFragmentSet& fragments,
+    const fluid::PlanarPressureRegionFragmentTopology& topology,
+    const fluid::PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    const std::span<
+        const fluid::PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const fluid::PlanarPressureRegionFragmentOpeningSet& openings,
+    const std::span<
+        const fluid::PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        resistanceDefinitions,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& surfaceState,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const fluid::PlanarPressureRegionFragmentOpeningLoadStateLimits&
+        loadStateLimits,
+    const SceneFluidRegionalPressureSamplingLimits& limits) {
+    validateOpeningSources(
+        loadState, pressureOperator, basePressureOperator, grid, sweep,
+        fragments, topology, volumeRates, openingDefinitions, openings,
+        resistanceDefinitions, surface, surfaceState, quadrature,
+        loadStateLimits);
+    validateSceneFluidRegionalPressureSampleIntegrity(samples);
+    if (samples != buildSamples(
+                       0, loadState.fingerprint, loadState.pressure,
+                       loadState.surfaceLoads,
+                       &loadState.openingSurfaceLoads,
+                       loadState.staticGeometry,
+                       loadState.usesMovingVolumeRates,
+                       loadState.timeStepSeconds,
+                       converted(loadState.solidPressureForceOnSheetNewtons),
+                       converted(
+                           loadState
+                               .solidPressureMomentOnSheetNewtonMeters),
+                       loadState.solidPressureWorkToSheetJoules,
+                       loadState.solidAreaSquareMeters, grid, topology,
+                       surface, surfaceState, quadrature, limits)) {
+        throw std::invalid_argument(
+            "scene fluid regional opening-pressure sample payload is invalid");
     }
 }
 
@@ -910,6 +1112,10 @@ applySceneFluidRegionalAcceptedPressureLoads(
     const SceneFluidRegionalPressureLoadApplicationLimits& limits) {
     validateApplicationLimits(limits);
     validateSceneFluidRegionalPressureSampleIntegrity(samples);
+    if (samples.openingAware) {
+        throw std::invalid_argument(
+            "scene fluid regional opening-pressure loads are read-only");
+    }
     const std::size_t nodeLoadCount = transfer.nodes().size();
     const std::size_t structureNodeCount = target.definition().nodes.size();
     if (nodeLoadCount == 0 || structureNodeCount == 0

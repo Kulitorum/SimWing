@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -233,6 +234,132 @@ struct RegionalEndpoint {
     }
 };
 
+struct OpeningRegionalEndpoint {
+    PeriodicCartesianGrid geometry = grid();
+    std::vector<PlanarPressureJumpLayerDefinition> layers = pocketLayers();
+    PlanarPressureRegionSweepLedger sweep;
+    PlanarPressureRegionFragmentSet fragments;
+    PlanarPressureRegionFragmentTopology topology;
+    PlanarPressureRegionFragmentPressureOperator basePressureOperator;
+    PlanarPressureRegionFragmentVolumeRateSet volumeRates;
+    std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions;
+    PlanarPressureRegionFragmentOpeningSet openings;
+    PlanarPressureRegionFragmentOpeningPressureOperator pressureOperator;
+    std::vector<PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        resistanceDefinitions;
+    PlanarPressureRegionFragmentOpeningAcceptedState acceptedFlow;
+    PlanarPressureRegionFragmentOpeningPressureState pressure;
+    PlanarPressureRegionFragmentSurfaceLoadLedger surfaceLoads;
+    PlanarPressureRegionFragmentOpeningSurfaceLoadLedger openingSurfaceLoads;
+    PlanarPressureRegionFragmentOpeningLoadState loadState;
+
+    OpeningRegionalEndpoint() {
+        constexpr double durationSeconds = 0.01;
+        sweep = makePlanarPressureRegionSweepLedger(
+            geometry, layers, layers, durationSeconds);
+        fragments = buildPlanarPressureRegionFragments(geometry, sweep);
+        topology = buildPlanarPressureRegionFragmentTopology(
+            geometry, sweep, fragments);
+        basePressureOperator =
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, sweep, fragments, topology);
+        volumeRates = buildPlanarPressureRegionFragmentVolumeRates(
+            geometry, sweep, fragments, topology);
+        for (const auto& link : topology.links) {
+            if (link.kind
+                    != PlanarPressureRegionFragmentFaceKind::PressureLayerWall
+                || link.surfaceStableId != 10) {
+                continue;
+            }
+            const std::uint64_t patchId =
+                100 + openingDefinitions.size();
+            openingDefinitions.push_back({
+                patchId,
+                1000,
+                link.surfaceStableId,
+                link.axis,
+                link.i,
+                link.j,
+                link.k,
+                link.minusRegionStableId,
+                link.plusRegionStableId,
+                link.areaSquareMeters,
+            });
+            resistanceDefinitions.push_back({patchId, {0.0, 0.0}});
+        }
+        if (openingDefinitions.size() != 4) {
+            throw std::runtime_error(
+                "opening regional fixture did not find four wall tiles");
+        }
+        openings = buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, openingDefinitions);
+        pressureOperator =
+            buildPlanarPressureRegionFragmentOpeningPressureOperator(
+                basePressureOperator, geometry, sweep, fragments, topology,
+                openingDefinitions, openings);
+
+        std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+            samples;
+        samples.reserve(openingDefinitions.size());
+        for (const auto& definition : openingDefinitions)
+            samples.push_back({definition.patchStableId, 0.0});
+        auto flux = buildPlanarPressureRegionFragmentOpeningFluxState(
+            geometry, sweep, fragments, topology, openingDefinitions,
+            openings, samples);
+        std::vector<double> velocity(topology.links.size(), 0.0);
+        std::vector<double> pressureCorrection(
+            basePressureOperator.rows.size(), 0.0);
+        PlanarPressureRegionFragmentOpeningPressureStepSettings settings;
+        settings.projection.densityKgPerCubicMeter = 1.2;
+        settings.projection.timeStepSeconds = durationSeconds;
+        settings.projection
+            .absoluteContinuityToleranceCubicMetersPerSecond = 1.0e-12;
+        settings.projection.relativeContinuityTolerance = 1.0e-10;
+        settings.projection
+            .absoluteMomentumResidualToleranceKilogramMetersPerSecond =
+            1.0e-12;
+        settings.projection.relativeMomentumResidualTolerance = 1.0e-10;
+        settings.projection.absoluteEnergyResidualToleranceJoules = 1.0e-12;
+        settings.projection.relativeEnergyResidualTolerance = 1.0e-10;
+        settings.projection.pressureSolve
+            .absoluteResidualTolerancePascalsMeters = 1.0e-13;
+        settings.projection.pressureSolve.relativeResidualTolerance = 0.0;
+        settings.projection.pressureSolve.maximumIterations = 200;
+        const auto diagnostics =
+            advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
+                pressureOperator, basePressureOperator, geometry, sweep,
+                fragments, topology, volumeRates, openingDefinitions,
+                openings, resistanceDefinitions, velocity, samples, flux,
+                pressureCorrection, settings);
+        if (!diagnostics.accepted) {
+            throw std::runtime_error(
+                "opening regional fixture pressure step did not converge");
+        }
+        acceptedFlow =
+            capturePlanarPressureRegionFragmentOpeningAcceptedState(
+                pressureOperator, basePressureOperator, geometry, sweep,
+                fragments, topology, volumeRates, openingDefinitions,
+                openings, resistanceDefinitions, diagnostics, velocity,
+                samples, flux, pressureCorrection, settings);
+        pressure = composePlanarPressureRegionFragmentOpeningPressureState(
+            acceptedFlow, pressureOperator, basePressureOperator, geometry,
+            sweep, fragments, topology, volumeRates, openingDefinitions,
+            openings, resistanceDefinitions);
+        surfaceLoads = capturePlanarPressureRegionFragmentSurfaceLoads(
+            pressure);
+        openingSurfaceLoads =
+            capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+                surfaceLoads, pressure, geometry, sweep, fragments, topology,
+                openingDefinitions, openings);
+        loadState = capturePlanarPressureRegionFragmentOpeningLoadState(
+            acceptedFlow, pressure, surfaceLoads, openingSurfaceLoads,
+            pressureOperator, basePressureOperator, geometry, sweep,
+            fragments, topology, volumeRates, openingDefinitions, openings,
+            resistanceDefinitions);
+    }
+};
+
 Scene pressureScene(const bool incomplete = false,
                     const bool reverseFirstSheet = false) {
     Scene scene;
@@ -282,6 +409,19 @@ Scene pressureScene(const bool incomplete = false,
     return scene;
 }
 
+Scene openingPressureScene() {
+    auto scene = pressureScene();
+    std::erase_if(
+        scene.triangles,
+        [](const Triangle& triangle) { return triangle.sheetId == 10; });
+    std::erase_if(
+        scene.vertices,
+        [](const Vertex& vertex) { return vertex.id < 200; });
+    scene.metadata.designChecksum =
+        "sha256:regional-opening-pressure-sampling";
+    return scene;
+}
+
 SceneFluidSurfaceState prepareState(
     const SceneFluidSurfaceDefinition& surface,
     const SceneStructureMappings& mappings,
@@ -316,10 +456,8 @@ struct SceneFixture {
     SceneFluidPatchOwnership ownership;
     SceneFluidQuadratureDefinition quadrature;
 
-    SceneFixture(const bool moving,
-                 const bool incomplete = false,
-                 const bool reverseFirstSheet = false)
-        : scene(pressureScene(incomplete, reverseFirstSheet)),
+    SceneFixture(Scene inputScene, const bool moving)
+        : scene(std::move(inputScene)),
           surface(assembleSceneFluidSurface(scene)),
           structureAssembly(assembleSceneStructure(scene)),
           structure(structureAssembly.definition),
@@ -338,9 +476,15 @@ struct SceneFixture {
           ownership(ownSceneFluidSurfacePatches(
               surface.definition, state, grid(), candidates,
               intersections, patches)),
-          quadrature(buildSceneFluidQuadrature(
+           quadrature(buildSceneFluidQuadrature(
               surface.definition, state, grid(), candidates,
               intersections, patches, ownership, transfer)) {}
+
+    SceneFixture(const bool moving,
+                 const bool incomplete = false,
+                 const bool reverseFirstSheet = false)
+        : SceneFixture(
+              pressureScene(incomplete, reverseFirstSheet), moving) {}
 };
 
 SceneFluidRegionalPressureSampleSet sample(
@@ -351,6 +495,19 @@ SceneFluidRegionalPressureSampleSet sample(
         endpoint.accepted, endpoint.geometry, endpoint.sweep,
         endpoint.fragments, endpoint.topology, endpoint.metric,
         scene.surface.definition, scene.state, scene.quadrature, limits);
+}
+
+SceneFluidRegionalPressureSampleSet sample(
+    const OpeningRegionalEndpoint& endpoint,
+    const SceneFixture& scene,
+    const SceneFluidRegionalPressureSamplingLimits& limits = {}) {
+    return sampleSceneFluidRegionalOpeningPressure(
+        endpoint.loadState, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, scene.surface.definition,
+        scene.state, scene.quadrature, {}, limits);
 }
 
 void testStaticSamplingAndTransfer() {
@@ -435,6 +592,114 @@ void testStaticSamplingAndTransfer() {
     check(fixture.structure.diagnostics().pendingExternalForceNewtons
               == StructureVector3{},
           "regional sampling: evaluation does not mutate Structure loads");
+}
+
+void testOpeningAwareReadOnlySampling() {
+    const OpeningRegionalEndpoint endpoint;
+    SceneFixture fixture(openingPressureScene(), false);
+    check(fixture.surface.ok() && fixture.structureAssembly.ok(),
+          "regional opening sampling: retained sheet assembles");
+    const auto samples = sample(endpoint, fixture);
+    const auto repeated = sample(endpoint, fixture);
+    check(samples == repeated && samples.fingerprint != 0
+              && samples.openingAware
+              && samples.regionalAcceptedStateFingerprint == 0
+              && samples.regionalOpeningLoadStateFingerprint
+                  == endpoint.loadState.fingerprint
+              && samples.regionalPressureStateFingerprint
+                  == endpoint.pressure.fingerprint
+              && samples.regionalSurfaceLoadFingerprint
+                  == endpoint.surfaceLoads.fingerprint
+              && samples.staticGeometry
+              && samples.usesMovingVolumeRates
+              && samples.tiles.size() == 8
+              && samples.bindings.size() == fixture.quadrature.points.size(),
+          "regional opening sampling: capture is deterministic and bound to the atomic endpoint");
+    std::size_t zeroSolidTiles = 0;
+    for (const auto& tile : samples.tiles) {
+        if (tile.surfaceStableId == 10) {
+            check(tile.sourceAreaSquareMeters == 0.0
+                      && tile.sampledAreaSquareMeters == 0.0
+                      && tile.sampleCount == 0
+                      && tile.areaResidualSquareMeters == 0.0,
+                  "regional opening sampling: fully open tile receives no fabric sample");
+            ++zeroSolidTiles;
+        } else {
+            check(tile.surfaceStableId == 20
+                      && tile.sourceAreaSquareMeters > 0.0
+                      && tile.sampleCount > 0,
+                  "regional opening sampling: retained tile remains covered");
+        }
+    }
+    check(zeroSolidTiles == 4,
+          "regional opening sampling: all removed wall tiles remain explicit");
+    checkNear(samples.sampledAreaSquareMeters,
+              endpoint.loadState.solidAreaSquareMeters, 2.0e-13,
+              "regional opening sampling: quadrature covers retained solid area only");
+    checkNear(samples.sampledPressureForceOnSheetNewtons.x,
+              endpoint.loadState.solidPressureForceOnSheetNewtons.x,
+              4.0e-13,
+              "regional opening sampling: retained pressure force closes");
+    check(std::max({
+              std::abs(samples.sourceForceResidualNewtons.x),
+              std::abs(samples.sourceForceResidualNewtons.y),
+              std::abs(samples.sourceForceResidualNewtons.z),
+              std::abs(samples.sourceMomentResidualNewtonMeters.x),
+              std::abs(samples.sourceMomentResidualNewtonMeters.y),
+              std::abs(samples.sourceMomentResidualNewtonMeters.z),
+              std::abs(samples.sourcePowerResidualWatts)}) < 4.0e-13,
+          "regional opening sampling: retained wrench and power close");
+    for (const auto& binding : samples.bindings) {
+        check(binding.surfaceStableId == 20,
+              "regional opening sampling: no aperture patch receives traction");
+    }
+    validateSceneFluidRegionalPressureSampleIntegrity(samples);
+    validateSceneFluidRegionalOpeningPressureSamples(
+        samples, endpoint.loadState, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, fixture.surface.definition,
+        fixture.state, fixture.quadrature);
+
+    const auto transferResult =
+        evaluateSceneFluidRegionalAcceptedPressureQuadrature(
+            fixture.surface.definition, fixture.state, fixture.transfer,
+            fixture.quadrature, samples);
+    checkNear(transferResult.diagnostics().surfaceAreaSquareMeters,
+              endpoint.loadState.solidAreaSquareMeters, 2.0e-13,
+              "regional opening sampling: read-only transfer retains solid area");
+    checkNear(transferResult.diagnostics().integratedSurfaceForceNewtons.x,
+              endpoint.loadState.solidPressureForceOnSheetNewtons.x,
+              4.0e-13,
+              "regional opening sampling: read-only transfer retains solid force");
+    const auto pendingBefore =
+        fixture.structure.diagnostics().pendingExternalForceNewtons;
+    expectRejected(
+        [&] {
+            static_cast<void>(applySceneFluidRegionalAcceptedPressureLoads(
+                fixture.surface.definition, fixture.state, fixture.transfer,
+                fixture.quadrature, samples, fixture.structure));
+        },
+        "regional opening sampling: Structure application remains disabled");
+    check(fixture.structure.diagnostics().pendingExternalForceNewtons
+              == pendingBefore,
+          "regional opening sampling: rejected application preserves Structure");
+
+    auto corrupt = samples;
+    corrupt.regionalOpeningLoadStateFingerprint ^= 1U;
+    expectRejected(
+        [&] { validateSceneFluidRegionalPressureSampleIntegrity(corrupt); },
+        "regional opening sampling: endpoint fingerprint corruption rejects");
+    SceneFluidRegionalPressureSamplingLimits limits;
+    limits.maximumSamples = samples.bindings.size() - 1;
+    expectRejected(
+        [&] { static_cast<void>(sample(endpoint, fixture, limits)); },
+        "regional opening sampling: sample limit rejects");
+    SceneFixture foreignFullSheet(false);
+    expectRejected(
+        [&] { static_cast<void>(sample(endpoint, foreignFullSheet)); },
+        "regional opening sampling: traction over removed aperture area rejects");
 }
 
 void testMovingSamplingAndPower() {
@@ -719,6 +984,7 @@ void testRejectionAndLimits() {
 int main() {
     try {
         testStaticSamplingAndTransfer();
+        testOpeningAwareReadOnlySampling();
         testMovingSamplingAndPower();
         testTransactionalLoadApplication();
         testMovingLoadApplication();

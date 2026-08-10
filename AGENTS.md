@@ -2030,15 +2030,18 @@ makes this a certified aerodynamic solver.
   load ledger after recursively validating exact fragment/topology/metric and
   after-state identity. It is a rollback-safe continuation snapshot, not a
   transport step or production commit.
-- `src/fsi/scene_fluid_regional_pressure_sampling.{h,cpp}` binds that accepted
-  endpoint to the existing scene quadrature and conservative Structure
-  transfer. Regional surface IDs must equal scene sheet IDs; every patch must
-  match one tile's side regions, current plane, normal, and material velocity,
-  and every tile must close area, force, moment, and power before publication.
-  Evaluation is immutable. Its separate explicit load application is epoch-
-  and kinematics-bound, preserves existing pending loads, publishes a per-node
-  receipt, and restores the complete Structure checkpoint on failure. It does
-  not step Structure or select worker pressure ownership.
+- `src/fsi/scene_fluid_regional_pressure_sampling.{h,cpp}` binds a sealed
+  accepted endpoint or atomic opening-load endpoint to the existing scene
+  quadrature and conservative Structure transfer. Regional surface IDs must
+  equal scene sheet IDs; every patch must match one tile's side regions,
+  current plane, normal, and material velocity. Sealed coverage closes full
+  wall area; opening coverage closes retained-solid area and keeps fully open
+  zero-sample tiles explicit. Evaluation is immutable. Opening-aware samples
+  are rejected by the application entry point before mutation. Sealed explicit
+  load application is epoch- and kinematics-bound, preserves existing pending
+  loads, publishes a per-node receipt, and restores the complete Structure
+  checkpoint on failure. It does not step Structure or select worker pressure
+  ownership.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2737,19 +2740,25 @@ limits. Do not infer momentum transport, topology rebase, Structure load
 application, checkpoint persistence, or production worker commitment.
 
 For `scene_fluid_regional_pressure_sampling.*`, rebuild and validate the full
-regional accepted endpoint and authoritative scene quadrature before sampling.
+sealed regional accepted endpoint or atomic opening-load endpoint and the
+authoritative scene quadrature before sampling.
 Require one subcell quadrature owner per patch, exact surface-ID/sheet-ID and
 side-region identity, compatible current plane/normal/material velocity, and
-complete per-tile area coverage. Independently close sampled force, moment, and
-power to the accepted load ledger, preserve the existing barycentric
+complete per-tile area coverage. For opening-aware input, cover retained-solid
+area only, preserve fully open tiles as exact zero-area/zero-sample rows, and
+close to the outer solid force/moment/work ledger. Independently close sampled
+force, moment, and power to the accepted load ledger, preserve the barycentric
 conservative transfer, and enforce sample/tile/owned/working limits before
 allocation. Cover static separate `-280/+280 N` sheet resultants, rigid moving
 power, nested corruption, incomplete coverage, reversed winding, and foreign
-accepted state. Evaluation must not mutate Structure. Explicit application
-must bind the exact Structure epoch/kinematics, prevalidate all resulting node
-loads and limits, preserve unrelated pending loads, change no committed state,
-and restore the full checkpoint after any failure. Cover static/moving
-application, pre-existing load preservation, receipt corruption, stale epoch,
+accepted state. Also cover deterministic opening endpoint binding, removal of
+all quadrature over a fully open authored surface, foreign extra fabric, and
+opening fingerprint corruption. Evaluation must not mutate Structure. Explicit
+application must reject opening-aware samples before mutation. Sealed
+application must bind the exact Structure epoch/kinematics, prevalidate all
+resulting node loads and limits, preserve unrelated pending loads, change no
+committed state, and restore the full checkpoint after any failure. Cover
+static/moving application, pre-existing load preservation, receipt corruption, stale epoch,
 and node/Structure/owned/working limits. Neither path enables a worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with

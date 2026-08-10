@@ -501,6 +501,14 @@ area is covered exactly once. Static two-sheet transfer recovers the separate
 `-280/+280 N` nodal resultants; rigid motion also closes quadrature power to
 the accepted sheet work. The result uses the established conservative
 barycentric Structure transfer, but evaluation remains read-only.
+The same adapter now accepts the atomic opening-load endpoint. It treats each
+tile's retained-solid area as the authoritative coverage target, so a fully
+open tile remains visible with zero quadrature samples while no traction is
+invented across the aperture. A four-tile removed-surface oracle leaves only
+the opposite `4 m2` sheet and closes its force, moment, and power exactly to the
+outer solid ledger. Read-only conservative evaluation is enabled; the explicit
+Structure-application entry point rejects opening-aware samples before any
+mutation until that coupling boundary is designed separately.
 An explicit opt-in application wrapper can now add those evaluated nodal forces
 to Structure's pending loads. It first binds the exact accepted epoch and nodal
 kinematics, precomputes every resulting load, preserves unrelated pending

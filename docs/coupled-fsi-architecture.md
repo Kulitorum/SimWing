@@ -2572,15 +2572,21 @@ storage-limit violations reject without a partial endpoint. No transport,
 rebase, structural application, persistence, or production commit follows from
 acceptance.
 `scene_fluid_regional_pressure_sampling.*` provides the first read-only bridge
-from that endpoint to authoritative scene-v2 structural geometry. Regional
+from either the sealed accepted endpoint or atomic opening-load endpoint to
+authoritative scene-v2 structural geometry. Regional
 surface stable IDs bind to scene sheet IDs; each clipped quadrature patch must
 resolve to one subcell pressure-wall tile with identical side regions, current
 plane, normal, and material-normal velocity. Per-tile sampled area must recover
 the complete source area, and the independently summed force, moment, and power
-must close to the accepted surface-load ledger before publication. The
+must close to the accepted surface-load ledger before publication. Opening-
+aware capture instead targets each tile's retained-solid area, keeps a fully
+open tile as an explicit zero-area/zero-sample row, and closes force, origin
+moment, and power to the atomic endpoint's solid ledger. The
 canonical two-plane scene covers all eight tiles, transfers the separate
 `-280/+280 N` resultants through the existing barycentric node topology, and
-under rigid translation reproduces accepted sheet work as quadrature power.
+under rigid translation reproduces accepted sheet work as quadrature power. A
+separate fully removed four-tile surface oracle covers only the remaining
+`4 m2` sheet and proves that no aperture traction is sampled.
 Evaluation returns an immutable `ConservativeTransferResult`; it deliberately
 does not call `addLoadsTo`, advance XPBD, persist the regional state, or change
 worker pressure ownership. A separate explicit application wrapper now binds
@@ -2590,7 +2596,9 @@ pressure-plus-prior pending load under independent node/storage bounds, applies
 through the existing transfer, and validates that only the pending-load vector
 changed. Its immutable receipt retains each prior/applied/resulting node force
 and aggregate closure; any exception or failed postcondition restores the
-complete checkpoint. This is a tested mutation boundary, not a structural
+complete checkpoint. That mutation boundary remains sealed-only: opening-aware
+samples reject before mutation while read-only conservative evaluation is
+available. This is a tested mutation boundary, not a structural
 advance, pressure refresh, checkpoint format, or worker integration.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
