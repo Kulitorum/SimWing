@@ -2571,20 +2571,24 @@ deliberately truncated cold and warm solves publish typed empty results while
 leaving both prediction and warm history bit-exact. It adds no viscosity, wall
 shear, traction, persistence, topology rebase, or worker selection.
 `planar_region_fragment_opening_momentum_cycle.*` now gives the repeated path
-one atomic ownership boundary. Its source is the scheme's actual staggered
-pair: collocated transport controls at the previous geometry and an accepted
-pressure endpoint at the current geometry. It captures only that endpoint's
-corrected current flow, advances the prior controls into it, predicts the new
-controls onto one consecutive next geometry, maps only correction pressure,
-and accepts the warm pressure transaction. Complete success publishes exactly
-two endpoints together: transported momentum at the current geometry and
-accepted pressure at the next. A transport or pressure rejection retains typed
-scalar attempt diagnostics and immutable lineage but both public endpoints are
-empty. Uniform X/Y/Z and expanding breathing cases reproduce the separately
-assembled pipeline bit-for-bit; forced subcycle and truncated-pressure failures
-prove rollback at both numerical stages. The opt-in cycle aggregates bounded
-temporary storage but adds no viscosity, wall shear, traction, topology rebase,
-persistence, or production-worker selection.
+one atomic ownership boundary and now owns activation as the same transaction.
+Exactly one collocated-momentum source is fingerprinted: an initial opening-
+aware velocity state for bootstrap, or the prior accepted transport controls
+for every repeated cycle. The other half of the scheme's staggered source pair
+is an accepted pressure endpoint at the current geometry. The transaction
+captures only that endpoint's corrected current flow, advances source momentum
+into it, predicts the new controls onto one consecutive next geometry, maps
+only correction pressure, and accepts the warm pressure transaction. Complete
+success publishes exactly two endpoints together: transported momentum at the
+current geometry and accepted pressure at the next. A transport or pressure
+rejection retains typed scalar attempt diagnostics and immutable lineage but
+both public endpoints are empty. Uniform bootstrap works on X/Y/Z and its
+published pair feeds a re-entrant fourth geometry; a live breathing aperture
+also bootstraps. Re-entrant uniform and expanding breathing cases reproduce the
+separately assembled pipeline, while forced subcycle and truncated-pressure
+failures prove rollback at both numerical stages. The opt-in cycle aggregates
+bounded temporary storage but adds no viscosity, wall shear, traction, topology
+rebase, persistence, or production-worker selection.
 `planar_region_fragment_opening_pressure_epoch.*` composes that warm product
 with the existing resistance-plus-augmented-projection transaction. It builds
 all four mutable fields privately, advances them together, and captures a new

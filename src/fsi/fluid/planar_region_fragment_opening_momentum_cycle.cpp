@@ -3,6 +3,7 @@
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 #include <utility>
 
 namespace simwing::fsi::fluid {
@@ -100,11 +101,11 @@ PlanarPressureRegionFragmentOpeningMomentumCycleFailureStage pressureFailure(
         "opening momentum-cycle pressure failure stage is invalid");
 }
 
+template<typename Source>
 PlanarPressureRegionFragmentOpeningMomentumCycleResult buildCycle(
-    const PlanarPressureRegionFragmentOpeningMomentumTransport&
-        sourceTransport,
+    const Source& sourceArtifact,
     const PlanarPressureRegionFragmentOpeningVelocityMetric&
-        sourceTransportMetric,
+        sourceMetric,
     const PlanarPressureRegionFragmentOpeningAcceptedState&
         currentAcceptedState,
     const PlanarPressureRegionFragmentOpeningPressureOperator&
@@ -150,8 +151,16 @@ PlanarPressureRegionFragmentOpeningMomentumCycleResult buildCycle(
     validateLimits(limits);
 
     PlanarPressureRegionFragmentOpeningMomentumCycleResult result;
-    result.sourceTransportFingerprint = sourceTransport.fingerprint;
-    result.sourceTransportMetricFingerprint = sourceTransportMetric.fingerprint;
+    if constexpr (std::is_same_v<
+                      Source,
+                      PlanarPressureRegionFragmentOpeningVelocityState>) {
+        result.sourceStateFingerprint = sourceArtifact.fingerprint;
+        result.diagnostics.usedInitialStateTransport = true;
+    } else {
+        result.sourceTransportFingerprint = sourceArtifact.fingerprint;
+        result.diagnostics.usedReentrantTransport = true;
+    }
+    result.sourceMetricFingerprint = sourceMetric.fingerprint;
     result.currentAcceptedStateFingerprint = currentAcceptedState.fingerprint;
     result.currentPressureOperatorFingerprint =
         currentPressureOperator.fingerprint;
@@ -172,7 +181,6 @@ PlanarPressureRegionFragmentOpeningMomentumCycleResult buildCycle(
     result.nextMetricFingerprint = nextMetric.fingerprint;
     result.transportSettings = transportSettings;
     result.pressureSettings = pressureSettings;
-    result.diagnostics.usedReentrantTransport = true;
 
     const auto currentFlow =
         capturePlanarPressureRegionFragmentOpeningVelocityState(
@@ -189,7 +197,7 @@ PlanarPressureRegionFragmentOpeningMomentumCycleResult buildCycle(
 
     auto transportAttempt =
         advancePlanarPressureRegionFragmentOpeningMomentum(
-            sourceTransport, sourceTransportMetric, currentFlow,
+            sourceArtifact, sourceMetric, currentFlow,
             currentMetric, grid, currentSweep, currentFragments,
             currentTopology, currentVolumeRates, transportSettings,
             limits.transportLimits);
@@ -341,8 +349,75 @@ advancePlanarPressureRegionFragmentOpeningMomentumCycle(
         limits);
 }
 
+PlanarPressureRegionFragmentOpeningMomentumCycleResult
+advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+    const PlanarPressureRegionFragmentOpeningVelocityState& sourceState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& sourceMetric,
+    const PlanarPressureRegionFragmentOpeningAcceptedState&
+        currentAcceptedState,
+    const PlanarPressureRegionFragmentOpeningPressureOperator&
+        currentPressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator&
+        currentBasePressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& currentSweep,
+    const PlanarPressureRegionFragmentSet& currentFragments,
+    const PlanarPressureRegionFragmentTopology& currentTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& currentVolumeRates,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        currentOpeningDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& currentOpenings,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        currentResistanceDefinitions,
+    const PlanarPressureRegionFragmentVelocityMetric& currentBaseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& currentMetric,
+    const PlanarPressureRegionFragmentOpeningPressureOperator&
+        nextPressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator&
+        nextBasePressureOperator,
+    const PlanarPressureRegionSweepLedger& nextSweep,
+    const PlanarPressureRegionFragmentSet& nextFragments,
+    const PlanarPressureRegionFragmentTopology& nextTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& nextVolumeRates,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        nextOpeningDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& nextOpenings,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        nextResistanceDefinitions,
+    const PlanarPressureRegionFragmentVelocityMetric& nextBaseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& nextMetric,
+    const PlanarPressureRegionFragmentOpeningMomentumTransportSettings&
+        transportSettings,
+    const PlanarPressureRegionFragmentOpeningPressureStepSettings&
+        pressureSettings,
+    const PlanarPressureRegionFragmentOpeningMomentumCycleLimits& limits) {
+    return buildCycle(
+        sourceState, sourceMetric, currentAcceptedState,
+        currentPressureOperator, currentBasePressureOperator, grid,
+        currentSweep, currentFragments, currentTopology, currentVolumeRates,
+        currentOpeningDefinitions, currentOpenings,
+        currentResistanceDefinitions, currentBaseMetric, currentMetric,
+        nextPressureOperator, nextBasePressureOperator, nextSweep,
+        nextFragments, nextTopology, nextVolumeRates,
+        nextOpeningDefinitions, nextOpenings, nextResistanceDefinitions,
+        nextBaseMetric, nextMetric, transportSettings, pressureSettings,
+        limits);
+}
+
 void validatePlanarPressureRegionFragmentOpeningMomentumCycleResultIntegrity(
     const PlanarPressureRegionFragmentOpeningMomentumCycleResult& result) {
+    const bool validSourceLineage =
+        (result.sourceStateFingerprint != 0)
+        != (result.sourceTransportFingerprint != 0);
+    const bool validSourcePolicy =
+        result.diagnostics.usedInitialStateTransport
+            != result.diagnostics.usedReentrantTransport
+        && result.diagnostics.usedInitialStateTransport
+            == (result.sourceStateFingerprint != 0);
     const bool endpointsEmpty = emptyTransport(result.transport)
         && emptyAcceptedState(result.acceptedState)
         && result.acceptedStateFingerprint == 0
@@ -400,8 +475,9 @@ void validatePlanarPressureRegionFragmentOpeningMomentumCycleResultIntegrity(
                 None;
     if (result.version
             != planarPressureRegionFragmentOpeningMomentumCycleVersion
-        || result.sourceTransportFingerprint == 0
-        || result.sourceTransportMetricFingerprint == 0
+        || !validSourceLineage
+        || !validSourcePolicy
+        || result.sourceMetricFingerprint == 0
         || result.currentAcceptedStateFingerprint == 0
         || result.currentPressureOperatorFingerprint == 0
         || result.currentBasePressureOperatorFingerprint == 0
@@ -419,7 +495,6 @@ void validatePlanarPressureRegionFragmentOpeningMomentumCycleResultIntegrity(
         || result.nextMetricFingerprint == 0
         || result.currentAcceptedFlowStateFingerprint == 0
         || result.transportAttemptFingerprint == 0
-        || !result.diagnostics.usedReentrantTransport
         || !std::isfinite(
             result.diagnostics.pressureFinalResidualNormPascalsMeters)
         || result.workingStorageBytes == 0
@@ -436,10 +511,12 @@ void validatePlanarPressureRegionFragmentOpeningMomentumCycleResultIntegrity(
             result.transport);
         validatePlanarPressureRegionFragmentOpeningAcceptedStateIntegrity(
             result.acceptedState);
-        if (result.transport.sourceTransportFingerprint
+        if (result.transport.sourceStateFingerprint
+                != result.sourceStateFingerprint
+            || result.transport.sourceTransportFingerprint
                 != result.sourceTransportFingerprint
             || result.transport.sourceMetricFingerprint
-                != result.sourceTransportMetricFingerprint
+                != result.sourceMetricFingerprint
             || result.transport.targetFlowStateFingerprint
                 != result.currentAcceptedFlowStateFingerprint
             || result.transport.targetMetricFingerprint
@@ -516,6 +593,66 @@ void validatePlanarPressureRegionFragmentOpeningMomentumCycleResult(
         result);
     if (result != buildCycle(
             sourceTransport, sourceTransportMetric, currentAcceptedState,
+            currentPressureOperator, currentBasePressureOperator, grid,
+            currentSweep, currentFragments, currentTopology,
+            currentVolumeRates, currentOpeningDefinitions, currentOpenings,
+            currentResistanceDefinitions, currentBaseMetric, currentMetric,
+            nextPressureOperator, nextBasePressureOperator, nextSweep,
+            nextFragments, nextTopology, nextVolumeRates,
+            nextOpeningDefinitions, nextOpenings, nextResistanceDefinitions,
+            nextBaseMetric, nextMetric, result.transportSettings,
+            result.pressureSettings, limits)) {
+        throw std::invalid_argument(
+            "opening momentum-cycle result is foreign to its source");
+    }
+}
+
+void validatePlanarPressureRegionFragmentOpeningMomentumCycleResult(
+    const PlanarPressureRegionFragmentOpeningMomentumCycleResult& result,
+    const PlanarPressureRegionFragmentOpeningVelocityState& sourceState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& sourceMetric,
+    const PlanarPressureRegionFragmentOpeningAcceptedState&
+        currentAcceptedState,
+    const PlanarPressureRegionFragmentOpeningPressureOperator&
+        currentPressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator&
+        currentBasePressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& currentSweep,
+    const PlanarPressureRegionFragmentSet& currentFragments,
+    const PlanarPressureRegionFragmentTopology& currentTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& currentVolumeRates,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        currentOpeningDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& currentOpenings,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        currentResistanceDefinitions,
+    const PlanarPressureRegionFragmentVelocityMetric& currentBaseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& currentMetric,
+    const PlanarPressureRegionFragmentOpeningPressureOperator&
+        nextPressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator&
+        nextBasePressureOperator,
+    const PlanarPressureRegionSweepLedger& nextSweep,
+    const PlanarPressureRegionFragmentSet& nextFragments,
+    const PlanarPressureRegionFragmentTopology& nextTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& nextVolumeRates,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        nextOpeningDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& nextOpenings,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        nextResistanceDefinitions,
+    const PlanarPressureRegionFragmentVelocityMetric& nextBaseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& nextMetric,
+    const PlanarPressureRegionFragmentOpeningMomentumCycleLimits& limits) {
+    validatePlanarPressureRegionFragmentOpeningMomentumCycleResultIntegrity(
+        result);
+    if (result != buildCycle(
+            sourceState, sourceMetric, currentAcceptedState,
             currentPressureOperator, currentBasePressureOperator, grid,
             currentSweep, currentFragments, currentTopology,
             currentVolumeRates, currentOpeningDefinitions, currentOpenings,

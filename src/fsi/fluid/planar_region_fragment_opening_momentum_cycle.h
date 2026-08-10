@@ -9,7 +9,7 @@
 namespace simwing::fsi::fluid {
 
 inline constexpr std::uint32_t
-    planarPressureRegionFragmentOpeningMomentumCycleVersion = 1;
+    planarPressureRegionFragmentOpeningMomentumCycleVersion = 2;
 
 enum class PlanarPressureRegionFragmentOpeningMomentumCycleFailureStage
     : std::uint8_t {
@@ -32,6 +32,7 @@ struct PlanarPressureRegionFragmentOpeningMomentumCycleLimits {
 
 struct PlanarPressureRegionFragmentOpeningMomentumCycleDiagnostics {
     bool accepted = false;
+    bool usedInitialStateTransport = false;
     bool usedReentrantTransport = false;
     bool usedPressureWarmStart = false;
     PlanarPressureRegionFragmentOpeningMomentumCycleFailureStage failureStage =
@@ -50,11 +51,13 @@ struct PlanarPressureRegionFragmentOpeningMomentumCycleDiagnostics {
         const = default;
 };
 
-// One atomic topology-stable transported opening cycle. The source transport
-// owns collocated momentum at the previous geometry. The current accepted
-// pressure endpoint supplies corrected target flow for the re-entrant ALE
-// advance. That new momentum is predicted onto the next geometry; only the
-// prior correction pressure is gauge-mapped there before pressure acceptance.
+// One atomic topology-stable transported opening cycle. Bootstrap takes
+// collocated momentum from an initial opening-aware velocity state; repeated
+// cycles take it directly from the previous accepted transport. Exactly one
+// source lineage is present. The current accepted pressure endpoint supplies
+// corrected target flow for the ALE advance. That new momentum is predicted
+// onto the next geometry; only the prior correction pressure is gauge-mapped
+// there before pressure acceptance.
 //
 // The public endpoint is the staggered pair required by the next cycle:
 // transported momentum at the current geometry and accepted pressure at the
@@ -63,8 +66,9 @@ struct PlanarPressureRegionFragmentOpeningMomentumCycleDiagnostics {
 struct PlanarPressureRegionFragmentOpeningMomentumCycleResult {
     std::uint32_t version =
         planarPressureRegionFragmentOpeningMomentumCycleVersion;
+    std::uint64_t sourceStateFingerprint = 0;
     std::uint64_t sourceTransportFingerprint = 0;
-    std::uint64_t sourceTransportMetricFingerprint = 0;
+    std::uint64_t sourceMetricFingerprint = 0;
     std::uint64_t currentAcceptedStateFingerprint = 0;
     std::uint64_t currentPressureOperatorFingerprint = 0;
     std::uint64_t currentBasePressureOperatorFingerprint = 0;
@@ -145,6 +149,49 @@ advancePlanarPressureRegionFragmentOpeningMomentumCycle(
         pressureSettings = {},
     const PlanarPressureRegionFragmentOpeningMomentumCycleLimits& limits = {});
 
+[[nodiscard]] PlanarPressureRegionFragmentOpeningMomentumCycleResult
+advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+    const PlanarPressureRegionFragmentOpeningVelocityState& sourceState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& sourceMetric,
+    const PlanarPressureRegionFragmentOpeningAcceptedState&
+        currentAcceptedState,
+    const PlanarPressureRegionFragmentOpeningPressureOperator&
+        currentPressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator&
+        currentBasePressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& currentSweep,
+    const PlanarPressureRegionFragmentSet& currentFragments,
+    const PlanarPressureRegionFragmentTopology& currentTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& currentVolumeRates,
+    std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        currentOpeningDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& currentOpenings,
+    std::span<const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        currentResistanceDefinitions,
+    const PlanarPressureRegionFragmentVelocityMetric& currentBaseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& currentMetric,
+    const PlanarPressureRegionFragmentOpeningPressureOperator&
+        nextPressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator&
+        nextBasePressureOperator,
+    const PlanarPressureRegionSweepLedger& nextSweep,
+    const PlanarPressureRegionFragmentSet& nextFragments,
+    const PlanarPressureRegionFragmentTopology& nextTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& nextVolumeRates,
+    std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        nextOpeningDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& nextOpenings,
+    std::span<const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        nextResistanceDefinitions,
+    const PlanarPressureRegionFragmentVelocityMetric& nextBaseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& nextMetric,
+    const PlanarPressureRegionFragmentOpeningMomentumTransportSettings&
+        transportSettings = {},
+    const PlanarPressureRegionFragmentOpeningPressureStepSettings&
+        pressureSettings = {},
+    const PlanarPressureRegionFragmentOpeningMomentumCycleLimits& limits = {});
+
 void validatePlanarPressureRegionFragmentOpeningMomentumCycleResultIntegrity(
     const PlanarPressureRegionFragmentOpeningMomentumCycleResult& result);
 
@@ -154,6 +201,45 @@ void validatePlanarPressureRegionFragmentOpeningMomentumCycleResult(
         sourceTransport,
     const PlanarPressureRegionFragmentOpeningVelocityMetric&
         sourceTransportMetric,
+    const PlanarPressureRegionFragmentOpeningAcceptedState&
+        currentAcceptedState,
+    const PlanarPressureRegionFragmentOpeningPressureOperator&
+        currentPressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator&
+        currentBasePressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& currentSweep,
+    const PlanarPressureRegionFragmentSet& currentFragments,
+    const PlanarPressureRegionFragmentTopology& currentTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& currentVolumeRates,
+    std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        currentOpeningDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& currentOpenings,
+    std::span<const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        currentResistanceDefinitions,
+    const PlanarPressureRegionFragmentVelocityMetric& currentBaseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& currentMetric,
+    const PlanarPressureRegionFragmentOpeningPressureOperator&
+        nextPressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator&
+        nextBasePressureOperator,
+    const PlanarPressureRegionSweepLedger& nextSweep,
+    const PlanarPressureRegionFragmentSet& nextFragments,
+    const PlanarPressureRegionFragmentTopology& nextTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& nextVolumeRates,
+    std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        nextOpeningDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& nextOpenings,
+    std::span<const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        nextResistanceDefinitions,
+    const PlanarPressureRegionFragmentVelocityMetric& nextBaseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& nextMetric,
+    const PlanarPressureRegionFragmentOpeningMomentumCycleLimits& limits = {});
+
+void validatePlanarPressureRegionFragmentOpeningMomentumCycleResult(
+    const PlanarPressureRegionFragmentOpeningMomentumCycleResult& result,
+    const PlanarPressureRegionFragmentOpeningVelocityState& sourceState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& sourceMetric,
     const PlanarPressureRegionFragmentOpeningAcceptedState&
         currentAcceptedState,
     const PlanarPressureRegionFragmentOpeningPressureOperator&

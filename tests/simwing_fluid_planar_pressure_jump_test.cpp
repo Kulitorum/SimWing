@@ -9706,8 +9706,137 @@ void testPlanarRegionalOpeningMomentumTransport() {
             warmPressureOperator, warmBasePressureOperator, warmSweep,
             warmFragments, warmTopology, warmVolumeRates, definitions,
             warmOpenings, zeroResistance, warmBaseMetric, warmMetric);
+        const auto bootstrapMomentumCycle =
+            advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+                targetFlowState, targetMetric,
+                momentumPressureEpoch.acceptedState,
+                predictionPressureOperator,
+                predictionBasePressureOperator, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates, definitions, predictionOpenings,
+                zeroResistance, predictionBaseMetric, predictionMetric,
+                warmPressureOperator, warmBasePressureOperator, warmSweep,
+                warmFragments, warmTopology, warmVolumeRates, definitions,
+                warmOpenings, zeroResistance, warmBaseMetric, warmMetric,
+                {}, momentumPressureSettings);
+        check(bootstrapMomentumCycle.diagnostics.accepted
+                  && bootstrapMomentumCycle.diagnostics
+                         .usedInitialStateTransport
+                  && !bootstrapMomentumCycle.diagnostics
+                          .usedReentrantTransport,
+              "initial velocity state bootstrap accepts on every axis");
+        check(bootstrapMomentumCycle.sourceStateFingerprint
+                      == targetFlowState.fingerprint
+                  && bootstrapMomentumCycle.sourceTransportFingerprint == 0,
+              "initial velocity state bootstrap retains exclusive source lineage");
+        for (const auto& control : bootstrapMomentumCycle.transport.controls) {
+            checkNear(control.velocityMetersPerSecond.x,
+                      uniformVelocity.x, 4.0e-14,
+                      "initial bootstrap preserves uniform X velocity");
+            checkNear(control.velocityMetersPerSecond.y,
+                      uniformVelocity.y, 4.0e-14,
+                      "initial bootstrap preserves uniform Y velocity");
+            checkNear(control.velocityMetersPerSecond.z,
+                      uniformVelocity.z, 4.0e-14,
+                      "initial bootstrap preserves uniform Z velocity");
+        }
+        check(bootstrapMomentumCycle.transport.diagnostics
+                      .momentumResidualNormKilogramMetersPerSecond
+                  < 2.0e-13
+                  && bootstrapMomentumCycle.acceptedState.accepted
+                  && bootstrapMomentumCycle.acceptedState
+                         .correctedContinuityResidualMaximumCubicMetersPerSecond
+                      <= bootstrapMomentumCycle.acceptedState
+                             .continuityToleranceCubicMetersPerSecond,
+              "initial velocity state bootstrap closes momentum and pressure");
+        validatePlanarPressureRegionFragmentOpeningMomentumCycleResult(
+            bootstrapMomentumCycle, targetFlowState, targetMetric,
+            momentumPressureEpoch.acceptedState,
+            predictionPressureOperator,
+            predictionBasePressureOperator, geometry, predictionSweep,
+            predictionFragments, predictionTopology,
+            predictionVolumeRates, definitions, predictionOpenings,
+            zeroResistance, predictionBaseMetric, predictionMetric,
+            warmPressureOperator, warmBasePressureOperator, warmSweep,
+            warmFragments, warmTopology, warmVolumeRates, definitions,
+            warmOpenings, zeroResistance, warmBaseMetric, warmMetric);
 
         if (axis != GridFaceAxis::X) continue;
+        auto fourthCurrent = warmCurrent;
+        fourthCurrent[0].physicalPlaneCoordinateMeters += 0.02;
+        fourthCurrent[1].physicalPlaneCoordinateMeters += 0.02;
+        const auto fourthSweep = makePlanarPressureRegionSweepLedger(
+            geometry, warmCurrent, fourthCurrent, 0.5);
+        const auto fourthFragments = buildPlanarPressureRegionFragments(
+            geometry, fourthSweep);
+        const auto fourthTopology =
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, fourthSweep, fourthFragments);
+        const auto fourthVolumeRates =
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, fourthSweep, fourthFragments, fourthTopology);
+        const auto fourthOpenings =
+            buildPlanarPressureRegionFragmentOpenings(
+                geometry, fourthSweep, fourthFragments, fourthTopology,
+                definitions);
+        const auto fourthBaseMetric =
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, fourthSweep, fourthFragments, fourthTopology);
+        const auto fourthMetric =
+            buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+                geometry, fourthSweep, fourthFragments, fourthTopology,
+                fourthBaseMetric, definitions, fourthOpenings);
+        const auto fourthBasePressureOperator =
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, fourthSweep, fourthFragments, fourthTopology);
+        const auto fourthPressureOperator =
+            buildPlanarPressureRegionFragmentOpeningPressureOperator(
+                fourthBasePressureOperator, geometry, fourthSweep,
+                fourthFragments, fourthTopology, definitions,
+                fourthOpenings);
+        const auto postBootstrapCycle =
+            advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+                bootstrapMomentumCycle.transport, predictionMetric,
+                bootstrapMomentumCycle.acceptedState,
+                warmPressureOperator, warmBasePressureOperator, geometry,
+                warmSweep, warmFragments, warmTopology, warmVolumeRates,
+                definitions, warmOpenings, zeroResistance, warmBaseMetric,
+                warmMetric, fourthPressureOperator,
+                fourthBasePressureOperator, fourthSweep, fourthFragments,
+                fourthTopology, fourthVolumeRates, definitions,
+                fourthOpenings, zeroResistance, fourthBaseMetric,
+                fourthMetric, {}, momentumPressureSettings);
+        check(postBootstrapCycle.diagnostics.accepted
+                  && postBootstrapCycle.diagnostics
+                         .usedReentrantTransport
+                  && !postBootstrapCycle.diagnostics
+                          .usedInitialStateTransport
+                  && postBootstrapCycle.sourceTransportFingerprint
+                      == bootstrapMomentumCycle.transport.fingerprint
+                  && postBootstrapCycle.acceptedState.accepted,
+              "bootstrap endpoint pair feeds the next re-entrant atomic cycle");
+        for (const auto& control : postBootstrapCycle.transport.controls) {
+            checkNear(control.velocityMetersPerSecond.x,
+                      uniformVelocity.x, 5.0e-14,
+                      "post-bootstrap cycle preserves uniform X velocity");
+            checkNear(control.velocityMetersPerSecond.y,
+                      uniformVelocity.y, 5.0e-14,
+                      "post-bootstrap cycle preserves uniform Y velocity");
+            checkNear(control.velocityMetersPerSecond.z,
+                      uniformVelocity.z, 5.0e-14,
+                      "post-bootstrap cycle preserves uniform Z velocity");
+        }
+        validatePlanarPressureRegionFragmentOpeningMomentumCycleResult(
+            postBootstrapCycle, bootstrapMomentumCycle.transport,
+            predictionMetric, bootstrapMomentumCycle.acceptedState,
+            warmPressureOperator, warmBasePressureOperator, geometry,
+            warmSweep, warmFragments, warmTopology, warmVolumeRates,
+            definitions, warmOpenings, zeroResistance, warmBaseMetric,
+            warmMetric, fourthPressureOperator,
+            fourthBasePressureOperator, fourthSweep, fourthFragments,
+            fourthTopology, fourthVolumeRates, definitions,
+            fourthOpenings, zeroResistance, fourthBaseMetric,
+            fourthMetric);
         std::vector<double> nonuniformNormal(
             sourceMetric.dofs.size(), 0.0);
         std::vector<double> nonuniformMaterial(
@@ -10258,6 +10387,55 @@ void testPlanarRegionalOpeningMomentumTransport() {
                 breathingWarmTopology, breathingWarmVolumeRates,
                 definitions, breathingWarmOpenings, zeroResistance,
                 breathingWarmBaseMetric, breathingWarmMetric);
+            const auto breathingBootstrapCycle =
+                advancePlanarPressureRegionFragmentOpeningMomentumCycle(
+                    breathingFlowState, breathingMetric,
+                    breathingMomentumPressureEpoch.acceptedState,
+                    breathingPredictionPressureOperator,
+                    breathingPredictionBasePressureOperator, geometry,
+                    breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology,
+                    breathingPredictionVolumeRates, definitions,
+                    breathingPredictionOpenings, zeroResistance,
+                    breathingPredictionBaseMetric,
+                    breathingPredictionMetric,
+                    breathingWarmPressureOperator,
+                    breathingWarmBasePressureOperator,
+                    breathingWarmSweep, breathingWarmFragments,
+                    breathingWarmTopology, breathingWarmVolumeRates,
+                    definitions, breathingWarmOpenings, zeroResistance,
+                    breathingWarmBaseMetric, breathingWarmMetric, {},
+                    momentumPressureSettings);
+            check(breathingBootstrapCycle.diagnostics.accepted
+                      && breathingBootstrapCycle.diagnostics
+                             .usedInitialStateTransport
+                      && !breathingBootstrapCycle.diagnostics
+                              .usedReentrantTransport
+                      && breathingBootstrapCycle.diagnostics.transport
+                             .maximumAbsoluteOpeningRelativeVolumeFlowRateCubicMetersPerSecond
+                          > 0.0
+                      && breathingBootstrapCycle.acceptedState.accepted,
+                  "live-aperture velocity state bootstraps a breathing atomic cycle");
+            validatePlanarPressureRegionFragmentOpeningMomentumCycleResult(
+                breathingBootstrapCycle, breathingFlowState,
+                breathingMetric,
+                breathingMomentumPressureEpoch.acceptedState,
+                breathingPredictionPressureOperator,
+                breathingPredictionBasePressureOperator, geometry,
+                breathingPredictionSweep,
+                breathingPredictionFragments,
+                breathingPredictionTopology,
+                breathingPredictionVolumeRates, definitions,
+                breathingPredictionOpenings, zeroResistance,
+                breathingPredictionBaseMetric,
+                breathingPredictionMetric,
+                breathingWarmPressureOperator,
+                breathingWarmBasePressureOperator,
+                breathingWarmSweep, breathingWarmFragments,
+                breathingWarmTopology, breathingWarmVolumeRates,
+                definitions, breathingWarmOpenings, zeroResistance,
+                breathingWarmBaseMetric, breathingWarmMetric);
 
             auto truncatedMomentumPressureSettings =
                 momentumPressureSettings;
@@ -10749,6 +10927,15 @@ void testPlanarRegionalOpeningMomentumTransport() {
                     corruptMomentumCycle);
             },
             "atomic transported cycle rejects nested endpoint corruption");
+        auto ambiguousBootstrapMomentumCycle = bootstrapMomentumCycle;
+        ambiguousBootstrapMomentumCycle.sourceTransportFingerprint =
+            transport.fingerprint;
+        expectRejected(
+            [&] {
+                validatePlanarPressureRegionFragmentOpeningMomentumCycleResultIntegrity(
+                    ambiguousBootstrapMomentumCycle);
+            },
+            "atomic momentum bootstrap rejects ambiguous source lineage");
         expectRejected(
             [&] {
                 static_cast<void>(
