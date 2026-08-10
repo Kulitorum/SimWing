@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fluid/planar_region_fragment_opening_pressure_operator.h"
 #include "fluid/planar_region_fragment_pressure_operator.h"
 
 #include <cstddef>
@@ -38,7 +39,10 @@ struct PlanarPressureRegionFragmentPressureSolveDiagnostics {
     bool compatible = false;
     bool converged = false;
     bool finite = false;
+    bool usesOpeningPressureOperator = false;
     std::uint64_t pressureOperatorFingerprint = 0;
+    std::uint64_t basePressureOperatorFingerprint = 0;
+    std::uint64_t openingFingerprint = 0;
     std::uint64_t fragmentFingerprint = 0;
     std::size_t rowCount = 0;
     std::size_t componentCount = 0;
@@ -71,6 +75,26 @@ solvePlanarPressureRegionFragmentPressureCorrection(
     const PlanarPressureRegionSweepLedger& sweep,
     const PlanarPressureRegionFragmentSet& fragments,
     const PlanarPressureRegionFragmentTopology& topology,
+    std::span<const double> integratedRightHandSidePascalsMeters,
+    std::vector<double>& correctionPascals,
+    const PlanarPressureRegionFragmentPressureSolveSettings& settings = {});
+
+// Opt-in counterpart over the exact opening-augmented graph. The same
+// compatibility, constant-nullspace, volume-gauge, residual, and rollback
+// contract applies, but compatibility is measured over opening-connected
+// components. This solves only the supplied integrated RHS; it does not
+// invent an opening source, aperture velocity, inertia, or resistance law.
+[[nodiscard]] PlanarPressureRegionFragmentPressureSolveDiagnostics
+solvePlanarPressureRegionFragmentOpeningPressureCorrection(
+    const PlanarPressureRegionFragmentOpeningPressureOperator& pressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator& basePressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
     std::span<const double> integratedRightHandSidePascalsMeters,
     std::vector<double>& correctionPascals,
     const PlanarPressureRegionFragmentPressureSolveSettings& settings = {});

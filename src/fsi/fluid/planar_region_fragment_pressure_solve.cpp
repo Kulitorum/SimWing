@@ -49,8 +49,9 @@ double vectorMaximumAbsolute(const std::span<const double> values) {
     return result;
 }
 
+template<typename PressureOperator>
 bool applyOperator(
-    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const PressureOperator& pressureOperator,
     const std::span<const double> pressure,
     std::vector<double>& result) {
     result.assign(pressureOperator.rows.size(), 0.0);
@@ -67,8 +68,9 @@ bool applyOperator(
     return true;
 }
 
+template<typename PressureOperator>
 void subtractComponentArithmeticMeans(
-    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const PressureOperator& pressureOperator,
     std::vector<double>& values) {
     for (const auto& component : pressureOperator.components) {
         double sum = 0.0;
@@ -88,10 +90,11 @@ void subtractComponentArithmeticMeans(
     }
 }
 
+template<typename PressureOperator, typename Component>
 double componentVolumeMean(
-    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const PressureOperator& pressureOperator,
     const PlanarPressureRegionFragmentSet& fragments,
-    const PlanarPressureRegionFragmentPressureOperatorComponent& component,
+    const Component& component,
     const std::span<const double> values) {
     double moment = 0.0;
     for (std::size_t offset = 0;
@@ -105,8 +108,9 @@ double componentVolumeMean(
     return moment / component.totalVolumeCubicMeters;
 }
 
+template<typename PressureOperator>
 void subtractComponentVolumeMeans(
-    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const PressureOperator& pressureOperator,
     const PlanarPressureRegionFragmentSet& fragments,
     std::vector<double>& values) {
     for (const auto& component : pressureOperator.components) {
@@ -125,21 +129,16 @@ bool allFinite(const std::span<const double> values) {
         values, [](const double value) { return std::isfinite(value); });
 }
 
-} // namespace
-
-PlanarPressureRegionFragmentPressureSolveDiagnostics
-solvePlanarPressureRegionFragmentPressureCorrection(
-    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
-    const PeriodicCartesianGrid& grid,
-    const PlanarPressureRegionSweepLedger& sweep,
+template<typename PressureOperator>
+PlanarPressureRegionFragmentPressureSolveDiagnostics solveCorrection(
+    const PressureOperator& pressureOperator,
     const PlanarPressureRegionFragmentSet& fragments,
-    const PlanarPressureRegionFragmentTopology& topology,
     const std::span<const double> integratedRightHandSidePascalsMeters,
     std::vector<double>& correctionPascals,
-    const PlanarPressureRegionFragmentPressureSolveSettings& settings) {
-    validateSettings(settings);
-    validatePlanarPressureRegionFragmentPressureOperator(
-        pressureOperator, grid, sweep, fragments, topology);
+    const PlanarPressureRegionFragmentPressureSolveSettings& settings,
+    const bool usesOpeningPressureOperator,
+    const std::uint64_t basePressureOperatorFingerprint,
+    const std::uint64_t openingFingerprint) {
     if (integratedRightHandSidePascalsMeters.size()
             != pressureOperator.rows.size()
         || correctionPascals.size() != pressureOperator.rows.size()
@@ -151,7 +150,11 @@ solvePlanarPressureRegionFragmentPressureCorrection(
 
     PlanarPressureRegionFragmentPressureSolveDiagnostics diagnostics;
     diagnostics.finite = true;
+    diagnostics.usesOpeningPressureOperator = usesOpeningPressureOperator;
     diagnostics.pressureOperatorFingerprint = pressureOperator.fingerprint;
+    diagnostics.basePressureOperatorFingerprint =
+        basePressureOperatorFingerprint;
+    diagnostics.openingFingerprint = openingFingerprint;
     diagnostics.fragmentFingerprint = fragments.fingerprint;
     diagnostics.rowCount = pressureOperator.rows.size();
     diagnostics.componentCount = pressureOperator.components.size();
@@ -360,6 +363,51 @@ solvePlanarPressureRegionFragmentPressureCorrection(
     }
     correctionPascals = std::move(candidate);
     return diagnostics;
+}
+
+} // namespace
+
+PlanarPressureRegionFragmentPressureSolveDiagnostics
+solvePlanarPressureRegionFragmentPressureCorrection(
+    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const std::span<const double> integratedRightHandSidePascalsMeters,
+    std::vector<double>& correctionPascals,
+    const PlanarPressureRegionFragmentPressureSolveSettings& settings) {
+    validateSettings(settings);
+    validatePlanarPressureRegionFragmentPressureOperator(
+        pressureOperator, grid, sweep, fragments, topology);
+    return solveCorrection(
+        pressureOperator, fragments, integratedRightHandSidePascalsMeters,
+        correctionPascals, settings, false, pressureOperator.fingerprint, 0);
+}
+
+PlanarPressureRegionFragmentPressureSolveDiagnostics
+solvePlanarPressureRegionFragmentOpeningPressureCorrection(
+    const PlanarPressureRegionFragmentOpeningPressureOperator& pressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator& basePressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
+    const std::span<const double> integratedRightHandSidePascalsMeters,
+    std::vector<double>& correctionPascals,
+    const PlanarPressureRegionFragmentPressureSolveSettings& settings) {
+    validateSettings(settings);
+    validatePlanarPressureRegionFragmentOpeningPressureOperator(
+        pressureOperator, basePressureOperator, grid, sweep, fragments,
+        topology, openingDefinitions, openings);
+    return solveCorrection(
+        pressureOperator, fragments, integratedRightHandSidePascalsMeters,
+        correctionPascals, settings, true, basePressureOperator.fingerprint,
+        openings.fingerprint);
 }
 
 } // namespace simwing::fsi::fluid

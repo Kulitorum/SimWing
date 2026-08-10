@@ -272,16 +272,19 @@ exterior/pocket gauges, and gives the authored 70 Pa regional field positive
 opening energy while preserving the connected constant null mode. Empty and
 multi-patch overlays remain deterministic through X/Y/Z. This is mimetic
 projection geometry only, not an aperture velocity update, resistance law,
-authored-pressure relaxation, load correction, or worker solve.
+authored-pressure relaxation, load correction, or worker selection.
 A transactional conjugate-gradient oracle now solves compatible corrections on
-that operator. It removes only roundoff-sized component RHS imbalance, keeps
-the static regional potential separate, and commits each correction with
-roundoff-zero volume mean per component. A manufactured two-component field is
-recovered to `3e-11 Pa` with a recomputed residual below `2e-12 Pa·m`; a zero
-RHS removes correction gauges while preserving every authored 70 Pa wall jump.
-Incompatible or iteration-truncated attempts leave the warm start bit-for-bit
-unchanged. No velocity divergence, pressure RHS, or production step invokes
-this solve yet.
+either the sealed or opt-in aperture-augmented operator. It removes only
+roundoff-sized component RHS imbalance, keeps the static regional potential
+separate, and commits each correction with roundoff-zero volume mean per
+component. A manufactured two-component sealed field is recovered to `3e-11
+Pa` with a recomputed residual below `2e-12 Pa·m`; the augmented solve instead
+accepts the equal-and-opposite cross-wall RHS that the sealed graph must reject,
+recovers the aperture-coupled regional field, and publishes the base/operator/
+opening provenance. An empty overlay retains the sealed solution within
+roundoff. Incompatible or iteration-truncated attempts leave the warm start
+bit-for-bit unchanged. No aperture velocity, pressure-drop law, or production
+step invokes this solve yet.
 A first static regional face projection now supplies that physical RHS without
 changing production. One oriented normal velocity is owned per topology link;
 the 64 same-region Cartesian links contribute area-weighted outward flow and

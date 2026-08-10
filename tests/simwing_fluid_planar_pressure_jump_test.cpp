@@ -293,10 +293,11 @@ double dotProduct(const std::vector<double>& first,
     return result;
 }
 
+template<typename PressureOperator, typename Component>
 double fragmentCorrectionVolumeMean(
-    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const PressureOperator& pressureOperator,
     const PlanarPressureRegionFragmentSet& fragments,
-    const PlanarPressureRegionFragmentPressureOperatorComponent& component,
+    const Component& component,
     const std::vector<double>& values) {
     double moment = 0.0;
     for (std::size_t offset = 0;
@@ -310,8 +311,9 @@ double fragmentCorrectionVolumeMean(
     return moment / component.totalVolumeCubicMeters;
 }
 
+template<typename PressureOperator>
 void subtractFragmentCorrectionVolumeMeans(
-    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const PressureOperator& pressureOperator,
     const PlanarPressureRegionFragmentSet& fragments,
     std::vector<double>& values) {
     for (const auto& component : pressureOperator.components) {
@@ -4418,8 +4420,12 @@ void testPlanarRegionalFragmentPressureCorrectionSolve() {
             rightHandSide, secondCorrection, settings);
     check(first == second && firstCorrection == secondCorrection
               && first.compatible && first.converged && first.finite
+              && !first.usesOpeningPressureOperator
               && first.pressureOperatorFingerprint
                   == pressureOperator.fingerprint
+              && first.basePressureOperatorFingerprint
+                  == pressureOperator.fingerprint
+              && first.openingFingerprint == 0
               && first.fragmentFingerprint == fragments.fingerprint
               && first.rowCount == pressureOperator.rows.size()
               && first.componentCount == 2
@@ -4502,6 +4508,186 @@ void testPlanarRegionalFragmentPressureCorrectionSolve() {
                   link.pressureJumpPascals, 0.0,
                   "zero correction preserves the authored static wall jump");
     }
+}
+
+void testPlanarRegionalFragmentOpeningPressureCorrectionSolve() {
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto base = buildPlanarPressureRegionFragmentPressureOperator(
+        geometry, sweep, fragments, topology);
+    const std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition>
+        definitions{{100, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.5}};
+    const auto openings = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, definitions);
+    const auto pressureOperator =
+        buildPlanarPressureRegionFragmentOpeningPressureOperator(
+            base, geometry, sweep, fragments, topology, definitions,
+            openings);
+
+    std::vector<double> manufactured;
+    manufactured.reserve(fragments.fragments.size());
+    for (const auto& fragment : fragments.fragments) {
+        manufactured.push_back(fragment.pressurePascals);
+    }
+    subtractFragmentCorrectionVolumeMeans(
+        pressureOperator, fragments, manufactured);
+    const auto rightHandSide =
+        applyPlanarPressureRegionFragmentOpeningPressureOperator(
+            pressureOperator, manufactured);
+
+    std::vector<double> sealedCorrection(base.rows.size(), 0.0);
+    const auto sealed = solvePlanarPressureRegionFragmentPressureCorrection(
+        base, geometry, sweep, fragments, topology, rightHandSide,
+        sealedCorrection);
+    check(!sealed.compatible && !sealed.converged && sealed.finite,
+          "sealed regional pressure solve rejects cross-wall aperture transfer");
+
+    PlanarPressureRegionFragmentPressureSolveSettings settings;
+    settings.absoluteResidualTolerancePascalsMeters = 1.0e-13;
+    settings.relativeResidualTolerance = 0.0;
+    settings.maximumIterations = 300;
+    std::vector<double> firstCorrection(
+        pressureOperator.rows.size(), 0.0);
+    auto secondCorrection = firstCorrection;
+    const auto first =
+        solvePlanarPressureRegionFragmentOpeningPressureCorrection(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            definitions, openings, rightHandSide, firstCorrection, settings);
+    const auto second =
+        solvePlanarPressureRegionFragmentOpeningPressureCorrection(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            definitions, openings, rightHandSide, secondCorrection, settings);
+    check(first == second && firstCorrection == secondCorrection
+              && first.compatible && first.converged && first.finite
+              && first.usesOpeningPressureOperator
+              && first.pressureOperatorFingerprint
+                  == pressureOperator.fingerprint
+              && first.basePressureOperatorFingerprint == base.fingerprint
+              && first.openingFingerprint == openings.fingerprint
+              && first.fragmentFingerprint == fragments.fingerprint
+              && first.componentCount == 1
+              && first.components.size() == 1
+              && first.iterationCount > 0
+              && first.iterationCount <= settings.maximumIterations,
+          "opening regional pressure solve accepts cross-wall transfer deterministically");
+    double maximumRecoveryError = 0.0;
+    for (std::size_t index = 0; index < manufactured.size(); ++index) {
+        maximumRecoveryError = std::max(
+            maximumRecoveryError,
+            std::abs(firstCorrection[index] - manufactured[index]));
+    }
+    const auto recoveredRightHandSide =
+        applyPlanarPressureRegionFragmentOpeningPressureOperator(
+            pressureOperator, firstCorrection);
+    double maximumResidual = 0.0;
+    for (std::size_t index = 0; index < rightHandSide.size(); ++index) {
+        maximumResidual = std::max(
+            maximumResidual,
+            std::abs(recoveredRightHandSide[index]
+                     - rightHandSide[index]));
+    }
+    check(maximumRecoveryError < 3.0e-10,
+          "opening regional pressure solve recovers its aperture-coupled field");
+    check(maximumResidual < 2.0e-11,
+          "opening regional pressure solve closes its recomputed residual");
+    check(first.finalResidualL2PascalsMeters < 1.0e-12,
+          "opening regional pressure solve reports a small RMS residual");
+    check(first.finalResidualMaximumPascalsMeters < 2.0e-11,
+          "opening regional pressure solve reports a small maximum residual");
+    checkNear(
+        fragmentCorrectionVolumeMean(
+            pressureOperator, fragments, pressureOperator.components[0],
+            firstCorrection),
+        0.0, 2.0e-15,
+        "opening regional pressure correction has one volume-weighted gauge");
+    checkNear(first.components[0].rightHandSideSumPascalsMeters,
+              0.0, 2.0e-13,
+              "opening regional pressure RHS is connected-component compatible");
+
+    const auto emptyOpenings =
+        buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, {});
+    const auto emptyOperator =
+        buildPlanarPressureRegionFragmentOpeningPressureOperator(
+            base, geometry, sweep, fragments, topology, {}, emptyOpenings);
+    std::vector<double> sealedManufactured(base.rows.size(), 0.0);
+    for (std::size_t index = 0; index < sealedManufactured.size(); ++index) {
+        const double sample = static_cast<double>(index + 1);
+        sealedManufactured[index] =
+            std::sin(0.23 * sample) + 0.04 * std::cos(0.37 * sample);
+    }
+    subtractFragmentCorrectionVolumeMeans(
+        base, fragments, sealedManufactured);
+    const auto sealedRightHandSide =
+        applyPlanarPressureRegionFragmentPressureOperator(
+            base, sealedManufactured);
+    std::vector<double> baseRecovered(base.rows.size(), 0.0);
+    std::vector<double> emptyRecovered(base.rows.size(), 0.0);
+    const auto baseDiagnostics =
+        solvePlanarPressureRegionFragmentPressureCorrection(
+            base, geometry, sweep, fragments, topology,
+            sealedRightHandSide, baseRecovered, settings);
+    const auto emptyDiagnostics =
+        solvePlanarPressureRegionFragmentOpeningPressureCorrection(
+            emptyOperator, base, geometry, sweep, fragments, topology,
+            {}, emptyOpenings, sealedRightHandSide, emptyRecovered, settings);
+    double maximumEmptyDifference = 0.0;
+    for (std::size_t index = 0; index < baseRecovered.size(); ++index) {
+        maximumEmptyDifference = std::max(
+            maximumEmptyDifference,
+            std::abs(baseRecovered[index] - emptyRecovered[index]));
+    }
+    check(baseDiagnostics.compatible && baseDiagnostics.converged
+              && emptyDiagnostics.compatible && emptyDiagnostics.converged
+              && emptyDiagnostics.componentCount
+                  == baseDiagnostics.componentCount
+              && maximumEmptyDifference < 3.0e-11,
+          "empty opening pressure solve preserves the sealed solution");
+
+    auto incompatibleRightHandSide = rightHandSide;
+    incompatibleRightHandSide[
+        pressureOperator.components[0].gaugeFragmentIndex] += 1.0e-4;
+    std::vector<double> warmStart(pressureOperator.rows.size(), 0.125);
+    const auto originalWarmStart = warmStart;
+    const auto incompatible =
+        solvePlanarPressureRegionFragmentOpeningPressureCorrection(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            definitions, openings, incompatibleRightHandSide, warmStart,
+            settings);
+    check(!incompatible.compatible && !incompatible.converged
+              && incompatible.finite && warmStart == originalWarmStart,
+          "incompatible opening pressure RHS rolls back transactionally");
+
+    auto truncatedSettings = settings;
+    truncatedSettings.absoluteResidualTolerancePascalsMeters = 1.0e-16;
+    truncatedSettings.relativeResidualTolerance = 0.0;
+    truncatedSettings.maximumIterations = 1;
+    warmStart = originalWarmStart;
+    const auto truncated =
+        solvePlanarPressureRegionFragmentOpeningPressureCorrection(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            definitions, openings, rightHandSide, warmStart,
+            truncatedSettings);
+    check(truncated.compatible && !truncated.converged
+              && truncated.iterationCount == 1
+              && warmStart == originalWarmStart,
+          "truncated opening pressure solve preserves its warm start");
+
+    auto corrupt = pressureOperator;
+    corrupt.entries.back().geometryWeightMeters += 0.1;
+    expectRejected([&] {
+        auto correction = originalWarmStart;
+        static_cast<void>(
+            solvePlanarPressureRegionFragmentOpeningPressureCorrection(
+                corrupt, base, geometry, sweep, fragments, topology,
+                definitions, openings, rightHandSide, correction, settings));
+    }, "opening pressure solve rejects a corrupted augmented operator");
 }
 
 void testPlanarRegionalFragmentPressureCorrectionRollback() {
@@ -7709,6 +7895,7 @@ int main() {
     testPlanarRegionalFragmentPressureOperatorAxesAndRejection();
     testPlanarRegionalFragmentOpeningPressureOperator();
     testPlanarRegionalFragmentPressureCorrectionSolve();
+    testPlanarRegionalFragmentOpeningPressureCorrectionSolve();
     testPlanarRegionalFragmentPressureCorrectionRollback();
     testPlanarRegionalFragmentPressureProjection();
     testPlanarRegionalFragmentProjectionEnergyAudit();

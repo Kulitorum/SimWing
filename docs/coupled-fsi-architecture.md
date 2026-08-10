@@ -2274,9 +2274,12 @@ gauges follow the opening overlay union. The canonical `0.5 m^2` patch adds
 the connected constant null mode, and gives the authored 70 Pa field energy
 `6125 Pa^2*m`. Empty, parallel-patch, and X/Y/Z assemblies remain bounded and
 deterministic. No RHS, solve, aperture inertia/velocity, resistance, authored-
-jump evolution, traction subtraction, or production ownership follows.
+jump evolution, traction subtraction, or production ownership follows from the
+operator alone.
 `planar_region_fragment_pressure_solve.*` provides the corresponding
-transactional conjugate-gradient oracle for a correction field only. The
+transactional conjugate-gradient oracle for a correction field only, with
+source-validated overloads for both the sealed base operator and the opt-in
+opening-augmented operator. The
 integrated RHS must close independently on every graph component; only a
 declared roundoff-sized component mean may be removed. Iterates remain in the
 constant-free subspace, and a converged candidate is shifted to roundoff-zero
@@ -2288,6 +2291,12 @@ The canonical manufactured two-component correction is recovered within
 `2e-12 Pa*m` and volume-mean residual below `3e-16 Pa`. Incompatible and
 iteration-truncated solves leave their warm start bit-for-bit unchanged. No
 regional velocity divergence or production pressure source owns this solve.
+The canonical aperture overload merges the two sealed components, accepts the
+equal-and-opposite cross-wall RHS rejected by the base solve, recovers the
+connected regional field, and retains base/operator/opening fingerprints. An
+empty overlay recovers the sealed answer within roundoff. This establishes a
+pressure solve across exact aperture geometry, not aperture velocity, inertia,
+resistance, energy acceptance, or worker integration.
 `planar_region_fragment_pressure_projection.*` is the first physical
 velocity/RHS boundary over those controls, but remains a static opt-in oracle.
 It assigns one scalar normal velocity to every topology link, oriented from

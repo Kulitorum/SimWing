@@ -2388,7 +2388,7 @@ constant null mode. The canonical `0.5 m2` patch must add `1.25 m`, merge the
 energy. Reject source/product corruption and row/entry/component/owned/
 working/nested source limits. Do not infer a RHS/solve, aperture velocity or
 inertia, constitutive resistance, authored-jump evolution, load subtraction,
-or production ownership.
+or production ownership from the operator alone.
 
 For `planar_region_fragment_pressure_solve.*`, require deterministic recovery
 of a manufactured two-component, zero-volume-mean correction within `3e-11
@@ -2398,9 +2398,15 @@ gauges and preserve every static +/-70 Pa wall jump. Require X/Y/Z zero-RHS
 closure, independent component compatibility diagnostics, and bit-exact warm-
 start rollback for incompatible or iteration-truncated solves. Reject mutated
 operator/source products, wrong-sized or non-finite fields, non-finite/empty
-tolerance policies, and a zero iteration bound. Do not infer a regional
-velocity divergence, physical pressure RHS, projection acceptance, or
-production ownership.
+tolerance policies, and a zero iteration bound. The opt-in augmented overload
+must bind the base operator and exact opening source, publish all three
+fingerprints, merge compatibility only through authored patches, accept a
+balanced cross-wall RHS rejected by the sealed solve, retain roundoff-zero
+connected volume gauge, and reproduce the sealed solution for an empty
+overlay. Apply the same deterministic residual and rollback contract. Do not
+infer an aperture velocity, inertia/resistance law, regional velocity
+divergence, physical pressure RHS, projection acceptance, or production
+ownership.
 
 For `planar_region_fragment_pressure_projection.*`, require deterministic
 manufactured-divergence cancellation below `3e-14 m3/s` through X/Y/Z, exact
