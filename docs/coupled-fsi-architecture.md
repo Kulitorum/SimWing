@@ -2355,6 +2355,20 @@ rejects that motion because its component continuity is infeasible. The
 bounded fingerprinted ledger therefore proves interface action/reaction and
 work ownership only; it does not accept incompressible motion, update momentum,
 transport state, handle topology rebase, or enter production.
+`planar_region_fragment_pressure_state.*` forms the first explicit total
+regional pressure endpoint. Composition is allowed only after the correction-
+energy and authored-jump audits independently rebuild against the same metric,
+topology, fragment set, after-state, epoch duration, and optional volume-rate
+artifact. Each control retains `p_authored`, `p_correction`, and their total;
+component correction means remain at the accepted roundoff-zero gauge. Each
+pressure-layer wall then publishes all three jumps and the corresponding
+authored/correction/total sheet forces. A static manufactured correction has a
+nonzero transient wall jump but exact zero material work. For rigid X/Y/Z
+motion the total wall work closes, per component and globally, to the authored
+jump geometry work plus the correction geometry work within `5e-13 J`, and the
+sheet receives the exact opposite work. The immutable state still applies no
+traction or fluid impulse and owns no transport, topology rebase, or production
+continuation.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

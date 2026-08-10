@@ -1946,6 +1946,12 @@ makes this a certified aerodynamic solver.
   publishes the opposite sheet force/impulse, and closes moving wall work to
   `-dt*sum(p*dV/dt)` per component and globally. It applies none of those
   loads and owns no projection, transport, rebase, or production state.
+- `src/fsi/fluid/planar_region_fragment_pressure_state.{h,cpp}` composes those
+  two accepted pressure owners only after validating both audits against the
+  same after-state, epoch, metric, and time step. It publishes authored,
+  correction, and total fragment pressures, fabric jumps, sheet forces, and
+  moving work splits. It remains diagnostic and applies no structural load or
+  fluid momentum update.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2415,6 +2421,21 @@ work. Cover X/Y/Z motion, corruption, wrong wall traces/duration, and all
 layer/component/owned/working/nested state or volume-rate limits. Do not infer
 that the ledger applies momentum, accepts incompressible motion, rebases
 topology, transports state, or belongs to production.
+
+For `planar_region_fragment_pressure_state.*`, require both source audits to
+validate against identical fragment/topology/metric identity, the projection
+before/after states, the jump audit's matching after-state, identical `dt`, and
+the same optional volume-rate fingerprint. Retain authored, correction, and
+total pressure per fragment with roundoff-zero correction gauges. Every wall
+must close `jump_total = jump_authored + jump_correction`, and its total sheet
+force/work must equal the two independently owned contributions. Static work
+is exact zero even when a manufactured correction creates a transient wall
+jump. Rigid X/Y/Z motion must close total wall work per component and globally
+to authored-jump geometry work plus correction geometry work within `5e-13 J`.
+Reject corrupted controls/walls/fingerprints, mismatched sources or durations,
+and control/wall/component/owned/working/nested-audit limits. Do not infer
+momentum application, structural transfer, transport, topology rebase, or
+production ownership.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

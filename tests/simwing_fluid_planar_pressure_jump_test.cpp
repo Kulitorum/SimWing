@@ -8,6 +8,7 @@
 #include "fluid/planar_region_fragment_pressure_projection.h"
 #include "fluid/planar_region_fragment_projection_energy.h"
 #include "fluid/planar_region_fragment_pressure_solve.h"
+#include "fluid/planar_region_fragment_pressure_state.h"
 #include "fluid/planar_region_fragment_topology.h"
 #include "fluid/planar_region_fragment_velocity_metric.h"
 #include "fluid/planar_region_fragment_velocity_state.h"
@@ -4820,6 +4821,203 @@ void testPlanarRegionalFragmentProjectionEnergyAudit() {
     validateStaticPlanarPressureRegionFragmentProjectionEnergyAudit(
         audit, geometry, sweep, fragments, topology, metric, before, after);
 
+    PlanarPressureRegionFragmentPressureJumpEnergySettings jumpSettings;
+    jumpSettings.timeStepSeconds = projectionSettings.timeStepSeconds;
+    const auto jumpAudit =
+        auditStaticPlanarPressureRegionFragmentPressureJumpEnergy(
+            geometry, sweep, fragments, topology, metric, after,
+            jumpSettings);
+    const auto pressureState =
+        composeStaticPlanarPressureRegionFragmentPressureState(
+            geometry, sweep, fragments, topology, metric, before, after,
+            audit, jumpAudit);
+    const auto repeatedPressureState =
+        composeStaticPlanarPressureRegionFragmentPressureState(
+            geometry, sweep, fragments, topology, metric, before, after,
+            audit, jumpAudit);
+    check(pressureState == repeatedPressureState
+              && pressureState.version
+                  == planarPressureRegionFragmentPressureStateVersion
+              && pressureState.fingerprint != 0
+              && pressureState.accepted
+              && pressureState.staticGeometry
+              && !pressureState.usesMovingVolumeRates
+              && pressureState.sourceFragmentFingerprint
+                  == fragments.fingerprint
+              && pressureState.sourceTopologyFingerprint
+                  == topology.fingerprint
+              && pressureState.sourceMetricFingerprint
+                  == metric.fingerprint
+              && pressureState.sourceProjectionEnergyFingerprint
+                  == audit.fingerprint
+              && pressureState.sourcePressureJumpEnergyFingerprint
+                  == jumpAudit.fingerprint
+              && pressureState.volumeRateFingerprint == 0
+              && pressureState.timeStepSeconds
+                  == projectionSettings.timeStepSeconds
+              && pressureState.controls.size()
+                  == fragments.fragments.size()
+              && pressureState.walls.size() == 8
+              && pressureState.components.size() == 2
+              && pressureState.ownedStorageBytes > 0
+              && pressureState.workingStorageBytes
+                  == topology.links.size() * sizeof(std::size_t),
+          "static regional pressure state composes both accepted pressure ledgers");
+    double maximumCorrectionWallJump = 0.0;
+    for (std::size_t index = 0;
+         index < pressureState.controls.size(); ++index) {
+        const auto& control = pressureState.controls[index];
+        check(control.fragmentIndex == index
+                  && control.fragmentStableId
+                      == fragments.fragments[index].stableId
+                  && control.authoredPressurePascals
+                      == fragments.fragments[index].pressurePascals
+                  && control.correctionPressurePascals == pressure[index],
+              "composed pressure control retains authored and correction identity");
+        checkNear(control.totalPressurePascals,
+                  control.authoredPressurePascals
+                      + control.correctionPressurePascals,
+                  2.0e-16,
+                  "composed pressure control closes total pressure");
+    }
+    for (const auto& wall : pressureState.walls) {
+        maximumCorrectionWallJump = std::max(
+            maximumCorrectionWallJump,
+            std::abs(wall.correctionPressureJumpPascals));
+        checkNear(wall.totalPressureJumpPascals,
+                  wall.authoredPressureJumpPascals
+                      + wall.correctionPressureJumpPascals,
+                  2.0e-14,
+                  "composed wall pressure jump retains both pressure owners");
+        checkNear(
+            std::max({
+                std::abs(wall.pressureForceSplitResidualNewtons.x),
+                std::abs(wall.pressureForceSplitResidualNewtons.y),
+                std::abs(wall.pressureForceSplitResidualNewtons.z)}),
+            0.0, 3.0e-14,
+            "composed wall sheet force closes its pressure split");
+        check(wall.materialWallVelocityMetersPerSecond == 0.0
+                  && wall.totalPressureWorkToFluidJoules == 0.0
+                  && wall.totalPressureWorkToSheetJoules == 0.0,
+              "static composed wall retains exact zero pressure work");
+    }
+    check(maximumCorrectionWallJump > 1.0e-3
+              && pressureState.maximumAbsoluteCorrectionGaugePascals
+                  < 3.0e-16
+              && pressureState.totalPressureWorkToFluidJoules == 0.0
+              && pressureState.totalGeometryPressureWorkJoules == 0.0
+              && pressureState.wallGeometryWorkResidualJoules == 0.0,
+          "static composed pressure keeps transient wall jump and zero work distinct");
+    validateStaticPlanarPressureRegionFragmentPressureState(
+        pressureState, geometry, sweep, fragments, topology, metric,
+        before, after, audit, jumpAudit);
+
+    auto corruptPressureState = pressureState;
+    corruptPressureState.fingerprint = 0;
+    expectRejected(
+        [&] {
+            validateStaticPlanarPressureRegionFragmentPressureState(
+                corruptPressureState, geometry, sweep, fragments, topology,
+                metric, before, after, audit, jumpAudit);
+        },
+        "composed pressure state rejects fingerprint corruption");
+    corruptPressureState = pressureState;
+    corruptPressureState.walls[0].totalPressureJumpPascals += 0.1;
+    expectRejected(
+        [&] {
+            validateStaticPlanarPressureRegionFragmentPressureState(
+                corruptPressureState, geometry, sweep, fragments, topology,
+                metric, before, after, audit, jumpAudit);
+        },
+        "composed pressure state rejects wall corruption");
+    auto mismatchedJumpSettings = jumpSettings;
+    mismatchedJumpSettings.timeStepSeconds *= 2.0;
+    const auto mismatchedJumpAudit =
+        auditStaticPlanarPressureRegionFragmentPressureJumpEnergy(
+            geometry, sweep, fragments, topology, metric, after,
+            mismatchedJumpSettings);
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                composeStaticPlanarPressureRegionFragmentPressureState(
+                    geometry, sweep, fragments, topology, metric, before,
+                    after, audit, mismatchedJumpAudit));
+        },
+        "composed pressure state rejects mismatched audit durations");
+    auto pressureStateLimits =
+        PlanarPressureRegionFragmentPressureStateLimits{};
+    pressureStateLimits.maximumControls =
+        pressureState.controls.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                composeStaticPlanarPressureRegionFragmentPressureState(
+                    geometry, sweep, fragments, topology, metric, before,
+                    after, audit, jumpAudit, pressureStateLimits));
+        },
+        "composed pressure state enforces the control limit");
+    pressureStateLimits = {};
+    pressureStateLimits.maximumWalls = pressureState.walls.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                composeStaticPlanarPressureRegionFragmentPressureState(
+                    geometry, sweep, fragments, topology, metric, before,
+                    after, audit, jumpAudit, pressureStateLimits));
+        },
+        "composed pressure state enforces the wall limit");
+    pressureStateLimits = {};
+    pressureStateLimits.maximumComponents =
+        pressureState.components.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                composeStaticPlanarPressureRegionFragmentPressureState(
+                    geometry, sweep, fragments, topology, metric, before,
+                    after, audit, jumpAudit, pressureStateLimits));
+        },
+        "composed pressure state enforces the component limit");
+    pressureStateLimits = {};
+    pressureStateLimits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                composeStaticPlanarPressureRegionFragmentPressureState(
+                    geometry, sweep, fragments, topology, metric, before,
+                    after, audit, jumpAudit, pressureStateLimits));
+        },
+        "composed pressure state enforces the owned byte limit");
+    pressureStateLimits = {};
+    pressureStateLimits.maximumWorkingBytes = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                composeStaticPlanarPressureRegionFragmentPressureState(
+                    geometry, sweep, fragments, topology, metric, before,
+                    after, audit, jumpAudit, pressureStateLimits));
+        },
+        "composed pressure state enforces the working byte limit");
+    pressureStateLimits = {};
+    pressureStateLimits.projectionEnergyLimits.maximumCorrections = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                composeStaticPlanarPressureRegionFragmentPressureState(
+                    geometry, sweep, fragments, topology, metric, before,
+                    after, audit, jumpAudit, pressureStateLimits));
+        },
+        "composed pressure state enforces nested projection-audit limits");
+    pressureStateLimits = {};
+    pressureStateLimits.pressureJumpLimits.maximumLayers = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                composeStaticPlanarPressureRegionFragmentPressureState(
+                    geometry, sweep, fragments, topology, metric, before,
+                    after, audit, jumpAudit, pressureStateLimits));
+        },
+        "composed pressure state enforces nested jump-audit limits");
+
     std::vector<double> uniformLinks(topology.links.size(), 0.0);
     for (const auto& link : topology.links) {
         if (link.kind
@@ -5610,6 +5808,97 @@ void testPlanarRegionalMovingFragmentPressureProjection() {
     validateMovingPlanarPressureRegionFragmentProjectionEnergyAudit(
         energy, geometry, sweep, fragments, topology, volumeRates, metric,
         beforeState, afterState);
+    PlanarPressureRegionFragmentPressureJumpEnergySettings jumpSettings;
+    jumpSettings.timeStepSeconds = settings.timeStepSeconds;
+    const auto jumpEnergy =
+        auditMovingPlanarPressureRegionFragmentPressureJumpEnergy(
+            geometry, sweep, fragments, topology, volumeRates, metric,
+            afterState, jumpSettings);
+    const auto pressureState =
+        composeMovingPlanarPressureRegionFragmentPressureState(
+            geometry, sweep, fragments, topology, volumeRates, metric,
+            beforeState, afterState, energy, jumpEnergy);
+    const auto repeatedPressureState =
+        composeMovingPlanarPressureRegionFragmentPressureState(
+            geometry, sweep, fragments, topology, volumeRates, metric,
+            beforeState, afterState, energy, jumpEnergy);
+    check(pressureState == repeatedPressureState
+              && pressureState.accepted
+              && !pressureState.staticGeometry
+              && pressureState.usesMovingVolumeRates
+              && pressureState.volumeRateFingerprint
+                  == volumeRates.fingerprint
+              && pressureState.sourceProjectionEnergyFingerprint
+                  == energy.fingerprint
+              && pressureState.sourcePressureJumpEnergyFingerprint
+                  == jumpEnergy.fingerprint
+              && pressureState.maximumAbsoluteCorrectionGaugePascals
+                  < 3.0e-13,
+          "moving composed pressure state is deterministic and source-bound");
+    checkNear(pressureState.authoredPressureWorkToFluidJoules,
+              0.0, 6.0e-14,
+              "rigid composed pressure retains zero net authored work");
+    checkNear(pressureState.correctionPressureWorkToFluidJoules,
+              energy.geometryPressureWorkJoules, 4.0e-13,
+              "rigid composed pressure exposes correction wall work");
+    checkNear(pressureState.totalPressureWorkToFluidJoules,
+              energy.geometryPressureWorkJoules, 4.0e-13,
+              "rigid composed pressure sums authored and correction work");
+    checkNear(pressureState.totalGeometryPressureWorkJoules,
+              energy.geometryPressureWorkJoules, 4.0e-13,
+              "rigid composed pressure retains total geometry work");
+    checkNear(pressureState.wallGeometryWorkResidualJoules,
+              0.0, 4.0e-13,
+              "rigid composed pressure closes total wall and geometry work");
+    checkNear(pressureState.totalPressureWorkToSheetJoules,
+              -pressureState.totalPressureWorkToFluidJoules, 0.0,
+              "rigid composed pressure publishes opposite sheet work");
+    for (const auto& component : pressureState.components) {
+        checkNear(component.wallGeometryWorkResidualJoules,
+                  0.0, 4.0e-13,
+                  "moving composed pressure closes component wall work");
+    }
+    validateMovingPlanarPressureRegionFragmentPressureState(
+        pressureState, geometry, sweep, fragments, topology, volumeRates,
+        metric, beforeState, afterState, energy, jumpEnergy);
+    auto corruptPressureState = pressureState;
+    corruptPressureState.controls[0].totalPressurePascals += 0.1;
+    expectRejected(
+        [&] {
+            validateMovingPlanarPressureRegionFragmentPressureState(
+                corruptPressureState, geometry, sweep, fragments, topology,
+                volumeRates, metric, beforeState, afterState, energy,
+                jumpEnergy);
+        },
+        "moving composed pressure state rejects control corruption");
+    auto mismatchedJumpSettings = jumpSettings;
+    mismatchedJumpSettings.timeStepSeconds = 0.5;
+    expectRejected(
+        [&] {
+            const auto mismatchedJump =
+                auditMovingPlanarPressureRegionFragmentPressureJumpEnergy(
+                    geometry, sweep, fragments, topology, volumeRates,
+                    metric, afterState, mismatchedJumpSettings);
+            static_cast<void>(
+                composeMovingPlanarPressureRegionFragmentPressureState(
+                    geometry, sweep, fragments, topology, volumeRates,
+                    metric, beforeState, afterState, energy,
+                    mismatchedJump));
+        },
+        "moving composed pressure state rejects mismatched audit duration");
+    auto pressureStateLimits =
+        PlanarPressureRegionFragmentPressureStateLimits{};
+    pressureStateLimits.projectionEnergyLimits.volumeRateLimits
+        .maximumFragments = 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                composeMovingPlanarPressureRegionFragmentPressureState(
+                    geometry, sweep, fragments, topology, volumeRates,
+                    metric, beforeState, afterState, energy, jumpEnergy,
+                    pressureStateLimits));
+        },
+        "moving composed pressure state enforces nested volume-rate limits");
     auto corruptEnergy = energy;
     corruptEnergy.volumeRateFingerprint = 0;
     expectRejected(
@@ -5831,6 +6120,8 @@ void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
     PlanarPressureRegionFragmentProjectionEnergySettings energySettings;
     energySettings.densityKgPerCubicMeter = settings.densityKgPerCubicMeter;
     energySettings.timeStepSeconds = settings.timeStepSeconds;
+    PlanarPressureRegionFragmentPressureJumpEnergySettings jumpSettings;
+    jumpSettings.timeStepSeconds = settings.timeStepSeconds;
     for (const GridFaceAxis axis
          : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
         const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
@@ -5885,6 +6176,14 @@ void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
             auditMovingPlanarPressureRegionFragmentProjectionEnergy(
                 geometry, sweep, fragments, topology, volumeRates, metric,
                 before, after, pressure, energySettings);
+        const auto jumpEnergy =
+            auditMovingPlanarPressureRegionFragmentPressureJumpEnergy(
+                geometry, sweep, fragments, topology, volumeRates, metric,
+                after, jumpSettings);
+        const auto pressureState =
+            composeMovingPlanarPressureRegionFragmentPressureState(
+                geometry, sweep, fragments, topology, volumeRates, metric,
+                before, after, energy, jumpEnergy);
         check(diagnostics.accepted
                   && diagnostics.usesMovingVolumeRates
                   && diagnostics
@@ -5898,8 +6197,12 @@ void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
                   && std::abs(energy.affineEnergyResidualJoules)
                       < 4.0e-13
                   && std::abs(energy.finalGeometryWorkResidualJoules)
-                      < 4.0e-13,
-              "moving regional projection and affine energy close on every axis");
+                      < 4.0e-13
+                  && pressureState.accepted
+                  && pressureState.usesMovingVolumeRates
+                  && std::abs(pressureState.wallGeometryWorkResidualJoules)
+                      < 5.0e-13,
+              "moving regional projection, affine energy, and total pressure close on every axis");
     }
 }
 

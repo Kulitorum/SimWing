@@ -336,6 +336,16 @@ pocket is still useful as a work oracle: its expanding `70 Pa` pocket gives
 work closes at `-11.2/-44.8 J`. The same bounded source-bound checks cover
 X/Y/Z, but remain diagnostic only: no impulse is applied and no transport,
 topology rebase, or production state is introduced.
+An immutable regional pressure state now composes the authored and correction
+owners only after both independent audits validate against the same after-state,
+metric, topology, epoch, and time step. Every fragment retains all three scalar
+pressures; every fabric tile retains authored, correction, and total jumps plus
+the corresponding sheet-force split. Static manufactured correction exposes a
+real transient fabric jump while doing exact zero wall work. Under rigid X/Y/Z
+motion, total material-wall work closes per component and globally to authored
+jump work plus correction geometry work within `5e-13 J`. This is still a
+diagnostic endpoint: it neither applies the published sheet force nor advances
+fluid momentum, transport, rebase, or production state.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.
