@@ -1921,6 +1921,12 @@ makes this a certified aerodynamic solver.
   current regional fragment from its layer-boundary displacements. It closes
   cell, region, component, and global ledgers, rejects Cartesian rebases, and
   is consumed only by the opt-in moving projection, never production.
+- `src/fsi/fluid/planar_region_fragment_velocity_metric.{h,cpp}` assigns the
+  diagonal dual-volume geometry for regional normal velocities. Same-region
+  grid links own one shared degree of freedom; each pressure-layer wall owns
+  two independent one-sided traces. Fragment, component, axis, and domain
+  volumes close without carrying velocity, density, energy, or production
+  state.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2326,6 +2332,19 @@ a Cartesian segment, mutated products/sources, and fragment/cell/region/
 component/byte/nested-topology limit violations. Do not infer topology-rebase
 appearance or retirement, pressure RHS composition beyond the topology-stable
 moving overload, face momentum mass, opening flow, or production ownership.
+
+For `planar_region_fragment_velocity_metric.*`, require one shared normal-
+velocity degree of freedom per same-region Cartesian link and two independent
+one-sided trace degrees per pressure-layer wall. The canonical X case must
+publish 64 shared plus 16 trace degrees, with `44.8 m3` shared, `3.2 m3`
+trace, and `48 m3` total dual volume. Require every fragment's six incidences,
+every exterior/pocket component, and the domain to close physical volume
+independently on X/Y/Z; rigid motion must preserve stable degree identity while
+metric fingerprints update, and breathing must update one-sided wall volume.
+Reject mutated products/sources, inconsistent half distances, and DOF,
+fragment, component, byte, or nested-topology limit violations. Do not infer
+velocity values, density, kinetic-energy acceptance, wall prescription,
+advection, pressure acceptance, or production ownership.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

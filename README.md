@@ -285,6 +285,18 @@ pocket instead exposes its `1.6 m3/s` component deficit, maps it to `3.84
 Pa*m`, and rolls back as incompatible rather than fabricating a wall or opening
 flux. Duration and source identities are exact, and static projection behavior
 remains a separate overload.
+A first diagonal face-inertia metric now closes the missing geometric mass
+ownership without yet creating a velocity state. Each same-region Cartesian
+link has one shared normal-velocity degree of freedom with dual volume `area *
+center distance`. Each pressure-layer wall instead has two independent
+one-sided trace degrees of freedom, each owning only its adjacent half-volume;
+velocity and momentum are never averaged across fabric. The canonical case has
+64 shared and 16 trace degrees of freedom, whose `44.8 + 3.2 = 48 m3` total
+closes the `16 m3` periodic domain independently on X/Y/Z. Every fragment and
+the separate `13.6/2.4 m3` exterior/pocket components close on each axis,
+including rigid motion and breathing geometry. This immutable bounded metric
+contains no velocity values, density, kinetic-energy acceptance, advection, or
+production state.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

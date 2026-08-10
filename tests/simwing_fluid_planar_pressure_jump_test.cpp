@@ -7,6 +7,7 @@
 #include "fluid/planar_region_fragment_pressure_projection.h"
 #include "fluid/planar_region_fragment_pressure_solve.h"
 #include "fluid/planar_region_fragment_topology.h"
+#include "fluid/planar_region_fragment_velocity_metric.h"
 #include "fluid/planar_region_fragment_volume_rate.h"
 #include "fluid/planar_region_sweep.h"
 #include "fluid/projection.h"
@@ -204,6 +205,16 @@ findFragmentVolumeRateComponent(
         rates.components, regionStableId,
         &PlanarPressureRegionFragmentComponentVolumeRate::regionStableId);
     return found == rates.components.end() ? nullptr : &*found;
+}
+
+const PlanarPressureRegionFragmentVelocityMetricComponent*
+findFragmentVelocityMetricComponent(
+    const PlanarPressureRegionFragmentVelocityMetric& metric,
+    const std::uint64_t regionStableId) {
+    const auto found = std::ranges::find(
+        metric.components, regionStableId,
+        &PlanarPressureRegionFragmentVelocityMetricComponent::regionStableId);
+    return found == metric.components.end() ? nullptr : &*found;
 }
 
 double dotProduct(const std::vector<double>& first,
@@ -2557,6 +2568,325 @@ void testPlanarRegionalFragmentVolumeRatesAxesAndRejection() {
         "regional fragment volume rates reject mutated source topology");
 }
 
+void testPlanarRegionalFragmentVelocityMetric() {
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto metric = buildPlanarPressureRegionFragmentVelocityMetric(
+        geometry, sweep, fragments, topology);
+    const auto repeated = buildPlanarPressureRegionFragmentVelocityMetric(
+        geometry, sweep, fragments, topology);
+    check(metric == repeated
+              && metric.version
+                  == planarPressureRegionFragmentVelocityMetricVersion
+              && metric.fingerprint != 0
+              && metric.sourceFragmentFingerprint == fragments.fingerprint
+              && metric.sourceTopologyFingerprint == topology.fingerprint
+              && metric.profileAxis == GridFaceAxis::X
+              && metric.dofs.size() == 80
+              && metric.fragments.size() == 24
+              && metric.components.size() == 2
+              && metric.sharedRegionGridDofCount == 64
+              && metric.pressureLayerTraceDofCount == 16
+              && metric.ownedStorageBytes > 0,
+          "regional velocity metric publishes the complete canonical basis");
+    checkNear(metric.sharedRegionGridDualVolumeCubicMeters,
+              44.8, 2.0e-13,
+              "regional velocity metric retains shared grid dual volume");
+    checkNear(metric.pressureLayerTraceDualVolumeCubicMeters,
+              3.2, 2.0e-14,
+              "regional velocity metric retains both wall-side half volumes");
+    checkNear(metric.totalDualVolumeCubicMeters,
+              48.0, 2.0e-13,
+              "regional velocity metric closes three component volumes");
+    for (const double value : {
+             metric.dualVolumeByAxisCubicMeters.x,
+             metric.dualVolumeByAxisCubicMeters.y,
+             metric.dualVolumeByAxisCubicMeters.z}) {
+        checkNear(value, 16.0, 8.0e-14,
+                  "regional velocity metric closes domain volume per axis");
+    }
+    checkNear(
+        std::max({
+            std::abs(
+                metric.domainVolumeClosureResidualByAxisCubicMeters.x),
+            std::abs(
+                metric.domainVolumeClosureResidualByAxisCubicMeters.y),
+            std::abs(
+                metric.domainVolumeClosureResidualByAxisCubicMeters.z)}),
+        0.0, 8.0e-14,
+        "regional velocity metric diagnoses bounded domain closure");
+    checkNear(
+        metric.maximumAbsoluteFragmentVolumeClosureResidualCubicMeters,
+        0.0, 4.0e-15,
+        "regional velocity metric closes every fragment on all axes");
+    checkNear(
+        metric.maximumAbsoluteComponentVolumeClosureResidualCubicMeters,
+        0.0, 8.0e-14,
+        "regional velocity metric closes every component on all axes");
+
+    const auto* exterior = findFragmentVelocityMetricComponent(metric, 1);
+    const auto* pocket = findFragmentVelocityMetricComponent(metric, 2);
+    check(exterior != nullptr && pocket != nullptr,
+          "regional velocity metric retains both pressure components");
+    if (exterior != nullptr && pocket != nullptr) {
+        check(exterior->sharedGridDofCount == 56
+                  && exterior->pressureLayerTraceDofCount == 8
+                  && pocket->sharedGridDofCount == 8
+                  && pocket->pressureLayerTraceDofCount == 8,
+              "regional velocity metric splits grid and wall-trace ownership");
+        for (const double value : {
+                 exterior->dualVolumeByAxisCubicMeters.x,
+                 exterior->dualVolumeByAxisCubicMeters.y,
+                 exterior->dualVolumeByAxisCubicMeters.z}) {
+            checkNear(value, 13.6, 6.0e-14,
+                      "exterior velocity metric closes each axis");
+        }
+        for (const double value : {
+                 pocket->dualVolumeByAxisCubicMeters.x,
+                 pocket->dualVolumeByAxisCubicMeters.y,
+                 pocket->dualVolumeByAxisCubicMeters.z}) {
+            checkNear(value, 2.4, 2.0e-14,
+                      "pocket velocity metric closes each axis");
+        }
+    }
+
+    std::set<std::uint64_t> stableIds;
+    std::size_t surface10TraceCount = 0;
+    std::size_t surface20TraceCount = 0;
+    for (const auto& dof : metric.dofs) {
+        stableIds.insert(dof.stableId);
+        check(dof.dofIndex < metric.dofs.size()
+                  && dof.sourceFaceLinkIndex < topology.links.size()
+                  && dof.ownerFragmentIndex < fragments.fragments.size()
+                  && dof.oppositeFragmentIndex < fragments.fragments.size()
+                  && dof.areaSquareMeters > 0.0
+                  && dof.ownerHalfDistanceMeters > 0.0
+                  && dof.ownerDualVolumeCubicMeters > 0.0
+                  && dof.dualVolumeCubicMeters > 0.0,
+              "regional velocity DOF retains bounded geometric ownership");
+        const auto& source = topology.links[dof.sourceFaceLinkIndex];
+        if (dof.kind
+            == PlanarPressureRegionFragmentVelocityDofKind::SharedRegionGrid) {
+            check(dof.surfaceStableId == 0
+                      && dof.oppositeHalfDistanceMeters > 0.0
+                      && dof.oppositeDualVolumeCubicMeters > 0.0,
+                  "shared grid velocity owns both adjacent half volumes");
+            checkNear(dof.dualVolumeCubicMeters,
+                      source.areaSquareMeters
+                          * source.centerDistanceMeters,
+                      4.0e-15,
+                      "shared velocity dual is area times center distance");
+        } else {
+            check(dof.surfaceStableId != 0
+                      && dof.oppositeHalfDistanceMeters == 0.0
+                      && dof.oppositeDualVolumeCubicMeters == 0.0,
+                  "wall trace velocity owns only one fluid-side half volume");
+            checkNear(dof.dualVolumeCubicMeters,
+                      dof.areaSquareMeters
+                          * dof.ownerHalfDistanceMeters,
+                      0.0,
+                      "wall trace dual is its one-sided area times distance");
+            if (dof.surfaceStableId == 10) ++surface10TraceCount;
+            if (dof.surfaceStableId == 20) ++surface20TraceCount;
+        }
+    }
+    check(stableIds.size() == metric.dofs.size()
+              && surface10TraceCount == 8
+              && surface20TraceCount == 8,
+          "regional velocity metric retains unique shared and wall trace IDs");
+    for (const auto& fragment : metric.fragments) {
+        check(fragment.velocityDofIncidenceCount == 6,
+              "regional velocity metric assigns six incidences per fragment");
+        for (const double value : {
+                 fragment.dualVolumeByAxisCubicMeters.x,
+                 fragment.dualVolumeByAxisCubicMeters.y,
+                 fragment.dualVolumeByAxisCubicMeters.z}) {
+            checkNear(value, fragment.sourceVolumeCubicMeters, 4.0e-15,
+                      "fragment velocity metric recovers its volume per axis");
+        }
+    }
+    validatePlanarPressureRegionFragmentVelocityMetric(
+        metric, geometry, sweep, fragments, topology);
+
+    const auto translatedLayers = translatePlanarPressureJumpLayers(
+        geometry, layers, 0.1).layers;
+    const auto translatedSweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, translatedLayers, 1.0);
+    const auto translatedFragments = buildPlanarPressureRegionFragments(
+        geometry, translatedSweep);
+    const auto translatedTopology =
+        buildPlanarPressureRegionFragmentTopology(
+            geometry, translatedSweep, translatedFragments);
+    const auto translatedMetric =
+        buildPlanarPressureRegionFragmentVelocityMetric(
+            geometry, translatedSweep, translatedFragments,
+            translatedTopology);
+    std::set<std::uint64_t> translatedIds;
+    for (const auto& dof : translatedMetric.dofs) {
+        translatedIds.insert(dof.stableId);
+    }
+    check(translatedIds == stableIds
+              && translatedMetric.fingerprint != metric.fingerprint,
+          "within-segment motion preserves velocity identity and updates metric");
+    checkNear(translatedMetric.totalDualVolumeCubicMeters,
+              48.0, 2.0e-13,
+              "translated velocity metric preserves total dual volume");
+
+    auto breathingLayers = layers;
+    breathingLayers[0].physicalPlaneCoordinateMeters -= 0.1;
+    breathingLayers[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto breathingSweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, breathingLayers, 0.5);
+    const auto breathingFragments = buildPlanarPressureRegionFragments(
+        geometry, breathingSweep);
+    const auto breathingTopology = buildPlanarPressureRegionFragmentTopology(
+        geometry, breathingSweep, breathingFragments);
+    const auto breathingMetric =
+        buildPlanarPressureRegionFragmentVelocityMetric(
+            geometry, breathingSweep, breathingFragments,
+            breathingTopology);
+    checkNear(breathingMetric.pressureLayerTraceDualVolumeCubicMeters,
+              3.6, 3.0e-14,
+              "breathing geometry updates its one-sided wall inertia");
+    checkNear(breathingMetric.totalDualVolumeCubicMeters,
+              48.0, 2.0e-13,
+              "breathing velocity metric preserves total dual volume");
+}
+
+void testPlanarRegionalFragmentVelocityMetricAxesAndRejection() {
+    const auto geometry = grid();
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> layers{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        const auto sweep = makePlanarPressureRegionSweepLedger(
+            geometry, layers, layers, 1.0);
+        const auto fragments = buildPlanarPressureRegionFragments(
+            geometry, sweep);
+        const auto topology = buildPlanarPressureRegionFragmentTopology(
+            geometry, sweep, fragments);
+        const auto metric =
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, sweep, fragments, topology);
+        check(metric.profileAxis == axis
+                  && metric.sharedRegionGridDofCount
+                      == topology.sameRegionGridLinkCount
+                  && metric.pressureLayerTraceDofCount
+                      == 2 * topology.pressureLayerWallLinkCount,
+              "regional velocity metric retains all-axis DOF ownership");
+        checkNear(metric.totalDualVolumeCubicMeters,
+                  48.0, 3.0e-13,
+                  "all-axis regional velocity metric closes total inertia");
+        for (const double value : {
+                 metric.dualVolumeByAxisCubicMeters.x,
+                 metric.dualVolumeByAxisCubicMeters.y,
+                 metric.dualVolumeByAxisCubicMeters.z}) {
+            checkNear(value, 16.0, 1.2e-13,
+                      "all-axis regional velocity metric closes domain volume");
+        }
+        for (const auto& component : metric.components) {
+            for (const double value : {
+                     component.dualVolumeByAxisCubicMeters.x,
+                     component.dualVolumeByAxisCubicMeters.y,
+                     component.dualVolumeByAxisCubicMeters.z}) {
+                checkNear(value, component.sourceVolumeCubicMeters, 8.0e-14,
+                          "all-axis component velocity metric closes volume");
+            }
+        }
+    }
+
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto metric = buildPlanarPressureRegionFragmentVelocityMetric(
+        geometry, sweep, fragments, topology);
+    auto corrupt = metric;
+    corrupt.fingerprint = 0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVelocityMetric(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional velocity metric rejects fingerprint corruption");
+    corrupt = metric;
+    corrupt.dofs[0].dualVolumeCubicMeters += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVelocityMetric(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional velocity metric rejects DOF corruption");
+    corrupt = metric;
+    corrupt.fragments[0].velocityDofIncidenceCount += 1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVelocityMetric(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional velocity metric rejects fragment corruption");
+    corrupt = metric;
+    corrupt.components[0].dualVolumeByAxisCubicMeters.x += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVelocityMetric(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional velocity metric rejects component corruption");
+
+    auto limits = PlanarPressureRegionFragmentVelocityMetricLimits{};
+    limits.maximumDofs = metric.dofs.size() - 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional velocity metric enforces the DOF limit");
+    limits = {};
+    limits.maximumFragments = metric.fragments.size() - 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional velocity metric enforces the fragment limit");
+    limits = {};
+    limits.maximumComponents = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional velocity metric enforces the component limit");
+    limits = {};
+    limits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional velocity metric enforces the byte limit");
+    limits = {};
+    limits.topologyLimits.maximumLinks = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional velocity metric enforces nested topology limits");
+    auto corruptTopology = topology;
+    corruptTopology.links[0].areaSquareMeters += 0.1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, sweep, fragments, corruptTopology)); },
+        "regional velocity metric rejects mutated source topology");
+}
+
 void testPlanarRegionalFragmentPressureOperator() {
     const auto geometry = grid();
     const auto layers = pocketLayers();
@@ -3997,6 +4327,8 @@ int main() {
     testPlanarRegionalFragmentTopologyAxesAndRejection();
     testPlanarRegionalFragmentVolumeRates();
     testPlanarRegionalFragmentVolumeRatesAxesAndRejection();
+    testPlanarRegionalFragmentVelocityMetric();
+    testPlanarRegionalFragmentVelocityMetricAxesAndRejection();
     testPlanarRegionalFragmentPressureOperator();
     testPlanarRegionalFragmentPressureOperatorAxesAndRejection();
     testPlanarRegionalFragmentPressureCorrectionSolve();

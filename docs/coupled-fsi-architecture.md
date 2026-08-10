@@ -2289,6 +2289,21 @@ defect rejects transactionally. Pressure-layer links remain exact zero
 material-relative flow. This proves topology-stable geometric continuity only,
 not opening flow, momentum transport, energy acceptance, rebase handling, or
 production ownership.
+`planar_region_fragment_velocity_metric.*` adds the corresponding immutable
+diagonal face geometry for a future velocity state. A same-region Cartesian
+link owns one shared normal degree of freedom with dual volume equal to face
+area times the complete center distance. A pressure-layer wall is deliberately
+split into independent minus- and plus-side trace degrees of freedom; each
+owns only face area times its adjacent half-distance, so no velocity or
+momentum is silently transmitted across fabric. In the canonical X case the
+64 shared degrees own `44.8 m3` and the 16 wall traces own `3.2 m3`; their
+three-axis total is `48 m3`, or one `16 m3` domain volume per axis. The
+exterior and pocket components independently close to `13.6 m3` and `2.4 m3`
+on every axis, and all six incidences recover each fragment volume. Stable
+degree identity survives topology-stable motion while breathing updates the
+one-sided metric. The artifact is bounded and fingerprinted, but owns no
+velocity samples, density, kinetic-energy ledger, wall prescription,
+advection, pressure acceptance, or production state.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
