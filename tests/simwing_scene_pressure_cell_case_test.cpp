@@ -1540,6 +1540,11 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
         settings;
     settings.conductance.solve =
         pressureCellResponseAuditSettings().shadowSolve;
+    settings.cellVolumes
+        .absoluteRegionPublicationToleranceCubicMeters = 1.0e-16;
+    settings.cellVolumes.relativeRegionPublicationTolerance = 1.0e-13;
+    settings.cellVolumes.useCellLocalFirstMomentAccumulation = true;
+    settings.traceSystem.localCell.algebraicConsistencyTolerance = 1.0e-9;
     const auto audit =
         fsi::auditScenePressureCellMimeticConductancePhaseRefinement(
             resolutions, phases, settings);
@@ -1557,43 +1562,43 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
     constexpr std::size_t expectedAccepted[]{8, 8, 8};
     constexpr std::size_t expectedRejected[]{0, 0, 0};
     constexpr double expectedMinimum[]{
-        0.099347529340182233,
-        0.12925278175548274,
-        0.29373390290273943,
+        0.099347529340038904,
+        0.12925278175551372,
+        0.29373390290402773,
     };
     constexpr double expectedMaximum[]{
-        0.10196547254313142,
-        0.408781484694966,
-        0.88867102845759738,
+        0.10196547254319122,
+        0.40878148469495934,
+        0.88867102845065093,
     };
     constexpr double expectedMean[]{
-        0.10066047211051987,
-        0.24092951956532438,
-        0.52124824069717568,
+        0.10066047211051679,
+        0.24092951956532088,
+        0.52124824069596765,
     };
     constexpr double expectedVariation[]{
-        0.010428734257699697,
-        0.39050354377024471,
-        0.38827709459290677,
+        0.010428734257852469,
+        0.39050354377026442,
+        0.38827709458825865,
     };
     constexpr double expectedNormalized[][8]{
         {
-            0.10196547254313142, 0.099933389492765257,
-            0.10149376949041197, 0.10186734872294091,
-            0.099443375352812405, 0.099834026726442912,
-            0.10139886521547191, 0.099347529340182233,
+            0.10196547254319122, 0.099933389492956631,
+            0.1014937694903892, 0.10186734872292738,
+            0.099443375352724642, 0.099834026726483491,
+            0.10139886521542292, 0.099347529340038904,
         },
         {
-            0.35825481434598105, 0.408781484694966,
-            0.18244616118707896, 0.24123026839889594,
-            0.20221810122979983, 0.26800858093279595,
-            0.12925278175548274, 0.13724396397759467,
+            0.35825481434597628, 0.40878148469495934,
+            0.18244616118694379, 0.24123026839899175,
+            0.20221810122977188, 0.26800858093280122,
+            0.12925278175551372, 0.13724396397760896,
         },
         {
-            0.51940722905705417, 0.35090782886457544,
-            0.88867102845759738, 0.44826142651391082,
-            0.44945862708767215, 0.29373390290273943,
-            0.81684064037937898, 0.40270524231447685,
+            0.51940722905755532, 0.35090782886233218,
+            0.88867102845065093, 0.44826142651411155,
+            0.44945862709157314, 0.29373390290402773,
+            0.8168406403729126, 0.40270524231457766,
         },
     };
     constexpr std::size_t expectedOpeningCounts[][8]{
@@ -1696,27 +1701,27 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
         15, 13, 14, 11, 11, 10, 11, 9,
     };
     constexpr double fineNormalized[]{
-        0.62454444526833486,
-        0.9992120361521708,
-        0.69710200382794307,
-        0.78394637046749738,
-        1.00214013973588,
-        1.141234407607552,
-        0.845443837466477,
-        1.1269364948078211,
+        0.62454444524186525,
+        0.99921203619619303,
+        0.697102003892905,
+        0.78394637048827798,
+        1.0021401397142324,
+        1.1412344076056995,
+        0.84544383743758122,
+        1.1269364948018383,
     };
     check(fineLevel.samples.size() == phases.size()
               && fineLevel.acceptedSampleCount == phases.size()
               && fineLevel.rejectedLocalCellLinearConsistencySampleCount == 0
               && std::abs(fineLevel.minimumNormalizedConductance
-                          - 0.62454444526833486) < 1.0e-12
+                          - 0.62454444524186525) < 1.0e-12
               && std::abs(fineLevel.maximumNormalizedConductance
-                          - 1.141234407607552) < 1.0e-12
+                          - 1.1412344076056995) < 1.0e-12
               && std::abs(fineLevel.meanNormalizedConductance
-                          - 0.90256996691670954) < 1.0e-12
+                          - 0.90256996692232405) < 1.0e-12
               && std::abs(
                   fineLevel.normalizedConductanceCoefficientOfVariation
-                  - 0.20104176667262066) < 1.0e-12,
+                  - 0.20104176666641796) < 1.0e-12,
           "16-cubed mimetic audit retains the complete phase spectrum");
     for (std::size_t phaseIndex = 0;
          phaseIndex < fineLevel.samples.size(); ++phaseIndex) {
@@ -1736,6 +1741,79 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
                       .normalizedConductanceCoefficientOfVariation,
           "uncensored phase sensitivity contracts materially from 8 to 16 cubed");
 
+    const std::array<fsi::fluid::GridCellCounts, 1>
+        ultraFineResolution{{{32, 32, 32}}};
+    const auto ultraFineAudit =
+        fsi::auditScenePressureCellMimeticConductancePhaseRefinement(
+            ultraFineResolution, phases, settings);
+    fsi::validateScenePressureCellMimeticConductancePhaseRefinementAuditIntegrity(
+        ultraFineAudit);
+    const auto& ultraFineLevel = ultraFineAudit.levels.front();
+    constexpr std::size_t ultraFineOpeningCounts[]{
+        31, 31, 30, 31, 32, 32, 30, 33,
+    };
+    constexpr std::size_t ultraFineControlCounts[]{
+        32922, 32920, 32916, 32929, 32918, 32929, 32913, 32917,
+    };
+    constexpr std::size_t ultraFineFullTraceCounts[]{
+        99057, 99045, 99028, 99081, 99039, 99073, 99028, 99041,
+    };
+    constexpr std::size_t ultraFineReducedTraceCounts[]{
+        98635, 98629, 98620, 98653, 98625, 98653, 98614, 98623,
+    };
+    constexpr double ultraFineNormalized[]{
+        1.1577413353530119,
+        1.1265174411489478,
+        1.2079951856795617,
+        1.0937860283025791,
+        0.98289046411330039,
+        1.0661102262212265,
+        1.1445396842549989,
+        0.95623170788946665,
+    };
+    check(ultraFineLevel.samples.size() == phases.size()
+              && ultraFineLevel.acceptedSampleCount == phases.size()
+              && ultraFineLevel
+                     .rejectedLocalCellLinearConsistencySampleCount == 0
+              && std::abs(ultraFineLevel.minimumNormalizedConductance
+                          - 0.95623170788946665) < 1.0e-12
+              && std::abs(ultraFineLevel.maximumNormalizedConductance
+                          - 1.2079951856795617) < 1.0e-12
+              && std::abs(ultraFineLevel.meanNormalizedConductance
+                          - 1.0919765091203868) < 1.0e-12
+              && std::abs(
+                  ultraFineLevel
+                      .normalizedConductanceCoefficientOfVariation
+                  - 0.07435531846404672) < 1.0e-12,
+          "32-cubed mimetic audit retains the complete phase spectrum");
+    for (std::size_t phaseIndex = 0; phaseIndex < phases.size(); ++phaseIndex) {
+        const auto& sample = ultraFineLevel.samples[phaseIndex];
+        check(sample.status
+                      == fsi::ScenePressureCellMimeticConductancePhaseSampleStatus::Accepted
+                  && sample.conductanceAudit.has_value()
+                  && !sample.localCellLinearConsistencyRejection.has_value()
+                  && sample.openingTraceCount
+                      == ultraFineOpeningCounts[phaseIndex]
+                  && sample.controlVolumeCount
+                      == ultraFineControlCounts[phaseIndex]
+                  && sample.fullTraceCount
+                      == ultraFineFullTraceCounts[phaseIndex]
+                  && sample.reducedTraceCount
+                      == ultraFineReducedTraceCounts[phaseIndex]
+                  && std::abs(sample.normalizedConductance
+                              - ultraFineNormalized[phaseIndex]) < 1.0e-12,
+              "32-cubed mimetic audit locks each uncensored phase response");
+    }
+    check(ultraFineLevel.normalizedConductanceCoefficientOfVariation
+                  < 0.4 * fineLevel
+                      .normalizedConductanceCoefficientOfVariation
+              && std::abs(ultraFineLevel.meanNormalizedConductance
+                          - fineLevel.meanNormalizedConductance)
+                  < std::abs(fineLevel.meanNormalizedConductance
+                             - audit.levels[2]
+                                   .meanNormalizedConductance),
+          "uncensored phase sensitivity and mean drift contract again from 16 to 32 cubed");
+
     auto corrupt = audit;
     corrupt.levels[2].samples[1].normalizedConductance += 1.0e-6;
     bool rejected = false;
@@ -1747,6 +1825,19 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
     }
     check(rejected,
           "uncensored mimetic audit rejects accepted-sample corruption");
+
+    corrupt = audit;
+    corrupt.settings.traceSystem.localCell
+        .algebraicConsistencyTolerance *= 0.5;
+    rejected = false;
+    try {
+        fsi::validateScenePressureCellMimeticConductancePhaseRefinementAuditIntegrity(
+            corrupt);
+    } catch (const std::exception&) {
+        rejected = true;
+    }
+    check(rejected,
+          "uncensored mimetic audit integrity binds local-operator settings");
 
     fsi::ScenePressureCellMimeticConductancePhaseRefinementAuditLimits
         limited;
@@ -1773,6 +1864,18 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
     }
     check(rejected,
           "uncensored mimetic audit enforces its aggregate byte limit before assembly");
+    limited = {};
+    limited.traceSystem.maximumTraces = 0;
+    rejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditScenePressureCellMimeticConductancePhaseRefinement(
+                translatedResolution, translatedPhase, settings, limited));
+    } catch (const std::length_error&) {
+        rejected = true;
+    }
+    check(rejected,
+          "uncensored mimetic audit forwards its trace-system work limit");
 
     auto invalidSettings = settings;
     invalidSettings.geometryTranslationMeters.x =
@@ -1787,6 +1890,19 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
     }
     check(rejected,
           "uncensored mimetic audit rejects a non-finite diagnostic translation");
+    invalidSettings = settings;
+    invalidSettings.traceSystem.localCell.algebraicConsistencyTolerance =
+        std::numeric_limits<double>::quiet_NaN();
+    rejected = false;
+    try {
+        static_cast<void>(
+            fsi::auditScenePressureCellMimeticConductancePhaseRefinement(
+                translatedResolution, translatedPhase, invalidSettings));
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    check(rejected,
+          "uncensored mimetic audit rejects invalid local-operator settings");
 }
 
 void testPersistentMimeticPressureAuditRestart() {

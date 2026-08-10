@@ -9,11 +9,26 @@
 
 namespace simwing::fsi {
 
+// The default product retains the v4 fingerprint exactly. Opt-in precision
+// settings are bound by a tagged fingerprint extension without changing the
+// established production/checkpoint provenance chain.
 inline constexpr std::uint32_t sceneFluidCellVolumeVersion = 4;
+inline constexpr std::uint32_t
+    sceneFluidCellVolumePrecisionSettingsVersion = 1;
 
 struct SceneFluidCellVolumeSettings {
     double absoluteVolumeToleranceCubicMeters = 1.0e-12;
     double relativeVolumeTolerance = 1.0e-10;
+    // Positive cell-region measures no larger than this separate envelope are
+    // omitted from the sparse publication. Defaults preserve the historical
+    // closure-tolerance behavior, while refinement audits may retain smaller
+    // resolved slivers without tightening decomposition acceptance.
+    double absoluteRegionPublicationToleranceCubicMeters = 1.0e-12;
+    double relativeRegionPublicationTolerance = 1.0e-10;
+    // Opt-in precision path for refinement audits. Contributions are summed
+    // about each Cartesian cell centre before the published world first
+    // moment is reconstructed. False preserves established worker arithmetic.
+    bool useCellLocalFirstMomentAccumulation = false;
     SceneFluidOpeningCapSettings openingCaps;
 
     bool operator==(const SceneFluidCellVolumeSettings&) const = default;

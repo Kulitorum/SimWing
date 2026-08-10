@@ -1423,6 +1423,7 @@ region, residual, and tolerance.
 | `4^3` | `8 / 8` | `0.129253` - `0.408781` | `0.240930 / 0.39050` |
 | `8^3` | `8 / 8` | `0.293734` - `0.888671` | `0.521248 / 0.38828` |
 | `16^3` | `8 / 8` | `0.624544` - `1.141234` | `0.902570 / 0.20104` |
+| `32^3` | `8 / 8` | `0.956232` - `1.207995` | `1.091977 / 0.07436` |
 
 Thus the earlier `4/8` and `6/8` coarse graph yields really were censoring the
 shadow placement spectrum. The five former fine-grid rejections diagnosed a
@@ -1442,9 +1443,20 @@ envelope. This reduced the representative sliver's divergence-moment defect
 from `6.80e-19` to `2.14e-21 m^3`. Its valid four-face operator then exposed a
 numerically singular low-rank wall auxiliary core; the bounded direct wall
 fallback above accepts it without changing the normal Woodbury path. All
-`8/8` phases now solve at `16^3`, and phase CV contracts from `0.38828` to
-`0.20104`. One refinement interval is useful continuum evidence but is still
-not a convergence result. Because one authored aperture can become
+`8/8` phases now solve at `16^3`. At `32^3`, one real complementary region is
+only `2.83e-15 m^3`: it passed the existing decomposition-closure envelope but
+was erased when that same tolerance also controlled sparse publication.
+Cell-volume closure and publication therefore have separate fingerprinted
+settings. The offline audit uses a `1e-16 m^3` absolute / `1e-13` relative
+publication envelope, cell-local first-moment accumulation, and bounded
+centroid repair for cancellation-scale complements; defaults preserve worker
+arithmetic. Two valid four-face local operators then report algebraic errors
+`5.52e-10` and `1.31e-10`, so the audit explicitly fingerprints a `1e-9`
+algebraic-consistency tolerance while production retains the default `1e-10`.
+All `8/8` phases solve at `32^3`; phase CV contracts from `0.38828` to
+`0.20104` and then to `0.07436`, and the mean drift contracts on the second
+interval. Two intervals are stronger continuum evidence but are still not a
+convergence result. Because one authored aperture can become
 several embedded traces, this audit's uniform area-weighted Neumann source
 also differs from the older graph-manufactured source on multi-opening
 placements. The live 600-step trace and audited checkpoint remain

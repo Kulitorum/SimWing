@@ -1,6 +1,7 @@
 #pragma once
 
 #include "fluid/grid.h"
+#include "scene_fluid_cell_volume.h"
 #include "scene_fluid_mimetic_region_conductance_audit.h"
 
 #include <cstddef>
@@ -12,13 +13,15 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t
-    scenePressureCellMimeticConductancePhaseRefinementAuditVersion = 3;
+    scenePressureCellMimeticConductancePhaseRefinementAuditVersion = 4;
 
 struct ScenePressureCellMimeticConductancePhaseRefinementAuditSettings {
     // Translates both the canonical diagnostic scene and its periodic grid.
     // This leaves their relative geometry unchanged and exists solely to
     // expose coordinate-origin sensitivity in the offline audit.
     fluid::Vector3 geometryTranslationMeters;
+    SceneFluidCellVolumeSettings cellVolumes;
+    SceneFluidMimeticTraceSystemSettings traceSystem;
     SceneFluidMimeticRegionConductanceAuditSettings conductance;
 
     bool operator==(
@@ -32,6 +35,8 @@ struct ScenePressureCellMimeticConductancePhaseRefinementAuditLimits {
     std::size_t maximumAggregateSamples = 128;
     std::size_t maximumGridCellsPerSample = 2'000'000;
     std::size_t maximumOwnedBytes = 1024ULL * 1024ULL * 1024ULL;
+    SceneFluidCellVolumeLimits cellVolumes;
+    SceneFluidMimeticTraceSystemLimits traceSystem;
     SceneFluidMimeticRegionConductanceAuditLimits conductance;
 };
 

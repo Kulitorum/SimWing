@@ -193,7 +193,45 @@ void validateSettings(
         settings) {
     const auto& conductance = settings.conductance;
     const auto& solve = conductance.solve;
+    const auto& volumes = settings.cellVolumes;
+    const auto& caps = volumes.openingCaps;
+    const auto& local = settings.traceSystem.localCell;
     if (!finite(settings.geometryTranslationMeters)
+        || !std::isfinite(volumes.absoluteVolumeToleranceCubicMeters)
+        || volumes.absoluteVolumeToleranceCubicMeters < 0.0
+        || !std::isfinite(volumes.relativeVolumeTolerance)
+        || volumes.relativeVolumeTolerance < 0.0
+        || (volumes.absoluteVolumeToleranceCubicMeters == 0.0
+            && volumes.relativeVolumeTolerance == 0.0)
+        || !std::isfinite(
+            volumes.absoluteRegionPublicationToleranceCubicMeters)
+        || volumes.absoluteRegionPublicationToleranceCubicMeters < 0.0
+        || !std::isfinite(volumes.relativeRegionPublicationTolerance)
+        || volumes.relativeRegionPublicationTolerance < 0.0
+        || !std::isfinite(caps.planarityToleranceMeters)
+        || caps.planarityToleranceMeters < 0.0
+        || !std::isfinite(caps.minimumTriangleAreaSquareMeters)
+        || !(caps.minimumTriangleAreaSquareMeters > 0.0)
+        || !std::isfinite(caps.convexityTolerance)
+        || caps.convexityTolerance < 0.0
+        || caps.convexityTolerance >= 1.0
+        || !std::isfinite(caps.collapsedBoundaryRelativeAreaTolerance)
+        || caps.collapsedBoundaryRelativeAreaTolerance < 0.0
+        || caps.collapsedBoundaryRelativeAreaTolerance >= 1.0
+        || !std::isfinite(
+            local.absoluteAreaClosureToleranceSquareMeters)
+        || local.absoluteAreaClosureToleranceSquareMeters < 0.0
+        || !std::isfinite(
+            local.absoluteDivergenceTheoremToleranceCubicMeters)
+        || local.absoluteDivergenceTheoremToleranceCubicMeters < 0.0
+        || !std::isfinite(local.relativeGeometryTolerance)
+        || local.relativeGeometryTolerance < 0.0
+        || !std::isfinite(local.unitNormalTolerance)
+        || local.unitNormalTolerance < 0.0
+        || !std::isfinite(local.algebraicConsistencyTolerance)
+        || local.algebraicConsistencyTolerance < 0.0
+        || local.maximumHalfFaces < 4
+        || local.maximumOperatorBytes == 0
         || !std::isfinite(
             conductance.terminalIntegratedTransferPascalsMeters)
         || !(conductance.terminalIntegratedTransferPascalsMeters > 0.0)
@@ -264,6 +302,39 @@ void fingerprintSettings(
     fingerprint.real(settings.geometryTranslationMeters.x);
     fingerprint.real(settings.geometryTranslationMeters.y);
     fingerprint.real(settings.geometryTranslationMeters.z);
+    fingerprint.real(
+        settings.cellVolumes.absoluteVolumeToleranceCubicMeters);
+    fingerprint.real(settings.cellVolumes.relativeVolumeTolerance);
+    fingerprint.real(settings.cellVolumes
+        .absoluteRegionPublicationToleranceCubicMeters);
+    fingerprint.real(
+        settings.cellVolumes.relativeRegionPublicationTolerance);
+    fingerprint.integer(static_cast<std::uint8_t>(
+        settings.cellVolumes.useCellLocalFirstMomentAccumulation));
+    fingerprint.real(
+        settings.cellVolumes.openingCaps.planarityToleranceMeters);
+    fingerprint.real(
+        settings.cellVolumes.openingCaps.minimumTriangleAreaSquareMeters);
+    fingerprint.real(
+        settings.cellVolumes.openingCaps.convexityTolerance);
+    fingerprint.real(settings.cellVolumes.openingCaps
+        .collapsedBoundaryRelativeAreaTolerance);
+    for (const double value : {
+             settings.traceSystem.localCell
+                 .absoluteAreaClosureToleranceSquareMeters,
+             settings.traceSystem.localCell
+                 .absoluteDivergenceTheoremToleranceCubicMeters,
+             settings.traceSystem.localCell.relativeGeometryTolerance,
+             settings.traceSystem.localCell.unitNormalTolerance,
+             settings.traceSystem.localCell
+                 .algebraicConsistencyTolerance,
+         }) {
+        fingerprint.real(value);
+    }
+    fingerprint.integer(static_cast<std::uint64_t>(
+        settings.traceSystem.localCell.maximumHalfFaces));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        settings.traceSystem.localCell.maximumOperatorBytes));
     fingerprint.real(
         conductance.terminalIntegratedTransferPascalsMeters);
     fingerprint.real(
@@ -466,7 +537,8 @@ ScenePressureCellMimeticConductancePhaseSample buildSample(
     const auto epoch = buildSceneFluidGridEpoch(
         surface.definition, state, grid, transfer);
     const auto caps = buildSceneFluidOpeningCaps(
-        surface.definition, state);
+        surface.definition, state, settings.cellVolumes.openingCaps,
+        limits.cellVolumes.openingCaps);
     const auto openingQuadrature = buildSceneFluidOpeningQuadrature(
         surface.definition, state, caps);
     const auto openingPatches = buildSceneFluidOpeningGridPatches(
@@ -480,7 +552,8 @@ ScenePressureCellMimeticConductancePhaseSample buildSample(
             surface.definition, state, grid, transfer, epoch, caps,
             openingQuadrature, openingPatches, openingFaceCrossings);
     const auto volumes = buildSceneFluidCellVolumes(
-        surface.definition, state, grid, transfer, epoch);
+        surface.definition, state, grid, transfer, epoch,
+        settings.cellVolumes, limits.cellVolumes);
     const auto connectivity = buildSceneFluidRegionConnectivity(
         surface.definition);
     const auto pressureVolumes = buildSceneFluidPressureControlVolumes(
@@ -525,7 +598,8 @@ ScenePressureCellMimeticConductancePhaseSample buildSample(
 
     SceneFluidMimeticTraceSystem fullTraceSystem;
     try {
-        fullTraceSystem = buildSceneFluidMimeticTraceSystem(controlCells);
+        fullTraceSystem = buildSceneFluidMimeticTraceSystem(
+            controlCells, settings.traceSystem, limits.traceSystem);
     } catch (
         const SceneFluidMimeticTraceLocalCellLinearConsistencyError& error) {
         result.status =

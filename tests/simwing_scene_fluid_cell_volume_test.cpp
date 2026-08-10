@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <utility>
@@ -715,6 +716,20 @@ void testUnsupportedTopologyCorruptionAndLimits() {
         fixture.surface.definition, state, grid(), fixture.transfer);
     const auto accepted = buildSceneFluidCellVolumes(
         fixture.surface.definition, state, grid(), fixture.transfer, epoch);
+    SceneFluidCellVolumeSettings precisionSettings;
+    precisionSettings.absoluteRegionPublicationToleranceCubicMeters =
+        1.0e-16;
+    precisionSettings.relativeRegionPublicationTolerance = 1.0e-13;
+    precisionSettings.useCellLocalFirstMomentAccumulation = true;
+    const auto precision = buildSceneFluidCellVolumes(
+        fixture.surface.definition, state, grid(), fixture.transfer, epoch,
+        precisionSettings);
+    check(precision.settings == precisionSettings
+              && precision.fingerprint != accepted.fingerprint,
+          "cell-volume fingerprint binds opt-in sparse-publication precision settings");
+    validateSceneFluidCellVolumes(
+        precision, fixture.surface.definition, state, grid(),
+        fixture.transfer, epoch);
     auto corrupt = accepted;
     corrupt.cellRegionVolumes.front().volumeCubicMeters += 0.01;
     expectInvalid(
@@ -738,6 +753,18 @@ void testUnsupportedTopologyCorruptionAndLimits() {
         [&] { validateSceneFluidCellVolumeIntegrity(corrupt); },
         "cell-volume integrity binds collapsed-boundary tolerance");
 
+    corrupt = precision;
+    corrupt.settings.absoluteRegionPublicationToleranceCubicMeters *= 0.5;
+    expectInvalid(
+        [&] { validateSceneFluidCellVolumeIntegrity(corrupt); },
+        "cell-volume integrity binds sparse publication tolerance");
+
+    corrupt = precision;
+    corrupt.settings.useCellLocalFirstMomentAccumulation = false;
+    expectInvalid(
+        [&] { validateSceneFluidCellVolumeIntegrity(corrupt); },
+        "cell-volume integrity binds cell-local first-moment accumulation");
+
     SceneFluidCellVolumeSettings invalidSettings;
     invalidSettings.absoluteVolumeToleranceCubicMeters = 0.0;
     invalidSettings.relativeVolumeTolerance = 0.0;
@@ -746,6 +773,23 @@ void testUnsupportedTopologyCorruptionAndLimits() {
             fixture.surface.definition, state, grid(), fixture.transfer,
             epoch, invalidSettings)); },
         "cell-volume construction rejects zero closure authority");
+
+    invalidSettings = {};
+    invalidSettings.absoluteRegionPublicationToleranceCubicMeters = -1.0;
+    expectInvalid(
+        [&] { static_cast<void>(buildSceneFluidCellVolumes(
+            fixture.surface.definition, state, grid(), fixture.transfer,
+            epoch, invalidSettings)); },
+        "cell-volume construction rejects negative publication tolerance");
+
+    invalidSettings = {};
+    invalidSettings.relativeRegionPublicationTolerance =
+        std::numeric_limits<double>::quiet_NaN();
+    expectInvalid(
+        [&] { static_cast<void>(buildSceneFluidCellVolumes(
+            fixture.surface.definition, state, grid(), fixture.transfer,
+            epoch, invalidSettings)); },
+        "cell-volume construction rejects non-finite publication tolerance");
 
     SceneFluidCellVolumeLimits limits;
     limits.openingCaps.maximumCaps = 0;

@@ -529,7 +529,11 @@ origin; deterministic convex clipping distributes that chain across exact
 cells, including cells wholly inside a region and cases whose face-local chains
 remain open at tile boundaries. Every tetrahedron closes across its clipped
 cells, every cell closes across its regions, and the global sum is compared with
-an independent whole-surface divergence volume. Scene-v2.2 may now attach an
+an independent whole-surface divergence volume. Decomposition closure and
+sparse-region publication have separate tolerances. Their defaults retain the
+established worker arithmetic; offline refinement audits can retain smaller
+resolved slivers with cell-local first moments and bounded centroid repair for
+cancellation-scale complements. Scene-v2.2 may now attach an
 oriented boundary-vertex disk to an intake or crossport. A separate immutable
 opening-cap owner closes those explicit planar or nonplanar facets for volume
 accounting only. When that disk is absent, planar convex loops retain their
@@ -883,11 +887,12 @@ by aperture area. The direct condensed solve reports conductance from
 gauge-invariant source work. It gives `0.0700820848335194 m` on the
 face-aligned case, within `3.6e-14 m` of the earlier graph-manufactured shadow
 measurement, and `0.0608388978079475 m` on the embedded two-point fixture.
-The resulting graph-independent matrix now retains and solves all 32 requested
+The resulting graph-independent matrix now retains and solves all 40 requested
 phase/refinement attempts. The normalized mean/CV values at `2^3`, `4^3`, and
 `8^3` are `0.100660/0.01043`, `0.240930/0.39050`, and
 `0.521248/0.38828`; at `16^3` they are `0.902570/0.20104`, with range
-`0.624544`-`1.141234`. The five former `8^3`
+`0.624544`-`1.141234`; at `32^3` they are `1.091977/0.07436`, with range
+`0.956232`-`1.207995`. The five former `8^3`
 fine-grid failures were not ill-conditioned inversions. Tiny Cartesian
 subfaces were measured with absolute-coordinate shoelace moments, and
 triangle/grid-edge vertices inherited whichever sequential clipping path
@@ -900,9 +905,16 @@ exceeds a fixed coordinate-ULP envelope. The resulting four-face/two-wall
 sliver closes its divergence moment to `2.14e-21 m^3`; if its normal `7 x 7`
 wall auxiliary core is numerically singular, a bounded direct principal-block
 fallback retains the exact Schur metric without persistent dense storage. All
-eight phases then solve, and phase CV contracts by about 48% from `8^3` to
-`16^3`. This single interval is useful evidence, not a convergence claim. The
-live 600-step trace
+eight phases then solve at `16^3`. Extending to `32^3` exposes a real
+`2.83e-15 m^3` complementary region that the former shared `1e-12 m^3`
+closure/publication tolerance erased. The audit retains it with an independent
+publication envelope and cell-local moment path. Two valid four-face local
+operators report algebraic errors `5.52e-10` and `1.31e-10`, so this offline
+matrix explicitly fingerprints a `1e-9` algebraic-consistency tolerance;
+production retains the default `1e-10`. Phase CV contracts by about 48% from
+`8^3` to `16^3` and another 63% from `16^3` to `32^3`, while mean drift also
+contracts. These two intervals are useful continuum evidence, not a convergence
+claim. The live 600-step trace
 and audited checkpoint remain byte-identical. The complete phase matrix still
 does not establish shadow convergence or authorize a live solver switch; the
 uniform area-weighted multi-opening source also differs intentionally from the
