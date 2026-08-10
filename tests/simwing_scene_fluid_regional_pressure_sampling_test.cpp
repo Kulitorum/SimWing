@@ -51,6 +51,19 @@ void expectRejected(Callback&& callback, const char* message) {
     check(rejected, message);
 }
 
+bool samePublicCheckpoint(const StructureCheckpoint& first,
+                          const StructureCheckpoint& second) {
+    return first.version == second.version
+        && first.definitionFingerprint == second.definitionFingerprint
+        && first.acceptedStepCount == second.acceptedStepCount
+        && first.simulationTimeSeconds == second.simulationTimeSeconds
+        && first.nodes == second.nodes
+        && first.pendingExternalForcesNewtons
+            == second.pendingExternalForcesNewtons
+        && first.lastAppliedExternalForceNewtons
+            == second.lastAppliedExternalForceNewtons;
+}
+
 PeriodicCartesianGrid grid() {
     return {{4, 2, 2}, {-2.0, -1.0, -1.0}, {2.0, 1.0, 1.0}};
 }
@@ -448,6 +461,199 @@ void testMovingSamplingAndPower() {
               "regional sampling: conservative Structure transfer preserves moving power");
 }
 
+void testTransactionalLoadApplication() {
+    const RegionalEndpoint endpoint(false);
+    SceneFixture fixture(false);
+    const auto samples = sample(endpoint, fixture);
+    std::vector<StructureVector3> priorLoads(
+        fixture.structure.definition().nodes.size());
+    for (std::size_t index = 0; index < priorLoads.size(); ++index) {
+        const double value = 0.01 * static_cast<double>(index + 1);
+        priorLoads[index] = {value, -2.0 * value, 0.5 * value};
+    }
+    fixture.structure.setExternalForces(priorLoads);
+    const auto before = fixture.structure.checkpoint();
+    const auto application = applySceneFluidRegionalAcceptedPressureLoads(
+        fixture.surface.definition, fixture.state, fixture.transfer,
+        fixture.quadrature, samples, fixture.structure);
+    const auto after = fixture.structure.checkpoint();
+    check(application.version
+                  == sceneFluidRegionalPressureLoadApplicationVersion
+              && application.fingerprint != 0
+              && application.applied
+              && application.sourceSamplingFingerprint
+                  == samples.fingerprint
+              && application.sourceSurfaceStateFingerprint
+                  == fixture.state.fingerprint
+              && application.couplingSurfaceFingerprint
+                  == fixture.transfer.couplingSurfaceFingerprint()
+              && application.targetDefinitionFingerprint
+                  == fixture.structure.definitionFingerprint()
+              && application.acceptedStepCount == 0
+              && application.simulationTimeSeconds == 0.0
+              && application.structureNodeCount == priorLoads.size()
+              && application.nodeLoads.size()
+                  == fixture.transfer.nodes().size()
+              && application.ownedStorageBytes > 0
+              && application.workingStorageBytes > 0,
+          "regional application: immutable receipt binds sampling and Structure epoch");
+    check(after.acceptedStepCount == before.acceptedStepCount
+              && after.simulationTimeSeconds == before.simulationTimeSeconds
+              && after.nodes == before.nodes
+              && after.lastAppliedExternalForceNewtons
+                  == before.lastAppliedExternalForceNewtons,
+          "regional application: pending-load mutation changes no committed state");
+    std::vector<StructureVector3> expected =
+        before.pendingExternalForcesNewtons;
+    for (const auto& load : application.nodeLoads) {
+        expected[load.structureNode].x +=
+            load.appliedPressureForceNewtons.x;
+        expected[load.structureNode].y +=
+            load.appliedPressureForceNewtons.y;
+        expected[load.structureNode].z +=
+            load.appliedPressureForceNewtons.z;
+        check(load.priorPendingForceNewtons
+                      == before.pendingExternalForcesNewtons[
+                          load.structureNode]
+                  && load.resultingPendingForceNewtons
+                      == expected[load.structureNode]
+                  && load.applicationResidualNewtons
+                      == StructureVector3{},
+              "regional application: each pressure load preserves its prior node load");
+    }
+    check(after.pendingExternalForcesNewtons == expected,
+          "regional application: all resulting pending loads match the receipt");
+    validateSceneFluidRegionalPressureLoadApplicationIntegrity(application);
+    auto corrupt = application;
+    corrupt.nodeLoads[0].resultingPendingForceNewtons.x += 1.0;
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalPressureLoadApplicationIntegrity(
+                corrupt);
+        },
+        "regional application: nested receipt corruption rejects");
+}
+
+void testMovingLoadApplication() {
+    const RegionalEndpoint endpoint(true);
+    SceneFixture fixture(true);
+    const auto samples = sample(endpoint, fixture);
+    const auto before = fixture.structure.checkpoint();
+    const auto application = applySceneFluidRegionalAcceptedPressureLoads(
+        fixture.surface.definition, fixture.state, fixture.transfer,
+        fixture.quadrature, samples, fixture.structure);
+    const auto after = fixture.structure.checkpoint();
+    check(application.applied && application.acceptedStepCount == 1
+              && application.simulationTimeSeconds == 1.0
+              && after.nodes == before.nodes
+              && after.acceptedStepCount == before.acceptedStepCount
+              && after.simulationTimeSeconds == before.simulationTimeSeconds
+              && after.pendingExternalForcesNewtons
+                  != before.pendingExternalForcesNewtons,
+          "regional application: moving accepted pressure reaches pending XPBD loads without stepping");
+}
+
+void testApplicationRollbackAndLimits() {
+    const RegionalEndpoint endpoint(false);
+    SceneFixture fixture(false);
+    const auto samples = sample(endpoint, fixture);
+    fixture.structure.addExternalForce(0, {1.0, 2.0, 3.0});
+    const auto before = fixture.structure.checkpoint();
+
+    auto limits = SceneFluidRegionalPressureLoadApplicationLimits{};
+    limits.maximumNodeLoads = fixture.transfer.nodes().size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                applySceneFluidRegionalAcceptedPressureLoads(
+                    fixture.surface.definition, fixture.state,
+                    fixture.transfer, fixture.quadrature, samples,
+                    fixture.structure, {}, limits));
+        },
+        "regional application: node-load limit rejects before mutation");
+    check(samePublicCheckpoint(before, fixture.structure.checkpoint()),
+          "regional application: node-load limit preserves exact target state");
+    limits = {};
+    limits.maximumStructureNodes =
+        fixture.structure.definition().nodes.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                applySceneFluidRegionalAcceptedPressureLoads(
+                    fixture.surface.definition, fixture.state,
+                    fixture.transfer, fixture.quadrature, samples,
+                    fixture.structure, {}, limits));
+        },
+        "regional application: Structure-node limit rejects before mutation");
+    check(samePublicCheckpoint(before, fixture.structure.checkpoint()),
+          "regional application: Structure-node limit preserves exact target state");
+
+    limits = {};
+    limits.maximumOwnedBytes =
+        fixture.transfer.nodes().size()
+            * sizeof(SceneFluidRegionalPressureAppliedNodeLoad) - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                applySceneFluidRegionalAcceptedPressureLoads(
+                    fixture.surface.definition, fixture.state,
+                    fixture.transfer, fixture.quadrature, samples,
+                    fixture.structure, {}, limits));
+        },
+        "regional application: owned-byte limit rejects before mutation");
+    check(samePublicCheckpoint(before, fixture.structure.checkpoint()),
+          "regional application: owned-byte limit preserves exact target state");
+
+    limits = {};
+    limits.maximumWorkingBytes =
+        fixture.structure.definition().nodes.size()
+            * sizeof(StructureVector3) - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                applySceneFluidRegionalAcceptedPressureLoads(
+                    fixture.surface.definition, fixture.state,
+                    fixture.transfer, fixture.quadrature, samples,
+                    fixture.structure, {}, limits));
+        },
+        "regional application: working-byte limit rejects before mutation");
+    check(samePublicCheckpoint(before, fixture.structure.checkpoint()),
+          "regional application: working-byte limit preserves exact target state");
+
+    auto corruptSamples = samples;
+    corruptSamples.fingerprint = 0;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                applySceneFluidRegionalAcceptedPressureLoads(
+                    fixture.surface.definition, fixture.state,
+                    fixture.transfer, fixture.quadrature, corruptSamples,
+                    fixture.structure));
+        },
+        "regional application: corrupt samples reject before mutation");
+    check(samePublicCheckpoint(before, fixture.structure.checkpoint()),
+          "regional application: corrupt samples preserve exact target state");
+
+    StructureStepSettings stepSettings;
+    stepSettings.timeStepSeconds = 0.01;
+    stepSettings.gravityMetersPerSecondSquared = {};
+    stepSettings.velocityDampingPerSecond = 0.0;
+    static_cast<void>(fixture.structure.step(stepSettings));
+    const auto staleBefore = fixture.structure.checkpoint();
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                applySceneFluidRegionalAcceptedPressureLoads(
+                    fixture.surface.definition, fixture.state,
+                    fixture.transfer, fixture.quadrature, samples,
+                    fixture.structure));
+        },
+        "regional application: stale Structure epoch rejects before mutation");
+    check(samePublicCheckpoint(
+              staleBefore, fixture.structure.checkpoint()),
+          "regional application: stale epoch preserves exact current target state");
+}
+
 void testRejectionAndLimits() {
     const RegionalEndpoint endpoint(false);
     SceneFixture fixture(false);
@@ -514,6 +720,9 @@ int main() {
     try {
         testStaticSamplingAndTransfer();
         testMovingSamplingAndPower();
+        testTransactionalLoadApplication();
+        testMovingLoadApplication();
+        testApplicationRollbackAndLimits();
         testRejectionAndLimits();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

@@ -1967,8 +1967,10 @@ makes this a certified aerodynamic solver.
   transfer. Regional surface IDs must equal scene sheet IDs; every patch must
   match one tile's side regions, current plane, normal, and material velocity,
   and every tile must close area, force, moment, and power before publication.
-  Evaluation is immutable and never calls `addLoadsTo` or selects worker
-  pressure ownership.
+  Evaluation is immutable. Its separate explicit load application is epoch-
+  and kinematics-bound, preserves existing pending loads, publishes a per-node
+  receipt, and restores the complete Structure checkpoint on failure. It does
+  not step Structure or select worker pressure ownership.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2486,7 +2488,12 @@ power to the accepted load ledger, preserve the existing barycentric
 conservative transfer, and enforce sample/tile/owned/working limits before
 allocation. Cover static separate `-280/+280 N` sheet resultants, rigid moving
 power, nested corruption, incomplete coverage, reversed winding, and foreign
-accepted state. Evaluation must not mutate Structure or enable a worker path.
+accepted state. Evaluation must not mutate Structure. Explicit application
+must bind the exact Structure epoch/kinematics, prevalidate all resulting node
+loads and limits, preserve unrelated pending loads, change no committed state,
+and restore the full checkpoint after any failure. Cover static/moving
+application, pre-existing load preservation, receipt corruption, stale epoch,
+and node/Structure/owned/working limits. Neither path enables a worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

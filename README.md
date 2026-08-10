@@ -369,8 +369,14 @@ region sides, current plane, normal, and material velocity, while every tile's
 area is covered exactly once. Static two-sheet transfer recovers the separate
 `-280/+280 N` nodal resultants; rigid motion also closes quadrature power to
 the accepted sheet work. The result uses the established conservative
-barycentric Structure transfer, but remains read-only: it neither adds pending
-XPBD loads nor selects the regional solver for a worker.
+barycentric Structure transfer, but evaluation remains read-only.
+An explicit opt-in application wrapper can now add those evaluated nodal forces
+to Structure's pending loads. It first binds the exact accepted epoch and nodal
+kinematics, precomputes every resulting load, preserves unrelated pending
+loads, and records a fingerprinted per-node receipt. Any failed postcondition
+restores the complete pre-application Structure checkpoint. It deliberately
+does not advance XPBD, consume the pending forces, or select the regional
+solver for a worker.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

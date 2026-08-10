@@ -232,6 +232,54 @@ std::uint64_t samplingFingerprint(
     return fingerprint.value();
 }
 
+std::size_t applicationOwnedStorageBytes(
+    const SceneFluidRegionalPressureLoadApplication& application) {
+    return checkedMultiply(
+        application.nodeLoads.size(),
+        sizeof(SceneFluidRegionalPressureAppliedNodeLoad));
+}
+
+std::size_t applicationWorkingStorageBytes(
+    const std::size_t structureNodeCount) {
+    return checkedMultiply(
+        structureNodeCount, sizeof(StructureVector3));
+}
+
+std::uint64_t applicationFingerprint(
+    const SceneFluidRegionalPressureLoadApplication& application) {
+    Fingerprint fingerprint;
+    fingerprint.integer(application.version);
+    fingerprint.integer(application.sourceSamplingFingerprint);
+    fingerprint.integer(application.sourceSurfaceStateFingerprint);
+    fingerprint.integer(application.couplingSurfaceFingerprint);
+    fingerprint.integer(application.targetDefinitionFingerprint);
+    fingerprint.integer(application.acceptedStepCount);
+    fingerprint.real(application.simulationTimeSeconds);
+    fingerprint.integer(static_cast<std::uint64_t>(
+        application.structureNodeCount));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        application.nodeLoads.size()));
+    for (const auto& load : application.nodeLoads) {
+        fingerprint.integer(static_cast<std::uint64_t>(load.loadIndex));
+        fingerprint.integer(load.stableId);
+        fingerprint.integer(static_cast<std::uint64_t>(load.structureNode));
+        fingerprintVector(fingerprint, load.priorPendingForceNewtons);
+        fingerprintVector(fingerprint, load.appliedPressureForceNewtons);
+        fingerprintVector(fingerprint, load.resultingPendingForceNewtons);
+        fingerprintVector(fingerprint, load.applicationResidualNewtons);
+    }
+    fingerprintVector(fingerprint, application.priorPendingForceNewtons);
+    fingerprintVector(fingerprint, application.appliedPressureForceNewtons);
+    fingerprintVector(fingerprint, application.resultingPendingForceNewtons);
+    fingerprintVector(fingerprint, application.applicationResidualNewtons);
+    fingerprint.boolean(application.applied);
+    fingerprint.integer(static_cast<std::uint64_t>(
+        application.ownedStorageBytes));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        application.workingStorageBytes));
+    return fingerprint.value();
+}
+
 void validateLimits(
     const SceneFluidRegionalPressureSamplingLimits& limits) {
     if (limits.maximumSamples == 0 || limits.maximumTiles == 0
@@ -239,6 +287,17 @@ void validateLimits(
         || limits.maximumWorkingBytes == 0) {
         throw std::invalid_argument(
             "scene fluid regional pressure-sampling limits are invalid");
+    }
+}
+
+void validateApplicationLimits(
+    const SceneFluidRegionalPressureLoadApplicationLimits& limits) {
+    if (limits.maximumNodeLoads == 0
+        || limits.maximumStructureNodes == 0
+        || limits.maximumOwnedBytes == 0
+        || limits.maximumWorkingBytes == 0) {
+        throw std::invalid_argument(
+            "scene fluid regional pressure load-application limits are invalid");
     }
 }
 
@@ -837,6 +896,234 @@ evaluateSceneFluidRegionalAcceptedPressureQuadrature(
             "scene fluid regional pressure transfer changed the sampled ledger");
     }
     return result;
+}
+
+SceneFluidRegionalPressureLoadApplication
+applySceneFluidRegionalAcceptedPressureLoads(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidRegionalPressureSampleSet& samples,
+    Structure& target,
+    const ConservativeTransferSettings& transferSettings,
+    const SceneFluidRegionalPressureLoadApplicationLimits& limits) {
+    validateApplicationLimits(limits);
+    validateSceneFluidRegionalPressureSampleIntegrity(samples);
+    const std::size_t nodeLoadCount = transfer.nodes().size();
+    const std::size_t structureNodeCount = target.definition().nodes.size();
+    if (nodeLoadCount == 0 || structureNodeCount == 0
+        || nodeLoadCount > limits.maximumNodeLoads
+        || structureNodeCount > limits.maximumStructureNodes) {
+        throw std::length_error(
+            "scene fluid regional pressure load-application count limit exceeded");
+    }
+    const std::size_t expectedOwnedBytes = checkedMultiply(
+        nodeLoadCount,
+        sizeof(SceneFluidRegionalPressureAppliedNodeLoad));
+    const std::size_t expectedWorkingBytes =
+        applicationWorkingStorageBytes(structureNodeCount);
+    if (expectedOwnedBytes > limits.maximumOwnedBytes
+        || expectedWorkingBytes > limits.maximumWorkingBytes) {
+        throw std::length_error(
+            "scene fluid regional pressure load-application byte limit exceeded");
+    }
+    if (target.definitionFingerprint()
+            != transfer.targetDefinitionFingerprint()
+        || target.acceptedStepCount() != state.acceptedStepCount
+        || target.simulationTimeSeconds() != state.simulationTimeSeconds) {
+        throw std::invalid_argument(
+            "scene fluid regional pressure target epoch is stale");
+    }
+    const auto sampledKinematics = transfer.kinematics(state);
+    const auto targetKinematics =
+        transfer.conservativeTransfer().captureKinematics(target);
+    if (sampledKinematics != targetKinematics) {
+        throw std::invalid_argument(
+            "scene fluid regional pressure target kinematics are stale");
+    }
+    const auto transferred =
+        evaluateSceneFluidRegionalAcceptedPressureQuadrature(
+            surface, state, transfer, quadrature, samples,
+            transferSettings);
+    const auto transferredLoads = transferred.nodeLoads();
+    if (transferredLoads.size() != nodeLoadCount) {
+        throw std::logic_error(
+            "scene fluid regional pressure transfer changed node count");
+    }
+
+    const StructureCheckpoint before = target.checkpoint();
+    if (before.definitionFingerprint != target.definitionFingerprint()
+        || before.acceptedStepCount != state.acceptedStepCount
+        || before.simulationTimeSeconds != state.simulationTimeSeconds
+        || before.nodes.size() != structureNodeCount
+        || before.pendingExternalForcesNewtons.size()
+            != structureNodeCount) {
+        throw std::invalid_argument(
+            "scene fluid regional pressure target checkpoint is incompatible");
+    }
+    std::vector<StructureVector3> expectedPending =
+        before.pendingExternalForcesNewtons;
+
+    SceneFluidRegionalPressureLoadApplication application;
+    application.sourceSamplingFingerprint = samples.fingerprint;
+    application.sourceSurfaceStateFingerprint = state.fingerprint;
+    application.couplingSurfaceFingerprint =
+        transfer.couplingSurfaceFingerprint();
+    application.targetDefinitionFingerprint =
+        target.definitionFingerprint();
+    application.acceptedStepCount = state.acceptedStepCount;
+    application.simulationTimeSeconds = state.simulationTimeSeconds;
+    application.structureNodeCount = structureNodeCount;
+    application.nodeLoads.reserve(nodeLoadCount);
+    for (const auto& force : before.pendingExternalForcesNewtons) {
+        application.priorPendingForceNewtons = add(
+            application.priorPendingForceNewtons, force);
+    }
+    for (std::size_t index = 0; index < nodeLoadCount; ++index) {
+        const auto& load = transferredLoads[index];
+        if (load.structureNode >= structureNodeCount
+            || !finite(load.forceNewtons)) {
+            throw std::invalid_argument(
+                "scene fluid regional pressure node load is invalid");
+        }
+        const StructureVector3 prior = expectedPending[load.structureNode];
+        const StructureVector3 resulting = add(prior, load.forceNewtons);
+        if (!finite(resulting)) {
+            throw std::overflow_error(
+                "scene fluid regional pressure pending load is not finite");
+        }
+        expectedPending[load.structureNode] = resulting;
+        application.appliedPressureForceNewtons = add(
+            application.appliedPressureForceNewtons, load.forceNewtons);
+        application.nodeLoads.push_back({
+            index,
+            load.stableId,
+            load.structureNode,
+            prior,
+            load.forceNewtons,
+            resulting,
+            subtract(resulting, add(prior, load.forceNewtons)),
+        });
+    }
+    for (const auto& force : expectedPending) {
+        application.resultingPendingForceNewtons = add(
+            application.resultingPendingForceNewtons, force);
+    }
+    application.applicationResidualNewtons = subtract(
+        application.resultingPendingForceNewtons,
+        add(application.priorPendingForceNewtons,
+            application.appliedPressureForceNewtons));
+    if (!finite(application.priorPendingForceNewtons)
+        || !finite(application.appliedPressureForceNewtons)
+        || !finite(application.resultingPendingForceNewtons)
+        || !finite(application.applicationResidualNewtons)) {
+        throw std::overflow_error(
+            "scene fluid regional pressure load-application ledger is not finite");
+    }
+    application.ownedStorageBytes = applicationOwnedStorageBytes(application);
+    application.workingStorageBytes = expectedWorkingBytes;
+    if (application.ownedStorageBytes != expectedOwnedBytes) {
+        throw std::logic_error(
+            "scene fluid regional pressure load-application storage changed");
+    }
+
+    try {
+        transfer.addLoadsTo(target, transferred);
+        const StructureCheckpoint after = target.checkpoint();
+        if (after.definitionFingerprint != before.definitionFingerprint
+            || after.acceptedStepCount != before.acceptedStepCount
+            || after.simulationTimeSeconds != before.simulationTimeSeconds
+            || after.nodes != before.nodes
+            || after.pendingExternalForcesNewtons != expectedPending
+            || after.lastAppliedExternalForceNewtons
+                != before.lastAppliedExternalForceNewtons) {
+            throw std::logic_error(
+                "scene fluid regional pressure load application changed non-load state");
+        }
+        application.applied = true;
+        application.fingerprint = applicationFingerprint(application);
+        validateSceneFluidRegionalPressureLoadApplicationIntegrity(
+            application);
+        return application;
+    } catch (...) {
+        target.restore(before);
+        throw;
+    }
+}
+
+void validateSceneFluidRegionalPressureLoadApplicationIntegrity(
+    const SceneFluidRegionalPressureLoadApplication& application) {
+    if (application.version
+            != sceneFluidRegionalPressureLoadApplicationVersion
+        || application.fingerprint == 0
+        || application.sourceSamplingFingerprint == 0
+        || application.sourceSurfaceStateFingerprint == 0
+        || application.couplingSurfaceFingerprint == 0
+        || application.targetDefinitionFingerprint == 0
+        || !std::isfinite(application.simulationTimeSeconds)
+        || application.structureNodeCount == 0
+        || application.nodeLoads.empty()
+        || !finite(application.priorPendingForceNewtons)
+        || !finite(application.appliedPressureForceNewtons)
+        || !finite(application.resultingPendingForceNewtons)
+        || !finite(application.applicationResidualNewtons)
+        || !application.applied
+        || application.ownedStorageBytes
+            != applicationOwnedStorageBytes(application)
+        || application.workingStorageBytes
+            != applicationWorkingStorageBytes(
+                application.structureNodeCount)
+        || application.fingerprint != applicationFingerprint(application)) {
+        throw std::invalid_argument(
+            "scene fluid regional pressure load-application integrity is invalid");
+    }
+    StructureVector3 appliedForce;
+    std::uint64_t previousStableId = 0;
+    std::size_t previousStructureNode = 0;
+    bool havePrevious = false;
+    for (std::size_t index = 0;
+         index < application.nodeLoads.size(); ++index) {
+        const auto& load = application.nodeLoads[index];
+        const StructureVector3 reconstructed = add(
+            load.priorPendingForceNewtons,
+            load.appliedPressureForceNewtons);
+        const StructureVector3 residual = subtract(
+            load.resultingPendingForceNewtons, reconstructed);
+        if (load.loadIndex != index || load.stableId == 0
+            || load.structureNode >= application.structureNodeCount
+            || !finite(load.priorPendingForceNewtons)
+            || !finite(load.appliedPressureForceNewtons)
+            || !finite(load.resultingPendingForceNewtons)
+            || !finite(load.applicationResidualNewtons)
+            || load.resultingPendingForceNewtons != reconstructed
+            || load.applicationResidualNewtons != residual
+            || (havePrevious
+                && (load.stableId <= previousStableId
+                    || load.structureNode <= previousStructureNode))) {
+            throw std::invalid_argument(
+                "scene fluid regional pressure applied node load is invalid");
+        }
+        havePrevious = true;
+        previousStableId = load.stableId;
+        previousStructureNode = load.structureNode;
+        appliedForce = add(appliedForce, load.appliedPressureForceNewtons);
+    }
+    const StructureVector3 aggregateResidual = subtract(
+        application.resultingPendingForceNewtons,
+        add(application.priorPendingForceNewtons,
+            application.appliedPressureForceNewtons));
+    const double forceScale = std::max({
+        maximumAbsolute(application.priorPendingForceNewtons),
+        maximumAbsolute(application.appliedPressureForceNewtons),
+        maximumAbsolute(application.resultingPendingForceNewtons), 1.0});
+    if (appliedForce != application.appliedPressureForceNewtons
+        || aggregateResidual != application.applicationResidualNewtons
+        || maximumAbsolute(application.applicationResidualNewtons)
+            > tolerance(forceScale)) {
+        throw std::invalid_argument(
+            "scene fluid regional pressure load-application closure is invalid");
+    }
 }
 
 } // namespace simwing::fsi

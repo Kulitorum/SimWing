@@ -11,6 +11,8 @@ namespace simwing::fsi {
 
 inline constexpr std::uint32_t
     sceneFluidRegionalPressureSamplingVersion = 1;
+inline constexpr std::uint32_t
+    sceneFluidRegionalPressureLoadApplicationVersion = 1;
 
 struct SceneFluidRegionalPressureSamplingLimits {
     std::size_t maximumSamples = 20'000'000;
@@ -59,9 +61,10 @@ struct SceneFluidRegionalPressureTileCoverage {
 // material velocity; every tile must receive its complete area exactly once.
 //
 // The sampled one-sided total pressures deliberately retain the regional
-// correction gauge chosen by the accepted pressure state. This adapter only
-// evaluates the existing conservative Structure transfer; it does not mutate
-// Structure, advance either solver, or select production pressure ownership.
+// correction gauge chosen by the accepted pressure state. Capture and
+// evaluation are read-only; mutation is available only through the separate
+// explicit transactional application below. None of these operations advances
+// either solver or selects production pressure ownership.
 struct SceneFluidRegionalPressureSampleSet {
     std::uint32_t version =
         sceneFluidRegionalPressureSamplingVersion;
@@ -95,6 +98,59 @@ struct SceneFluidRegionalPressureSampleSet {
 
     bool operator==(
         const SceneFluidRegionalPressureSampleSet&) const = default;
+};
+
+struct SceneFluidRegionalPressureLoadApplicationLimits {
+    std::size_t maximumNodeLoads = 20'000'000;
+    std::size_t maximumStructureNodes = 20'000'000;
+    std::size_t maximumOwnedBytes = 2048ULL * 1024ULL * 1024ULL;
+    std::size_t maximumWorkingBytes = 1024ULL * 1024ULL * 1024ULL;
+};
+
+struct SceneFluidRegionalPressureAppliedNodeLoad {
+    std::size_t loadIndex = 0;
+    std::uint64_t stableId = 0;
+    std::size_t structureNode = 0;
+    StructureVector3 priorPendingForceNewtons;
+    StructureVector3 appliedPressureForceNewtons;
+    StructureVector3 resultingPendingForceNewtons;
+    StructureVector3 applicationResidualNewtons;
+
+    bool operator==(
+        const SceneFluidRegionalPressureAppliedNodeLoad&) const = default;
+};
+
+// Immutable receipt for one explicit pending-load mutation. The target must
+// still be at the exact Structure epoch and nodal kinematics represented by
+// the sampled scene state. All node bindings, arithmetic and storage limits
+// are validated before the first load changes; every postcondition is checked
+// against a saved Structure checkpoint and any failure restores that checkpoint.
+// Existing non-pressure pending loads are retained exactly.
+//
+// This does not step Structure, consume the pending loads, persist regional
+// state, or enable a production worker path.
+struct SceneFluidRegionalPressureLoadApplication {
+    std::uint32_t version =
+        sceneFluidRegionalPressureLoadApplicationVersion;
+    std::uint64_t fingerprint = 0;
+    std::uint64_t sourceSamplingFingerprint = 0;
+    std::uint64_t sourceSurfaceStateFingerprint = 0;
+    std::uint64_t couplingSurfaceFingerprint = 0;
+    std::uint64_t targetDefinitionFingerprint = 0;
+    std::uint64_t acceptedStepCount = 0;
+    double simulationTimeSeconds = 0.0;
+    std::size_t structureNodeCount = 0;
+    std::vector<SceneFluidRegionalPressureAppliedNodeLoad> nodeLoads;
+    StructureVector3 priorPendingForceNewtons;
+    StructureVector3 appliedPressureForceNewtons;
+    StructureVector3 resultingPendingForceNewtons;
+    StructureVector3 applicationResidualNewtons;
+    bool applied = false;
+    std::size_t ownedStorageBytes = 0;
+    std::size_t workingStorageBytes = 0;
+
+    bool operator==(
+        const SceneFluidRegionalPressureLoadApplication&) const = default;
 };
 
 [[nodiscard]] SceneFluidRegionalPressureSampleSet
@@ -134,5 +190,19 @@ evaluateSceneFluidRegionalAcceptedPressureQuadrature(
     const SceneFluidQuadratureDefinition& quadrature,
     const SceneFluidRegionalPressureSampleSet& samples,
     const ConservativeTransferSettings& settings = {});
+
+[[nodiscard]] SceneFluidRegionalPressureLoadApplication
+applySceneFluidRegionalAcceptedPressureLoads(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidRegionalPressureSampleSet& samples,
+    Structure& target,
+    const ConservativeTransferSettings& transferSettings = {},
+    const SceneFluidRegionalPressureLoadApplicationLimits& limits = {});
+
+void validateSceneFluidRegionalPressureLoadApplicationIntegrity(
+    const SceneFluidRegionalPressureLoadApplication& application);
 
 } // namespace simwing::fsi

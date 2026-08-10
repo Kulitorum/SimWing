@@ -2402,7 +2402,15 @@ canonical two-plane scene covers all eight tiles, transfers the separate
 under rigid translation reproduces accepted sheet work as quadrature power.
 Evaluation returns an immutable `ConservativeTransferResult`; it deliberately
 does not call `addLoadsTo`, advance XPBD, persist the regional state, or change
-worker pressure ownership.
+worker pressure ownership. A separate explicit application wrapper now binds
+that result back to the exact Structure definition, accepted step, simulation
+time, and nodal kinematics. It checkpoints Structure, precomputes every
+pressure-plus-prior pending load under independent node/storage bounds, applies
+through the existing transfer, and validates that only the pending-load vector
+changed. Its immutable receipt retains each prior/applied/resulting node force
+and aggregate closure; any exception or failed postcondition restores the
+complete checkpoint. This is a tested mutation boundary, not a structural
+advance, pressure refresh, checkpoint format, or worker integration.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
