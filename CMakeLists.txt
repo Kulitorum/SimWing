@@ -433,6 +433,8 @@ add_library(simwing_scene_fluid_cell_volume STATIC
     src/fsi/scene_fluid_region_wall.h
     src/fsi/scene_fluid_regional_opening_momentum_wall_exchange.cpp
     src/fsi/scene_fluid_regional_opening_momentum_wall_exchange.h
+    src/fsi/scene_fluid_regional_opening_momentum_wall_pressure_epoch.cpp
+    src/fsi/scene_fluid_regional_opening_momentum_wall_pressure_epoch.h
     src/fsi/scene_fluid_regional_opening_momentum_wall_input.cpp
     src/fsi/scene_fluid_regional_opening_momentum_wall_input.h
     src/fsi/scene_fluid_wall_exchange_kernel.cpp

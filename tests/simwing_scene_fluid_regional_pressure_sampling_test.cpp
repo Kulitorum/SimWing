@@ -17,6 +17,7 @@
 #include "scene_fluid_regional_opening_momentum_load_epoch.h"
 #include "scene_fluid_regional_opening_momentum_wall_exchange.h"
 #include "scene_fluid_regional_opening_momentum_wall_input.h"
+#include "scene_fluid_regional_opening_momentum_wall_pressure_epoch.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1788,6 +1789,190 @@ void testOpeningMomentumWallExchange() {
               && zeroPrediction.fingerprint != baselinePrediction.fingerprint,
           "regional opening wall exchange: zero viscosity preserves the exact numeric prediction while retaining adjustment lineage");
 
+    const auto baselinePressureEpoch =
+        acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+            baselinePrediction, endpoint.pressureOperator,
+            endpoint.basePressureOperator, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.resistanceDefinitions,
+            endpoint.baseMetric, endpoint.openingMetric,
+            endpoint.momentumCycle.pressureSettings);
+    const auto adjustedPressureEpoch =
+        acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+            adjustedPrediction, endpoint.pressureOperator,
+            endpoint.basePressureOperator, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.resistanceDefinitions,
+            endpoint.baseMetric, endpoint.openingMetric,
+            endpoint.momentumCycle.pressureSettings);
+    const auto zeroPressureEpoch =
+        acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+            zeroPrediction, endpoint.pressureOperator,
+            endpoint.basePressureOperator, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.resistanceDefinitions,
+            endpoint.baseMetric, endpoint.openingMetric,
+            endpoint.momentumCycle.pressureSettings);
+    validatePlanarPressureRegionFragmentOpeningMomentumPressureEpochResult(
+        adjustedPressureEpoch, adjustedPrediction,
+        endpoint.pressureOperator, endpoint.basePressureOperator,
+        endpoint.geometry, endpoint.sweep, endpoint.fragments,
+        endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric, endpoint.momentumCycle.pressureSettings);
+    check(baselinePressureEpoch.diagnostics.accepted
+              && adjustedPressureEpoch.diagnostics.accepted
+              && zeroPressureEpoch.diagnostics.accepted
+              && adjustedPressureEpoch.sourcePredictionFingerprint
+                  == adjustedPrediction.fingerprint
+              && adjustedPressureEpoch.acceptedState
+                  != baselinePressureEpoch.acceptedState
+              && zeroPressureEpoch.acceptedState
+                  == baselinePressureEpoch.acceptedState
+              && zeroPressureEpoch.diagnostics
+                  == baselinePressureEpoch.diagnostics
+              && zeroPressureEpoch.sourcePredictionFingerprint
+                  != baselinePressureEpoch.sourcePredictionFingerprint,
+          "regional opening wall exchange: opt-in adjusted prediction reaches pressure acceptance while zero viscosity preserves the exact numeric endpoint");
+
+    const auto wallPressureEpoch =
+        acceptSceneFluidRegionalOpeningMomentumWallPressureEpoch(
+            exchange, endpoint.momentumCycle.transport,
+            endpoint.openingMetric, endpoint.pressureOperator,
+            endpoint.basePressureOperator, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.resistanceDefinitions,
+            endpoint.baseMetric, endpoint.openingMetric, {},
+            endpoint.momentumCycle.pressureSettings);
+    const auto zeroWallPressureEpoch =
+        acceptSceneFluidRegionalOpeningMomentumWallPressureEpoch(
+            zeroExchange, endpoint.momentumCycle.transport,
+            endpoint.openingMetric, endpoint.pressureOperator,
+            endpoint.basePressureOperator, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.resistanceDefinitions,
+            endpoint.baseMetric, endpoint.openingMetric, {},
+            endpoint.momentumCycle.pressureSettings);
+    validateSceneFluidRegionalOpeningMomentumWallPressureEpoch(
+        wallPressureEpoch, exchange, endpoint.momentumCycle.transport,
+        endpoint.openingMetric, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric);
+    check(wallPressureEpoch.fingerprint != 0
+              && wallPressureEpoch.sourceWallExchangeFingerprint
+                  == exchange.fingerprint
+              && wallPressureEpoch.adjustmentState == adjustment
+              && wallPressureEpoch.prediction == adjustedPrediction
+              && wallPressureEpoch.pressureEpoch == adjustedPressureEpoch
+              && wallPressureEpoch.pressureEpoch.diagnostics.accepted
+              && zeroWallPressureEpoch.adjustmentState == zeroAdjustment
+              && zeroWallPressureEpoch.prediction == zeroPrediction
+              && zeroWallPressureEpoch.pressureEpoch
+                  == zeroPressureEpoch
+              && zeroWallPressureEpoch.pressureEpoch.acceptedState
+                  == baselinePressureEpoch.acceptedState,
+          "regional opening wall pressure epoch: one immutable receipt retains the exact adjustment-prediction-pressure chain");
+
+    const auto pressureWarmStart =
+        buildPlanarPressureRegionFragmentOpeningPressureWarmStart(
+            baselinePressureEpoch.acceptedState,
+            endpoint.pressureOperator, endpoint.basePressureOperator,
+            endpoint.geometry, endpoint.sweep, endpoint.fragments,
+            endpoint.topology, endpoint.volumeRates,
+            endpoint.openingDefinitions, endpoint.openings,
+            endpoint.resistanceDefinitions, endpoint.pressureOperator,
+            endpoint.basePressureOperator, endpoint.sweep,
+            endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+            endpoint.openingDefinitions, endpoint.openings);
+    const auto directWarmPressureEpoch =
+        acceptPlanarPressureRegionFragmentOpeningMomentumPressureEpoch(
+            adjustedPrediction, pressureWarmStart,
+            endpoint.pressureOperator, endpoint.basePressureOperator,
+            endpoint.geometry, endpoint.sweep, endpoint.fragments,
+            endpoint.topology, endpoint.volumeRates,
+            endpoint.openingDefinitions, endpoint.openings,
+            endpoint.resistanceDefinitions, endpoint.baseMetric,
+            endpoint.openingMetric,
+            endpoint.momentumCycle.pressureSettings);
+    const auto warmWallPressureEpoch =
+        acceptSceneFluidRegionalOpeningMomentumWallPressureEpoch(
+            exchange, endpoint.momentumCycle.transport,
+            endpoint.openingMetric, pressureWarmStart,
+            endpoint.pressureOperator, endpoint.basePressureOperator,
+            endpoint.geometry, endpoint.sweep, endpoint.fragments,
+            endpoint.topology, endpoint.volumeRates,
+            endpoint.openingDefinitions, endpoint.openings,
+            endpoint.resistanceDefinitions, endpoint.baseMetric,
+            endpoint.openingMetric, {},
+            endpoint.momentumCycle.pressureSettings);
+    validateSceneFluidRegionalOpeningMomentumWallPressureEpoch(
+        warmWallPressureEpoch, exchange,
+        endpoint.momentumCycle.transport, endpoint.openingMetric,
+        pressureWarmStart, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric);
+    check(warmWallPressureEpoch.sourcePressureWarmStartFingerprint
+              == pressureWarmStart.fingerprint
+              && warmWallPressureEpoch.pressureEpoch
+                  == directWarmPressureEpoch
+              && warmWallPressureEpoch.pressureEpoch.diagnostics.accepted
+              && warmWallPressureEpoch.pressureEpoch.diagnostics
+                     .usedWarmPressureStart,
+          "regional opening wall pressure epoch: pressure-only warm lineage composes without carrying stale flow");
+
+    auto corruptWallPressureEpoch = wallPressureEpoch;
+    ++corruptWallPressureEpoch.pressureEpoch.sourcePredictionFingerprint;
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningMomentumWallPressureEpochIntegrity(
+                corruptWallPressureEpoch);
+        },
+        "regional opening wall pressure epoch: corrupt nested provenance rejects");
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningMomentumWallPressureEpoch(
+                wallPressureEpoch, zeroExchange,
+                endpoint.momentumCycle.transport, endpoint.openingMetric,
+                endpoint.pressureOperator, endpoint.basePressureOperator,
+                endpoint.geometry, endpoint.sweep, endpoint.fragments,
+                endpoint.topology, endpoint.volumeRates,
+                endpoint.openingDefinitions, endpoint.openings,
+                endpoint.resistanceDefinitions, endpoint.baseMetric,
+                endpoint.openingMetric);
+        },
+        "regional opening wall pressure epoch: foreign exchange rejects full validation");
+    auto wallPressureLimits =
+        SceneFluidRegionalOpeningMomentumWallPressureEpochLimits{};
+    wallPressureLimits.maximumOwnedBytes =
+        wallPressureEpoch.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                acceptSceneFluidRegionalOpeningMomentumWallPressureEpoch(
+                    exchange, endpoint.momentumCycle.transport,
+                    endpoint.openingMetric, endpoint.pressureOperator,
+                    endpoint.basePressureOperator, endpoint.geometry,
+                    endpoint.sweep, endpoint.fragments, endpoint.topology,
+                    endpoint.volumeRates, endpoint.openingDefinitions,
+                    endpoint.openings, endpoint.resistanceDefinitions,
+                    endpoint.baseMetric, endpoint.openingMetric, {},
+                    endpoint.momentumCycle.pressureSettings,
+                    wallPressureLimits));
+        },
+        "regional opening wall pressure epoch: late aggregate limit rejects publication");
+
     auto corruptAdjustment = adjustment;
     corruptAdjustment.controls.front().velocityMetersPerSecond.y += 0.1;
     expectRejected(
@@ -1847,6 +2032,20 @@ void testOpeningMomentumWallExchange() {
                     endpoint.openingMetric));
         },
         "regional opening wall exchange: rejected exchange cannot publish adjusted momentum");
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                acceptSceneFluidRegionalOpeningMomentumWallPressureEpoch(
+                    limited, endpoint.momentumCycle.transport,
+                    endpoint.openingMetric, endpoint.pressureOperator,
+                    endpoint.basePressureOperator, endpoint.geometry,
+                    endpoint.sweep, endpoint.fragments, endpoint.topology,
+                    endpoint.volumeRates, endpoint.openingDefinitions,
+                    endpoint.openings, endpoint.resistanceDefinitions,
+                    endpoint.baseMetric, endpoint.openingMetric, {},
+                    endpoint.momentumCycle.pressureSettings));
+        },
+        "regional opening wall pressure epoch: rejected wall exchange cannot enter pressure acceptance");
 
     auto corrupt = exchange;
     corrupt.samples.front().structureTraction.tractionPascals.y += 1.0;

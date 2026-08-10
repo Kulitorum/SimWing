@@ -2192,6 +2192,13 @@ makes this a certified aerodynamic solver.
   adjusted momentum state and consumed by the predictor's explicit opt-in
   overload. The existing cycle still consumes raw transport; traction is not
   applied to Structure, and no cycle or worker is committed.
+- `src/fsi/scene_fluid_regional_opening_momentum_wall_pressure_epoch.{h,cpp}`
+  is the bounded immutable composition of accepted wall exchange, exact fluid
+  adjustment state, consecutive predictor, and cold or pressure-only-warm
+  pressure acceptance. It retains and recursively validates all three nested
+  numerical products plus exact exchange/transport/metric/warm provenance.
+  It remains an isolated opt-in receipt: no mutable cycle/worker consumes it
+  and its retained Structure traction is not applied.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -3165,6 +3172,19 @@ adjustment state; prove zero-viscosity nested-prediction identity and nonzero-
 viscosity predictor influence plus foreign/corrupt/limit rejection. Keep this
 predictor path explicitly opt-in: do not switch the cycle, apply traction to
 Structure, commit the cycle owner, or enable a worker.
+
+For `scene_fluid_regional_opening_momentum_wall_pressure_epoch.*`, accept only
+an already accepted wall exchange bound to the exact transport target metric.
+Compose the fluid adjustment state, adjusted consecutive predictor, and the
+existing private pressure-epoch transaction without recreating any arithmetic.
+Support explicit cold pressure or the existing pressure-only warm artifact;
+retain every nested product and bind exchange/transport/source-metric/current-
+metric/adjustment/prediction/warm lineage under aggregate owned/working limits.
+Cover bit-exact zero-viscosity nested prediction and accepted-pressure identity,
+nonzero wall influence on the accepted pressure endpoint, cold/warm full
+validation, corruption, foreign exchange, rejected wall subcycling, and late
+aggregate limits. Do not apply wall traction, commit a mutable momentum cycle,
+persist the receipt, or enable a production worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

@@ -435,6 +435,9 @@ src/fsi/
     scene_fluid_region_rebase.* bounded mapped current-topology rebase
     scene_fluid_region_wall.* legacy scene-region wall ownership adapter
     scene_fluid_wall_exchange_kernel.* shared tangential wall arithmetic
+    scene_fluid_regional_opening_momentum_wall_input.* exact regional wall ownership input
+    scene_fluid_regional_opening_momentum_wall_exchange.* isolated regional wall exchange
+    scene_fluid_regional_opening_momentum_wall_pressure_epoch.* adjusted predictor/pressure receipt
     scene_fluid_region_link_flow.* current-link region predictor
     scene_fluid_pressure_coupling.* strong pressure/shear feedback
     scene_pressure_cell_geometry.* shared visible/refinement tetrahedra
@@ -2919,6 +2922,21 @@ only adjustment provenance. Foreign/corrupt/oversized adjustments and rejected
 wall exchanges cannot publish a prediction source. This remains isolated from
 the existing momentum cycle: it does not change that cycle's raw-transport
 selection, apply shear to Structure, or select production ownership.
+`scene_fluid_regional_opening_momentum_wall_pressure_epoch.*` now preserves
+that complete opt-in continuation as one bounded receipt. Starting from an
+accepted same-epoch wall exchange, it captures the identity-preserving fluid
+adjustment, predicts the consecutive opening-aware flow, and invokes the
+existing private pressure-acceptance transaction with either an explicit cold
+gauge or the established pressure-only warm artifact. All nested artifacts and
+their exchange/transport/source-metric/current-metric/adjustment/prediction/
+warm lineage remain available for recursive integrity and full source
+validation. The partial-opening oracle proves that nonzero viscosity changes
+the accepted pressure state, while zero viscosity preserves the complete
+nested numeric prediction and accepted endpoint exactly. Cold and warm paths
+match their direct fluid transactions; corrupt provenance, a foreign or
+rejected exchange, and late aggregate limits reject. This receipt is not yet
+consumed by the mutable cycle or worker and does not apply the retained wall
+traction to Structure.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
