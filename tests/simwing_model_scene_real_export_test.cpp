@@ -28,6 +28,7 @@
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <sstream>
 #include <set>
@@ -183,6 +184,16 @@ void testRealDesignCapture(const std::filesystem::path &input,
     if (!result.success) {
         return;
     }
+    const std::filesystem::path scenePath =
+        output / "simwing-scene-v2.bin";
+    std::ofstream sceneOutput(
+        scenePath, std::ios::binary | std::ios::trunc);
+    std::string sceneWriteError;
+    check(sceneOutput
+              && simwing::fsi::writeScene(
+                  result.scene, sceneOutput, &sceneWriteError),
+          "real scene-v2 export writes a reusable worker input payload");
+    sceneOutput.close();
 
     const auto roleCount = [&result](simwing::fsi::SurfaceRole role) {
         return std::count_if(

@@ -1,4 +1,5 @@
 #include "canonical_case.h"
+#include "frozen_scene_pressure_case.h"
 #include "hemisphere_case.h"
 #include "moving_porous_flow_case.h"
 #include "moving_porous_flow_checkpoint_persistence.h"
@@ -67,6 +68,7 @@ constexpr std::uint64_t maximumSteps = 10'000'000;
 
 enum class WorkerCase {
     Structural,
+    FrozenScene,
     Hemisphere,
     ProjectedFlag,
     RamAirCell,
@@ -86,6 +88,7 @@ struct Options {
     std::filesystem::path tracePath;
     std::filesystem::path checkpointInputPath;
     std::filesystem::path checkpointOutputPath;
+    std::filesystem::path scenePath;
     std::uint64_t checkpointEvery = 0;
     bool viewer = true;
     bool controlStdio = false;
@@ -97,7 +100,8 @@ struct Options {
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: simwing-fsi [--case structural|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
+        "Usage: simwing-fsi [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
+        "                   [--scene PATH]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
         "                   [--checkpoint-in PATH]\n"
@@ -110,6 +114,9 @@ void printUsage(FILE* stream) {
         "Runs a canonical Qt-free numerical case and writes a completed diagnostic\n"
         "trace. 'structural' is the original analytic XPBD harness; 'hemisphere'\n"
         "runs a soft three-point fabric dome under an alternating pressure mode;\n"
+        "'frozen-scene' loads --scene, holds its geometry fixed, and publishes\n"
+        "one prescribed-flow mixed-hybrid pressure projection and conservative\n"
+        "load field; it is not a time-resolved wake or aerodynamic polar;\n"
         "'flag' maps the complete reaction from a fixed-reference projected gust\n"
         "onto a one-edge-clamped XPBD fabric panel;\n"
         "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"
@@ -157,6 +164,10 @@ void printUsage(FILE* stream) {
 bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
     if (text == "structural") {
         workerCase = WorkerCase::Structural;
+        return true;
+    }
+    if (text == "frozen-scene") {
+        workerCase = WorkerCase::FrozenScene;
         return true;
     }
     if (text == "hemisphere") {
@@ -244,7 +255,7 @@ bool parseOptions(int argc,
         } else if (argument == "--case") {
             if (++index >= argc
                 || !parseWorkerCase(argv[index], options.workerCase)) {
-                error = "--case requires 'structural', 'hemisphere', 'flag', 'ram-cell', 'pressure-cell', 'piston', "
+                error = "--case requires 'structural', 'frozen-scene', 'hemisphere', 'flag', 'ram-cell', 'pressure-cell', 'piston', "
                     "'strong-piston', 'open-piston', 'periodic-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
@@ -253,7 +264,7 @@ bool parseOptions(int argc,
             }
         } else if (argument.starts_with("--case=")) {
             if (!parseWorkerCase(argument.substr(7), options.workerCase)) {
-                error = "--case requires 'structural', 'hemisphere', 'flag', 'ram-cell', 'pressure-cell', 'piston', "
+                error = "--case requires 'structural', 'frozen-scene', 'hemisphere', 'flag', 'ram-cell', 'pressure-cell', 'piston', "
                     "'strong-piston', 'open-piston', 'periodic-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
@@ -285,6 +296,19 @@ bool parseOptions(int argc,
                 return false;
             }
             options.tracePath = std::filesystem::path(argument.substr(8));
+        } else if (argument == "--scene") {
+            if (++index >= argc || argv[index][0] == '\0') {
+                error = "--scene requires a path";
+                return false;
+            }
+            options.scenePath = std::filesystem::path(argv[index]);
+        } else if (argument.starts_with("--scene=")) {
+            if (argument.size() == 8) {
+                error = "--scene requires a path";
+                return false;
+            }
+            options.scenePath =
+                std::filesystem::path(argument.substr(8));
         } else if (argument == "--checkpoint-in") {
             if (++index >= argc || argv[index][0] == '\0') {
                 error = "--checkpoint-in requires a path";
@@ -338,6 +362,14 @@ bool parseOptions(int argc,
     if (options.steps > maximumSteps) {
         error = "--steps exceeds the worker safety limit";
         return false;
+    }
+    if ((options.workerCase == WorkerCase::FrozenScene)
+            != !options.scenePath.empty()) {
+        error = "--case frozen-scene requires exactly one --scene path";
+        return false;
+    }
+    if (options.workerCase == WorkerCase::FrozenScene && !stepsRequested) {
+        options.steps = 1;
     }
     if ((!options.checkpointInputPath.empty()
          || !options.checkpointOutputPath.empty())
@@ -564,6 +596,27 @@ std::filesystem::path checkpointTemporaryPath(
     std::filesystem::path temporary = path;
     temporary += ".tmp-" + std::to_string(processId());
     return temporary;
+}
+
+bool readSceneFile(const std::filesystem::path& path,
+                   simwing::fsi::Scene& scene,
+                   std::string& error) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        error = "cannot open scene-v2 input: " + path.string();
+        return false;
+    }
+    std::string sceneError;
+    simwing::fsi::Scene candidate;
+    if (!simwing::fsi::readScene(input, candidate, &sceneError)) {
+        error = "cannot decode scene-v2 input";
+        if (!sceneError.empty()) {
+            error += ": " + sceneError;
+        }
+        return false;
+    }
+    scene = std::move(candidate);
+    return true;
 }
 
 bool readCheckpointBytes(const std::filesystem::path& path,
@@ -1110,6 +1163,9 @@ int main(int argc, char* argv[]) {
             options.checkpointOutputPath = normalizedAbsolutePath(
                 options.checkpointOutputPath);
         }
+        if (!options.scenePath.empty()) {
+            options.scenePath = normalizedAbsolutePath(options.scenePath);
+        }
         if ((!options.checkpointInputPath.empty()
              && samePath(options.tracePath, options.checkpointInputPath))
             || (!options.checkpointOutputPath.empty()
@@ -1124,6 +1180,21 @@ int main(int argc, char* argv[]) {
                 stderr,
                 "trace and checkpoint paths must be different files\n");
             return 2;
+        }
+        if (!options.scenePath.empty()
+            && samePath(options.tracePath, options.scenePath)) {
+            std::fprintf(
+                stderr, "trace and scene input must be different files\n");
+            return 2;
+        }
+
+        std::optional<simwing::fsi::Scene> frozenScene;
+        if (!options.scenePath.empty()) {
+            frozenScene.emplace();
+            if (!readSceneFile(options.scenePath, *frozenScene, error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                return 1;
+            }
         }
 
         std::optional<simwing::fsi::PeriodicFlowCaseCheckpoint>
@@ -1748,6 +1819,28 @@ int main(int argc, char* argv[]) {
                 }
             } else if constexpr (std::is_same_v<
                                      Simulation,
+                                     simwing::fsi::FrozenScenePressureCase>) {
+                const auto& diagnostics = simulation.diagnostics();
+                std::printf(
+                    "simwing-fsi completed %llu frozen-scene sample(s), "
+                    "t=%.9g s, controls=%zu, traces=%zu, iterations=%zu, "
+                    "max-pressure-jump=%.6g Pa, pressure-force="
+                    "[%.6g %.6g %.6g] N, transfer-residual=%.3g N, "
+                    "trace=%s\n",
+                    static_cast<unsigned long long>(
+                        simulation.acceptedStepCount()),
+                    simulation.simulationTimeSeconds(),
+                    diagnostics.pressureControlCount,
+                    diagnostics.sharedTraceCount,
+                    diagnostics.pressureIterationCount,
+                    diagnostics.maximumAbsolutePressureDifferencePascals,
+                    diagnostics.pressureForceNewtons.x,
+                    diagnostics.pressureForceNewtons.y,
+                    diagnostics.pressureForceNewtons.z,
+                    diagnostics.transferForceResidualNewtons,
+                    options.tracePath.string().c_str());
+            } else if constexpr (std::is_same_v<
+                                     Simulation,
                                      simwing::fsi::PressureJumpCase>) {
                 const auto& diagnostics = simulation.diagnostics();
                 std::printf(
@@ -1823,6 +1916,15 @@ int main(int argc, char* argv[]) {
 
         if (options.workerCase == WorkerCase::Piston) {
             simwing::fsi::CoupledPistonCase simulation;
+            return run(simulation);
+        }
+        if (options.workerCase == WorkerCase::FrozenScene) {
+            if (!frozenScene) {
+                throw std::logic_error(
+                    "frozen scene input disappeared before construction");
+            }
+            simwing::fsi::FrozenScenePressureCase simulation(
+                std::move(*frozenScene));
             return run(simulation);
         }
         if (options.workerCase == WorkerCase::StrongPiston) {

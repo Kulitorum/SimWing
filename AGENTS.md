@@ -97,7 +97,7 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
-.\build\bin\Release\simwing-fsi.exe [--case structural|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
+.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
 .\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
@@ -269,6 +269,11 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   and immutable viewer frames.
 - `simwing_scene_structure`: deterministic scene-v2 membrane, per-sheet
   bending, junction, and cable assembly into `simwing_structure`.
+- `simwing_frozen_scene_pressure_case`: input-driven fixed-geometry integration
+  probe. It loads scene-v2, assembles the exact Structure/fluid surface, runs
+  one prescribed-flow mixed-hybrid mimetic pressure projection, conservatively
+  transfers pressure loads, and publishes immutable pressure/load fields. It
+  is not a time-resolved external-flow, wake, polar, or two-way FSI solver.
 - `simwing_scene_fluid_surface`: deterministic compact ownership of the
   authoritative scene-v2 fluid regions, porous fabric, oriented surface
   triangles, and openings, plus immutable capture of accepted Structure
@@ -1620,6 +1625,12 @@ makes this a certified aerodynamic solver.
   first end-to-end worker slice. The case is an analytic structural harness,
   not aerodynamic truth; it writes only accepted steps and launches the
   sibling viewer by default. `--no-viewer` must remain Qt-free and unthrottled.
+- `src/fsi/frozen_scene_pressure_case.{h,cpp}` is the first input-driven
+  whole-scene pressure/load publication path. `--case frozen-scene --scene
+  <scene-v2.bin>` freezes Structure geometry and repeats one immutable
+  prescribed-flow pressure projection as diagnostic frames. Its pressure
+  magnitude is not aerodynamic validation; no advection, wake, polar,
+  refinement study, or structural feedback is present.
 - `tools/simwing_mimetic_conductance_audit_main.cpp` is the opt-in Qt-free
   high-resolution evidence runner. It consumes the canonical offline profile
   and grid phases owned by the mimetic conductance phase-audit boundary. An

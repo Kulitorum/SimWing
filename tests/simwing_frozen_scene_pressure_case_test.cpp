@@ -1,0 +1,137 @@
+#include "frozen_scene_pressure_case.h"
+#include "scene_pressure_cell_geometry.h"
+
+#include <cmath>
+#include <cstdio>
+#include <exception>
+#include <stdexcept>
+#include <vector>
+
+namespace {
+
+int failures = 0;
+
+void check(const bool condition, const char* message) {
+    if (!condition) {
+        std::fprintf(stderr, "FAIL: %s\n", message);
+        ++failures;
+    }
+}
+
+const simwing::viewer::ScalarField* scalarField(
+    const simwing::viewer::DiagnosticFrame& frame,
+    const char* name) {
+    for (const auto& field : frame.scalarFields) {
+        if (field.name == name) {
+            return &field;
+        }
+    }
+    return nullptr;
+}
+
+const simwing::viewer::VectorField* vectorField(
+    const simwing::viewer::DiagnosticFrame& frame,
+    const char* name) {
+    for (const auto& field : frame.vectorFields) {
+        if (field.name == name) {
+            return &field;
+        }
+    }
+    return nullptr;
+}
+
+std::vector<std::uint8_t> serialized(
+    const simwing::viewer::DiagnosticFrame& frame) {
+    std::vector<std::uint8_t> result;
+    simwing::viewer::ProtocolError error;
+    if (!simwing::viewer::serializeFrame(frame, result, &error)) {
+        throw std::runtime_error(error.message);
+    }
+    return result;
+}
+
+bool sameGeometry(const simwing::viewer::DiagnosticFrame& first,
+                  const simwing::viewer::DiagnosticFrame& second) {
+    if (first.vertices.size() != second.vertices.size()
+        || first.triangles.size() != second.triangles.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < first.vertices.size(); ++index) {
+        const auto& a = first.vertices[index];
+        const auto& b = second.vertices[index];
+        if (a.stableId != b.stableId
+            || a.positionMetres.x != b.positionMetres.x
+            || a.positionMetres.y != b.positionMetres.y
+            || a.positionMetres.z != b.positionMetres.z) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0; index < first.triangles.size(); ++index) {
+        const auto& a = first.triangles[index];
+        const auto& b = second.triangles[index];
+        if (a.stableId != b.stableId
+            || a.vertex0 != b.vertex0 || a.vertex1 != b.vertex1
+            || a.vertex2 != b.vertex2
+            || a.negativeRegionId != b.negativeRegionId
+            || a.positiveRegionId != b.positiveRegionId) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void testFrozenScenePressureCase() {
+    const auto scene = simwing::fsi::makeScenePressureCellGeometry();
+    simwing::fsi::FrozenScenePressureCaseSettings settings;
+    settings.cellCounts = {4, 4, 4};
+    settings.useExplicitDomain = true;
+    settings.lowerMeters = {};
+    settings.upperMeters = {4.0, 4.0, 4.0};
+    simwing::fsi::FrozenScenePressureCase first(scene, settings);
+    simwing::fsi::FrozenScenePressureCase second(scene, settings);
+    const auto firstFrame = first.advance();
+    const auto repeatedFrame = second.advance();
+    const auto secondFrame = first.advance();
+    const auto* pressure = scalarField(
+        firstFrame, "frozen_scene.pressure_jump");
+    const auto* nodalForce = vectorField(
+        firstFrame, "frozen_scene.nodal_pressure_force");
+    const auto& diagnostics = first.diagnostics();
+    check(serialized(firstFrame) == serialized(repeatedFrame)
+              && firstFrame.step == 1
+              && secondFrame.step == 2
+              && sameGeometry(firstFrame, secondFrame),
+          "frozen scene pressure publication is deterministic and leaves geometry unchanged");
+    check(pressure != nullptr
+              && pressure->association
+                  == simwing::viewer::FieldAssociation::Triangle
+              && pressure->values.size() == firstFrame.triangles.size()
+              && nodalForce != nullptr
+              && nodalForce->association
+                  == simwing::viewer::FieldAssociation::Vertex
+              && nodalForce->values.size() == firstFrame.vertices.size(),
+          "frozen scene frame publishes complete triangle pressure and nodal load fields");
+    check(diagnostics.finite
+              && diagnostics.pressureControlCount > 0
+              && diagnostics.sharedTraceCount > 0
+              && diagnostics.pressureIterationCount > 0
+              && diagnostics.maximumAbsolutePressureDifferencePascals > 0.0
+              && diagnostics.transferForceResidualNewtons < 1.0e-8
+              && diagnostics.transferMomentResidualNewtonMeters < 1.0e-8,
+          "frozen scene pressure solve and conservative transfer are accepted");
+}
+
+} // namespace
+
+int main() {
+    try {
+        testFrozenScenePressureCase();
+    } catch (const std::exception& exception) {
+        std::fprintf(stderr, "FAIL: %s\n", exception.what());
+        ++failures;
+    }
+    if (failures == 0) {
+        std::printf("simwing frozen scene pressure case tests passed\n");
+    }
+    return failures == 0 ? 0 : 1;
+}

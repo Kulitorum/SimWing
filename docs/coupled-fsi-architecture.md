@@ -3427,6 +3427,20 @@ hemisphere` path is a
 visual and structural regression only; it must not be cited as curved-interface
 fluid coupling or aerodynamic validation.
 
+The first input-driven whole-scene integration probe is now available as
+`--case frozen-scene --scene <scene-v2.bin>`. It validates and assembles the
+scene's exact Structure and two-sided fluid surface, freezes that geometry,
+builds the capped-region mixed-hybrid system, solves one prescribed-flow
+mimetic pressure projection, conservatively transfers its pressure quadrature
+to Structure nodes, and publishes per-triangle pressure and per-vertex load
+fields. The real gnuC2 developer export completes this path through 138 pressure
+controls and 42,927 shared traces with sub-nanonewton force-transfer closure.
+This is an integration result only: repeated frames reuse the same projection,
+the prescribed predictor is not an advected external-flow state, and the large
+absolute pressure/load magnitudes are not a wing polar, lift result, wake, or
+aerodynamic validation. It therefore does not close the Phase 2 gate or begin
+the Phase 3 validation gate.
+
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written
 budgets; folded-interface and unresolved-gap cases do not leak or change fluid

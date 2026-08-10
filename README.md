@@ -1516,6 +1516,7 @@ Run:
 
 ```powershell
 .\build\bin\Release\LEparagliding.exe
+.\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin
 .\build\bin\Release\simwing-fsi.exe --case hemisphere --steps 600
 .\build\bin\Release\simwing-fsi.exe --case flag --steps 600
 .\build\bin\Release\simwing-fsi.exe --case ram-cell --steps 600
@@ -1552,6 +1553,17 @@ the other canonical cases. The flag command is the first real CFD-load-driven
 fabric animation while retaining a stationary reference surface on the fluid
 side. Commands with `--no-viewer` run unthrottled for
 tests and scripted verification.
+The `frozen-scene` command is the first input-driven whole-wing diagnostic. It
+loads a binary scene-v2 payload, holds the assembled geometry fixed, evaluates
+one prescribed-flow mixed-hybrid pressure projection, conservatively maps the
+pressure forces to Structure nodes, and publishes triangle pressure plus nodal
+load fields to the trace viewer. Repeated samples contain the same immutable
+physics. This proves the real geometry-to-pressure-to-viewer path; it is not
+time-resolved external CFD and its absolute pressure, force, wake, lift, and
+polar are not yet physical validation results. The current reusable gnuC2
+payload is emitted by `simwing-model-scene-real-export-test` into its requested
+output directory; that developer fixture supplies explicit test material and
+pilot properties because the design format does not yet author them.
 The ram-cell command shows the same conservative complete-reaction path acting
 on a multi-panel open fabric shell; it is a deformation/inflation precursor,
 not a resolved moving-cavity or aerodynamic-wing result.
