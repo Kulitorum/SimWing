@@ -1923,9 +1923,11 @@ makes this a certified aerodynamic solver.
   per-link static and topology-stable moving projection over that solve.
   Same-region links own oriented area flow and receive pressure correction;
   pressure-layer walls require exact zero relative flow. The moving overload
-  composes the bound fragment `dV/dt`. Velocity and pressure commit together
-  only after recomputed continuity closes. Rebases, face momentum mass,
-  opening conductance, and production integration remain outside this slice.
+  composes the bound fragment `dV/dt`; its separate opt-in opening overload
+  also adds prescribed per-fragment aperture flow while keeping topology-wall
+  velocity zero. Velocity and pressure commit together only after recomputed
+  continuity closes. Rebases, face/opening momentum, constitutive intake flow,
+  open-area load correction, and production integration remain outside.
 - `src/fsi/fluid/planar_region_fragment_volume_rate.{h,cpp}` reconstructs
   topology-stable previous volume and constant geometry `dV/dt` for every
   current regional fragment from its layer-boundary displacements. It closes
@@ -2404,6 +2406,17 @@ deficit and corresponding `3.84 Pa*m` incompatibility, rolling back both
 fields. Reject corrupt or foreign volume rates, duration mismatch, nested rate
 limits, and truncated solves. Do not infer opening flux, topology-transition
 ownership, momentum/energy acceptance, or production integration.
+For the explicit prescribed-opening overload, require exact opening-set/flux/
+sample source binding and assemble `dV/dt + grid outward flow + opening outward
+flow` per fragment before the physical `-rho/dt` scaling. A canonical `0.5
+m2`, `3.2 m/s` negative-to-positive intake must carry `1.6 m3/s`, make the
+breathing exterior/pocket components compatible, and pressure-redistribute the
+localized source below continuity tolerance on X/Y/Z. Pressure-layer topology
+velocities remain exact zero. Reversing the intake must expose twice the
+component deficit and roll back velocity and warm pressure bit-for-bit. Reject
+corrupt/foreign opening state or samples and nested opening-flux limits. Do not
+infer a pressure-driven opening law, aperture momentum or energy acceptance,
+solid-wall traction subtraction, topology rebase, or production ownership.
 
 For `planar_region_fragment_volume_rate.*`, require canonical breathing to
 publish `+1.6/-1.6 m3/s` pocket/exterior component rates while every fixed

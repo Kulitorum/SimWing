@@ -2317,6 +2317,17 @@ defect rejects transactionally. Pressure-layer links remain exact zero
 material-relative flow. This proves topology-stable geometric continuity only,
 not opening flow, momentum transport, energy acceptance, rebase handling, or
 production ownership.
+The separate prescribed-opening overload composes the source-bound patch flux
+as `dV/dt + net outward grid flow + outward opening flow` before applying the
+same correction. Aperture values remain fixed inputs: pressure updates only
+same-region Cartesian links, and every pressure-layer topology-link velocity
+stays exact zero. A half-tile `0.5 m^2` intake at `3.2 m/s` offsets the
+canonical `1.6 m^3/s` breathing component rate; the local source is then
+redistributed and closes below tolerance through X/Y/Z. Reversing the sample
+creates twice the component incompatibility and preserves caller velocity and
+warm pressure bit-for-bit. This is a continuity consumer for prescribed
+kinematics, not a conductance/resistance solve, aperture momentum or energy
+acceptance, open-area wall-load correction, rebase, or production integration.
 `planar_region_fragment_velocity_metric.*` adds the corresponding immutable
 diagonal face geometry for a future velocity state. A same-region Cartesian
 link owns one shared normal degree of freedom with dual volume equal to face

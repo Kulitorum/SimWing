@@ -1,10 +1,12 @@
 #pragma once
 
 #include "fluid/planar_region_fragment_pressure_solve.h"
+#include "fluid/planar_region_fragment_opening_flux.h"
 #include "fluid/planar_region_fragment_volume_rate.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 namespace simwing::fsi::fluid {
@@ -24,6 +26,7 @@ struct PlanarPressureRegionFragmentPressureProjectionSettings {
 struct PlanarPressureRegionFragmentPressureProjectionLimits {
     PlanarPressureRegionFragmentPressureOperatorLimits pressureOperatorLimits;
     PlanarPressureRegionFragmentVolumeRateLimits volumeRateLimits;
+    PlanarPressureRegionFragmentOpeningFluxLimits openingFluxLimits;
     std::size_t maximumWorkingBytes = 2048ULL * 1024ULL * 1024ULL;
 };
 
@@ -32,14 +35,18 @@ struct PlanarPressureRegionFragmentPressureProjectionDiagnostics {
     bool finite = false;
     bool staticGeometry = false;
     bool usesMovingVolumeRates = false;
+    bool usesOpeningFlux = false;
     std::uint64_t pressureOperatorFingerprint = 0;
     std::uint64_t topologyFingerprint = 0;
     std::uint64_t fragmentFingerprint = 0;
     std::uint64_t volumeRateFingerprint = 0;
+    std::uint64_t openingFingerprint = 0;
+    std::uint64_t openingFluxFingerprint = 0;
     std::size_t fragmentCount = 0;
     std::size_t linkCount = 0;
     std::size_t projectedSameRegionGridLinkCount = 0;
     std::size_t sealedPressureLayerWallLinkCount = 0;
+    std::size_t openingPatchCount = 0;
     std::size_t workingStorageBytes = 0;
     double predictedNetOutwardFlowL2CubicMetersPerSecond = 0.0;
     double predictedNetOutwardFlowMaximumCubicMetersPerSecond = 0.0;
@@ -50,6 +57,8 @@ struct PlanarPressureRegionFragmentPressureProjectionDiagnostics {
     double maximumAbsoluteCorrectedComponentBalanceCubicMetersPerSecond =
         0.0;
     double maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond = 0.0;
+    double maximumAbsoluteOpeningFragmentOutwardFlowRateCubicMetersPerSecond =
+        0.0;
     double predictedContinuityResidualL2CubicMetersPerSecond = 0.0;
     double predictedContinuityResidualMaximumCubicMetersPerSecond = 0.0;
     double maximumAbsolutePredictedComponentContinuityResidualCubicMetersPerSecond =
@@ -106,6 +115,31 @@ projectMovingPlanarPressureRegionFragmentFaceVelocities(
     const PlanarPressureRegionFragmentSet& fragments,
     const PlanarPressureRegionFragmentTopology& topology,
     const PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    std::vector<double>& orientedNormalVelocityMetersPerSecond,
+    std::vector<double>& pressureCorrectionPascals,
+    const PlanarPressureRegionFragmentPressureProjectionSettings& settings =
+        {},
+    const PlanarPressureRegionFragmentPressureProjectionLimits& limits = {});
+
+// Opt-in prescribed-aperture overload. Opening flow contributes its oriented
+// per-fragment outward rate alongside geometry dV/dt and Cartesian grid flow.
+// The pressure correction still acts only on same-region grid links; aperture
+// kinematics are fixed inputs and pressure-layer topology-link velocities stay
+// zero. This does not supply an aperture constitutive or energy law.
+[[nodiscard]] PlanarPressureRegionFragmentPressureProjectionDiagnostics
+projectMovingPlanarPressureRegionFragmentFaceVelocitiesWithOpenings(
+    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
+    const PlanarPressureRegionFragmentOpeningFluxState& openingFlux,
+    std::span<const PlanarPressureRegionFragmentOpeningVelocitySample>
+        openingVelocitySamples,
     std::vector<double>& orientedNormalVelocityMetersPerSecond,
     std::vector<double>& pressureCorrectionPascals,
     const PlanarPressureRegionFragmentPressureProjectionSettings& settings =

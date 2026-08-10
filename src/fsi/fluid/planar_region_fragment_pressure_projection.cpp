@@ -145,6 +145,14 @@ projectPlanarPressureRegionFragmentFaceVelocities(
     const PlanarPressureRegionFragmentSet& fragments,
     const PlanarPressureRegionFragmentTopology& topology,
     const PlanarPressureRegionFragmentVolumeRateSet* volumeRates,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet* openings,
+    const PlanarPressureRegionFragmentOpeningFluxState* openingFlux,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningVelocitySample>
+        openingVelocitySamples,
     std::vector<double>& orientedNormalVelocityMetersPerSecond,
     std::vector<double>& pressureCorrectionPascals,
     const PlanarPressureRegionFragmentPressureProjectionSettings& settings,
@@ -166,6 +174,24 @@ projectPlanarPressureRegionFragmentFaceVelocities(
                 "moving planar regional projection duration does not match its volume rates");
         }
     }
+    if ((openings == nullptr) != (openingFlux == nullptr)) {
+        throw std::invalid_argument(
+            "moving planar regional projection opening sources are incomplete");
+    }
+    if (openingFlux != nullptr) {
+        if (volumeRates == nullptr) {
+            throw std::invalid_argument(
+                "planar regional opening-flux projection requires moving volume rates");
+        }
+        validatePlanarPressureRegionFragmentOpeningFluxState(
+            *openingFlux, grid, sweep, fragments, topology,
+            openingDefinitions, *openings, openingVelocitySamples,
+            limits.openingFluxLimits);
+    } else if (!openingDefinitions.empty()
+               || !openingVelocitySamples.empty()) {
+        throw std::invalid_argument(
+            "moving planar regional projection has orphan opening inputs");
+    }
     if (orientedNormalVelocityMetersPerSecond.size()
             != topology.links.size()
         || pressureCorrectionPascals.size()
@@ -182,10 +208,17 @@ projectPlanarPressureRegionFragmentFaceVelocities(
     diagnostics.topologyFingerprint = topology.fingerprint;
     diagnostics.fragmentFingerprint = fragments.fingerprint;
     diagnostics.usesMovingVolumeRates = volumeRates != nullptr;
+    diagnostics.usesOpeningFlux = openingFlux != nullptr;
     diagnostics.volumeRateFingerprint = volumeRates == nullptr
         ? 0 : volumeRates->fingerprint;
+    diagnostics.openingFingerprint = openings == nullptr
+        ? 0 : openings->fingerprint;
+    diagnostics.openingFluxFingerprint = openingFlux == nullptr
+        ? 0 : openingFlux->fingerprint;
     diagnostics.fragmentCount = fragments.fragments.size();
     diagnostics.linkCount = topology.links.size();
+    diagnostics.openingPatchCount = openingFlux == nullptr
+        ? 0 : openingFlux->patches.size();
     diagnostics.workingStorageBytes = workingStorageBytes(
         fragments.fragments.size(), topology.links.size(),
         pressureOperator.components.size());
@@ -236,8 +269,19 @@ projectPlanarPressureRegionFragmentFaceVelocities(
                 diagnostics
                     .maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond,
                 std::abs(geometryVolumeRate));
+        const double openingOutwardFlow = openingFlux == nullptr
+            ? 0.0
+            : openingFlux->fragments[row]
+                .outwardRelativeVolumeFlowRateCubicMetersPerSecond;
+        diagnostics
+            .maximumAbsoluteOpeningFragmentOutwardFlowRateCubicMetersPerSecond =
+            std::max(
+                diagnostics
+                    .maximumAbsoluteOpeningFragmentOutwardFlowRateCubicMetersPerSecond,
+                std::abs(openingOutwardFlow));
         integratedRightHandSide[row] =
-            predictedNetOutwardFlow[row] + geometryVolumeRate;
+            predictedNetOutwardFlow[row] + geometryVolumeRate
+            + openingOutwardFlow;
     }
     diagnostics.predictedContinuityResidualL2CubicMetersPerSecond =
         rootMeanSquare(integratedRightHandSide);
@@ -309,6 +353,11 @@ projectPlanarPressureRegionFragmentFaceVelocities(
                 volumeRates->fragments[row]
                     .geometryVolumeChangeRateCubicMetersPerSecond;
         }
+        if (openingFlux != nullptr) {
+            correctedNetOutwardFlow[row] +=
+                openingFlux->fragments[row]
+                    .outwardRelativeVolumeFlowRateCubicMetersPerSecond;
+        }
     }
     diagnostics.correctedContinuityResidualL2CubicMetersPerSecond =
         rootMeanSquare(correctedNetOutwardFlow);
@@ -332,6 +381,9 @@ projectPlanarPressureRegionFragmentFaceVelocities(
         && std::isfinite(
             diagnostics
                 .maximumAbsoluteGeometryVolumeRateCubicMetersPerSecond)
+        && std::isfinite(
+            diagnostics
+                .maximumAbsoluteOpeningFragmentOutwardFlowRateCubicMetersPerSecond)
         && std::isfinite(
             diagnostics.correctedContinuityResidualL2CubicMetersPerSecond)
         && std::isfinite(
@@ -369,6 +421,7 @@ projectStaticPlanarPressureRegionFragmentFaceVelocities(
     const PlanarPressureRegionFragmentPressureProjectionLimits& limits) {
     return projectPlanarPressureRegionFragmentFaceVelocities(
         pressureOperator, grid, sweep, fragments, topology, nullptr,
+        {}, nullptr, nullptr, {},
         orientedNormalVelocityMetersPerSecond, pressureCorrectionPascals,
         settings, limits);
 }
@@ -387,8 +440,36 @@ projectMovingPlanarPressureRegionFragmentFaceVelocities(
     const PlanarPressureRegionFragmentPressureProjectionLimits& limits) {
     return projectPlanarPressureRegionFragmentFaceVelocities(
         pressureOperator, grid, sweep, fragments, topology, &volumeRates,
+        {}, nullptr, nullptr, {},
         orientedNormalVelocityMetersPerSecond, pressureCorrectionPascals,
         settings, limits);
+}
+
+PlanarPressureRegionFragmentPressureProjectionDiagnostics
+projectMovingPlanarPressureRegionFragmentFaceVelocitiesWithOpenings(
+    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
+    const PlanarPressureRegionFragmentOpeningFluxState& openingFlux,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningVelocitySample>
+        openingVelocitySamples,
+    std::vector<double>& orientedNormalVelocityMetersPerSecond,
+    std::vector<double>& pressureCorrectionPascals,
+    const PlanarPressureRegionFragmentPressureProjectionSettings& settings,
+    const PlanarPressureRegionFragmentPressureProjectionLimits& limits) {
+    return projectPlanarPressureRegionFragmentFaceVelocities(
+        pressureOperator, grid, sweep, fragments, topology, &volumeRates,
+        openingDefinitions, &openings, &openingFlux,
+        openingVelocitySamples, orientedNormalVelocityMetersPerSecond,
+        pressureCorrectionPascals, settings, limits);
 }
 
 } // namespace simwing::fsi::fluid

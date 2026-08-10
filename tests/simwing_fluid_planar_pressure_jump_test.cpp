@@ -7146,6 +7146,220 @@ void testPlanarRegionalFragmentOpeningFluxState() {
         "regional fragment opening flux enforces nested opening limits");
 }
 
+void testPlanarRegionalOpeningFluxPressureProjection() {
+    const auto geometry = grid();
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> previous{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        auto current = previous;
+        current[0].physicalPlaneCoordinateMeters -= 0.1;
+        current[1].physicalPlaneCoordinateMeters += 0.1;
+        const auto sweep = makePlanarPressureRegionSweepLedger(
+            geometry, previous, current, 0.5);
+        const auto fragments = buildPlanarPressureRegionFragments(
+            geometry, sweep);
+        const auto topology = buildPlanarPressureRegionFragmentTopology(
+            geometry, sweep, fragments);
+        const auto pressureOperator =
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, sweep, fragments, topology);
+        const auto volumeRates =
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, sweep, fragments, topology);
+        const auto wall = std::ranges::find_if(
+            topology.links,
+            [](const auto& link) {
+                return link.kind
+                        == PlanarPressureRegionFragmentFaceKind::
+                            PressureLayerWall
+                    && link.surfaceStableId == 10;
+            });
+        check(wall != topology.links.end(),
+              "opening-flux moving projection finds an intake wall on every axis");
+        if (wall == topology.links.end()) continue;
+        const double patchArea = 0.5 * wall->areaSquareMeters;
+        const std::vector<
+            PlanarPressureRegionFragmentOpeningPatchDefinition> definitions{
+            {100, 1000, wall->surfaceStableId, wall->axis,
+             wall->i, wall->j, wall->k,
+             wall->minusRegionStableId, wall->plusRegionStableId,
+             patchArea},
+        };
+        const auto openings = buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, definitions);
+        const double requiredFlow =
+            -volumeRates.components[wall->minusComponentIndex]
+                 .geometryVolumeChangeRateCubicMetersPerSecond;
+        const std::vector<
+            PlanarPressureRegionFragmentOpeningVelocitySample> samples{
+            {100, requiredFlow / patchArea},
+        };
+        const auto openingFlux =
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, definitions,
+                openings, samples);
+        checkNear(
+            volumeRates.components[wall->minusComponentIndex]
+                    .geometryVolumeChangeRateCubicMetersPerSecond
+                + openingFlux.baseComponents[wall->minusComponentIndex]
+                      .outwardRelativeVolumeFlowRateCubicMetersPerSecond,
+            0.0, 1.6e-14,
+            "opening flux balances the shrinking projection component");
+        checkNear(
+            volumeRates.components[wall->plusComponentIndex]
+                    .geometryVolumeChangeRateCubicMetersPerSecond
+                + openingFlux.baseComponents[wall->plusComponentIndex]
+                      .outwardRelativeVolumeFlowRateCubicMetersPerSecond,
+            0.0, 1.6e-14,
+            "opening flux balances the expanding projection component");
+
+        PlanarPressureRegionFragmentPressureProjectionSettings settings;
+        settings.densityKgPerCubicMeter = 1.2;
+        settings.timeStepSeconds = 0.5;
+        settings.absoluteContinuityToleranceCubicMetersPerSecond = 1.0e-11;
+        settings.relativeContinuityTolerance = 1.0e-10;
+        settings.pressureSolve.absoluteResidualTolerancePascalsMeters =
+            1.0e-13;
+        settings.pressureSolve.relativeResidualTolerance = 1.0e-12;
+        settings.pressureSolve.maximumIterations = 300;
+        std::vector<double> velocity(topology.links.size(), 0.0);
+        std::vector<double> pressure(pressureOperator.rows.size(), 0.0);
+        auto repeatedVelocity = velocity;
+        auto repeatedPressure = pressure;
+        const auto diagnostics =
+            projectMovingPlanarPressureRegionFragmentFaceVelocitiesWithOpenings(
+                pressureOperator, geometry, sweep, fragments, topology,
+                volumeRates, definitions, openings, openingFlux, samples,
+                velocity, pressure, settings);
+        const auto repeated =
+            projectMovingPlanarPressureRegionFragmentFaceVelocitiesWithOpenings(
+                pressureOperator, geometry, sweep, fragments, topology,
+                volumeRates, definitions, openings, openingFlux, samples,
+                repeatedVelocity, repeatedPressure, settings);
+        check(diagnostics == repeated && velocity == repeatedVelocity
+                  && pressure == repeatedPressure
+                  && diagnostics.accepted && diagnostics.finite
+                  && diagnostics.usesMovingVolumeRates
+                  && diagnostics.usesOpeningFlux
+                  && diagnostics.volumeRateFingerprint
+                      == volumeRates.fingerprint
+                  && diagnostics.openingFingerprint == openings.fingerprint
+                  && diagnostics.openingFluxFingerprint
+                      == openingFlux.fingerprint
+                  && diagnostics.openingPatchCount == 1
+                  && diagnostics.pressureSolve.compatible
+                  && diagnostics.pressureSolve.converged,
+              "prescribed opening flux makes breathing projection deterministic and acceptable");
+        checkNear(
+            diagnostics.maximumAbsoluteOpeningFragmentOutwardFlowRateCubicMetersPerSecond,
+            std::abs(requiredFlow), 1.6e-14,
+            "moving projection reports the prescribed fragment opening flow");
+        check(
+            diagnostics.correctedContinuityResidualMaximumCubicMetersPerSecond
+                    <= diagnostics.continuityToleranceCubicMetersPerSecond
+                && diagnostics
+                       .maximumAbsoluteCorrectedComponentContinuityResidualCubicMetersPerSecond
+                    <= diagnostics.continuityToleranceCubicMetersPerSecond,
+            "opening-flux moving projection closes local and component continuity");
+        check(std::ranges::any_of(
+                  velocity, [](const double value) { return value != 0.0; })
+                  && std::ranges::any_of(
+                      pressure,
+                      [](const double value) { return value != 0.0; }),
+              "opening-flux moving projection redistributes the localized intake flow");
+        for (const auto& link : topology.links) {
+            if (link.kind
+                == PlanarPressureRegionFragmentFaceKind::PressureLayerWall) {
+                check(velocity[link.linkIndex] == 0.0,
+                      "opening flux remains separate from sealed topology-link velocity");
+            }
+        }
+
+        std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+            reversedSamples{{100, -samples[0]
+                                      .relativeNormalVelocityMetersPerSecond}};
+        const auto reversedFlux =
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, definitions,
+                openings, reversedSamples);
+        std::vector<double> rejectedVelocity(topology.links.size(), 0.0);
+        std::vector<double> rejectedPressure(
+            pressureOperator.rows.size(), 0.25);
+        const auto originalRejectedVelocity = rejectedVelocity;
+        const auto originalRejectedPressure = rejectedPressure;
+        const auto reversed =
+            projectMovingPlanarPressureRegionFragmentFaceVelocitiesWithOpenings(
+                pressureOperator, geometry, sweep, fragments, topology,
+                volumeRates, definitions, openings, reversedFlux,
+                reversedSamples, rejectedVelocity, rejectedPressure,
+                settings);
+        check(!reversed.accepted && reversed.finite
+                  && !reversed.pressureSolve.compatible
+                  && !reversed.pressureSolve.converged
+                  && rejectedVelocity == originalRejectedVelocity
+                  && rejectedPressure == originalRejectedPressure,
+              "reversed prescribed opening flux rejects and rolls back projection");
+        checkNear(
+            reversed.maximumAbsolutePredictedComponentContinuityResidualCubicMetersPerSecond,
+            2.0 * std::abs(requiredFlow), 3.2e-14,
+            "reversed opening flux doubles the breathing component deficit");
+
+        if (axis == GridFaceAxis::X) {
+            auto corruptFlux = openingFlux;
+            corruptFlux.patches[0]
+                .relativeVolumeFlowRateCubicMetersPerSecond += 0.1;
+            expectRejected(
+                [&] {
+                    auto candidateVelocity = originalRejectedVelocity;
+                    auto candidatePressure = originalRejectedPressure;
+                    static_cast<void>(
+                        projectMovingPlanarPressureRegionFragmentFaceVelocitiesWithOpenings(
+                            pressureOperator, geometry, sweep, fragments,
+                            topology, volumeRates, definitions, openings,
+                            corruptFlux, samples, candidateVelocity,
+                            candidatePressure, settings));
+                },
+                "opening-flux moving projection rejects corrupted flux state");
+            expectRejected(
+                [&] {
+                    auto candidateVelocity = originalRejectedVelocity;
+                    auto candidatePressure = originalRejectedPressure;
+                    static_cast<void>(
+                        projectMovingPlanarPressureRegionFragmentFaceVelocitiesWithOpenings(
+                            pressureOperator, geometry, sweep, fragments,
+                            topology, volumeRates, definitions, openings,
+                            openingFlux, reversedSamples, candidateVelocity,
+                            candidatePressure, settings));
+                },
+                "opening-flux moving projection rejects foreign velocity samples");
+            auto limits =
+                PlanarPressureRegionFragmentPressureProjectionLimits{};
+            limits.openingFluxLimits.maximumFragments = 1;
+            expectRejected(
+                [&] {
+                    auto candidateVelocity = originalRejectedVelocity;
+                    auto candidatePressure = originalRejectedPressure;
+                    static_cast<void>(
+                        projectMovingPlanarPressureRegionFragmentFaceVelocitiesWithOpenings(
+                            pressureOperator, geometry, sweep, fragments,
+                            topology, volumeRates, definitions, openings,
+                            openingFlux, samples, candidateVelocity,
+                            candidatePressure, settings, limits));
+                },
+                "opening-flux moving projection enforces nested flux limits");
+        }
+    }
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -7316,6 +7530,7 @@ int main() {
     testPlanarRegionalFragmentPressureProjectionAxesAndRollback();
     testPlanarRegionalMovingFragmentPressureProjection();
     testPlanarRegionalMovingFragmentPressureProjectionAllAxes();
+    testPlanarRegionalOpeningFluxPressureProjection();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {

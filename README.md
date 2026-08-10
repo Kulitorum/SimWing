@@ -306,6 +306,15 @@ pocket instead exposes its `1.6 m3/s` component deficit, maps it to `3.84
 Pa*m`, and rolls back as incompatible rather than fabricating a wall or opening
 flux. Duration and source identities are exact, and static projection behavior
 remains a separate overload.
+An additional opt-in moving overload now composes the prescribed patch flux as
+`dV/dt + grid flow + opening flow`. The same `3.2 m/s`, `0.5 m²` intake that
+balances the breathing component lets the pressure correction redistribute
+its localized `1.6 m³/s` source through same-region grid faces on X/Y/Z and
+close continuity below tolerance. Aperture flow remains separate from the
+zero-valued pressure-wall topology links. Reversing it doubles the component
+deficit and rolls back both fields. This accepts only caller-prescribed
+kinematics; it still supplies no pressure-driven intake law, aperture momentum
+or energy ledger, open-area traction subtraction, rebase, or worker path.
 A first diagonal face-inertia metric now closes the missing geometric mass
 ownership without yet creating a velocity state. Each same-region Cartesian
 link has one shared normal-velocity degree of freedom with dual volume `area *
