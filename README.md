@@ -23,6 +23,13 @@ Numerical development includes a standalone Qt/OpenGL diagnostic viewer from
 the first implementation slice. Interactive runs open it by default so the
 live structure, loads, contact, coupling residuals, and progressively added CFD
 fields can be inspected; automated runs remain available through `--no-viewer`.
+The separate Qt-free `simwing-mimetic-conductance-audit` tool runs deliberately
+opt-in, graph-free pressure-cell conductance samples at one resolution and one
+canonical grid phase (or all eight phases explicitly). It is an offline
+convergence-evidence runner and has no path to worker pressure or loads.
+For example, `simwing-mimetic-conductance-audit --resolution 64 --phase 0`
+runs one expensive selected trajectory; `--all-phases` is intentionally
+required for a complete ensemble.
 
 The first remake foundations are now present: scene-v2 validation and bounded
 serialization, direct export from captured analytical wing geometry,

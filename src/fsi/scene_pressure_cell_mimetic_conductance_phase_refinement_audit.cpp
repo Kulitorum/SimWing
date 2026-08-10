@@ -628,6 +628,22 @@ ScenePressureCellMimeticConductancePhaseSample buildSample(
 
 } // namespace
 
+ScenePressureCellMimeticConductancePhaseRefinementAuditSettings
+makeScenePressureCellMimeticConductanceOfflineAuditSettings() {
+    ScenePressureCellMimeticConductancePhaseRefinementAuditSettings settings;
+    settings.conductance.solve.absoluteResidualTolerancePascalsMeters =
+        1.0e-10;
+    settings.conductance.solve.relativeResidualTolerance = 1.0e-11;
+    settings.conductance.solve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-10;
+    settings.cellVolumes
+        .absoluteRegionPublicationToleranceCubicMeters = 1.0e-16;
+    settings.cellVolumes.relativeRegionPublicationTolerance = 1.0e-13;
+    settings.cellVolumes.useCellLocalFirstMomentAccumulation = true;
+    settings.traceSystem.localCell.algebraicConsistencyTolerance = 1.0e-9;
+    return settings;
+}
+
 ScenePressureCellMimeticConductancePhaseRefinementAudit
 auditScenePressureCellMimeticConductancePhaseRefinement(
     const std::span<const fluid::GridCellCounts> resolutions,

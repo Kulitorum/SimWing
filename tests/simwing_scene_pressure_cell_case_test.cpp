@@ -1537,15 +1537,12 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
         {2, 2, 2}, {4, 4, 4}, {8, 8, 8},
     };
     const auto& phases = pressureCellGridPhases();
-    fsi::ScenePressureCellMimeticConductancePhaseRefinementAuditSettings
-        settings;
-    settings.conductance.solve =
-        pressureCellResponseAuditSettings().shadowSolve;
-    settings.cellVolumes
-        .absoluteRegionPublicationToleranceCubicMeters = 1.0e-16;
-    settings.cellVolumes.relativeRegionPublicationTolerance = 1.0e-13;
-    settings.cellVolumes.useCellLocalFirstMomentAccumulation = true;
-    settings.traceSystem.localCell.algebraicConsistencyTolerance = 1.0e-9;
+    const auto settings =
+        fsi::makeScenePressureCellMimeticConductanceOfflineAuditSettings();
+    check(std::ranges::equal(
+              phases,
+              fsi::scenePressureCellMimeticConductanceCanonicalGridPhases),
+          "offline mimetic audit profile owns the established canonical phases");
     const auto audit =
         fsi::auditScenePressureCellMimeticConductancePhaseRefinement(
             resolutions, phases, settings);

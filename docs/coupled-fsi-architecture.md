@@ -1418,6 +1418,14 @@ successful response, and distinguishes accepted nested terminal solves from a
 typed local-cell linear-consistency rejection carrying the exact control,
 region, residual, and tolerance.
 
+The same boundary owns the eight canonical half-cell placements and an
+explicit offline numeric profile. `simwing-mimetic-conductance-audit` exposes
+that profile without adding fine-grid samples to normal CTest: callers must
+name a resolution in `2..64` and either one phase index or `--all-phases`.
+Its stable text report retains fingerprints, topology sizes, opening count,
+solve residual, normalized response, and any typed local-cell rejection. It
+constructs neither the graph pressure owner nor a structural load path.
+
 | Grid | Shadow terminal solves | Normalized range | Conditional mean / CV |
 |---|---:|---:|---:|
 | `2^3` | `8 / 8` | `0.099348` - `0.101965` | `0.100660 / 0.01043` |
@@ -1425,6 +1433,21 @@ region, residual, and tolerance.
 | `8^3` | `8 / 8` | `0.293734` - `0.888671` | `0.521248 / 0.38828` |
 | `16^3` | `8 / 8` | `0.624544` - `1.141234` | `0.902570 / 0.20104` |
 | `32^3` | `8 / 8` | `0.956232` - `1.207995` | `1.091977 / 0.07436` |
+
+The opt-in runner has also completed three deliberately selected `64^3`
+samples; these are trajectory probes, not a complete ensemble:
+
+| Canonical phase | Opening traces | Normalized response | `16 -> 32` increment | `32 -> 64` increment | Latest contraction |
+|---:|---:|---:|---:|---:|---:|
+| `0` | `96` | `1.231094375584` | `0.533196890111` | `0.073353040231` | `0.137572` |
+| `1` | `92` | `1.287760771417` | `0.127305404953` | `0.161243330268` | `1.266587` |
+| `2` | `93` | `1.304594221258` | `0.510893181787` | `0.096599035578` | `0.189079` |
+
+Phases 0 and 2 now contract strongly, while the formerly clean phase 1 becomes
+noncontracting. Thus refinement moves the adverse trajectory instead of yet
+removing it. The missing five phases preclude `64^3` aggregate statistics or a
+four-level convergence decision, and the strict production gate remains
+`InsufficientEvidence`.
 
 Thus the earlier `4/8` and `6/8` coarse graph yields really were censoring the
 shadow placement spectrum. The five former fine-grid rejections diagnosed a

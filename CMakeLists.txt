@@ -1611,6 +1611,13 @@ target_link_libraries(simwing-fsi PRIVATE
     simwing_worker_control_stream
 )
 
+add_executable(simwing-mimetic-conductance-audit
+    tools/simwing_mimetic_conductance_audit_main.cpp
+)
+target_link_libraries(simwing-mimetic-conductance-audit PRIVATE
+    simwing_scene_pressure_cell_case
+)
+
 qt_add_executable(LEparagliding WIN32
     src/gui/airfoil_file.cpp
     src/gui/airfoil_file.h
@@ -1769,6 +1776,7 @@ set_target_properties(
     simwing-open-piston-case-test
     simwing-viewer
     simwing-fsi
+    simwing-mimetic-conductance-audit
     playground-cells-test
     playground-material-test
     playground-contact-test
@@ -1853,6 +1861,7 @@ foreach(configuration Debug Release RelWithDebInfo MinSizeRel)
         simwing-open-piston-case-test
         simwing-viewer
         simwing-fsi
+        simwing-mimetic-conductance-audit
         playground-cells-test
         playground-material-test
         playground-contact-test
@@ -2118,6 +2127,29 @@ add_test(NAME simwing_porous_sheet_case
     COMMAND simwing-porous-sheet-case-test)
 add_test(NAME simwing_open_piston_case COMMAND simwing-open-piston-case-test)
 add_test(NAME simwing_fsi_help COMMAND simwing-fsi --help)
+add_test(NAME simwing_mimetic_conductance_audit_help
+    COMMAND simwing-mimetic-conductance-audit --help)
+set_tests_properties(simwing_mimetic_conductance_audit_help PROPERTIES
+    PASS_REGULAR_EXPRESSION
+        "Usage: simwing-mimetic-conductance-audit")
+add_test(NAME simwing_mimetic_conductance_audit_single_phase
+    COMMAND simwing-mimetic-conductance-audit
+        --resolution 2
+        --phase 0)
+set_tests_properties(simwing_mimetic_conductance_audit_single_phase PROPERTIES
+    PASS_REGULAR_EXPRESSION
+        "sample phase=0.*status=accepted.*normalized=0.10196547254319122")
+add_test(NAME simwing_mimetic_conductance_audit_all_phases
+    COMMAND simwing-mimetic-conductance-audit
+        --resolution=2
+        --all-phases)
+set_tests_properties(simwing_mimetic_conductance_audit_all_phases PROPERTIES
+    PASS_REGULAR_EXPRESSION
+        "summary accepted=8 rejected=0.*mean=0.10066047211051679")
+add_test(NAME simwing_mimetic_conductance_audit_requires_phase
+    COMMAND simwing-mimetic-conductance-audit --resolution 2)
+set_tests_properties(simwing_mimetic_conductance_audit_requires_phase
+    PROPERTIES WILL_FAIL TRUE)
 add_test(NAME simwing_fsi_hemisphere_headless
     COMMAND simwing-fsi
         --case hemisphere

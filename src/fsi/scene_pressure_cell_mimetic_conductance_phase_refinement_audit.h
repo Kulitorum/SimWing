@@ -4,6 +4,7 @@
 #include "scene_fluid_cell_volume.h"
 #include "scene_fluid_mimetic_region_conductance_audit.h"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -28,6 +29,26 @@ struct ScenePressureCellMimeticConductancePhaseRefinementAuditSettings {
         const ScenePressureCellMimeticConductancePhaseRefinementAuditSettings&)
         const = default;
 };
+
+inline constexpr std::array<fluid::Vector3, 8>
+    scenePressureCellMimeticConductanceCanonicalGridPhases{{
+        {0.0, 0.0, 0.0},
+        {-0.5, 0.0, 0.0},
+        {0.0, -0.5, 0.0},
+        {0.0, 0.0, -0.5},
+        {-0.5, -0.5, 0.0},
+        {-0.5, 0.0, -0.5},
+        {0.0, -0.5, -0.5},
+        {-0.5, -0.5, -0.5},
+    }};
+
+// Explicit offline profile used by the convergence evidence path. It opts in
+// to tighter sparse-volume publication, cell-local moments, and the measured
+// fine-grid local-operator tolerance. The default-constructed settings remain
+// the production-arithmetic compatibility oracle.
+[[nodiscard]]
+ScenePressureCellMimeticConductancePhaseRefinementAuditSettings
+makeScenePressureCellMimeticConductanceOfflineAuditSettings();
 
 struct ScenePressureCellMimeticConductancePhaseRefinementAuditLimits {
     std::size_t maximumResolutionCount = 16;
