@@ -2201,6 +2201,13 @@ makes this a certified aerodynamic solver.
   numerical products plus exact exchange/transport/metric/warm provenance.
   It remains an isolated opt-in receipt: no mutable cycle/worker consumes it
   and its retained Structure traction is not applied.
+- `src/fsi/scene_fluid_regional_opening_momentum_wall_cycle_state.{h,cpp}` and
+  `..._owner.{h,cpp}` compact one accepted wall-pressure receipt into the
+  staggered restart triple: adjusted collocated momentum at the source metric,
+  accepted pressure at the consecutive metric, and conservative wall traction
+  at the exact quadrature epoch. The transactional owner commits/restores only
+  complete validated candidates and retains its prior state on rejected
+  pressure. It is in-memory only and is not a production owner.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -3193,6 +3200,20 @@ nonzero wall influence on the accepted pressure endpoint, cold/warm full
 validation, corruption, foreign exchange, rejected wall subcycling, and late
 aggregate limits. Do not apply wall traction, commit a mutable momentum cycle,
 persist the receipt, or enable a production worker.
+
+For `scene_fluid_regional_opening_momentum_wall_cycle_state.*` and its owner,
+capture only an accepted composed wall-pressure receipt paired with its exact
+accepted wall exchange, source/accepted metrics, and scene quadrature. Retain
+the adjusted momentum state, accepted pressure endpoint, and the shared minimal
+accepted wall-traction set plus prediction/warm/predicted-flux lineage under
+aggregate limits. Full validation must bind the accepted pressure to live
+geometry/operator/opening/resistance sources and wall traction to the live
+quadrature. Construct a complete candidate before the owner's no-throw swap;
+valid rejected pressure returns false and retains the prior state, while
+invalid/corrupt/foreign inputs throw before mutation. Cover checkpoint/restore,
+exact next-transport replay, genuine truncated-pressure rejection, corrupt
+traction, foreign quadrature, and limits. Do not serialize this state through
+`SWRM`, apply traction, step Structure, retry numerics, or enable a worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

@@ -1,4 +1,6 @@
 #include "scene_fluid_region_wall.h"
+
+#include "scene_fluid_regional_opening_momentum_wall_exchange.h"
 #include "scene_fluid_wall_exchange_kernel.h"
 
 #include <algorithm>
@@ -786,6 +788,39 @@ SceneFluidAcceptedWallTractionSet captureSceneFluidAcceptedWallTractions(
                                     / sizeof(SceneFluidQuadratureTraction)) {
         throw std::length_error(
             "scene fluid accepted wall traction storage overflows");
+    }
+    result.ownedStorageBytes = exchange.samples.size()
+        * sizeof(SceneFluidQuadratureTraction);
+    result.tractions.reserve(exchange.samples.size());
+    for (const auto& sample : exchange.samples) {
+        result.tractions.push_back(sample.structureTraction);
+    }
+    result.fingerprint = acceptedTractionFingerprint(result);
+    validateSceneFluidAcceptedWallTractionSetIntegrity(result);
+    return result;
+}
+
+SceneFluidAcceptedWallTractionSet captureSceneFluidAcceptedWallTractions(
+    const SceneFluidRegionalOpeningMomentumWallExchange& exchange) {
+    validateSceneFluidRegionalOpeningMomentumWallExchangeIntegrity(exchange);
+    if (!exchange.diagnostics.accepted) {
+        throw std::invalid_argument(
+            "scene fluid accepted regional wall traction source was not accepted");
+    }
+    const auto& input = exchange.sourceInput;
+    SceneFluidAcceptedWallTractionSet result;
+    result.wallExchangeFingerprint = exchange.fingerprint;
+    result.quadratureFingerprint = input.quadratureFingerprint;
+    result.surfaceDefinitionFingerprint = input.surfaceDefinitionFingerprint;
+    result.surfaceStateFingerprint = input.surfaceStateFingerprint;
+    result.structureDefinitionFingerprint =
+        input.structureDefinitionFingerprint;
+    result.acceptedStepCount = input.acceptedStepCount;
+    result.simulationTimeSeconds = input.simulationTimeSeconds;
+    if (exchange.samples.size() > std::numeric_limits<std::size_t>::max()
+                                    / sizeof(SceneFluidQuadratureTraction)) {
+        throw std::length_error(
+            "scene fluid accepted regional wall traction storage overflows");
     }
     result.ownedStorageBytes = exchange.samples.size()
         * sizeof(SceneFluidQuadratureTraction);

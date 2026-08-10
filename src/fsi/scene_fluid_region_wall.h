@@ -9,6 +9,8 @@
 
 namespace simwing::fsi {
 
+struct SceneFluidRegionalOpeningMomentumWallExchange;
+
 inline constexpr std::uint32_t sceneFluidRegionWallExchangeVersion = 2;
 inline constexpr std::uint32_t sceneFluidAcceptedWallTractionVersion = 1;
 
@@ -192,6 +194,10 @@ void validateSceneFluidRegionWallExchange(
 [[nodiscard]] SceneFluidAcceptedWallTractionSet
 captureSceneFluidAcceptedWallTractions(
     const SceneFluidRegionWallExchange& exchange);
+
+[[nodiscard]] SceneFluidAcceptedWallTractionSet
+captureSceneFluidAcceptedWallTractions(
+    const SceneFluidRegionalOpeningMomentumWallExchange& exchange);
 
 void validateSceneFluidAcceptedWallTractionSetIntegrity(
     const SceneFluidAcceptedWallTractionSet& tractions);

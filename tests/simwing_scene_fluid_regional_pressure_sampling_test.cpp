@@ -16,6 +16,7 @@
 #include "scene_fluid_regional_opening_load_epoch.h"
 #include "scene_fluid_regional_opening_momentum_load_epoch.h"
 #include "scene_fluid_regional_opening_momentum_wall_exchange.h"
+#include "scene_fluid_regional_opening_momentum_wall_cycle_owner.h"
 #include "scene_fluid_regional_opening_momentum_wall_input.h"
 #include "scene_fluid_regional_opening_momentum_wall_pressure_epoch.h"
 
@@ -2041,6 +2042,169 @@ void testOpeningMomentumWallExchange() {
                     nextTransportLimits));
         },
         "regional opening wall pressure epoch: adjusted-source next-transport limit rejects");
+
+    const auto wallCycleState =
+        captureSceneFluidRegionalOpeningMomentumWallCycleState(
+            wallPressureEpoch, exchange, endpoint.openingMetric,
+            endpoint.openingMetric, fixture.quadrature);
+    validateSceneFluidRegionalOpeningMomentumWallCycleState(
+        wallCycleState, endpoint.openingMetric,
+        endpoint.pressureOperator, endpoint.basePressureOperator,
+        endpoint.geometry, endpoint.sweep, endpoint.fragments,
+        endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric, fixture.quadrature);
+    check(wallCycleState.sourceWallPressureEpochFingerprint
+              == wallPressureEpoch.fingerprint
+              && wallCycleState.sourceWallExchangeFingerprint
+                  == exchange.fingerprint
+              && wallCycleState.adjustedMomentum == adjustment
+              && wallCycleState.acceptedPressure
+                  == adjustedPressureEpoch.acceptedState
+              && wallCycleState.wallTractions.wallExchangeFingerprint
+                  == exchange.fingerprint
+              && wallCycleState.wallTractions.tractions.size()
+                  == exchange.samples.size(),
+          "regional opening wall-cycle state: compact endpoint retains adjusted momentum, accepted pressure, and matching traction");
+
+    SceneFluidRegionalOpeningMomentumWallCycleOwner wallCycleOwner;
+    check(wallCycleOwner.tryCommit(
+              wallPressureEpoch, exchange, endpoint.openingMetric,
+              endpoint.openingMetric, fixture.quadrature)
+              && wallCycleOwner.hasState()
+              && wallCycleOwner.checkpoint() == wallCycleState,
+          "regional opening wall-cycle owner: accepted receipt commits atomically");
+    SceneFluidRegionalOpeningMomentumWallCycleOwner restoredWallCycleOwner;
+    restoredWallCycleOwner.restore(
+        wallCycleOwner.checkpoint(), endpoint.openingMetric,
+        endpoint.pressureOperator, endpoint.basePressureOperator,
+        endpoint.geometry, endpoint.sweep, endpoint.fragments,
+        endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric, fixture.quadrature);
+    const auto restoredNextTransport =
+        advancePlanarPressureRegionFragmentOpeningMomentum(
+            restoredWallCycleOwner.state().adjustedMomentum,
+            endpoint.openingMetric, adjustedTargetFlow,
+            endpoint.openingMetric, endpoint.geometry, endpoint.sweep,
+            endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates,
+            endpoint.momentumCycle.transportSettings);
+    check(restoredWallCycleOwner.state() == wallCycleState
+              && restoredNextTransport == adjustedNextTransport,
+          "regional opening wall-cycle owner: restored endpoint replays the exact next transport");
+
+    const auto rejectingLayers = translatePlanarPressureJumpLayers(
+        endpoint.geometry, endpoint.layers, 0.1).layers;
+    const auto rejectingSweep = makePlanarPressureRegionSweepLedger(
+        endpoint.geometry, endpoint.layers, rejectingLayers, 1.0);
+    const auto rejectingFragments = buildPlanarPressureRegionFragments(
+        endpoint.geometry, rejectingSweep);
+    const auto rejectingTopology =
+        buildPlanarPressureRegionFragmentTopology(
+            endpoint.geometry, rejectingSweep, rejectingFragments);
+    const auto rejectingVolumeRates =
+        buildPlanarPressureRegionFragmentVolumeRates(
+            endpoint.geometry, rejectingSweep, rejectingFragments,
+            rejectingTopology);
+    auto rejectingOpeningDefinitions = endpoint.openingDefinitions;
+    for (auto& definition : rejectingOpeningDefinitions) {
+        if (definition.authoredWrappedCentroidMeters) {
+            definition.authoredWrappedCentroidMeters->x += 0.1;
+        }
+    }
+    const auto rejectingOpenings =
+        buildPlanarPressureRegionFragmentOpenings(
+            endpoint.geometry, rejectingSweep, rejectingFragments,
+            rejectingTopology, rejectingOpeningDefinitions);
+    const auto rejectingBasePressureOperator =
+        buildPlanarPressureRegionFragmentPressureOperator(
+            endpoint.geometry, rejectingSweep, rejectingFragments,
+            rejectingTopology);
+    const auto rejectingPressureOperator =
+        buildPlanarPressureRegionFragmentOpeningPressureOperator(
+            rejectingBasePressureOperator, endpoint.geometry,
+            rejectingSweep, rejectingFragments, rejectingTopology,
+            rejectingOpeningDefinitions, rejectingOpenings);
+    const auto rejectingBaseMetric =
+        buildPlanarPressureRegionFragmentVelocityMetric(
+            endpoint.geometry, rejectingSweep, rejectingFragments,
+            rejectingTopology);
+    const auto rejectingMetric =
+        buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+            endpoint.geometry, rejectingSweep, rejectingFragments,
+            rejectingTopology, rejectingBaseMetric,
+            rejectingOpeningDefinitions, rejectingOpenings);
+    auto rejectingPressureSettings =
+        endpoint.momentumCycle.pressureSettings;
+    rejectingPressureSettings.projection.timeStepSeconds = 1.0;
+    rejectingPressureSettings.projection.pressureSolve.maximumIterations = 1;
+    rejectingPressureSettings.projection.pressureSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-16;
+    rejectingPressureSettings.projection.pressureSolve
+        .relativeResidualTolerance = 0.0;
+    const auto rejectedWallPressureEpoch =
+        acceptSceneFluidRegionalOpeningMomentumWallPressureEpoch(
+            exchange, endpoint.momentumCycle.transport,
+            endpoint.openingMetric, rejectingPressureOperator,
+            rejectingBasePressureOperator, endpoint.geometry,
+            rejectingSweep, rejectingFragments, rejectingTopology,
+            rejectingVolumeRates, rejectingOpeningDefinitions,
+            rejectingOpenings, endpoint.resistanceDefinitions,
+            rejectingBaseMetric, rejectingMetric, {},
+            rejectingPressureSettings);
+    const auto beforeRejectedCommit = wallCycleOwner.checkpoint();
+    const bool rejectedCommit = wallCycleOwner.tryCommit(
+        rejectedWallPressureEpoch, exchange, endpoint.openingMetric,
+        rejectingMetric, fixture.quadrature);
+    check(!rejectedWallPressureEpoch.pressureEpoch.diagnostics.accepted,
+          "regional opening wall-cycle owner: negative pressure oracle rejects");
+    check(!rejectedCommit,
+          "regional opening wall-cycle owner: rejected pressure does not commit");
+    check(wallCycleOwner.checkpoint() == beforeRejectedCommit,
+          "regional opening wall-cycle owner: rejected pressure retains the prior endpoint exactly");
+
+    auto corruptWallCycleState = wallCycleState;
+    corruptWallCycleState.wallTractions.tractions.front()
+        .tractionPascals.y += 1.0;
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningMomentumWallCycleStateIntegrity(
+                corruptWallCycleState);
+        },
+        "regional opening wall-cycle state: corrupt retained traction rejects");
+    auto wallCycleLimits =
+        SceneFluidRegionalOpeningMomentumWallCycleStateLimits{};
+    wallCycleLimits.maximumWallTractions =
+        wallCycleState.wallTractions.tractions.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                captureSceneFluidRegionalOpeningMomentumWallCycleState(
+                    wallPressureEpoch, exchange, endpoint.openingMetric,
+                    endpoint.openingMetric, fixture.quadrature,
+                    wallCycleLimits));
+        },
+        "regional opening wall-cycle state: traction limit rejects before publication");
+    SceneFixture foreignWallCycleFixture(false);
+    const auto beforeForeignRestore = restoredWallCycleOwner.checkpoint();
+    expectRejected(
+        [&] {
+            restoredWallCycleOwner.restore(
+                wallCycleState, endpoint.openingMetric,
+                endpoint.pressureOperator,
+                endpoint.basePressureOperator, endpoint.geometry,
+                endpoint.sweep, endpoint.fragments, endpoint.topology,
+                endpoint.volumeRates, endpoint.openingDefinitions,
+                endpoint.openings, endpoint.resistanceDefinitions,
+                endpoint.baseMetric, endpoint.openingMetric,
+                foreignWallCycleFixture.quadrature);
+        },
+        "regional opening wall-cycle owner: foreign quadrature restore rejects");
+    check(restoredWallCycleOwner.checkpoint() == beforeForeignRestore,
+          "regional opening wall-cycle owner: failed restore retains the prior state");
 
     auto corruptWallPressureEpoch = wallPressureEpoch;
     ++corruptWallPressureEpoch.pressureEpoch.sourcePredictionFingerprint;

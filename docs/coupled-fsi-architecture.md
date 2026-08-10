@@ -438,6 +438,8 @@ src/fsi/
     scene_fluid_regional_opening_momentum_wall_input.* exact regional wall ownership input
     scene_fluid_regional_opening_momentum_wall_exchange.* isolated regional wall exchange
     scene_fluid_regional_opening_momentum_wall_pressure_epoch.* adjusted predictor/pressure receipt
+    scene_fluid_regional_opening_momentum_wall_cycle_state.* compact accepted staggered endpoint
+    scene_fluid_regional_opening_momentum_wall_cycle_owner.* transactional in-memory owner
     scene_fluid_region_link_flow.* current-link region predictor
     scene_fluid_pressure_coupling.* strong pressure/shear feedback
     scene_pressure_cell_geometry.* shared visible/refinement tetrahedra
@@ -2945,6 +2947,21 @@ consumed by the mutable cycle or worker and does not apply the retained wall
 traction to Structure. Its adjusted state can now seed a separate opt-in next
 ALE transport directly: zero viscosity matches the raw-transport numeric
 endpoint exactly, while nonzero shear persists into that next transport.
+`scene_fluid_regional_opening_momentum_wall_cycle_state.*` and its owner now
+make the first honest mutable boundary for that opt-in path. An accepted
+wall-pressure receipt compacts to adjusted collocated momentum at the source
+metric, accepted pressure at the consecutive metric, and the existing minimal
+conservative wall-traction set at the exact scene quadrature epoch. Prediction,
+pressure-warm, predicted-opening-flux, exchange, and both metric fingerprints
+retain the staggered bridge. Full validation binds pressure back to live
+geometry/operator/opening/resistance inputs and traction back to live
+quadrature. The owner builds a complete candidate before a no-throw swap:
+checkpoint/restore reproduces the exact following ALE transport, a genuine
+one-iteration breathing-pressure rejection returns false and retains the prior
+state exactly, and corrupt traction, foreign quadrature, and limits reject
+without mutation. This state is deliberately in-memory only; it is not in the
+`SWRM` codec, does not apply traction or step Structure, and is not selected by
+the production worker.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
