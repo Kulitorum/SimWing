@@ -2159,6 +2159,13 @@ the exterior ledger is equal and opposite. All-axis area scaling, input-ledger
 revalidation, tolerances, and count/region/byte bounds are explicit. This is a
 compatibility screen, not a regional projection or permission to let fluid
 cross fabric.
+The compatibility artifact carries a deterministic nonzero semantic
+fingerprint. Validation reconstructs all interval quantities from the retained
+primitive volumes, boundary velocities, duration, area, identities, and
+tolerance policy, then rebuilds stable-ID chain continuity, sorted regional
+summaries, global aggregates, flags, and owned-storage accounting. Mutated or
+foreign diagnostic payloads therefore reject transactionally; this hardens an
+offline measurement and does not promote it into accepted fluid state.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

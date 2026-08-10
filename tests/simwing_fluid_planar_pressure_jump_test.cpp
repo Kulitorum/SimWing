@@ -673,6 +673,7 @@ void testRegionalFluxCompatibility() {
     const auto rigid = assessPlanarPressureRegionFluxCompatibility(
         rigidSweep);
     check(rigid.version == planarPressureRegionFluxVersion
+              && rigid.fingerprint != 0
               && rigid.sourceSweepVersion
                   == planarPressureRegionSweepVersion
               && rigid.intervals.size() == 2
@@ -839,6 +840,16 @@ void testRegionalFluxAllAxesAndRejection() {
         geometry, previous, 0.1).layers;
     const auto validSweep = makePlanarPressureRegionSweepLedger(
         geometry, previous, current, 1.0);
+    const auto validCompatibility =
+        assessPlanarPressureRegionFluxCompatibility(validSweep);
+    const auto repeatedCompatibility =
+        assessPlanarPressureRegionFluxCompatibility(validSweep);
+    check(validCompatibility == repeatedCompatibility
+              && validCompatibility.fingerprint
+                  == repeatedCompatibility.fingerprint,
+          "regional flux compatibility is deterministic and fingerprinted");
+    validatePlanarPressureRegionFluxCompatibility(validCompatibility);
+
     auto corrupt = validSweep;
     corrupt.intervals[0].lowerSurfaceVelocityMetersPerSecond += 1.0;
     expectRejected(
@@ -874,6 +885,71 @@ void testRegionalFluxAllAxesAndRejection() {
             assessPlanarPressureRegionFluxCompatibility(
                 validSweep, {}, {2, 2, 1})); },
         "regional flux enforces its byte limit");
+
+    auto corruptCompatibility = validCompatibility;
+    corruptCompatibility.fingerprint = 0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFluxCompatibility(
+            corruptCompatibility); },
+        "regional flux validation rejects a zero fingerprint");
+    corruptCompatibility = validCompatibility;
+    corruptCompatibility.intervals[0]
+        .leastSquaresFluidVelocityMetersPerSecond += 1.0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFluxCompatibility(
+            corruptCompatibility); },
+        "regional flux validation recomputes derived interval values");
+    corruptCompatibility = validCompatibility;
+    corruptCompatibility.intervals[0].previousVolumeCubicMeters += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFluxCompatibility(
+            corruptCompatibility); },
+        "regional flux validation binds primitive interval volumes");
+    corruptCompatibility = validCompatibility;
+    corruptCompatibility.intervals[0].lowerSurfaceStableId = 999;
+    corruptCompatibility.intervals[1].upperSurfaceStableId = 999;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFluxCompatibility(
+            corruptCompatibility); },
+        "regional flux validation binds foreign surface identities");
+    corruptCompatibility = validCompatibility;
+    std::swap(corruptCompatibility.regions[0],
+              corruptCompatibility.regions[1]);
+    expectRejected(
+        [&] { validatePlanarPressureRegionFluxCompatibility(
+            corruptCompatibility); },
+        "regional flux validation enforces sorted region order");
+    corruptCompatibility = validCompatibility;
+    corruptCompatibility.failedContinuityRegionCount += 1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFluxCompatibility(
+            corruptCompatibility); },
+        "regional flux validation recomputes aggregate counts");
+    corruptCompatibility = validCompatibility;
+    corruptCompatibility.maximumAbsoluteContinuityResidualCubicMeters =
+        std::numeric_limits<double>::quiet_NaN();
+    expectRejected(
+        [&] { validatePlanarPressureRegionFluxCompatibility(
+            corruptCompatibility); },
+        "regional flux validation rejects non-finite aggregates");
+    corruptCompatibility = validCompatibility;
+    corruptCompatibility.settings.relativeVelocityTolerance *= 2.0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFluxCompatibility(
+            corruptCompatibility); },
+        "regional flux validation binds its tolerance policy");
+    expectRejected(
+        [&] { validatePlanarPressureRegionFluxCompatibility(
+            validCompatibility, {1, 2, 1024 * 1024}); },
+        "regional flux validation enforces its interval limit");
+    expectRejected(
+        [&] { validatePlanarPressureRegionFluxCompatibility(
+            validCompatibility, {2, 1, 1024 * 1024}); },
+        "regional flux validation enforces its region limit");
+    expectRejected(
+        [&] { validatePlanarPressureRegionFluxCompatibility(
+            validCompatibility, {2, 2, 1}); },
+        "regional flux validation enforces its byte limit");
 }
 
 void testAllAxisAssembly() {

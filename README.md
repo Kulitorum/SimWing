@@ -198,6 +198,10 @@ least unavoidable one-sided slip and material-relative flow while independently
 closing `volume change + integrated outward relative flow = 0`. This keeps
 impermeability distinct from continuity and provides evidence for the next
 regional velocity discretization; it still does not advance fluid state.
+The screen is published as a nonzero semantic-fingerprinted artifact. Its
+validator reconstructs every interval result, stable-ID chain, sorted region
+summary, aggregate, tolerance flag, and storage ledger before accepting a
+copy, so diagnostics cannot be silently reused after mutation.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

@@ -8,7 +8,7 @@
 
 namespace simwing::fsi::fluid {
 
-inline constexpr std::uint32_t planarPressureRegionFluxVersion = 1;
+inline constexpr std::uint32_t planarPressureRegionFluxVersion = 2;
 
 struct PlanarPressureRegionFluxSettings {
     double absoluteVelocityToleranceMetersPerSecond = 1.0e-12;
@@ -78,6 +78,7 @@ struct PlanarPressureRegionFluxSummary {
 // change. This is an offline compatibility screen, not a fluid solve.
 struct PlanarPressureRegionFluxCompatibility {
     std::uint32_t version = planarPressureRegionFluxVersion;
+    std::uint64_t fingerprint = 0;
     std::uint32_t sourceSweepVersion = 0;
     GridFaceAxis axis = GridFaceAxis::X;
     double durationSeconds = 0.0;
@@ -108,6 +109,13 @@ struct PlanarPressureRegionFluxCompatibility {
 assessPlanarPressureRegionFluxCompatibility(
     const PlanarPressureRegionSweepLedger& sweep,
     const PlanarPressureRegionFluxSettings& settings = {},
+    const PlanarPressureRegionFluxLimits& limits = {});
+
+// Reconstructs every interval, sorted region summary, aggregate, flag, storage
+// count, and semantic fingerprint from the artifact's primitive identity,
+// volume, velocity, duration, area, and tolerance fields.
+void validatePlanarPressureRegionFluxCompatibility(
+    const PlanarPressureRegionFluxCompatibility& compatibility,
     const PlanarPressureRegionFluxLimits& limits = {});
 
 } // namespace simwing::fsi::fluid
