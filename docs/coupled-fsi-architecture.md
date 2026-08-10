@@ -444,6 +444,7 @@ src/fsi/
     scene_fluid_regional_opening_momentum_wall_load_application.* conservative Structure wall-load receipt
     scene_fluid_regional_opening_momentum_wall_load_epoch.* atomic pressure-plus-wall pending-load epoch
     scene_fluid_regional_opening_momentum_wall_structure_step_epoch.* replayable one-step XPBD consumption
+    scene_fluid_regional_opening_momentum_wall_coupled_state.* atomic in-memory fluid/Structure owner
     scene_fluid_region_link_flow.* current-link region predictor
     scene_fluid_pressure_coupling.* strong pressure/shear feedback
     scene_pressure_cell_geometry.* shared visible/refinement tetrahedra
@@ -3012,6 +3013,17 @@ persistence or aggregate failure rolls the live target all the way back before
 pressure application. This is still an opt-in proof: it neither advances nor
 commits fluid state, rebases topology, repeats a coupled cycle, nor changes the
 production worker.
+`scene_fluid_regional_opening_momentum_wall_coupled_state.*` now prevents that
+accepted structural endpoint from becoming visible without its exact adjusted
+fluid cycle state. Advance copies the compact fluid candidate before mutation,
+runs and fully replay-validates the structural receipt, then publishes the pair
+with a no-throw swap. Restore validates the complete coupled candidate and
+rebuilds a replacement Structure from the retained post-step encoding before
+either owner changes. A deliberately late aggregate-owner failure restores the
+pre-pressure Structure while retaining the prior fluid owner; a restored pair
+reproduces both byte-identical Structure state and the exact next ALE transport.
+This owner is in-memory only and still performs no topology rebase, repeated
+coupled stepping, persistence, or production selection.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

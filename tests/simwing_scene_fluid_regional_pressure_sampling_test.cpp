@@ -17,6 +17,7 @@
 #include "scene_fluid_regional_opening_momentum_load_epoch.h"
 #include "scene_fluid_regional_opening_momentum_wall_exchange.h"
 #include "scene_fluid_regional_opening_momentum_wall_cycle_owner.h"
+#include "scene_fluid_regional_opening_momentum_wall_coupled_state.h"
 #include "scene_fluid_regional_opening_momentum_wall_cycle_state_persistence.h"
 #include "scene_fluid_regional_opening_momentum_wall_input.h"
 #include "scene_fluid_regional_opening_momentum_wall_load_application.h"
@@ -2799,6 +2800,130 @@ void testOpeningMomentumWallExchange() {
               beforeLateLimitedStructureStep,
               lateLimitedStructureStepFixture.structure.checkpoint()),
           "regional opening wall structural-step epoch: late outer rejection restores pre-load Structure state");
+
+    SceneFixture coupledOwnerSources(
+        partialOpeningPressureScene(), false);
+    const auto advanceCoupledOwner = [&](
+        SceneFluidRegionalOpeningMomentumWallCoupledStateOwner& owner,
+        const SceneFluidRegionalOpeningMomentumWallCoupledStateLimits&
+            limits) {
+        owner.advance(
+            decodedWallCycleState, endpoint.openingMetric,
+            endpoint.pressureOperator, endpoint.basePressureOperator,
+            endpoint.geometry, endpoint.sweep, endpoint.fragments,
+            endpoint.topology, endpoint.volumeRates,
+            endpoint.openingDefinitions, endpoint.openings,
+            endpoint.resistanceDefinitions, endpoint.baseMetric,
+            endpoint.openingMetric, coupledOwnerSources.surface.definition,
+            coupledOwnerSources.state, coupledOwnerSources.transfer,
+            coupledOwnerSources.quadrature, structureStepSettings, limits);
+    };
+    const auto restoreCoupledOwner = [&](
+        SceneFluidRegionalOpeningMomentumWallCoupledStateOwner& owner,
+        const SceneFluidRegionalOpeningMomentumWallCoupledState& state,
+        const SceneFluidRegionalOpeningMomentumWallCoupledStateLimits&
+            limits) {
+        owner.restore(
+            state, endpoint.openingMetric, endpoint.pressureOperator,
+            endpoint.basePressureOperator, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.resistanceDefinitions,
+            endpoint.baseMetric, endpoint.openingMetric,
+            coupledOwnerSources.surface.definition,
+            coupledOwnerSources.state, coupledOwnerSources.transfer,
+            coupledOwnerSources.quadrature, structureStepSettings, limits);
+    };
+    const auto encodeOwnerStructure = [](
+        const SceneFluidRegionalOpeningMomentumWallCoupledStateOwner& owner) {
+        std::vector<std::uint8_t> bytes;
+        StructureCheckpointPersistenceError error;
+        if (!serializeStructureCheckpoint(
+                owner.structure(), owner.structure().checkpoint(), bytes,
+                &error)) {
+            throw std::runtime_error(
+                "cannot encode coupled-owner Structure: " + error.message);
+        }
+        return bytes;
+    };
+
+    SceneFluidRegionalOpeningMomentumWallCoupledStateOwner coupledOwner(
+        Structure(coupledOwnerSources.structureAssembly.definition));
+    advanceCoupledOwner(coupledOwner, {});
+    const auto coupledCheckpoint = coupledOwner.checkpoint();
+    const auto coupledStructureBytes = encodeOwnerStructure(coupledOwner);
+    check(coupledOwner.hasState()
+              && coupledCheckpoint.version
+                  == sceneFluidRegionalOpeningMomentumWallCoupledStateVersion
+              && coupledCheckpoint.fingerprint != 0
+              && coupledCheckpoint.cycleState
+                  == decodedWallCycleState
+              && coupledCheckpoint.structureStep.fingerprint
+                  == structureStepEpoch.fingerprint
+              && coupledCheckpoint.structureStep.afterStructureCheckpoint
+                  == coupledStructureBytes,
+          "regional opening wall coupled owner: fluid and post-XPBD endpoints publish atomically");
+
+    SceneFluidRegionalOpeningMomentumWallCoupledStateOwner
+        restoredCoupledOwner(
+            Structure(coupledOwnerSources.structureAssembly.definition));
+    restoreCoupledOwner(restoredCoupledOwner, coupledCheckpoint, {});
+    const auto restoredCoupledStructureBytes =
+        encodeOwnerStructure(restoredCoupledOwner);
+    const auto restoredCoupledNextTransport =
+        advancePlanarPressureRegionFragmentOpeningMomentum(
+            restoredCoupledOwner.state().cycleState.adjustedMomentum,
+            endpoint.openingMetric, adjustedTargetFlow,
+            endpoint.openingMetric, endpoint.geometry, endpoint.sweep,
+            endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates,
+            endpoint.momentumCycle.transportSettings);
+    check(restoredCoupledOwner.state().fingerprint
+                  == coupledCheckpoint.fingerprint
+              && restoredCoupledStructureBytes
+                  == coupledStructureBytes
+              && restoredCoupledNextTransport == adjustedNextTransport,
+          "regional opening wall coupled owner: restored pair replays exact Structure and next fluid transport");
+
+    const auto beforeRejectedCoupledRestore =
+        encodeOwnerStructure(restoredCoupledOwner);
+    const auto priorCoupledFingerprint =
+        restoredCoupledOwner.state().fingerprint;
+    auto corruptCoupledCheckpoint = coupledCheckpoint;
+    corruptCoupledCheckpoint.structureStep.diagnostics
+        .kineticEnergyJoules += 1.0;
+    expectRejected(
+        [&] {
+            restoreCoupledOwner(
+                restoredCoupledOwner, corruptCoupledCheckpoint, {});
+        },
+        "regional opening wall coupled owner: corrupt structural endpoint rejects restore");
+    check(restoredCoupledOwner.state().fingerprint
+                  == priorCoupledFingerprint
+              && encodeOwnerStructure(restoredCoupledOwner)
+                  == beforeRejectedCoupledRestore,
+          "regional opening wall coupled owner: rejected restore preserves both live owners");
+
+    SceneFluidRegionalOpeningMomentumWallCoupledStateOwner
+        lateLimitedCoupledOwner(
+            Structure(coupledOwnerSources.structureAssembly.definition));
+    const auto beforeLateLimitedCoupledOwner =
+        lateLimitedCoupledOwner.structure().checkpoint();
+    auto coupledOwnerLimits =
+        SceneFluidRegionalOpeningMomentumWallCoupledStateLimits{};
+    coupledOwnerLimits.maximumOwnedBytes =
+        coupledCheckpoint.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            advanceCoupledOwner(
+                lateLimitedCoupledOwner, coupledOwnerLimits);
+        },
+        "regional opening wall coupled owner: late owner limit rejects after structural acceptance");
+    check(!lateLimitedCoupledOwner.hasState()
+              && samePublicCheckpoint(
+                  beforeLateLimitedCoupledOwner,
+                  lateLimitedCoupledOwner.structure().checkpoint()),
+          "regional opening wall coupled owner: late rejection retains prior fluid absence and exact Structure");
 
     const auto rejectingLayers = translatePlanarPressureJumpLayers(
         endpoint.geometry, endpoint.layers, 0.1).layers;

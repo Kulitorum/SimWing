@@ -2230,6 +2230,13 @@ makes this a certified aerodynamic solver.
   both loads, and requires byte-identical post-step replay. One outer rollback
   still covers late persistence or aggregate failure; no production worker
   selects this path.
+- `src/fsi/scene_fluid_regional_opening_momentum_wall_coupled_state.{h,cpp}`
+  owns that accepted structural endpoint beside its exact compact fluid cycle
+  state. Advance withholds publication until the one-step receipt has fully
+  replay-validated; restore rebuilds the post-step Structure from its retained
+  encoding before a no-throw pair publication. Late owner failure restores the
+  pre-load Structure and prior fluid owner together. It is in-memory only and
+  remains outside the worker.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -3292,6 +3299,20 @@ corrupt checkpoint/diagnostics, foreign settings, time-step mismatch, and a
 late aggregate failure that restores the exact pre-load state. Do not advance
 or commit fluid state, rebase topology, repeat the coupled cycle, persist a new
 wire protocol, or enable a production worker.
+
+For `scene_fluid_regional_opening_momentum_wall_coupled_state.*`, bind one
+complete compact wall-cycle state to the structural step receipt whose source
+cycle fingerprint matches it. The owner must copy and validate fluid state
+before structural mutation, publish neither side until full structural replay
+validation succeeds, and restore the pre-load Structure if any later owner
+limit or validation fails. Restore must validate the complete candidate,
+decode and restore a replacement Structure from the retained post-step bytes,
+then publish Structure and fluid state only through no-throw operations. Cover
+atomic first publication, exact restored Structure and next-fluid-transport
+replay, corrupt-state restore with both prior owners unchanged, and a late
+owner-limit failure with no fluid publication and exact Structure rollback. Do
+not add persistence, topology rebase, repeated coupled stepping, or a worker
+selection.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.
