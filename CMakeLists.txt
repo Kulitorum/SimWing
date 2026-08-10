@@ -458,6 +458,8 @@ add_library(simwing_scene_pressure_cell_case STATIC
     src/fsi/scene_pressure_cell_case.h
     src/fsi/scene_pressure_cell_geometry.cpp
     src/fsi/scene_pressure_cell_geometry.h
+    src/fsi/scene_pressure_cell_mimetic_conductance_convergence_assessment.cpp
+    src/fsi/scene_pressure_cell_mimetic_conductance_convergence_assessment.h
     src/fsi/scene_pressure_cell_mimetic_conductance_phase_refinement_audit.cpp
     src/fsi/scene_pressure_cell_mimetic_conductance_phase_refinement_audit.h
     src/fsi/scene_pressure_cell_operator_phase_audit.h

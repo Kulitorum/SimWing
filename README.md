@@ -914,7 +914,15 @@ matrix explicitly fingerprints a `1e-9` algebraic-consistency tolerance;
 production retains the default `1e-10`. Phase CV contracts by about 48% from
 `8^3` to `16^3` and another 63% from `16^3` to `32^3`, while mean drift also
 contracts. These two intervals are useful continuum evidence, not a convergence
-claim. The live 600-step trace
+claim. A separate immutable three-level assessment now makes that caveat
+machine-checkable. The aggregate `8^3`/`16^3`/`32^3` means have apparent order
+`1.0095`, extrapolate to `1.27891`, and leave a `14.6%` fine-grid gap, all
+inside its screening policy. The per-phase trajectories are not asymptotic:
+four reverse increment direction, four fail the `0.75` contraction bound, and
+only one of eight passes both. The strict outcome is therefore
+`InsufficientEvidence` with rejection mask `0x300`; even an explicitly
+permissive zero-rejection result names only a read-only trend candidate and
+cannot select or apply a pressure field. The live 600-step trace
 and audited checkpoint remain byte-identical. The complete phase matrix still
 does not establish shadow convergence or authorize a live solver switch; the
 uniform area-weighted multi-opening source also differs intentionally from the

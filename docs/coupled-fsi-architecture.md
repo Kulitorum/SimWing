@@ -443,6 +443,7 @@ src/fsi/
     scene_pressure_cell_operator_refinement_audit.* skew-intake grid spectrum
     scene_fluid_mimetic_region_conductance_audit.* graph-free terminal response
     scene_pressure_cell_mimetic_conductance_phase_refinement_audit.* uncensored shadow matrix
+    scene_pressure_cell_mimetic_conductance_convergence_assessment.* typed three-level trend screen
     scene_pressure_cell_checkpoint_persistence.* bounded canonical restart
     transfer.*              conservative traction/motion exchange
     coupling.*              rollback, Aitken, IQN-ILS, acceptance logic
@@ -1462,8 +1463,23 @@ also differs from the older graph-manufactured source on multi-opening
 placements. The live 600-step trace and audited checkpoint remain
 byte-identical, so no production pressure or load arithmetic changes.
 
-The same product now owns an optional common translation of its canonical
-scene and periodic grid, making coordinate-origin sensitivity observable
+`src/fsi/scene_pressure_cell_mimetic_conductance_convergence_assessment.*`
+turns the last three complete ensembles into a separate bounded immutable
+screen instead of treating lower aggregate CV as convergence. The aggregate
+mean increments contract by `0.4967106`, giving apparent order `1.00952`, a
+Richardson-style extrapolation of `1.278907`, and a `0.146164` relative
+fine-to-extrapolated gap. The fine CV and its `0.369850` contraction also pass
+the explicit default policy. The phase trajectories do not: phases 2, 4, 5,
+and 7 reverse increment direction, while phases 0, 2, 3, and 6 exceed the
+`0.75` contraction limit. Only phase 1 passes both requirements. The product
+therefore reports `InsufficientEvidence`, typed rejection mask `0x300`, and
+the complete adverse counts/trajectories. Its policy, all three source-audit
+fingerprints, diagnostics, outcome, storage, and integrity are bound. Turning
+off the two phase requirements can produce a read-only trend candidate while
+retaining the adverse counts, but this assessment has no worker or load path.
+
+The phase/refinement audit also owns an optional common translation of its
+canonical scene and periodic grid, making coordinate-origin sensitivity observable
 without changing relative geometry. Translating the `8^3`, phase
 `[0,-0.5,0]` sample by `[256,-512,1024] m` preserves all 524 controls,
 full/reduced trace counts, and four opening traces. Its intake-area delta is

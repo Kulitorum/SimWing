@@ -3,6 +3,7 @@
 #include "scene_pressure_cell_operator_phase_audit.h"
 #include "scene_pressure_cell_operator_phase_refinement_audit.h"
 #include "scene_pressure_cell_operator_refinement_audit.h"
+#include "scene_pressure_cell_mimetic_conductance_convergence_assessment.h"
 #include "scene_pressure_cell_mimetic_conductance_phase_refinement_audit.h"
 #include "scene_fluid_mimetic_region_conductance_audit.h"
 #include "scene_fluid_pressure_operator_response_audit.h"
@@ -1813,6 +1814,161 @@ void testUncensoredMimeticConductancePhaseRefinementAudit() {
                              - audit.levels[2]
                                    .meanNormalizedConductance),
           "uncensored phase sensitivity and mean drift contract again from 16 to 32 cubed");
+
+    const auto convergence =
+        fsi::assessScenePressureCellMimeticConductanceConvergence(
+            audit, fineAudit, ultraFineAudit);
+    const auto repeatedConvergence =
+        fsi::assessScenePressureCellMimeticConductanceConvergence(
+            audit, fineAudit, ultraFineAudit);
+    fsi::validateScenePressureCellMimeticConductanceConvergenceAssessmentIntegrity(
+        convergence, audit, fineAudit, ultraFineAudit);
+    check(convergence == repeatedConvergence
+              && convergence.sourceAuditFingerprints
+                  == std::array<std::uint64_t, 3>{
+                      audit.fingerprint, fineAudit.fingerprint,
+                      ultraFineAudit.fingerprint}
+              && convergence.sourceLevelIndices
+                  == std::array<std::size_t, 3>{2, 0, 0}
+              && convergence.policyFingerprint
+                  == fsi::scenePressureCellMimeticConductanceConvergencePolicyFingerprint(
+                      convergence.policy)
+              && convergence.outcome
+                  == fsi::ScenePressureCellMimeticConductanceConvergenceOutcome::
+                      InsufficientEvidence
+              && convergence.rejectionMask == 0x300ULL
+              && convergence.rejectionCount == 2
+              && convergence.phaseTrajectories.size() == phases.size()
+              && convergence.phaseDirectionChangeCount == 4
+              && convergence.phaseNonContractingCount == 4,
+          "mimetic conductance convergence assessment retains immutable typed phase-trajectory blockers");
+    check(std::abs(convergence.refinementRatio - 2.0) < 1.0e-15
+              && std::abs(convergence.previousMeanIncrement
+                          - 0.3813217262263564) < 1.0e-12
+              && std::abs(convergence.latestMeanIncrement
+                          - 0.18940654219806274) < 1.0e-12
+              && std::abs(convergence.meanIncrementContractionRatio
+                          - 0.49671059677734997) < 1.0e-12
+              && std::abs(convergence.apparentOrder
+                          - 1.0095225694630154) < 1.0e-12
+              && std::abs(convergence.extrapolatedNormalizedConductance
+                          - 1.2789072014940428) < 1.0e-12
+              && std::abs(convergence.relativeFineToExtrapolatedGap
+                          - 0.14616439109521015) < 1.0e-12
+              && std::abs(
+                  convergence.latestPhaseVariationContractionRatio
+                  - 0.3698501047666482) < 1.0e-12,
+          "mimetic conductance convergence assessment locks aggregate apparent-order evidence");
+    constexpr std::uint64_t expectedTrajectoryMasks[]{
+        0x200ULL, 0x000ULL, 0x300ULL, 0x200ULL,
+        0x100ULL, 0x100ULL, 0x200ULL, 0x100ULL,
+    };
+    std::size_t cleanTrajectoryCount = 0;
+    for (std::size_t phaseIndex = 0; phaseIndex < phases.size(); ++phaseIndex) {
+        const auto& trajectory = convergence.phaseTrajectories[phaseIndex];
+        cleanTrajectoryCount += trajectory.rejectionMask == 0;
+        check(trajectory.complete
+                  && trajectory.phaseIndex == phaseIndex
+                  && trajectory.gridPhaseFraction == phases[phaseIndex]
+                  && trajectory.rejectionMask
+                      == expectedTrajectoryMasks[phaseIndex],
+              "mimetic conductance convergence assessment retains each phase trajectory decision");
+    }
+    check(cleanTrajectoryCount == 1
+              && fsi::scenePressureCellMimeticConductanceConvergenceRejectedFor(
+                  convergence,
+                  fsi::ScenePressureCellMimeticConductanceConvergenceRejection::
+                      PhaseIncrementDirectionChange)
+              && fsi::scenePressureCellMimeticConductanceConvergenceRejectedFor(
+                  convergence,
+                  fsi::ScenePressureCellMimeticConductanceConvergenceRejection::
+                      PhaseIncrementNotContracting)
+              && !fsi::scenePressureCellMimeticConductanceConvergenceRejectedFor(
+                  convergence,
+                  fsi::ScenePressureCellMimeticConductanceConvergenceRejection::
+                      MeanIncrementNotContracting),
+          "aggregate contraction does not conceal seven unresolved same-phase trajectories");
+
+    auto permissiveConvergencePolicy = convergence.policy;
+    permissiveConvergencePolicy.requireConsistentPhaseIncrementDirection =
+        false;
+    permissiveConvergencePolicy.requirePhaseIncrementContraction = false;
+    const auto permissiveConvergence =
+        fsi::assessScenePressureCellMimeticConductanceConvergence(
+            audit, fineAudit, ultraFineAudit,
+            permissiveConvergencePolicy);
+    check(permissiveConvergence.outcome
+                  == fsi::ScenePressureCellMimeticConductanceConvergenceOutcome::
+                      ContinuumTrendCandidate
+              && permissiveConvergence.rejectionMask == 0
+              && permissiveConvergence.rejectionCount == 0
+              && permissiveConvergence.phaseDirectionChangeCount == 4
+              && permissiveConvergence.phaseNonContractingCount == 4,
+          "explicitly permissive convergence policy names only a read-only trend candidate while retaining adverse diagnostics");
+
+    auto corruptConvergence = convergence;
+    corruptConvergence.phaseTrajectories[1]
+        .normalizedConductance[2] += 1.0e-6;
+    bool convergenceRejected = false;
+    try {
+        fsi::validateScenePressureCellMimeticConductanceConvergenceAssessmentIntegrity(
+            corruptConvergence, audit, fineAudit, ultraFineAudit);
+    } catch (const std::exception&) {
+        convergenceRejected = true;
+    }
+    check(convergenceRejected,
+          "mimetic conductance convergence assessment rejects trajectory corruption");
+
+    fsi::ScenePressureCellMimeticConductanceConvergenceAssessmentLimits
+        convergenceLimits;
+    convergenceLimits.maximumPhaseTrajectories = phases.size() - 1;
+    convergenceRejected = false;
+    try {
+        static_cast<void>(
+            fsi::assessScenePressureCellMimeticConductanceConvergence(
+                audit, fineAudit, ultraFineAudit, {}, convergenceLimits));
+    } catch (const std::length_error&) {
+        convergenceRejected = true;
+    }
+    check(convergenceRejected,
+          "mimetic conductance convergence assessment bounds phase trajectories before publication");
+    convergenceLimits = {};
+    convergenceLimits.maximumOwnedBytes = convergence.ownedStorageBytes - 1;
+    convergenceRejected = false;
+    try {
+        static_cast<void>(
+            fsi::assessScenePressureCellMimeticConductanceConvergence(
+                audit, fineAudit, ultraFineAudit, {}, convergenceLimits));
+    } catch (const std::length_error&) {
+        convergenceRejected = true;
+    }
+    check(convergenceRejected,
+          "mimetic conductance convergence assessment enforces its byte limit");
+
+    auto invalidConvergencePolicy = convergence.policy;
+    invalidConvergencePolicy.maximumMeanIncrementContractionRatio = 1.0;
+    convergenceRejected = false;
+    try {
+        static_cast<void>(
+            fsi::assessScenePressureCellMimeticConductanceConvergence(
+                audit, fineAudit, ultraFineAudit,
+                invalidConvergencePolicy));
+    } catch (const std::invalid_argument&) {
+        convergenceRejected = true;
+    }
+    check(convergenceRejected,
+          "mimetic conductance convergence assessment rejects invalid policy before publication");
+
+    convergenceRejected = false;
+    try {
+        static_cast<void>(
+            fsi::assessScenePressureCellMimeticConductanceConvergence(
+                audit, fineAudit, translated));
+    } catch (const std::invalid_argument&) {
+        convergenceRejected = true;
+    }
+    check(convergenceRejected,
+          "mimetic conductance convergence assessment rejects incompatible source ensembles");
 
     auto corrupt = audit;
     corrupt.levels[2].samples[1].normalizedConductance += 1.0e-6;
