@@ -4,6 +4,7 @@
 #include "fluid/planar_region_opening_power.h"
 #include "fluid/planar_region_fragment.h"
 #include "fluid/planar_region_fragment_accepted_state.h"
+#include "fluid/planar_region_fragment_opening_accepted_state.h"
 #include "fluid/planar_region_fragment_opening.h"
 #include "fluid/planar_region_fragment_opening_flux.h"
 #include "fluid/planar_region_fragment_opening_pressure_operator.h"
@@ -7686,6 +7687,7 @@ void testPlanarRegionalFragmentOpeningFluxState() {
     validatePlanarPressureRegionFragmentOpeningFluxState(
         state, geometry, sweep, fragments, topology, definitions, openings,
         samples);
+    validatePlanarPressureRegionFragmentOpeningFluxStateIntegrity(state);
 
     const auto emptyOpenings = buildPlanarPressureRegionFragmentOpenings(
         geometry, sweep, fragments, topology, {});
@@ -7851,10 +7853,11 @@ void testPlanarRegionalFragmentOpeningFluxState() {
     auto corrupt = state;
     corrupt.patches[0].relativeVolumeFlowRateCubicMetersPerSecond += 0.1;
     expectRejected(
-        [&] { validatePlanarPressureRegionFragmentOpeningFluxState(
-            corrupt, geometry, sweep, fragments, topology, definitions,
-            openings, samples); },
-        "regional fragment-opening flux validation rejects corruption");
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningFluxStateIntegrity(
+                corrupt);
+        },
+        "regional fragment-opening flux integrity rejects corruption");
     std::vector<PlanarPressureRegionFragmentOpeningVelocitySample> invalid;
     expectRejected(
         [&] { static_cast<void>(
@@ -9072,6 +9075,178 @@ void testPlanarRegionalResistedOpeningPressureStep() {
         }
     }
 
+    const auto acceptedState =
+        capturePlanarPressureRegionFragmentOpeningAcceptedState(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            volumeRates, definitions, openings, resistance, diagnostics,
+            velocity, samples, flux, pressure, settings);
+    const auto repeatedAcceptedState =
+        capturePlanarPressureRegionFragmentOpeningAcceptedState(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            volumeRates, definitions, openings, resistance, diagnostics,
+            velocity, samples, flux, pressure, settings);
+    check(acceptedState == repeatedAcceptedState
+              && acceptedState.version
+                  == planarPressureRegionFragmentOpeningAcceptedStateVersion
+              && acceptedState.fingerprint != 0
+              && acceptedState.accepted
+              && acceptedState.sourcePressureOperatorFingerprint
+                  == pressureOperator.fingerprint
+              && acceptedState.sourceBasePressureOperatorFingerprint
+                  == base.fingerprint
+              && acceptedState.sourceOpeningFingerprint
+                  == openings.fingerprint
+              && acceptedState.sourceFragmentFingerprint
+                  == fragments.fingerprint
+              && acceptedState.sourceTopologyFingerprint
+                  == topology.fingerprint
+              && acceptedState.sourceVolumeRateFingerprint
+                  == volumeRates.fingerprint
+              && acceptedState.sourceOpeningFluxFingerprint
+                  == initialFlux.fingerprint
+              && acceptedState.resultOpeningFluxFingerprint
+                  == flux.fingerprint
+              && acceptedState.settings == settings
+              && acceptedState
+                     .orientedTopologyLinkVelocityMetersPerSecond
+                  == velocity
+              && acceptedState.openingVelocitySamples == samples
+              && acceptedState.openingFlux == flux
+              && acceptedState.pressureCorrectionPascals == pressure
+              && acceptedState.kineticEnergyAfterJoules
+                  == diagnostics.kineticEnergyAfterJoules
+              && acceptedState.correctedContinuityResidualMaximumCubicMetersPerSecond
+                  == diagnostics.projection
+                         .correctedContinuityResidualMaximumCubicMetersPerSecond
+              && acceptedState.maximumAbsoluteCorrectionVolumeMeanPascals
+                  == diagnostics.projection.pressureSolve
+                         .maximumAbsoluteCorrectionVolumeMeanPascals
+              && acceptedState.pressureSolveIterationCount
+                  == diagnostics.projection.pressureSolve.iterationCount,
+          "opening accepted state atomically retains the complete pressure-step endpoint");
+    validatePlanarPressureRegionFragmentOpeningAcceptedStateIntegrity(
+        acceptedState);
+    validatePlanarPressureRegionFragmentOpeningAcceptedState(
+        acceptedState, pressureOperator, base, geometry, sweep, fragments,
+        topology, volumeRates, definitions, openings, resistance);
+    auto corruptAcceptedState = acceptedState;
+    corruptAcceptedState.openingFlux.patches[0]
+        .relativeNormalVelocityMetersPerSecond += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningAcceptedStateIntegrity(
+                corruptAcceptedState);
+        },
+        "opening accepted state rejects nested flux corruption");
+    corruptAcceptedState = acceptedState;
+    const auto sharedLink = std::ranges::find_if(
+        topology.links,
+        [](const auto& link) {
+            return link.kind
+                == PlanarPressureRegionFragmentFaceKind::SameRegionGrid;
+        });
+    check(sharedLink != topology.links.end(),
+          "opening accepted-state corruption test finds a shared link");
+    if (sharedLink != topology.links.end()) {
+        corruptAcceptedState
+            .orientedTopologyLinkVelocityMetersPerSecond[
+                sharedLink->linkIndex] += 0.1;
+        expectRejected(
+            [&] {
+                validatePlanarPressureRegionFragmentOpeningAcceptedStateIntegrity(
+                    corruptAcceptedState);
+            },
+            "opening accepted state rejects velocity corruption");
+    }
+    auto foreignResistance = resistance;
+    foreignResistance[0].resistance.linearPascalSecondsPerMeter += 1.0;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningAcceptedState(
+                acceptedState, pressureOperator, base, geometry, sweep,
+                fragments, topology, volumeRates, definitions, openings,
+                foreignResistance);
+        },
+        "opening accepted state rejects foreign resistance provenance");
+    auto acceptedLimits =
+        PlanarPressureRegionFragmentOpeningAcceptedStateLimits{};
+    acceptedLimits.maximumOwnedBytes =
+        acceptedState.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningAcceptedState(
+                acceptedState, pressureOperator, base, geometry, sweep,
+                fragments, topology, volumeRates, definitions, openings,
+                resistance, acceptedLimits);
+        },
+        "opening accepted state enforces its aggregate owned-byte limit");
+
+    const std::vector<
+        PlanarPressureRegionFragmentOpeningPatchDefinition>
+        splitDefinitions{
+            {102, 1000, wall->surfaceStableId, wall->axis,
+             wall->i, wall->j, wall->k, wall->minusRegionStableId,
+             wall->plusRegionStableId, 0.4 * patchArea},
+            {101, 1000, wall->surfaceStableId, wall->axis,
+             wall->i, wall->j, wall->k, wall->minusRegionStableId,
+             wall->plusRegionStableId, 0.6 * patchArea},
+        };
+    const auto splitOpenings = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, splitDefinitions);
+    const auto splitPressureOperator =
+        buildPlanarPressureRegionFragmentOpeningPressureOperator(
+            base, geometry, sweep, fragments, topology,
+            splitDefinitions, splitOpenings);
+    std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+        splitSamples{
+            {102, requiredFlow / patchArea},
+            {101, requiredFlow / patchArea},
+        };
+    auto splitFlux = buildPlanarPressureRegionFragmentOpeningFluxState(
+        geometry, sweep, fragments, topology, splitDefinitions,
+        splitOpenings, splitSamples);
+    std::vector<double> splitVelocity(topology.links.size(), 0.0);
+    std::vector<double> splitPressure(base.rows.size(), 0.0);
+    const auto splitSeeded =
+        projectMovingPlanarPressureRegionFragmentFaceVelocitiesWithOpenings(
+            base, geometry, sweep, fragments, topology, volumeRates,
+            splitDefinitions, splitOpenings, splitFlux, splitSamples,
+            splitVelocity, splitPressure, seedSettings);
+    const std::vector<
+        PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        splitResistance{{102, {8.0, 3.0}}, {101, {8.0, 3.0}}};
+    const auto splitDiagnostics =
+        advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
+            splitPressureOperator, base, geometry, sweep, fragments,
+            topology, volumeRates, splitDefinitions, splitOpenings,
+            splitResistance, splitVelocity, splitSamples, splitFlux,
+            splitPressure, settings);
+    check(splitSeeded.accepted && splitDiagnostics.accepted,
+          "opening accepted-state canonical-order fixture advances");
+    if (splitSeeded.accepted && splitDiagnostics.accepted) {
+        auto reversedSplitSamples = splitSamples;
+        std::ranges::reverse(reversedSplitSamples);
+        const auto splitState =
+            capturePlanarPressureRegionFragmentOpeningAcceptedState(
+                splitPressureOperator, base, geometry, sweep, fragments,
+                topology, volumeRates, splitDefinitions, splitOpenings,
+                splitResistance, splitDiagnostics, splitVelocity,
+                splitSamples, splitFlux, splitPressure, settings);
+        const auto reorderedSplitState =
+            capturePlanarPressureRegionFragmentOpeningAcceptedState(
+                splitPressureOperator, base, geometry, sweep, fragments,
+                topology, volumeRates, splitDefinitions, splitOpenings,
+                splitResistance, splitDiagnostics, splitVelocity,
+                reversedSplitSamples, splitFlux, splitPressure, settings);
+        check(splitState == reorderedSplitState
+                  && splitState.openingVelocitySamples.size() == 2
+                  && splitState.openingVelocitySamples[0].patchStableId
+                      == 101
+                  && splitState.openingVelocitySamples[1].patchStableId
+                      == 102,
+              "opening accepted state canonicalizes caller sample order");
+    }
+
     auto authoredDriveSettings = settings;
     authoredDriveSettings.useAuthoredPressureDrive = true;
     auto authoredDriveVelocity = initialVelocity;
@@ -9113,6 +9288,27 @@ void testPlanarRegionalResistedOpeningPressureStep() {
                   "authored-pressure composed step retains solid-wall zero flow");
         }
     }
+    const auto authoredDriveState =
+        capturePlanarPressureRegionFragmentOpeningAcceptedState(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            volumeRates, definitions, openings, resistance, authoredDrive,
+            authoredDriveVelocity, authoredDriveSamples, authoredDriveFlux,
+            authoredDrivePressure, authoredDriveSettings);
+    check(authoredDriveState.accepted
+              && authoredDriveState.settings.useAuthoredPressureDrive
+              && authoredDriveState.authoredPressureWorkJoules
+                  == authoredDrive.authoredPressureWorkJoules
+              && authoredDriveState.pressureCorrectionPascals
+                  == authoredDrivePressure
+              && authoredDriveState.pressureCorrectionPascals
+                  != acceptedState.pressureCorrectionPascals
+              && authoredDriveState.resultOpeningFluxFingerprint
+                  == authoredDriveFlux.fingerprint,
+          "opening accepted state distinguishes authored-pressure continuation");
+    validatePlanarPressureRegionFragmentOpeningAcceptedState(
+        authoredDriveState, pressureOperator, base, geometry, sweep,
+        fragments, topology, volumeRates, definitions, openings,
+        resistance);
 
     const std::vector<
         PlanarPressureRegionFragmentOpeningResistanceDefinition>
@@ -9170,6 +9366,17 @@ void testPlanarRegionalResistedOpeningPressureStep() {
               && rejectedFlux == initialFlux
               && rejectedPressure == initialPressure,
           "failed resisted projection rolls back all composed fields");
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                capturePlanarPressureRegionFragmentOpeningAcceptedState(
+                    pressureOperator, base, geometry, sweep, fragments,
+                    topology, volumeRates, definitions, openings,
+                    resistance, rejected, rejectedVelocity,
+                    rejectedSamples, rejectedFlux, rejectedPressure,
+                    truncatedSettings));
+        },
+        "opening accepted state rejects an unaccepted pressure step");
 
     auto rejectedAuthoredVelocity = initialVelocity;
     auto rejectedAuthoredSamples = initialSamples;

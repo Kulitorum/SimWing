@@ -503,6 +503,36 @@ buildPlanarPressureRegionFragmentOpeningFluxState(
     return result;
 }
 
+void validatePlanarPressureRegionFragmentOpeningFluxStateIntegrity(
+    const PlanarPressureRegionFragmentOpeningFluxState& state) {
+    if (state.version != planarPressureRegionFragmentOpeningFluxVersion
+        || state.fingerprint == 0
+        || state.sourceOpeningFingerprint == 0
+        || state.sourceFragmentFingerprint == 0
+        || state.sourceTopologyFingerprint == 0
+        || (state.profileAxis != GridFaceAxis::X
+            && state.profileAxis != GridFaceAxis::Y
+            && state.profileAxis != GridFaceAxis::Z)
+        || !std::isfinite(
+            state.maximumAbsoluteRelativeNormalVelocityMetersPerSecond)
+        || !std::isfinite(
+            state.maximumAbsolutePatchVolumeFlowRateCubicMetersPerSecond)
+        || !std::isfinite(
+            state.maximumAbsoluteBaseComponentOutwardFlowRateCubicMetersPerSecond)
+        || !std::isfinite(
+            state.totalAbsolutePatchVolumeFlowRateCubicMetersPerSecond)
+        || !std::isfinite(
+            state.globalOutwardRelativeVolumeFlowRateCubicMetersPerSecond)
+        || !std::isfinite(
+            state.maximumAbsoluteConnectedComponentOutwardFlowRateCubicMetersPerSecond)
+        || !std::isfinite(state.conservationToleranceCubicMetersPerSecond)
+        || state.ownedStorageBytes != ownedStorageBytes(state)
+        || state.fingerprint != openingFluxFingerprint(state)) {
+        throw std::invalid_argument(
+            "planar regional fragment-opening flux integrity is invalid");
+    }
+}
+
 void validatePlanarPressureRegionFragmentOpeningFluxState(
     const PlanarPressureRegionFragmentOpeningFluxState& state,
     const PeriodicCartesianGrid& grid,
@@ -519,27 +549,11 @@ void validatePlanarPressureRegionFragmentOpeningFluxState(
         openings, grid, sweep, fragments, topology, definitions,
         limits.openingLimits);
     validateLimits(limits);
-    if (state.version != planarPressureRegionFragmentOpeningFluxVersion
-        || state.fingerprint == 0
-        || state.sourceOpeningFingerprint != openings.fingerprint
+    validatePlanarPressureRegionFragmentOpeningFluxStateIntegrity(state);
+    if (state.sourceOpeningFingerprint != openings.fingerprint
         || state.sourceFragmentFingerprint != fragments.fingerprint
         || state.sourceTopologyFingerprint != topology.fingerprint
         || state.profileAxis != topology.profileAxis
-        || !std::isfinite(
-            state.maximumAbsoluteRelativeNormalVelocityMetersPerSecond)
-        || !std::isfinite(
-            state.maximumAbsolutePatchVolumeFlowRateCubicMetersPerSecond)
-        || !std::isfinite(
-            state.maximumAbsoluteBaseComponentOutwardFlowRateCubicMetersPerSecond)
-        || !std::isfinite(
-            state.totalAbsolutePatchVolumeFlowRateCubicMetersPerSecond)
-        || !std::isfinite(
-            state.globalOutwardRelativeVolumeFlowRateCubicMetersPerSecond)
-        || !std::isfinite(
-            state.maximumAbsoluteConnectedComponentOutwardFlowRateCubicMetersPerSecond)
-        || !std::isfinite(state.conservationToleranceCubicMetersPerSecond)
-        || state.ownedStorageBytes != ownedStorageBytes(state)
-        || state.fingerprint != openingFluxFingerprint(state)
         || state != buildFluxState(
                         fragments, topology, openings, samples, limits)) {
         throw std::invalid_argument(

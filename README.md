@@ -373,6 +373,18 @@ even a completed authored-drive stage along with topology velocity, aperture
 samples, flux state, and pressure. The substep still lacks scene-authored
 coefficients, authored-pressure relaxation, and topology rebases, and it does
 not itself own pressure-load or worker integration.
+The complete accepted aperture-step output can now be captured as one bounded
+immutable continuation state. It owns the corrected Cartesian link velocities,
+canonical stable-ID opening samples, rebuilt opening-flux ledger, and connected-
+component-gauged pressure warm start, with exact graph/geometry/opening/
+resistance/settings lineage. Capture independently rebuilds final local and
+component continuity, pressure gauges, solid-wall zero flow, and post-step
+diagonal kinetic energy before retaining the step's closed energy and solver
+evidence. Nested flux or field corruption, foreign coefficients, unaccepted
+steps, source mismatches, and count/byte-limit violations are rejected. This
+fills the rollback-safe aperture-flow continuation boundary; a later composition
+must still build total authored-plus-correction regional pressure and bind the
+opening-aware load ledger before any Structure or worker handoff.
 An opening-aware surface-load ledger now supplies the missing opt-in load-area
 partition. It binds each aperture partition to its exact composed pressure-wall
 tile, leaves pressure-jump traction unchanged, removes force/impulse/work from

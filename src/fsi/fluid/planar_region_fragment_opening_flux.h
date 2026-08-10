@@ -161,6 +161,9 @@ buildPlanarPressureRegionFragmentOpeningFluxState(
     std::span<const PlanarPressureRegionFragmentOpeningVelocitySample> samples,
     const PlanarPressureRegionFragmentOpeningFluxLimits& limits = {});
 
+void validatePlanarPressureRegionFragmentOpeningFluxStateIntegrity(
+    const PlanarPressureRegionFragmentOpeningFluxState& state);
+
 void validatePlanarPressureRegionFragmentOpeningFluxState(
     const PlanarPressureRegionFragmentOpeningFluxState& state,
     const PeriodicCartesianGrid& grid,

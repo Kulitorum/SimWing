@@ -1957,6 +1957,12 @@ makes this a certified aerodynamic solver.
   geometry-work/correction-energy/dissipation identity and owns the outer
   four-field transaction, but no pressure relaxation, scene mapping, traction,
   rebase, or production path.
+- `src/fsi/fluid/planar_region_fragment_opening_accepted_state.{h,cpp}`
+  captures that four-field endpoint as one bounded immutable continuation
+  artifact. It canonicalizes opening samples, binds graph/geometry/opening/
+  resistance/settings lineage, and independently reconstructs final
+  continuity, connected pressure gauges, and diagonal kinetic energy before
+  publication. It does not yet compose total regional pressure or loads.
 - `src/fsi/fluid/planar_region_fragment_opening_surface_load.{h,cpp}` is the
   opt-in load-area counterpart. It binds the exact opening partitions to the
   composed pressure-wall load ledger, removes traction from aperture area,
@@ -2530,6 +2536,23 @@ acceptance; a truncated pressure solve after either successful resistance or
 authored drive must roll back all four. Enforce outer and nested storage
 limits. Do not infer authored-pressure relaxation, scene coefficient mapping,
 topology rebase, Structure traction application, or production ownership.
+
+For `planar_region_fragment_opening_accepted_state.*`, capture only an accepted
+finite resistance-plus-projection step whose source/result flux chain, pressure
+operator, base operator, fragments, topology, volume-rate epoch, opening
+overlay, resistance-definition fingerprint, settings, counts, and nested solve
+identity all agree. Canonicalize sample order by stable patch ID and retain the
+complete corrected topology velocity, opening sample/flux, and pressure warm
+state. Independently reconstruct local and opening-connected continuity,
+connected-component volume gauges, maximum pressure, solid-wall zero flow, and
+post-step diagonal kinetic energy; require exact agreement with the accepted
+diagnostics and retain the aggregate authored-work/geometry-work/correction-
+energy/dissipation identity. Fingerprint every owned continuation field, use
+the standalone opening-flux integrity check for nested corruption, enforce
+aggregate count/owned/working limits, and reject foreign coefficients,
+unaccepted steps, corrupted fields, and mismatched source epochs. This state
+does not certify total regional pressure, open-area pressure-load subtraction,
+Structure traction, rebase, or worker ownership.
 
 For `planar_region_fragment_volume_rate.*`, require canonical breathing to
 publish `+1.6/-1.6 m3/s` pocket/exterior component rates while every fixed

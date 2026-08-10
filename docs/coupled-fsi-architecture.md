@@ -503,6 +503,7 @@ src/fsi/
         planar_region_fragment_opening_pressure_projection.* active aperture projection
         planar_region_fragment_opening_resistance.* passive aperture loss
         planar_region_fragment_opening_pressure_step.* constrained loss+projection step
+        planar_region_fragment_opening_accepted_state.* immutable aperture-step continuation
         planar_region_fragment_pressure_solve.* correction-only CG oracle
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
@@ -2405,6 +2406,24 @@ pressure solve rolls back the already-computed resistance or authored drive.
 The composition is bounded and opt-in; it still has no scene coefficient
 mapping, authored-pressure relaxation, rebase ownership, or worker selection,
 and it does not itself own pressure-load transfer.
+`planar_region_fragment_opening_accepted_state.*` supplies the missing owning
+continuation artifact for that transaction. It canonicalizes sample order and
+atomically retains corrected same-region topology velocities, material-relative
+opening samples, the rebuilt immutable flux ledger, and the opening-connected
+pressure warm start. Source fingerprints bind the augmented/base operators,
+fragment topology, volume-rate epoch, aperture overlay, pre-step flux,
+resistance definitions, and exact settings. Capture does not merely trust the
+four mutable output fields: it independently reconstructs local and connected-
+component continuity, volume-weighted pressure gauges, maximum correction,
+zero flow on every retained solid wall, and the post-step diagonal kinetic
+energy, then checks those against the accepted nested solver and aggregate
+energy evidence. The artifact and newly exposed nested opening-flux integrity
+check reject corruption, unaccepted diagnostics, foreign coefficients/source
+epochs, and bounded-storage violations. This is the rollback-safe aperture-
+flow endpoint only. Total authored-plus-correction regional pressure must next
+be composed on the opening-connected gauge before the open-area load partition
+can be bound without falsely mixing it with the sealed pressure certificate;
+Structure traction, rebases, and worker selection remain outside.
 `planar_region_fragment_opening_surface_load.*` provides the corresponding
 opt-in pressure-load area partition. It binds the immutable aperture overlay
 to the composed wall-load ledger, preserves the tile pressure-jump traction,
