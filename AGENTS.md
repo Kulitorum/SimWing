@@ -1962,7 +1962,13 @@ makes this a certified aerodynamic solver.
   artifact. It canonicalizes opening samples, binds graph/geometry/opening/
   resistance/settings lineage, and independently reconstructs final
   continuity, connected pressure gauges, and diagonal kinetic energy before
-  publication. It does not yet compose total regional pressure or loads.
+  publication. It does not itself compose total regional pressure or loads.
+- `src/fsi/fluid/planar_region_fragment_opening_pressure_state.{h,cpp}`
+  composes authored fragment pressure with that accepted correction on the
+  opening-connected gauge. It publishes full-wall authored/correction/total
+  pressure, sheet force/impulse, and moving work, closing component/global
+  wall work to `-dt*sum(p*dV/dt)`. It does not remove aperture load area or
+  apply traction.
 - `src/fsi/fluid/planar_region_fragment_opening_surface_load.{h,cpp}` is the
   opt-in load-area counterpart. It binds the exact opening partitions to the
   composed pressure-wall load ledger, removes traction from aperture area,
@@ -2553,6 +2559,26 @@ aggregate count/owned/working limits, and reject foreign coefficients,
 unaccepted steps, corrupted fields, and mismatched source epochs. This state
 does not certify total regional pressure, open-area pressure-load subtraction,
 Structure traction, rebase, or worker ownership.
+
+For `planar_region_fragment_opening_pressure_state.*`, require a fully
+validated opening accepted state and exact agreement with its augmented/base
+operators, fragments, topology, volume-rate epoch, aperture definitions, and
+resistance provenance. Compose every control as `authored + correction`, map
+sealed base components through the opening overlay, and enforce a roundoff-zero
+volume-weighted correction gauge per opening-connected component rather than
+per sealed region. For every pressure wall, require the minus upper-boundary
+and plus lower-boundary material velocities to agree; publish authored,
+correction, and total jumps, sheet forces, total impulses, and wall work with
+pressure/force/work split closure. Accumulate the two absolute wall-side work
+contributions to their connected components, reconstruct authored/correction/
+total geometry work independently as `-dt*sum(p*dV/dt)`, require component and
+global wall/geometry closure, and require correction geometry work to agree
+with the accepted aperture projection. Preserve deterministic X/Y/Z signs,
+fingerprint every field, enforce nested/entity/owned/working limits, and reject
+corruption, foreign accepted endpoints, mismatched wall kinematics, or invalid
+tolerances. Do not confuse authored moving-wall work with the separate
+authored aperture-drive work, remove open-area sheet load, relax authored
+pressure, apply Structure traction, rebase, or select production ownership.
 
 For `planar_region_fragment_volume_rate.*`, require canonical breathing to
 publish `+1.6/-1.6 m3/s` pocket/exterior component rates while every fixed

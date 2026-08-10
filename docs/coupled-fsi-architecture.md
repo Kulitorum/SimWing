@@ -504,6 +504,7 @@ src/fsi/
         planar_region_fragment_opening_resistance.* passive aperture loss
         planar_region_fragment_opening_pressure_step.* constrained loss+projection step
         planar_region_fragment_opening_accepted_state.* immutable aperture-step continuation
+        planar_region_fragment_opening_pressure_state.* opening-connected total pressure
         planar_region_fragment_pressure_solve.* correction-only CG oracle
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
@@ -2420,10 +2421,27 @@ energy, then checks those against the accepted nested solver and aggregate
 energy evidence. The artifact and newly exposed nested opening-flux integrity
 check reject corruption, unaccepted diagnostics, foreign coefficients/source
 epochs, and bounded-storage violations. This is the rollback-safe aperture-
-flow endpoint only. Total authored-plus-correction regional pressure must next
-be composed on the opening-connected gauge before the open-area load partition
-can be bound without falsely mixing it with the sealed pressure certificate;
-Structure traction, rebases, and worker selection remain outside.
+flow endpoint only. The following pressure state composes total authored-plus-
+correction pressure on that opening-connected gauge, so the open-area load
+partition can later bind without falsely mixing it with the sealed pressure
+certificate. Structure traction, rebases, and worker selection remain outside.
+`planar_region_fragment_opening_pressure_state.*` now performs that first
+pressure composition. It consumes only the validated accepted aperture state,
+uses the augmented operator's connected-component mapping, and publishes each
+fragment's authored, correction, and total pressure without imposing a sealed-
+component gauge. Every pressure-wall tile then retains its exact two-sided
+identity, normal, area, centroid, material velocity, pressure split, full-wall
+sheet force/impulse, and material work. The minus upper-boundary and plus lower-
+boundary velocities must agree exactly. Absolute minus/plus pressure work is
+aggregated to the appropriate connected components; independently reconstructed
+authored, correction, and total `-dt*sum(p*dV/dt)` work must close per component
+and globally, and correction geometry work must equal the accepted projection
+ledger. The separate authored aperture-drive work is deliberately not folded
+into moving-wall work. Deterministic X/Y/Z checks, complete fingerprints,
+nested validation, and count/byte bounds make this an immutable total-pressure
+source. It still describes the entire wall tile. The following open-area load
+partition must consume this state before retained-solid traction can be called
+a Structure handoff; no pressure relaxation, rebase, or worker selection occurs.
 `planar_region_fragment_opening_surface_load.*` provides the corresponding
 opt-in pressure-load area partition. It binds the immutable aperture overlay
 to the composed wall-load ledger, preserves the tile pressure-jump traction,

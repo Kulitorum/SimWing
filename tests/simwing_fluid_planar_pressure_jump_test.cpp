@@ -5,6 +5,7 @@
 #include "fluid/planar_region_fragment.h"
 #include "fluid/planar_region_fragment_accepted_state.h"
 #include "fluid/planar_region_fragment_opening_accepted_state.h"
+#include "fluid/planar_region_fragment_opening_pressure_state.h"
 #include "fluid/planar_region_fragment_opening.h"
 #include "fluid/planar_region_fragment_opening_flux.h"
 #include "fluid/planar_region_fragment_opening_pressure_operator.h"
@@ -9181,6 +9182,142 @@ void testPlanarRegionalResistedOpeningPressureStep() {
         },
         "opening accepted state enforces its aggregate owned-byte limit");
 
+    const auto openingPressureState =
+        composePlanarPressureRegionFragmentOpeningPressureState(
+            acceptedState, pressureOperator, base, geometry, sweep,
+            fragments, topology, volumeRates, definitions, openings,
+            resistance);
+    const auto repeatedOpeningPressureState =
+        composePlanarPressureRegionFragmentOpeningPressureState(
+            acceptedState, pressureOperator, base, geometry, sweep,
+            fragments, topology, volumeRates, definitions, openings,
+            resistance);
+    check(openingPressureState == repeatedOpeningPressureState
+              && openingPressureState.version
+                  == planarPressureRegionFragmentOpeningPressureStateVersion
+              && openingPressureState.fingerprint != 0
+              && openingPressureState.accepted
+              && openingPressureState.sourceAcceptedStateFingerprint
+                  == acceptedState.fingerprint
+              && openingPressureState.sourcePressureOperatorFingerprint
+                  == pressureOperator.fingerprint
+              && openingPressureState.sourceBasePressureOperatorFingerprint
+                  == base.fingerprint
+              && openingPressureState.sourceOpeningFingerprint
+                  == openings.fingerprint
+              && openingPressureState.sourceVolumeRateFingerprint
+                  == volumeRates.fingerprint
+              && openingPressureState.controls.size()
+                  == fragments.fragments.size()
+              && openingPressureState.walls.size()
+                  == topology.pressureLayerWallLinkCount
+              && openingPressureState.components.size()
+                  == openings.connectedComponents.size()
+              && openingPressureState.components.size() == 1
+              && openingPressureState.correctionGeometryPressureWorkJoules
+                  == acceptedState.geometryPressureWorkJoules,
+          "opening pressure state composes the accepted connected-gauge correction deterministically");
+    for (std::size_t index = 0;
+         index < openingPressureState.controls.size(); ++index) {
+        const auto& control = openingPressureState.controls[index];
+        check(control.fragmentIndex == index
+                  && control.authoredPressurePascals
+                      == fragments.fragments[index].pressurePascals
+                  && control.correctionPressurePascals
+                      == acceptedState.pressureCorrectionPascals[index]
+                  && control.totalPressurePascals
+                      == control.authoredPressurePascals
+                         + control.correctionPressurePascals,
+              "opening pressure state retains authored and correction control pressure");
+    }
+    check(openingPressureState.maximumAbsoluteCorrectionGaugePascals
+              <= 2.0e-12
+              && std::abs(
+                     openingPressureState.wallGeometryWorkResidualJoules)
+                  <= openingPressureState
+                         .settings.absoluteWorkResidualToleranceJoules
+              && std::abs(
+                     openingPressureState.pressureWorkSplitResidualJoules)
+                  <= openingPressureState
+                         .settings.absoluteWorkResidualToleranceJoules
+              && openingPressureState.totalPressureImpulseOnSheetNewtonSeconds
+                  == Vector3{
+                      openingPressureState
+                              .totalPressureForceOnSheetNewtons.x
+                          * openingPressureState.timeStepSeconds,
+                      openingPressureState
+                              .totalPressureForceOnSheetNewtons.y
+                          * openingPressureState.timeStepSeconds,
+                      openingPressureState
+                              .totalPressureForceOnSheetNewtons.z
+                          * openingPressureState.timeStepSeconds},
+          "opening pressure state closes connected gauges, wall work, and impulse");
+    validatePlanarPressureRegionFragmentOpeningPressureStateIntegrity(
+        openingPressureState);
+    validatePlanarPressureRegionFragmentOpeningPressureState(
+        openingPressureState, acceptedState, pressureOperator, base,
+        geometry, sweep, fragments, topology, volumeRates, definitions,
+        openings, resistance);
+    auto corruptOpeningPressureState = openingPressureState;
+    corruptOpeningPressureState.controls[0].totalPressurePascals += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningPressureStateIntegrity(
+                corruptOpeningPressureState);
+        },
+        "opening pressure-state integrity rejects control corruption");
+    auto openingPressureLimits =
+        PlanarPressureRegionFragmentOpeningPressureStateLimits{};
+    openingPressureLimits.maximumControls =
+        openingPressureState.controls.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                composePlanarPressureRegionFragmentOpeningPressureState(
+                    acceptedState, pressureOperator, base, geometry, sweep,
+                    fragments, topology, volumeRates, definitions, openings,
+                    resistance, {}, openingPressureLimits));
+        },
+        "opening pressure state enforces its control limit");
+    openingPressureLimits = {};
+    openingPressureLimits.maximumOwnedBytes =
+        openingPressureState.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                composePlanarPressureRegionFragmentOpeningPressureState(
+                    acceptedState, pressureOperator, base, geometry, sweep,
+                    fragments, topology, volumeRates, definitions, openings,
+                    resistance, {}, openingPressureLimits));
+        },
+        "opening pressure state enforces its owned-byte limit");
+    openingPressureLimits = {};
+    openingPressureLimits.maximumWorkingBytes =
+        openingPressureState.workingStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                composePlanarPressureRegionFragmentOpeningPressureState(
+                    acceptedState, pressureOperator, base, geometry, sweep,
+                    fragments, topology, volumeRates, definitions, openings,
+                    resistance, {}, openingPressureLimits));
+        },
+        "opening pressure state enforces its working-byte limit");
+    auto invalidOpeningPressureSettings =
+        PlanarPressureRegionFragmentOpeningPressureStateSettings{};
+    invalidOpeningPressureSettings.absolutePressureResidualTolerancePascals =
+        0.0;
+    invalidOpeningPressureSettings.relativePressureResidualTolerance = 0.0;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                composePlanarPressureRegionFragmentOpeningPressureState(
+                    acceptedState, pressureOperator, base, geometry, sweep,
+                    fragments, topology, volumeRates, definitions, openings,
+                    resistance, invalidOpeningPressureSettings));
+        },
+        "opening pressure state rejects disabled pressure tolerances");
+
     const std::vector<
         PlanarPressureRegionFragmentOpeningPatchDefinition>
         splitDefinitions{
@@ -9309,6 +9446,35 @@ void testPlanarRegionalResistedOpeningPressureStep() {
         authoredDriveState, pressureOperator, base, geometry, sweep,
         fragments, topology, volumeRates, definitions, openings,
         resistance);
+    const auto authoredDrivePressureState =
+        composePlanarPressureRegionFragmentOpeningPressureState(
+            authoredDriveState, pressureOperator, base, geometry, sweep,
+            fragments, topology, volumeRates, definitions, openings,
+            resistance);
+    check(authoredDrivePressureState.accepted
+              && authoredDrivePressureState.sourceAcceptedStateFingerprint
+                  == authoredDriveState.fingerprint
+              && authoredDrivePressureState.correctionGeometryPressureWorkJoules
+                  == authoredDriveState.geometryPressureWorkJoules
+              && authoredDrivePressureState.controls
+                  != openingPressureState.controls
+              && authoredDrivePressureState.correctionPressureForceOnSheetNewtons
+                  != openingPressureState
+                         .correctionPressureForceOnSheetNewtons
+              && std::abs(
+                     authoredDrivePressureState
+                         .wallGeometryWorkResidualJoules)
+                  <= authoredDrivePressureState
+                         .settings.absoluteWorkResidualToleranceJoules,
+          "opening pressure state follows the authored-drive correction without mixing sealed gauges");
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningPressureState(
+                openingPressureState, authoredDriveState, pressureOperator,
+                base, geometry, sweep, fragments, topology, volumeRates,
+                definitions, openings, resistance);
+        },
+        "opening pressure state rejects a foreign accepted endpoint");
 
     const std::vector<
         PlanarPressureRegionFragmentOpeningResistanceDefinition>
@@ -9415,6 +9581,156 @@ void testPlanarRegionalResistedOpeningPressureStep() {
                 candidateVelocity, candidateSamples, candidateFlux,
                 candidatePressure, settings, limits));
     }, "resisted opening pressure step enforces its working limit");
+}
+
+void testPlanarRegionalOpeningPressureStateAxes() {
+    const auto geometry = grid();
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> previous{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        auto current = previous;
+        current[0].physicalPlaneCoordinateMeters -= 0.1;
+        current[1].physicalPlaneCoordinateMeters += 0.1;
+        const auto sweep = makePlanarPressureRegionSweepLedger(
+            geometry, previous, current, 0.5);
+        const auto fragments = buildPlanarPressureRegionFragments(
+            geometry, sweep);
+        const auto topology = buildPlanarPressureRegionFragmentTopology(
+            geometry, sweep, fragments);
+        const auto base = buildPlanarPressureRegionFragmentPressureOperator(
+            geometry, sweep, fragments, topology);
+        const auto volumeRates =
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, sweep, fragments, topology);
+        const auto wall = std::ranges::find_if(
+            topology.links,
+            [](const auto& link) {
+                return link.kind
+                        == PlanarPressureRegionFragmentFaceKind::
+                            PressureLayerWall
+                    && link.surfaceStableId == 10;
+            });
+        check(wall != topology.links.end(),
+              "opening pressure state finds a wall on every axis");
+        if (wall == topology.links.end()) continue;
+        const double patchArea = 0.5 * wall->areaSquareMeters;
+        const std::vector<
+            PlanarPressureRegionFragmentOpeningPatchDefinition>
+            definitions{{
+                100, 1000, wall->surfaceStableId, wall->axis,
+                wall->i, wall->j, wall->k, wall->minusRegionStableId,
+                wall->plusRegionStableId, patchArea,
+            }};
+        const auto openings = buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, definitions);
+        const auto pressureOperator =
+            buildPlanarPressureRegionFragmentOpeningPressureOperator(
+                base, geometry, sweep, fragments, topology, definitions,
+                openings);
+        const double requiredFlow =
+            -volumeRates.components[wall->minusComponentIndex]
+                 .geometryVolumeChangeRateCubicMetersPerSecond;
+        std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+            samples{{100, requiredFlow / patchArea}};
+        auto flux = buildPlanarPressureRegionFragmentOpeningFluxState(
+            geometry, sweep, fragments, topology, definitions, openings,
+            samples);
+        std::vector<double> velocity(topology.links.size(), 0.0);
+        std::vector<double> pressure(base.rows.size(), 0.0);
+        PlanarPressureRegionFragmentPressureProjectionSettings seedSettings;
+        seedSettings.densityKgPerCubicMeter = 1.2;
+        seedSettings.timeStepSeconds = 0.5;
+        seedSettings.absoluteContinuityToleranceCubicMetersPerSecond =
+            2.0e-11;
+        seedSettings.relativeContinuityTolerance = 1.0e-10;
+        seedSettings.pressureSolve
+            .absoluteResidualTolerancePascalsMeters = 1.0e-13;
+        seedSettings.pressureSolve.relativeResidualTolerance = 0.0;
+        seedSettings.pressureSolve.maximumIterations = 300;
+        const auto seeded =
+            projectMovingPlanarPressureRegionFragmentFaceVelocitiesWithOpenings(
+                base, geometry, sweep, fragments, topology, volumeRates,
+                definitions, openings, flux, samples, velocity, pressure,
+                seedSettings);
+        PlanarPressureRegionFragmentOpeningPressureStepSettings settings;
+        settings.projection.densityKgPerCubicMeter = 1.2;
+        settings.projection.timeStepSeconds = 0.5;
+        settings.projection
+            .absoluteContinuityToleranceCubicMetersPerSecond = 2.0e-11;
+        settings.projection.relativeContinuityTolerance = 1.0e-10;
+        settings.projection
+            .absoluteMomentumResidualToleranceKilogramMetersPerSecond =
+            2.0e-12;
+        settings.projection.relativeMomentumResidualTolerance = 1.0e-10;
+        settings.projection.absoluteEnergyResidualToleranceJoules = 2.0e-11;
+        settings.projection.relativeEnergyResidualTolerance = 1.0e-10;
+        settings.projection.pressureSolve
+            .absoluteResidualTolerancePascalsMeters = 1.0e-13;
+        settings.projection.pressureSolve.relativeResidualTolerance = 0.0;
+        settings.projection.pressureSolve.maximumIterations = 300;
+        const std::vector<
+            PlanarPressureRegionFragmentOpeningResistanceDefinition>
+            resistance{{100, {0.0, 0.0}}};
+        const auto diagnostics =
+            advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
+                pressureOperator, base, geometry, sweep, fragments,
+                topology, volumeRates, definitions, openings, resistance,
+                velocity, samples, flux, pressure, settings);
+        check(seeded.accepted && diagnostics.accepted,
+              "opening pressure-state all-axis fixture advances");
+        if (!seeded.accepted || !diagnostics.accepted) continue;
+        const auto accepted =
+            capturePlanarPressureRegionFragmentOpeningAcceptedState(
+                pressureOperator, base, geometry, sweep, fragments,
+                topology, volumeRates, definitions, openings, resistance,
+                diagnostics, velocity, samples, flux, pressure, settings);
+        const auto state =
+            composePlanarPressureRegionFragmentOpeningPressureState(
+                accepted, pressureOperator, base, geometry, sweep,
+                fragments, topology, volumeRates, definitions, openings,
+                resistance);
+        const auto pressureWall = std::ranges::find_if(
+            state.walls,
+            [&](const auto& candidate) {
+                return candidate.sourceFaceLinkStableId == wall->stableId;
+            });
+        check(pressureWall != state.walls.end(),
+              "opening pressure state retains its source wall on every axis");
+        if (pressureWall == state.walls.end()) continue;
+        const Vector3 expectedAuthoredForce = axis == GridFaceAxis::X
+            ? Vector3{-70.0 * wall->areaSquareMeters, 0.0, 0.0}
+            : axis == GridFaceAxis::Y
+            ? Vector3{0.0, -70.0 * wall->areaSquareMeters, 0.0}
+            : Vector3{0.0, 0.0, -70.0 * wall->areaSquareMeters};
+        check(state.accepted && state.components.size() == 1
+                  && pressureWall->axis == axis
+                  && pressureWall->authoredPressureForceOnSheetNewtons
+                      == expectedAuthoredForce
+                  && pressureWall->totalPressureImpulseOnSheetNewtonSeconds
+                      == Vector3{
+                          pressureWall
+                                  ->totalPressureForceOnSheetNewtons.x
+                              * state.timeStepSeconds,
+                          pressureWall
+                                  ->totalPressureForceOnSheetNewtons.y
+                              * state.timeStepSeconds,
+                          pressureWall
+                                  ->totalPressureForceOnSheetNewtons.z
+                              * state.timeStepSeconds}
+                  && std::abs(state.wallGeometryWorkResidualJoules)
+                      <= state.settings
+                             .absoluteWorkResidualToleranceJoules,
+              "opening pressure state closes force, impulse, and work on every axis");
+    }
 }
 
 void testAllAxisAssembly() {
@@ -9593,6 +9909,7 @@ int main() {
     testPlanarRegionalPressureDrivenOpeningProjection();
     testPlanarRegionalOpeningResistance();
     testPlanarRegionalResistedOpeningPressureStep();
+    testPlanarRegionalOpeningPressureStateAxes();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {

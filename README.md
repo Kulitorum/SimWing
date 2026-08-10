@@ -382,9 +382,19 @@ component continuity, pressure gauges, solid-wall zero flow, and post-step
 diagonal kinetic energy before retaining the step's closed energy and solver
 evidence. Nested flux or field corruption, foreign coefficients, unaccepted
 steps, source mismatches, and count/byte-limit violations are rejected. This
-fills the rollback-safe aperture-flow continuation boundary; a later composition
-must still build total authored-plus-correction regional pressure and bind the
-opening-aware load ledger before any Structure or worker handoff.
+fills the rollback-safe aperture-flow continuation boundary without itself
+building total pressure or loads. Total regional pressure composition is now
+available as a separate
+immutable opening-connected state. Each control retains authored, correction,
+and total pressure under the augmented component gauge; every full pressure-
+wall tile publishes the corresponding sheet force, time-integrated impulse,
+and material work. The two absolute fluid-side wall contributions close to
+`-dt*sum(p*dV/dt)` independently per opening-connected component and globally,
+while the correction geometry work must reproduce the accepted aperture
+projection. X/Y/Z orientation, source fingerprints, corruption, foreign
+endpoints, and bounded storage are covered. This is still the full-wall source
+ledger: the next handoff must bind it to the aperture area partition before
+any retained-solid traction can reach Structure.
 An opening-aware surface-load ledger now supplies the missing opt-in load-area
 partition. It binds each aperture partition to its exact composed pressure-wall
 tile, leaves pressure-jump traction unchanged, removes force/impulse/work from
