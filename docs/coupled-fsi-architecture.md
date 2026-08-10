@@ -443,6 +443,7 @@ src/fsi/
     scene_fluid_regional_opening_momentum_wall_cycle_owner.* transactional in-memory owner
     scene_fluid_regional_opening_momentum_wall_load_application.* conservative Structure wall-load receipt
     scene_fluid_regional_opening_momentum_wall_load_epoch.* atomic pressure-plus-wall pending-load epoch
+    scene_fluid_regional_opening_momentum_wall_structure_step_epoch.* replayable one-step XPBD consumption
     scene_fluid_region_link_flow.* current-link region predictor
     scene_fluid_pressure_coupling.* strong pressure/shear feedback
     scene_pressure_cell_geometry.* shared visible/refinement tetrahedra
@@ -2998,6 +2999,19 @@ both mutations bit-exactly. The combined prior, pressure, wall, and resulting
 force ledger closes deterministically on rebuilt targets restored from `SWRW`.
 This still stops at pending loads: Structure is not stepped, fluid state is not
 advanced or committed, and no production worker selects the epoch.
+`scene_fluid_regional_opening_momentum_wall_structure_step_epoch.*` is the
+first isolated consumer of that complete pending-load endpoint. It requires the
+XPBD macro-step duration to match the retained fluid adjustment duration
+exactly, applies pressure then conservative wall traction, and consumes the
+resulting loads in one accepted Structure step. Deterministic complete
+Structure checkpoint encodings retain both endpoints beside the nested load
+receipt, exact solver settings, and finite diagnostics. Full validation restores
+a fresh Structure from the pre-step bytes, repeats both load applications and
+the step, and requires byte-identical post-step state and diagnostics. A late
+persistence or aggregate failure rolls the live target all the way back before
+pressure application. This is still an opt-in proof: it neither advances nor
+commits fluid state, rebases topology, repeats a coupled cycle, nor changes the
+production worker.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

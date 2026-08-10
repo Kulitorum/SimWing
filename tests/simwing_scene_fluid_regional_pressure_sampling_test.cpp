@@ -22,6 +22,7 @@
 #include "scene_fluid_regional_opening_momentum_wall_load_application.h"
 #include "scene_fluid_regional_opening_momentum_wall_load_epoch.h"
 #include "scene_fluid_regional_opening_momentum_wall_pressure_epoch.h"
+#include "scene_fluid_regional_opening_momentum_wall_structure_step_epoch.h"
 
 #include <algorithm>
 #include <cmath>
@@ -832,6 +833,45 @@ void validateOpeningMomentumWallLoadEpoch(
         endpoint.resistanceDefinitions, endpoint.baseMetric,
         endpoint.openingMetric, scene.surface.definition, scene.state,
         scene.transfer, scene.quadrature, settings, limits);
+}
+
+SceneFluidRegionalOpeningMomentumWallStructureStepEpoch
+advanceOpeningMomentumWallStructureStepEpoch(
+    const SceneFluidRegionalOpeningMomentumWallCycleState& cycleState,
+    const OpeningRegionalEndpoint& endpoint,
+    SceneFixture& scene,
+    const SceneFluidRegionalOpeningMomentumWallStructureStepEpochSettings&
+        settings,
+    const SceneFluidRegionalOpeningMomentumWallStructureStepEpochLimits&
+        limits = {}) {
+    return advanceSceneFluidRegionalOpeningMomentumWallStructureStepEpoch(
+        cycleState, endpoint.openingMetric, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric, scene.surface.definition, scene.state,
+        scene.transfer, scene.quadrature, scene.structure, settings, limits);
+}
+
+void validateOpeningMomentumWallStructureStepEpoch(
+    const SceneFluidRegionalOpeningMomentumWallStructureStepEpoch& epoch,
+    const SceneFluidRegionalOpeningMomentumWallCycleState& cycleState,
+    const OpeningRegionalEndpoint& endpoint,
+    const SceneFixture& scene,
+    const SceneFluidRegionalOpeningMomentumWallStructureStepEpochSettings&
+        settings,
+    const SceneFluidRegionalOpeningMomentumWallStructureStepEpochLimits&
+        limits = {}) {
+    validateSceneFluidRegionalOpeningMomentumWallStructureStepEpoch(
+        epoch, cycleState, endpoint.openingMetric,
+        endpoint.pressureOperator, endpoint.basePressureOperator,
+        endpoint.geometry, endpoint.sweep, endpoint.fragments,
+        endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric, scene.surface.definition, scene.state,
+        scene.transfer, scene.quadrature, scene.structure, settings, limits);
 }
 
 void validateOpeningMomentumWallInput(
@@ -2618,6 +2658,147 @@ void testOpeningMomentumWallExchange() {
               beforeLateLimitedCombined,
               lateLimitedCombinedFixture.structure.checkpoint()),
           "regional opening momentum wall-load epoch: late outer rejection restores both pressure and wall loads");
+
+    SceneFluidRegionalOpeningMomentumWallStructureStepEpochSettings
+        structureStepSettings;
+    structureStepSettings.structure.timeStepSeconds =
+        decodedWallCycleState.adjustedMomentum.timeStepSeconds;
+    structureStepSettings.structure.substeps = 1;
+    structureStepSettings.structure.constraintIterations = 8;
+    structureStepSettings.structure.gravityMetersPerSecondSquared = {};
+    structureStepSettings.structure.velocityDampingPerSecond = 0.0;
+    structureStepSettings.structure.workerThreads = 0;
+
+    SceneFixture structureStepFixture(
+        partialOpeningPressureScene(), false);
+    const auto beforeStructureStep =
+        structureStepFixture.structure.checkpoint();
+    const auto structureStepEpoch =
+        advanceOpeningMomentumWallStructureStepEpoch(
+            decodedWallCycleState, endpoint, structureStepFixture,
+            structureStepSettings);
+    const auto afterStructureStep =
+        structureStepFixture.structure.checkpoint();
+    validateOpeningMomentumWallStructureStepEpoch(
+        structureStepEpoch, decodedWallCycleState, endpoint,
+        structureStepFixture, structureStepSettings);
+    const bool structureMoved =
+        !std::ranges::equal(
+            beforeStructureStep.nodes, afterStructureStep.nodes);
+    const bool pendingLoadsConsumed = std::ranges::all_of(
+        afterStructureStep.pendingExternalForcesNewtons,
+        [](const StructureVector3& value) {
+            return value == StructureVector3{};
+        });
+    check(structureStepEpoch.stepped
+              && structureStepEpoch.version
+                  == sceneFluidRegionalOpeningMomentumWallStructureStepEpochVersion
+              && structureStepEpoch.fingerprint != 0
+              && structureStepEpoch.loadEpoch.applied
+              && structureStepEpoch.diagnostics.finite
+              && structureStepEpoch.beforeStructureCheckpoint.size() > 24
+              && structureStepEpoch.afterStructureCheckpoint.size() > 24
+              && structureStepEpoch.beforeStructureCheckpoint
+                  != structureStepEpoch.afterStructureCheckpoint
+              && structureMoved && pendingLoadsConsumed
+              && afterStructureStep.acceptedStepCount
+                  == beforeStructureStep.acceptedStepCount + 1
+              && afterStructureStep.simulationTimeSeconds
+                  == beforeStructureStep.simulationTimeSeconds
+                      + structureStepSettings.structure.timeStepSeconds
+              && afterStructureStep.lastAppliedExternalForceNewtons
+                  == structureStepEpoch.loadEpoch
+                         .resultingPendingForceNewtons
+              && structureStepEpoch.diagnostics
+                     .lastAppliedExternalForceNewtons
+                  == afterStructureStep.lastAppliedExternalForceNewtons,
+          "regional opening wall structural-step epoch: combined loads deform XPBD once and retain complete endpoints");
+
+    SceneFixture repeatedStructureStepFixture(
+        partialOpeningPressureScene(), false);
+    const auto repeatedStructureStepEpoch =
+        advanceOpeningMomentumWallStructureStepEpoch(
+            decodedWallCycleState, endpoint,
+            repeatedStructureStepFixture, structureStepSettings);
+    check(repeatedStructureStepEpoch.fingerprint
+                  == structureStepEpoch.fingerprint
+              && repeatedStructureStepEpoch.loadEpoch
+                  == structureStepEpoch.loadEpoch
+              && repeatedStructureStepEpoch.diagnostics
+                  == structureStepEpoch.diagnostics
+              && repeatedStructureStepEpoch.beforeStructureCheckpoint
+                  == structureStepEpoch.beforeStructureCheckpoint
+              && repeatedStructureStepEpoch.afterStructureCheckpoint
+                  == structureStepEpoch.afterStructureCheckpoint,
+          "regional opening wall structural-step epoch: rebuilt Structure replay is byte-identical");
+
+    auto corruptStructureStepEpoch = structureStepEpoch;
+    corruptStructureStepEpoch.afterStructureCheckpoint.back() ^= 0x01U;
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningMomentumWallStructureStepEpochIntegrity(
+                corruptStructureStepEpoch);
+        },
+        "regional opening wall structural-step epoch: corrupt retained checkpoint rejects");
+    corruptStructureStepEpoch = structureStepEpoch;
+    corruptStructureStepEpoch.diagnostics.kineticEnergyJoules += 1.0;
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningMomentumWallStructureStepEpochIntegrity(
+                corruptStructureStepEpoch);
+        },
+        "regional opening wall structural-step epoch: corrupt diagnostics reject");
+
+    auto foreignStructureStepSettings = structureStepSettings;
+    foreignStructureStepSettings.structure.constraintIterations += 1;
+    expectRejected(
+        [&] {
+            validateOpeningMomentumWallStructureStepEpoch(
+                structureStepEpoch, decodedWallCycleState, endpoint,
+                structureStepFixture, foreignStructureStepSettings);
+        },
+        "regional opening wall structural-step epoch: foreign structural settings reject replay");
+
+    SceneFixture mismatchedStepFixture(
+        partialOpeningPressureScene(), false);
+    const auto beforeMismatchedStep =
+        mismatchedStepFixture.structure.checkpoint();
+    auto mismatchedStepSettings = structureStepSettings;
+    mismatchedStepSettings.structure.timeStepSeconds *= 0.5;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                advanceOpeningMomentumWallStructureStepEpoch(
+                    decodedWallCycleState, endpoint,
+                    mismatchedStepFixture, mismatchedStepSettings));
+        },
+        "regional opening wall structural-step epoch: mismatched fluid and structural time steps reject");
+    check(samePublicCheckpoint(
+              beforeMismatchedStep,
+              mismatchedStepFixture.structure.checkpoint()),
+          "regional opening wall structural-step epoch: time-step rejection preserves target state");
+
+    SceneFixture lateLimitedStructureStepFixture(
+        partialOpeningPressureScene(), false);
+    const auto beforeLateLimitedStructureStep =
+        lateLimitedStructureStepFixture.structure.checkpoint();
+    auto structureStepLimits =
+        SceneFluidRegionalOpeningMomentumWallStructureStepEpochLimits{};
+    structureStepLimits.maximumOwnedBytes =
+        structureStepEpoch.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                advanceOpeningMomentumWallStructureStepEpoch(
+                    decodedWallCycleState, endpoint,
+                    lateLimitedStructureStepFixture,
+                    structureStepSettings, structureStepLimits));
+        },
+        "regional opening wall structural-step epoch: late aggregate limit rejects after XPBD consumption");
+    check(samePublicCheckpoint(
+              beforeLateLimitedStructureStep,
+              lateLimitedStructureStepFixture.structure.checkpoint()),
+          "regional opening wall structural-step epoch: late outer rejection restores pre-load Structure state");
 
     const auto rejectingLayers = translatePlanarPressureJumpLayers(
         endpoint.geometry, endpoint.layers, 0.1).layers;
