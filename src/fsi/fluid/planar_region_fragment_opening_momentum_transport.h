@@ -9,6 +9,8 @@
 
 namespace simwing::fsi::fluid {
 
+struct PlanarPressureRegionFragmentOpeningMomentumAdjustmentState;
+
 inline constexpr std::uint32_t
     planarPressureRegionFragmentOpeningMomentumTransportVersion = 2;
 
@@ -97,9 +99,10 @@ struct PlanarPressureRegionFragmentOpeningMomentumTransportDiagnostics {
 // First-order conservative ALE advance of complete collocated fragment
 // momentum. The first epoch takes one vector momentum per previous physical
 // fragment from a velocity state. A later epoch takes the exact accepted
-// collocated controls from the preceding transport instead, without
-// reconstructing them through a face state. Exactly one of those source
-// lineages is present. The target velocity state supplies only the corrected
+// collocated controls from the preceding transport or from an independently
+// proven identity-preserving adjustment state, without reconstructing them
+// through a face state. Exactly one source lineage is present. The target
+// velocity state supplies only the corrected
 // relative normal flow on fixed-grid and aperture degrees; retained solid
 // traces carry no inter-fragment mass. Donor selection transports the complete
 // vector through each connection while target fragment volumes advance
@@ -116,6 +119,7 @@ struct PlanarPressureRegionFragmentOpeningMomentumTransport {
     std::uint64_t fingerprint = 0;
     std::uint64_t sourceStateFingerprint = 0;
     std::uint64_t sourceTransportFingerprint = 0;
+    std::uint64_t sourceAdjustmentStateFingerprint = 0;
     std::uint64_t sourceMetricFingerprint = 0;
     std::uint64_t targetFlowStateFingerprint = 0;
     std::uint64_t targetMetricFingerprint = 0;
@@ -169,6 +173,23 @@ advancePlanarPressureRegionFragmentOpeningMomentum(
     const PlanarPressureRegionFragmentOpeningMomentumTransportLimits& limits =
         {});
 
+[[nodiscard]] PlanarPressureRegionFragmentOpeningMomentumTransport
+advancePlanarPressureRegionFragmentOpeningMomentum(
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState&
+        sourceAdjustmentState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& sourceMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityState& targetFlowState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& targetMetric,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& targetSweep,
+    const PlanarPressureRegionFragmentSet& targetFragments,
+    const PlanarPressureRegionFragmentTopology& targetTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& targetVolumeRates,
+    const PlanarPressureRegionFragmentOpeningMomentumTransportSettings&
+        settings = {},
+    const PlanarPressureRegionFragmentOpeningMomentumTransportLimits& limits =
+        {});
+
 void validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
     const PlanarPressureRegionFragmentOpeningMomentumTransport& transport);
 
@@ -190,6 +211,21 @@ void validatePlanarPressureRegionFragmentOpeningMomentumTransport(
     const PlanarPressureRegionFragmentOpeningMomentumTransport& transport,
     const PlanarPressureRegionFragmentOpeningMomentumTransport&
         sourceTransport,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& sourceMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityState& targetFlowState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& targetMetric,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& targetSweep,
+    const PlanarPressureRegionFragmentSet& targetFragments,
+    const PlanarPressureRegionFragmentTopology& targetTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& targetVolumeRates,
+    const PlanarPressureRegionFragmentOpeningMomentumTransportLimits& limits =
+        {});
+
+void validatePlanarPressureRegionFragmentOpeningMomentumTransport(
+    const PlanarPressureRegionFragmentOpeningMomentumTransport& transport,
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState&
+        sourceAdjustmentState,
     const PlanarPressureRegionFragmentOpeningVelocityMetric& sourceMetric,
     const PlanarPressureRegionFragmentOpeningVelocityState& targetFlowState,
     const PlanarPressureRegionFragmentOpeningVelocityMetric& targetMetric,

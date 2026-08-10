@@ -1932,6 +1932,116 @@ void testOpeningMomentumWallExchange() {
                      .usedWarmPressureStart,
           "regional opening wall pressure epoch: pressure-only warm lineage composes without carrying stale flow");
 
+    const auto baselineTargetFlow =
+        capturePlanarPressureRegionFragmentOpeningVelocityState(
+            baselinePressureEpoch.acceptedState,
+            endpoint.pressureOperator, endpoint.basePressureOperator,
+            endpoint.geometry, endpoint.sweep, endpoint.fragments,
+            endpoint.topology, endpoint.volumeRates,
+            endpoint.openingDefinitions, endpoint.openings,
+            endpoint.resistanceDefinitions, endpoint.baseMetric,
+            endpoint.openingMetric);
+    const auto adjustedTargetFlow =
+        capturePlanarPressureRegionFragmentOpeningVelocityState(
+            adjustedPressureEpoch.acceptedState,
+            endpoint.pressureOperator, endpoint.basePressureOperator,
+            endpoint.geometry, endpoint.sweep, endpoint.fragments,
+            endpoint.topology, endpoint.volumeRates,
+            endpoint.openingDefinitions, endpoint.openings,
+            endpoint.resistanceDefinitions, endpoint.baseMetric,
+            endpoint.openingMetric);
+    const auto zeroTargetFlow =
+        capturePlanarPressureRegionFragmentOpeningVelocityState(
+            zeroPressureEpoch.acceptedState, endpoint.pressureOperator,
+            endpoint.basePressureOperator, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.resistanceDefinitions,
+            endpoint.baseMetric, endpoint.openingMetric);
+    const auto baselineNextTransport =
+        advancePlanarPressureRegionFragmentOpeningMomentum(
+            endpoint.momentumCycle.transport, endpoint.openingMetric,
+            baselineTargetFlow, endpoint.openingMetric,
+            endpoint.geometry, endpoint.sweep, endpoint.fragments,
+            endpoint.topology, endpoint.volumeRates,
+            endpoint.momentumCycle.transportSettings);
+    const auto adjustedNextTransport =
+        advancePlanarPressureRegionFragmentOpeningMomentum(
+            adjustment, endpoint.openingMetric, adjustedTargetFlow,
+            endpoint.openingMetric, endpoint.geometry, endpoint.sweep,
+            endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates,
+            endpoint.momentumCycle.transportSettings);
+    const auto zeroNextTransport =
+        advancePlanarPressureRegionFragmentOpeningMomentum(
+            zeroAdjustment, endpoint.openingMetric, zeroTargetFlow,
+            endpoint.openingMetric, endpoint.geometry, endpoint.sweep,
+            endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates,
+            endpoint.momentumCycle.transportSettings);
+    validatePlanarPressureRegionFragmentOpeningMomentumTransport(
+        adjustedNextTransport, adjustment, endpoint.openingMetric,
+        adjustedTargetFlow, endpoint.openingMetric, endpoint.geometry,
+        endpoint.sweep, endpoint.fragments, endpoint.topology,
+        endpoint.volumeRates);
+    check(baselineNextTransport.diagnostics.accepted
+              && adjustedNextTransport.diagnostics.accepted
+              && zeroNextTransport.diagnostics.accepted
+              && baselineNextTransport.sourceTransportFingerprint
+                  == endpoint.momentumCycle.transport.fingerprint
+              && baselineNextTransport.sourceAdjustmentStateFingerprint
+                  == 0
+              && adjustedNextTransport.sourceTransportFingerprint == 0
+              && adjustedNextTransport.sourceAdjustmentStateFingerprint
+                  == adjustment.fingerprint
+              && adjustedNextTransport.controls
+                  != baselineNextTransport.controls
+              && zeroNextTransport.controls
+                  == baselineNextTransport.controls
+              && zeroNextTransport.diagnostics
+                  == baselineNextTransport.diagnostics
+              && zeroNextTransport.fingerprint
+                  != baselineNextTransport.fingerprint,
+          "regional opening wall pressure epoch: adjusted collocated momentum propagates into the next ALE transport with zero-viscosity numeric identity");
+
+    auto ambiguousNextTransport = adjustedNextTransport;
+    ambiguousNextTransport.sourceTransportFingerprint =
+        endpoint.momentumCycle.transport.fingerprint;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
+                ambiguousNextTransport);
+        },
+        "regional opening wall pressure epoch: ambiguous adjusted/raw transport lineage rejects");
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningMomentumTransport(
+                adjustedNextTransport, zeroAdjustment,
+                endpoint.openingMetric, zeroTargetFlow,
+                endpoint.openingMetric, endpoint.geometry,
+                endpoint.sweep, endpoint.fragments, endpoint.topology,
+                endpoint.volumeRates);
+        },
+        "regional opening wall pressure epoch: foreign adjustment rejects next-transport validation");
+
+    auto nextTransportLimits =
+        PlanarPressureRegionFragmentOpeningMomentumTransportLimits{};
+    nextTransportLimits.maximumFragments =
+        adjustment.controls.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                advancePlanarPressureRegionFragmentOpeningMomentum(
+                    adjustment, endpoint.openingMetric,
+                    adjustedTargetFlow, endpoint.openingMetric,
+                    endpoint.geometry, endpoint.sweep,
+                    endpoint.fragments, endpoint.topology,
+                    endpoint.volumeRates,
+                    endpoint.momentumCycle.transportSettings,
+                    nextTransportLimits));
+        },
+        "regional opening wall pressure epoch: adjusted-source next-transport limit rejects");
+
     auto corruptWallPressureEpoch = wallPressureEpoch;
     ++corruptWallPressureEpoch.pressureEpoch.sourcePredictionFingerprint;
     expectRejected(

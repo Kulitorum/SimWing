@@ -2520,9 +2520,11 @@ advect momentum, project pressure, rebase topology, or enter the worker.
 `planar_region_fragment_opening_momentum_transport.*` now performs consecutive
 topology-stable ALE advances. Its first epoch consumes collocated vectors from
 an opening velocity state; every re-entrant epoch consumes the preceding
-accepted transport controls directly, so exact collocated momentum never
-round-trips through a reconstructed face field. Exactly one source lineage is
-fingerprinted. The target pressure-corrected state supplies only relative flow
+accepted transport controls or an identity-preserving adjusted state directly,
+so exact collocated momentum never round-trips through a reconstructed face
+field. Exactly one of the three source lineages is fingerprinted. The original
+state/transport paths retain their exact arithmetic and fingerprints. The
+target pressure-corrected state supplies only relative flow
 on same-region Cartesian and aperture degrees. Previous and current fragments
 map by stable identity, and independently reconstructed endpoint volumes may
 differ only at roundoff scale. Retained solid traces move with their material
@@ -2536,8 +2538,12 @@ solution through a pressure-accepted second step on X/Y/Z; nonuniform flow
 dissipates energy without losing momentum, and breathing pressure correction
 feeds a second live-aperture transport. Rejected, corrupted, or foreign prior
 transports and continuity/substep-limit failures publish no accepted controls.
-This remains opt-in: it adds no viscosity, wall shear, topology rebase,
-production-worker mutation, or pressure warm-start policy.
+Zero adjustment reproduces the raw-transport controls and diagnostics exactly
+with distinct lineage, while nonzero wall adjustment changes the next accepted
+ALE transport. This third lineage is not yet admitted to the mutable momentum
+cycle or its `SWRM` codec. The overload remains opt-in: it adds no viscosity,
+wall shear, topology rebase, production-worker mutation, or pressure warm-start
+policy.
 `planar_region_fragment_opening_momentum_adjustment_state.*` now provides the
 fluid-owned boundary for a same-epoch physical adjustment without fabricating
 another accepted transport. It binds a nonzero opaque adjustment fingerprint
@@ -2936,7 +2942,9 @@ nested numeric prediction and accepted endpoint exactly. Cold and warm paths
 match their direct fluid transactions; corrupt provenance, a foreign or
 rejected exchange, and late aggregate limits reject. This receipt is not yet
 consumed by the mutable cycle or worker and does not apply the retained wall
-traction to Structure.
+traction to Structure. Its adjusted state can now seed a separate opt-in next
+ALE transport directly: zero viscosity matches the raw-transport numeric
+endpoint exactly, while nonzero shear persists into that next transport.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

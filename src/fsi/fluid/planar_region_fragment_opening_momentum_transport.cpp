@@ -1,5 +1,7 @@
 #include "fluid/planar_region_fragment_opening_momentum_transport.h"
 
+#include "fluid/planar_region_fragment_opening_momentum_adjustment_state.h"
+
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -173,6 +175,9 @@ std::uint64_t transportFingerprint(
     fingerprint.integer(transport.version);
     fingerprint.integer(transport.sourceStateFingerprint);
     fingerprint.integer(transport.sourceTransportFingerprint);
+    if (transport.sourceAdjustmentStateFingerprint != 0) {
+        fingerprint.integer(transport.sourceAdjustmentStateFingerprint);
+    }
     fingerprint.integer(transport.sourceMetricFingerprint);
     fingerprint.integer(transport.targetFlowStateFingerprint);
     fingerprint.integer(transport.targetMetricFingerprint);
@@ -279,6 +284,11 @@ const auto& momentumSourceControls(
     return source.controls;
 }
 
+const auto& momentumSourceControls(
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState& source) {
+    return source.controls;
+}
+
 Vector3 momentumSourceVelocity(
     const PlanarPressureRegionFragmentOpeningVelocityStateFragment& source) {
     return source.collocatedVelocityMetersPerSecond;
@@ -299,6 +309,17 @@ void validateMomentumSource(
                       PlanarPressureRegionFragmentOpeningVelocityState>) {
         validatePlanarPressureRegionFragmentOpeningVelocityState(
             source, sourceMetric, limits.stateLimits);
+    } else if constexpr (std::is_same_v<
+                             Source,
+                             PlanarPressureRegionFragmentOpeningMomentumAdjustmentState>) {
+        validatePlanarPressureRegionFragmentOpeningMomentumAdjustmentStateIntegrity(
+            source);
+        validatePlanarPressureRegionFragmentOpeningVelocityMetricIntegrity(
+            sourceMetric);
+        if (source.sourceMetricFingerprint != sourceMetric.fingerprint) {
+            throw std::invalid_argument(
+                "opening momentum-transport source adjustment is invalid");
+        }
     } else {
         validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
             source);
@@ -392,6 +413,10 @@ PlanarPressureRegionFragmentOpeningMomentumTransport buildTransport(
                       Source,
                       PlanarPressureRegionFragmentOpeningVelocityState>) {
         result.sourceStateFingerprint = sourceArtifact.fingerprint;
+    } else if constexpr (std::is_same_v<
+                             Source,
+                             PlanarPressureRegionFragmentOpeningMomentumAdjustmentState>) {
+        result.sourceAdjustmentStateFingerprint = sourceArtifact.fingerprint;
     } else {
         result.sourceTransportFingerprint = sourceArtifact.fingerprint;
     }
@@ -789,6 +814,27 @@ advancePlanarPressureRegionFragmentOpeningMomentum(
         settings, limits);
 }
 
+PlanarPressureRegionFragmentOpeningMomentumTransport
+advancePlanarPressureRegionFragmentOpeningMomentum(
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState&
+        sourceAdjustmentState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& sourceMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityState& targetFlowState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& targetMetric,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& targetSweep,
+    const PlanarPressureRegionFragmentSet& targetFragments,
+    const PlanarPressureRegionFragmentTopology& targetTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& targetVolumeRates,
+    const PlanarPressureRegionFragmentOpeningMomentumTransportSettings&
+        settings,
+    const PlanarPressureRegionFragmentOpeningMomentumTransportLimits& limits) {
+    return buildTransport(
+        sourceAdjustmentState, sourceMetric, targetFlowState, targetMetric,
+        grid, targetSweep, targetFragments, targetTopology,
+        targetVolumeRates, settings, limits);
+}
+
 void validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
     const PlanarPressureRegionFragmentOpeningMomentumTransport& transport) {
     const auto& diagnostics = transport.diagnostics;
@@ -828,13 +874,16 @@ void validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
             != PlanarPressureRegionFragmentOpeningMomentumTransportFailureStage::
                 None
         && transport.controls.empty() && transport.ownedStorageBytes == 0;
-    const bool validSourceLineage =
-        (transport.sourceStateFingerprint != 0)
-        != (transport.sourceTransportFingerprint != 0);
+    const std::size_t sourceLineageCount =
+        static_cast<std::size_t>(transport.sourceStateFingerprint != 0)
+        + static_cast<std::size_t>(
+            transport.sourceTransportFingerprint != 0)
+        + static_cast<std::size_t>(
+            transport.sourceAdjustmentStateFingerprint != 0);
     if (transport.version
             != planarPressureRegionFragmentOpeningMomentumTransportVersion
         || transport.fingerprint == 0
-        || !validSourceLineage
+        || sourceLineageCount != 1
         || transport.sourceMetricFingerprint == 0
         || transport.targetFlowStateFingerprint == 0
         || transport.targetMetricFingerprint == 0
@@ -955,6 +1004,37 @@ void validatePlanarPressureRegionFragmentOpeningMomentumTransport(
             sourceTransport, sourceMetric, targetFlowState, targetMetric,
             grid, targetSweep, targetFragments, targetTopology,
             targetVolumeRates, transport.settings, limits)) {
+        throw std::invalid_argument(
+            "opening momentum transport is foreign to its source");
+    }
+}
+
+void validatePlanarPressureRegionFragmentOpeningMomentumTransport(
+    const PlanarPressureRegionFragmentOpeningMomentumTransport& transport,
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState&
+        sourceAdjustmentState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& sourceMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityState& targetFlowState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& targetMetric,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& targetSweep,
+    const PlanarPressureRegionFragmentSet& targetFragments,
+    const PlanarPressureRegionFragmentTopology& targetTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& targetVolumeRates,
+    const PlanarPressureRegionFragmentOpeningMomentumTransportLimits& limits) {
+    validateLimits(limits);
+    validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
+        transport);
+    if (transport.controls.size() > limits.maximumFragments
+        || transport.ownedStorageBytes > limits.maximumOwnedBytes
+        || transport.workingStorageBytes > limits.maximumWorkingBytes) {
+        throw std::length_error(
+            "opening momentum-transport validation limit exceeded");
+    }
+    if (transport != buildTransport(
+            sourceAdjustmentState, sourceMetric, targetFlowState,
+            targetMetric, grid, targetSweep, targetFragments,
+            targetTopology, targetVolumeRates, transport.settings, limits)) {
         throw std::invalid_argument(
             "opening momentum transport is foreign to its source");
     }
