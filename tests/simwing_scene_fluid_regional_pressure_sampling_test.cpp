@@ -14,6 +14,7 @@
 #include "scene_fluid_regional_pressure_sampling.h"
 #include "scene_fluid_regional_opening_load_epoch.h"
 #include "scene_fluid_regional_opening_momentum_load_epoch.h"
+#include "scene_fluid_regional_opening_momentum_wall_input.h"
 
 #include <algorithm>
 #include <cmath>
@@ -266,7 +267,9 @@ struct OpeningRegionalEndpoint {
     PlanarPressureRegionFragmentOpeningSurfaceLoadLedger openingSurfaceLoads;
     PlanarPressureRegionFragmentOpeningLoadState loadState;
 
-    explicit OpeningRegionalEndpoint(const bool fullyOpenFirstSurface = true) {
+    explicit OpeningRegionalEndpoint(
+        const bool fullyOpenFirstSurface = true,
+        const Vector3 fluidVelocityMetersPerSecond = {}) {
         constexpr double durationSeconds = 0.01;
         sweep = makePlanarPressureRegionSweepLedger(
             geometry, layers, layers, durationSeconds);
@@ -333,6 +336,24 @@ struct OpeningRegionalEndpoint {
             geometry, sweep, fragments, topology, openingDefinitions,
             openings, samples);
         std::vector<double> velocity(topology.links.size(), 0.0);
+        const auto component = [&](const GridFaceAxis axis) {
+            switch (axis) {
+            case GridFaceAxis::X:
+                return fluidVelocityMetersPerSecond.x;
+            case GridFaceAxis::Y:
+                return fluidVelocityMetersPerSecond.y;
+            case GridFaceAxis::Z:
+                return fluidVelocityMetersPerSecond.z;
+            }
+            throw std::logic_error(
+                "opening regional fixture axis is invalid");
+        };
+        for (const auto& link : topology.links) {
+            if (link.kind
+                == PlanarPressureRegionFragmentFaceKind::SameRegionGrid) {
+                velocity[link.linkIndex] = component(link.axis);
+            }
+        }
         std::vector<double> pressureCorrection(
             basePressureOperator.rows.size(), 0.0);
         PlanarPressureRegionFragmentOpeningPressureStepSettings settings;
@@ -694,6 +715,39 @@ void validateOpeningMomentumLoadEpoch(
         endpoint.openingDefinitions, endpoint.openings,
         endpoint.resistanceDefinitions, endpoint.openingMetric,
         scene.surface.definition, scene.state, scene.transfer,
+        scene.quadrature, settings, limits);
+}
+
+SceneFluidRegionalOpeningMomentumWallInput captureOpeningMomentumWallInput(
+    const PlanarPressureRegionFragmentOpeningMomentumTransport& transport,
+    const OpeningRegionalEndpoint& endpoint,
+    const SceneFixture& scene,
+    const SceneFluidRegionalOpeningMomentumWallInputSettings& settings = {},
+    const SceneFluidRegionalOpeningMomentumWallInputLimits& limits = {}) {
+    return captureSceneFluidRegionalOpeningMomentumWallInput(
+        transport, endpoint.acceptedFlow, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric, scene.surface.definition, scene.state,
+        scene.quadrature, settings, limits);
+}
+
+void validateOpeningMomentumWallInput(
+    const SceneFluidRegionalOpeningMomentumWallInput& input,
+    const PlanarPressureRegionFragmentOpeningMomentumTransport& transport,
+    const OpeningRegionalEndpoint& endpoint,
+    const SceneFixture& scene,
+    const SceneFluidRegionalOpeningMomentumWallInputSettings& settings = {},
+    const SceneFluidRegionalOpeningMomentumWallInputLimits& limits = {}) {
+    validateSceneFluidRegionalOpeningMomentumWallInput(
+        input, transport, endpoint.acceptedFlow, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric, scene.surface.definition, scene.state,
         scene.quadrature, settings, limits);
 }
 
@@ -1478,6 +1532,116 @@ void testAtomicOpeningLoadEpoch() {
           "regional opening epoch: nested rejection preserves Structure");
 }
 
+void testOpeningMomentumWallInput() {
+    const OpeningRegionalEndpoint endpoint(
+        false, Vector3{0.0, 0.4, -0.2});
+    SceneFixture fixture(partialOpeningPressureScene(), false);
+    SceneFixture repeatedFixture(partialOpeningPressureScene(), false);
+
+    const auto input = captureOpeningMomentumWallInput(
+        endpoint.momentumCycle.transport, endpoint, fixture);
+    PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceError
+        persistenceError;
+    std::vector<std::uint8_t> stateBytes;
+    check(serializePlanarPressureRegionFragmentOpeningMomentumCycleState(
+              endpoint.momentumCycleState, endpoint.volumeRates,
+              endpoint.openingMetric, endpoint.pressureOperator,
+              endpoint.basePressureOperator, endpoint.geometry,
+              endpoint.sweep, endpoint.fragments, endpoint.topology,
+              endpoint.volumeRates, endpoint.openingDefinitions,
+              endpoint.openings, endpoint.resistanceDefinitions,
+              endpoint.openingMetric, stateBytes, &persistenceError),
+          "regional opening wall input: source staggered state serializes before same-epoch replay");
+    PlanarPressureRegionFragmentOpeningMomentumCycleState restoredState;
+    check(deserializePlanarPressureRegionFragmentOpeningMomentumCycleState(
+              stateBytes, endpoint.volumeRates, endpoint.openingMetric,
+              endpoint.pressureOperator, endpoint.basePressureOperator,
+              endpoint.geometry, endpoint.sweep, endpoint.fragments,
+              endpoint.topology, endpoint.volumeRates,
+              endpoint.openingDefinitions, endpoint.openings,
+              endpoint.resistanceDefinitions, endpoint.openingMetric,
+              restoredState, &persistenceError),
+          "regional opening wall input: source staggered state restores for same-epoch replay");
+    const auto repeated = captureOpeningMomentumWallInput(
+        restoredState.transport, endpoint, repeatedFixture);
+
+    bool zeroExchange = true;
+    for (const auto& sample : input.samples) {
+        zeroExchange = zeroExchange
+            && sample.negativeSideFluidImpulseKilogramMetersPerSecond
+                == Vector3{}
+            && sample.positiveSideFluidImpulseKilogramMetersPerSecond
+                == Vector3{}
+            && sample.structureTraction.tractionPascals
+                == StructureVector3{};
+    }
+    double maximumTangentialSpeed = 0.0;
+    for (const auto& control : input.controlVolumes) {
+        maximumTangentialSpeed = std::max(
+            maximumTangentialSpeed,
+            std::hypot(
+                control.velocityMetersPerSecond.y,
+                control.velocityMetersPerSecond.z));
+    }
+    check(input == repeated
+              && input.version
+                  == sceneFluidRegionalOpeningMomentumWallInputVersion
+              && input.fingerprint != 0
+              && input.sourceTransportFingerprint
+                  == endpoint.momentumCycle.transport.fingerprint
+              && input.sourceAcceptedStateFingerprint
+                  == endpoint.acceptedFlow.fingerprint
+              && input.sourceTransportMetricFingerprint
+                  == endpoint.openingMetric.fingerprint
+              && input.sourceSamplingFingerprint != 0
+              && input.quadratureFingerprint
+                  == fixture.quadrature.fingerprint
+              && input.controlVolumes.size()
+                  == endpoint.momentumCycle.transport.controls.size()
+              && input.samples.size() == fixture.quadrature.points.size()
+              && input.activeControlVolumeCount > 0
+              && input.maximumIncidentWallAreaSquareMeters > 0.0
+              && maximumTangentialSpeed > 0.4
+              && zeroExchange,
+          "regional opening wall input: restored current transport maps deterministically to zero-exchange kernel descriptors");
+    checkNear(input.wallSampleAreaSquareMeters, 7.5, 2.0e-13,
+              "regional opening wall input: retained-solid scene area is complete");
+    checkNear(input.controlIncidentWallAreaSquareMeters, 15.0, 4.0e-13,
+              "regional opening wall input: both fluid sides own every retained-solid sample");
+    validateSceneFluidRegionalOpeningMomentumWallInputIntegrity(input);
+    validateOpeningMomentumWallInput(
+        input, endpoint.momentumCycle.transport, endpoint, fixture);
+
+    auto corrupt = input;
+    corrupt.samples.front().negativeSideControlVolumeIndex =
+        corrupt.controlVolumes.size();
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningMomentumWallInputIntegrity(
+                corrupt);
+        },
+        "regional opening wall input: corrupt fragment ownership rejects");
+
+    auto limits = SceneFluidRegionalOpeningMomentumWallInputLimits{};
+    limits.maximumSamples = input.samples.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(captureOpeningMomentumWallInput(
+                endpoint.momentumCycle.transport, endpoint, fixture, {},
+                limits));
+        },
+        "regional opening wall input: sample limit rejects before publication");
+
+    const OpeningRegionalEndpoint foreignEndpoint(false);
+    expectRejected(
+        [&] {
+            static_cast<void>(captureOpeningMomentumWallInput(
+                foreignEndpoint.momentumCycle.transport, endpoint,
+                fixture));
+        },
+        "regional opening wall input: foreign current transported flow rejects");
+}
+
 void testRejectionAndLimits() {
     const RegionalEndpoint endpoint(false);
     SceneFixture fixture(false);
@@ -1550,6 +1714,7 @@ int main() {
         testMovingLoadApplication();
         testApplicationRollbackAndLimits();
         testAtomicOpeningLoadEpoch();
+        testOpeningMomentumWallInput();
         testRejectionAndLimits();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

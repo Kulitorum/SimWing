@@ -2164,6 +2164,15 @@ makes this a certified aerodynamic solver.
   the cycle and nested receipt together, and encloses even late outer failures
   in a Structure checkpoint rollback. It does not commit the cycle owner, add
   wall shear, step Structure, rebase, or select production ownership.
+- `src/fsi/scene_fluid_regional_opening_momentum_wall_input.{h,cpp}` is the
+  read-only same-epoch ownership adapter between accepted opening-aware
+  collocated transport and the shared material-wall kernel. It rebuilds the
+  transport's current accepted-flow source, composes retained-solid scene
+  samples, maps every sample through its exact pressure wall to two fragment
+  controls, and closes double-sided incident area before publishing zero-
+  impulse/zero-traction descriptors. It deliberately does not consume the
+  staggered cycle's consecutive next-pressure endpoint, run wall exchange,
+  mutate Structure/fluid state, rebase, or select a worker.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -3097,6 +3106,18 @@ Cover deterministic `SWRM` restore onto a rebuilt target, transport provenance
 corruption, foreign cycle sources, early source limits, and late outer rollback. Do not
 commit the cycle owner, add wall shear, step Structure, rebase, or enable a
 worker.
+
+For `scene_fluid_regional_opening_momentum_wall_input.*`, require the transport
+target flow/metric/volume epoch to equal the independently rebuilt current
+accepted opening flow. Map retained-solid scene samples through their exact
+regional pressure walls to stable minus/plus fragment controls; reconstruct
+incident areas from the sample ownership and close their sum to twice the
+sampled wall area. Every published impulse and traction must remain exactly
+zero. Cover nonzero tangential flow, deterministic rebuilt-scene capture,
+`SWRM`-restored transport replay, corrupt ownership, foreign current flow, and
+entity/storage limits. Do not use the consecutive accepted-pressure half of
+the cycle as if it shared the transport geometry, invoke the wall kernel,
+mutate either solver, or enable a worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

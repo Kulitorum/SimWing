@@ -2872,6 +2872,21 @@ bit-exactly, while source-cycle limits reject before mutation. Corrupt transport
 provenance and foreign cycle state also reject. The wrapper still does not
 commit the mutable cycle owner, add tangential wall exchange, step XPBD, handle
 topology rebase, persist a coupled receipt, or select production ownership.
+`scene_fluid_regional_opening_momentum_wall_input.*` now establishes the
+correct wall-shear side of the staggered pair without pretending that the
+cycle's transported current geometry and consecutive accepted pressure share
+an epoch. It rebuilds the transport's current accepted opening velocity state,
+composes the same connected-pressure and retained-solid scene sampling chain,
+and maps every authoritative quadrature point through its pressure wall to the
+two exact transported fragment controls. A tangential translating partial-
+opening oracle maps a restored `SWRM` transport deterministically onto `7.5
+m2` of retained fabric and closes `15 m2` of two-sided incident control area.
+All kernel descriptors still carry zero impulse and zero traction; corrupt
+fragment ownership, a foreign current transported flow, and sample limits
+reject before publication. This adapter therefore supplies trusted input to a
+later shared-kernel transaction but does not yet apply shear, alter the
+transport used by next-pressure prediction, mutate Structure, or select a
+worker.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

@@ -431,6 +431,8 @@ add_library(simwing_scene_fluid_cell_volume STATIC
     src/fsi/scene_fluid_region_transport.h
     src/fsi/scene_fluid_region_wall.cpp
     src/fsi/scene_fluid_region_wall.h
+    src/fsi/scene_fluid_regional_opening_momentum_wall_input.cpp
+    src/fsi/scene_fluid_regional_opening_momentum_wall_input.h
     src/fsi/scene_fluid_wall_exchange_kernel.cpp
     src/fsi/scene_fluid_wall_exchange_kernel.h
     src/fsi/scene_fluid_pressure_sampling.cpp
@@ -1395,7 +1397,7 @@ add_executable(simwing-scene-fluid-regional-pressure-sampling-test
     tests/simwing_scene_fluid_regional_pressure_sampling_test.cpp
 )
 target_link_libraries(simwing-scene-fluid-regional-pressure-sampling-test
-    PRIVATE simwing_scene_fluid_quadrature)
+    PRIVATE simwing_scene_fluid_quadrature simwing_scene_fluid_cell_volume)
 
 add_executable(simwing-viewer-protocol-test
     tests/simwing_viewer_protocol_test.cpp
