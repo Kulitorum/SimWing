@@ -1,4 +1,5 @@
 #include "fluid/planar_pressure_jump.h"
+#include "fluid/planar_region_sweep.h"
 #include "fluid/projection.h"
 
 #include <algorithm>
@@ -113,6 +114,17 @@ const PlanarPressureRegionSummary* findRegion(
             return region.regionStableId == regionStableId;
         });
     return found == profile.regions.end() ? nullptr : &*found;
+}
+
+const PlanarPressureRegionSweepSummary* findSweepRegion(
+    const PlanarPressureRegionSweepLedger& ledger,
+    const std::uint64_t regionStableId) {
+    const auto found = std::ranges::find_if(
+        ledger.regions,
+        [&](const auto& region) {
+            return region.regionStableId == regionStableId;
+        });
+    return found == ledger.regions.end() ? nullptr : &*found;
 }
 
 void testCanonicalAssemblyAndSameFacePocket() {
@@ -401,6 +413,244 @@ void testStaticRegionalPressureProfile() {
         "static regional profile rejects a non-finite pressure gauge");
 }
 
+void testRegionalSweepLedger() {
+    const auto geometry = grid();
+    const auto previous = pocketLayers();
+    const auto rigid = translatePlanarPressureJumpLayers(
+        geometry, previous, 0.5);
+    const auto first = makePlanarPressureRegionSweepLedger(
+        geometry, previous, rigid.layers, 1.0);
+    auto reversedPrevious = previous;
+    auto reversedCurrent = rigid.layers;
+    std::ranges::reverse(reversedPrevious);
+    std::ranges::reverse(reversedCurrent);
+    const auto second = makePlanarPressureRegionSweepLedger(
+        geometry, reversedPrevious, reversedCurrent, 1.0);
+    check(first == second
+              && first.version == planarPressureRegionSweepVersion
+              && first.axis == GridFaceAxis::X
+              && first.intervals.size() == 2
+              && first.regions.size() == 2
+              && first.ownedStorageBytes > 0,
+          "regional sweep ledger canonicalizes a complete rigid layer motion");
+    for (const auto& interval : first.intervals) {
+        checkNear(interval.lowerSurfaceDisplacementMeters,
+                  0.5, 1.0e-15,
+                  "rigid regional sweep retains each lower-layer displacement");
+        checkNear(interval.upperSurfaceDisplacementMeters,
+                  0.5, 1.0e-15,
+                  "rigid regional sweep retains each upper-layer displacement");
+        checkNear(interval.lowerSurfaceVelocityMetersPerSecond,
+                  0.5, 1.0e-15,
+                  "rigid regional sweep derives the lower-layer velocity");
+        checkNear(interval.upperSurfaceVelocityMetersPerSecond,
+                  0.5, 1.0e-15,
+                  "rigid regional sweep derives the upper-layer velocity");
+        checkNear(interval.boundarySweptVolumeCubicMeters,
+                  0.0, 4.0e-15,
+                  "rigid regional sweep has no interval volume sweep");
+        checkNear(interval.surfaceGeometryResidualCubicMeters,
+                  0.0, 4.0e-15,
+                  "rigid regional sweep closes interval geometry");
+    }
+    checkNear(first.globalGeometryVolumeChangeCubicMeters,
+              0.0, 4.0e-15,
+              "rigid regional sweep preserves global volume");
+    checkNear(first.globalBoundarySweptVolumeCubicMeters,
+              0.0, 4.0e-15,
+              "rigid regional sweep has zero global boundary sweep");
+    checkNear(first.globalSurfaceGeometryResidualCubicMeters,
+              0.0, 4.0e-15,
+              "rigid regional sweep closes its global geometry ledger");
+
+    auto breathing = previous;
+    breathing[0].physicalPlaneCoordinateMeters -= 0.1;
+    breathing[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto expanded = makePlanarPressureRegionSweepLedger(
+        geometry, previous, breathing, 0.5);
+    const auto* pocket = findSweepRegion(expanded, 2);
+    const auto* exterior = findSweepRegion(expanded, 1);
+    check(pocket != nullptr && exterior != nullptr,
+          "breathing regional sweep retains both region ledgers");
+    if (pocket != nullptr && exterior != nullptr) {
+        checkNear(pocket->previousVolumeCubicMeters,
+                  2.4, 2.0e-15,
+                  "breathing regional sweep retains the previous pocket volume");
+        checkNear(pocket->currentVolumeCubicMeters,
+                  3.2, 2.0e-15,
+                  "breathing regional sweep retains the expanded pocket volume");
+        checkNear(pocket->geometryVolumeChangeCubicMeters,
+                  0.8, 4.0e-15,
+                  "breathing regional sweep measures pocket volume growth");
+        checkNear(pocket->boundarySweptVolumeCubicMeters,
+                  0.8, 4.0e-15,
+                  "breathing regional sweep independently integrates layer motion");
+        checkNear(pocket->surfaceGeometryResidualCubicMeters,
+                  0.0, 4.0e-15,
+                  "breathing pocket geometry and layer sweep close");
+        checkNear(exterior->geometryVolumeChangeCubicMeters,
+                  -0.8, 4.0e-15,
+                  "breathing regional sweep assigns opposite exterior volume change");
+        checkNear(exterior->boundarySweptVolumeCubicMeters,
+                  -0.8, 4.0e-15,
+                  "breathing regional sweep assigns opposite exterior boundary sweep");
+    }
+    checkNear(expanded.globalGeometryVolumeChangeCubicMeters,
+              0.0, 4.0e-15,
+              "breathing regional sweep conserves total periodic volume");
+    checkNear(expanded.globalBoundarySweptVolumeCubicMeters,
+              0.0, 4.0e-15,
+              "breathing regional sweep cancels global boundary motion");
+    checkNear(expanded.maximumAbsoluteSurfaceGeometryResidualCubicMeters,
+              0.0, 4.0e-15,
+              "breathing regional sweep closes every interval geometry ledger");
+
+    const std::vector<PlanarPressureJumpLayerDefinition> wrapping{
+        {10, 1, 2,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 3, 0},
+         1.2, 70.0},
+        {20, 2, 1,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 0, 1},
+         1.8, -70.0},
+    };
+    const auto wrapped = translatePlanarPressureJumpLayers(
+        geometry, wrapping, 0.5);
+    const auto wrapLedger = makePlanarPressureRegionSweepLedger(
+        geometry, wrapping, wrapped.layers, 1.0);
+    check(wrapLedger.currentProfile.intervals[0]
+                  .lowerSurfaceStableId == 10
+              && wrapped.layers[0].topology.faceCoordinate == 0
+              && wrapped.layers[0].topology.periodicImage == 1,
+          "regional sweep ledger retains identity through a periodic topology rebase");
+    checkNear(wrapLedger.globalSurfaceGeometryResidualCubicMeters,
+              0.0, 4.0e-15,
+              "periodically rebased regional sweep closes global geometry");
+
+    const std::vector<PlanarPressureJumpLayerDefinition> reverseWrapping{
+        {10, 1, 2,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 3, -1},
+         -2.8, 70.0},
+        {20, 2, 1,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 0, 0},
+         -2.2, -70.0},
+    };
+    const auto reverseWrapped = translatePlanarPressureJumpLayers(
+        geometry, reverseWrapping, -0.5);
+    const auto reverseWrapLedger = makePlanarPressureRegionSweepLedger(
+        geometry, reverseWrapping, reverseWrapped.layers, 1.0);
+    check(reverseWrapped.layers[1].topology.faceCoordinate == 3
+              && reverseWrapped.layers[1].topology.periodicImage == -1,
+          "regional sweep ledger retains identity through a negative periodic rebase");
+    checkNear(reverseWrapLedger.globalSurfaceGeometryResidualCubicMeters,
+              0.0, 4.0e-15,
+              "negative periodically rebased regional sweep closes global geometry");
+}
+
+void testRegionalSweepAllAxesAndRejection() {
+    const auto geometry = grid();
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> previous{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        auto current = previous;
+        current[0].physicalPlaneCoordinateMeters -= 0.1;
+        current[1].physicalPlaneCoordinateMeters += 0.1;
+        const auto ledger = makePlanarPressureRegionSweepLedger(
+            geometry, previous, current, 0.5);
+        const auto* pocket = findSweepRegion(ledger, 2);
+        const double expectedChange = axis == GridFaceAxis::X
+            ? 0.8 : 1.6;
+        check(pocket != nullptr,
+              "regional sweep retains the breathing pocket on each axis");
+        if (pocket != nullptr) {
+            checkNear(pocket->geometryVolumeChangeCubicMeters,
+                      expectedChange, 8.0e-15,
+                      "regional sweep uses the physical transverse area on each axis");
+            checkNear(pocket->boundarySweptVolumeCubicMeters,
+                      expectedChange, 8.0e-15,
+                      "regional sweep closes boundary motion on each axis");
+        }
+    }
+
+    const auto previous = pocketLayers();
+    const auto previousCopy = previous;
+    auto validCurrent = translatePlanarPressureJumpLayers(
+        geometry, previous, 0.1).layers;
+    auto invalid = validCurrent;
+    invalid[0].surfaceStableId = 30;
+    expectRejected(
+        [&] { static_cast<void>(makePlanarPressureRegionSweepLedger(
+            geometry, previous, invalid, 1.0)); },
+        "regional sweep rejects changed surface identity");
+    invalid = validCurrent;
+    invalid[0].plusRegionStableId = 3;
+    invalid[1].minusRegionStableId = 3;
+    expectRejected(
+        [&] { static_cast<void>(makePlanarPressureRegionSweepLedger(
+            geometry, previous, invalid, 1.0)); },
+        "regional sweep rejects changed region identity");
+    invalid = validCurrent;
+    invalid[0].pressureJumpPascals = 71.0;
+    invalid[1].pressureJumpPascals = -71.0;
+    expectRejected(
+        [&] { static_cast<void>(makePlanarPressureRegionSweepLedger(
+            geometry, previous, invalid, 1.0)); },
+        "regional sweep rejects changed pressure-jump identity");
+    invalid = previous;
+    invalid[0].physicalPlaneCoordinateMeters = -0.5;
+    expectRejected(
+        [&] { static_cast<void>(makePlanarPressureRegionSweepLedger(
+            geometry, previous, invalid, 1.0)); },
+        "regional sweep rejects exact topology-boundary motion");
+    invalid = previous;
+    invalid[0].physicalPlaneCoordinateMeters += 1.6;
+    invalid[0].topology.faceCoordinate = 3;
+    invalid[1].physicalPlaneCoordinateMeters += 1.6;
+    invalid[1].topology.faceCoordinate = 3;
+    expectRejected(
+        [&] { static_cast<void>(makePlanarPressureRegionSweepLedger(
+            geometry, previous, invalid, 1.0)); },
+        "regional sweep rejects a skipped topology segment");
+    invalid = previous;
+    invalid[0].physicalPlaneCoordinateMeters = -0.1;
+    invalid[0].topology.faceCoordinate = 2;
+    invalid[1].physicalPlaneCoordinateMeters = -0.3;
+    invalid[1].topology.faceCoordinate = 2;
+    expectRejected(
+        [&] { static_cast<void>(makePlanarPressureRegionSweepLedger(
+            geometry, previous, invalid, 1.0)); },
+        "regional sweep rejects layer-order crossing");
+    expectRejected(
+        [&] { static_cast<void>(makePlanarPressureRegionSweepLedger(
+            geometry, previous, validCurrent, 0.0)); },
+        "regional sweep rejects a zero duration");
+    expectRejected(
+        [&] { static_cast<void>(makePlanarPressureRegionSweepLedger(
+            geometry, previous, validCurrent, 1.0,
+            {1, 2, 1024})); },
+        "regional sweep enforces its layer limit");
+    expectRejected(
+        [&] { static_cast<void>(makePlanarPressureRegionSweepLedger(
+            geometry, previous, validCurrent, 1.0,
+            {2, 1, 1024 * 1024})); },
+        "regional sweep enforces its region limit");
+    expectRejected(
+        [&] { static_cast<void>(makePlanarPressureRegionSweepLedger(
+            geometry, previous, validCurrent, 1.0,
+            {2, 2, 1})); },
+        "regional sweep enforces its byte limit");
+    check(previous == previousCopy,
+          "rejected regional sweep cannot mutate either endpoint");
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -540,6 +790,8 @@ int main() {
     testCanonicalAssemblyAndSameFacePocket();
     testSeparatedResolutionAndPeriodicWrap();
     testStaticRegionalPressureProfile();
+    testRegionalSweepLedger();
+    testRegionalSweepAllAxesAndRejection();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {

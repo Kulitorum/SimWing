@@ -1864,6 +1864,12 @@ makes this a certified aerodynamic solver.
   requires a closed pressure potential, and volume-gauges each distinct region;
   it owns no regional velocity degree of freedom and does not enter production
   projection arithmetic.
+- `src/fsi/fluid/planar_region_sweep.{h,cpp}` binds two static profiles into a
+  bounded two-epoch geometric-conservation ledger. Stable layer identity,
+  region sides, jumps, order, and one-segment topology motion are immutable;
+  per-interval boundary sweep closes against volume change before per-region
+  and global aggregation. It owns no Eulerian regional flux and is not a
+  leakage solver.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2145,6 +2151,13 @@ potentials. Only the separated-face state enters the current projection as an
 intermediate cell pressure. The profile has no regional velocity unknown; this
 exposes the unresolved subcell momentum/flux limitation and is not acceptance
 of moving folded-interface physics.
+
+The same test covers `planar_region_sweep.*`: require rigid and breathing
+geometry/sweep closure on X/Y/Z, positive and negative periodic rebases, stable
+endpoint identity, deterministic authored-order canonicalization, finite
+positive duration, and count/region/byte bounds. Exact-boundary, skipped,
+crossed, or foreign layer motion must reject transactionally. This is only the
+regional GCL boundary ledger; no Eulerian relative-flux claim is permitted.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

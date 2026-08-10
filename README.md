@@ -184,6 +184,13 @@ difference under a declared volume-mean gauge. It creates no regional velocity
 degree of freedom and does not change the projection, so this remains
 moving-topology groundwork rather than a general folded-fabric or leakage
 solve.
+A bounded two-epoch regional sweep ledger now binds those profiles by stable
+layer identity. It derives each layer velocity, independently integrates the
+lower/upper boundary sweep of every interval, and closes that value against
+geometric volume change per interval, per region, and globally. Rigid and
+breathing pockets close on X/Y/Z through positive and negative periodic
+rebases. The ledger still contains no Eulerian regional flux, so it proves the
+moving geometry/GCL prerequisite without claiming no-leakage dynamics.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

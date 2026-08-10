@@ -490,6 +490,7 @@ src/fsi/
         interface_jump.*
         planar_face_topology.* generic axis-aligned periodic plane epochs
         planar_pressure_jump.* closed moving multi-layer pressure chains
+        planar_region_sweep.* bounded two-epoch regional geometry/GCL
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
         porous_topology.*   compatibility API over planar face topology
@@ -2134,6 +2135,18 @@ The profile owns no regional velocity degrees of freedom and does not enter the
 production projection. It therefore exposes rather than closes the remaining
 regional-subcell momentum/flux requirement; it is not a leakage closure,
 deforming folded-surface tracker, or moving folded-interface solve.
+A separate bounded `planar_region_sweep.*` product now binds two such profiles
+by stable surface, side-region, pressure-jump, order, and one-segment topology
+continuity. It derives each layer displacement and velocity, compares every
+interval's exact volume change with the independently signed lower/upper
+boundary sweep, and aggregates that ledger per region and globally. Rigid
+translation has zero regional change; a breathing pocket assigns equal and
+opposite interior/exterior changes and closes on X/Y/Z. Both signed periodic
+rebases retain identity. Crossed layers, exact-boundary or skipped motion,
+foreign identities, and count/region/byte-limit violations reject before a
+candidate is published. This is the geometric-conservation half of moving
+regional flow only: no Eulerian subcell velocity or relative flux exists yet,
+so the no-leakage gate remains open.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
