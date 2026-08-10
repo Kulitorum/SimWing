@@ -116,6 +116,9 @@ std::uint64_t predictionFingerprint(
     Fingerprint fingerprint;
     fingerprint.integer(prediction.version);
     fingerprint.integer(prediction.sourceTransportFingerprint);
+    if (prediction.sourceAdjustmentStateFingerprint != 0) {
+        fingerprint.integer(prediction.sourceAdjustmentStateFingerprint);
+    }
     fingerprint.integer(prediction.sourceTransportMetricFingerprint);
     fingerprint.integer(prediction.currentMetricFingerprint);
     fingerprint.integer(prediction.currentVolumeRateFingerprint);
@@ -229,8 +232,72 @@ void validateDegreeIdentity(
     }
 }
 
+void validatePredictionSource(
+    const PlanarPressureRegionFragmentOpeningMomentumTransport& source,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& metric) {
+    validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
+        source);
+    if (!source.diagnostics.accepted
+        || source.targetMetricFingerprint != metric.fingerprint) {
+        throw std::invalid_argument(
+            "opening momentum-prediction source transport is invalid");
+    }
+}
+
+void validatePredictionSource(
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState& source,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& metric) {
+    validatePlanarPressureRegionFragmentOpeningMomentumAdjustmentStateIntegrity(
+        source);
+    if (source.sourceMetricFingerprint != metric.fingerprint) {
+        throw std::invalid_argument(
+            "opening momentum-prediction source adjustment is invalid");
+    }
+}
+
+std::uint64_t sourceTransportFingerprint(
+    const PlanarPressureRegionFragmentOpeningMomentumTransport& source) {
+    return source.fingerprint;
+}
+
+std::uint64_t sourceTransportFingerprint(
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState& source) {
+    return source.sourceTransportFingerprint;
+}
+
+std::uint64_t sourceAdjustmentStateFingerprint(
+    const PlanarPressureRegionFragmentOpeningMomentumTransport&) {
+    return 0;
+}
+
+std::uint64_t sourceAdjustmentStateFingerprint(
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState& source) {
+    return source.fingerprint;
+}
+
+Vector3 sourceMomentum(
+    const PlanarPressureRegionFragmentOpeningMomentumTransport& source) {
+    return source.diagnostics.momentumAfterKilogramMetersPerSecond;
+}
+
+Vector3 sourceMomentum(
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState& source) {
+    return source.adjustedMomentumKilogramMetersPerSecond;
+}
+
+double sourceKineticEnergy(
+    const PlanarPressureRegionFragmentOpeningMomentumTransport& source) {
+    return source.diagnostics.kineticEnergyAfterJoules;
+}
+
+double sourceKineticEnergy(
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState& source) {
+    return source.adjustedKineticEnergyJoules;
+}
+
+template<typename Source>
 PlanarPressureRegionFragmentOpeningMomentumPrediction buildPrediction(
-    const PlanarPressureRegionFragmentOpeningMomentumTransport& transport,
+    const Source& source,
     const PlanarPressureRegionFragmentOpeningVelocityMetric&
         transportTargetMetric,
     const PeriodicCartesianGrid& grid,
@@ -247,10 +314,9 @@ PlanarPressureRegionFragmentOpeningMomentumPrediction buildPrediction(
     const PlanarPressureRegionFragmentOpeningMomentumPredictionLimits&
         limits) {
     validateLimits(limits);
-    validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
-        transport);
     validatePlanarPressureRegionFragmentOpeningVelocityMetricIntegrity(
         transportTargetMetric);
+    validatePredictionSource(source, transportTargetMetric);
     validatePlanarPressureRegionFragmentVolumeRates(
         currentVolumeRates, grid, currentSweep, currentFragments,
         currentTopology, limits.volumeRateLimits);
@@ -258,25 +324,19 @@ PlanarPressureRegionFragmentOpeningMomentumPrediction buildPrediction(
         currentMetric, grid, currentSweep, currentFragments,
         currentTopology, currentBaseMetric, currentOpeningDefinitions,
         currentOpenings, limits.stateLimits.metricLimits);
-    if (!transport.diagnostics.accepted
-        || transport.targetMetricFingerprint
-            != transportTargetMetric.fingerprint) {
-        throw std::invalid_argument(
-            "opening momentum-prediction source transport is invalid");
-    }
     validateDegreeIdentity(transportTargetMetric, currentMetric);
 
     const std::size_t fragmentCount = currentMetric.fragments.size();
     const std::size_t dofCount = currentMetric.dofs.size();
     if (fragmentCount == 0
-        || transport.controls.size() != fragmentCount
+        || source.controls.size() != fragmentCount
         || transportTargetMetric.fragments.size() != fragmentCount
         || currentVolumeRates.fragments.size() != fragmentCount
         || currentMetric.sourceFragmentFingerprint
             != currentFragments.fingerprint
         || currentMetric.sourceTopologyFingerprint
             != currentTopology.fingerprint
-        || transport.densityKgPerCubicMeter <= 0.0) {
+        || source.densityKgPerCubicMeter <= 0.0) {
         throw std::invalid_argument(
             "opening momentum-prediction endpoint identity is invalid");
     }
@@ -311,7 +371,7 @@ PlanarPressureRegionFragmentOpeningMomentumPrediction buildPrediction(
     std::iota(sourceOrder.begin(), sourceOrder.end(), 0);
     std::iota(currentOrder.begin(), currentOrder.end(), 0);
     std::ranges::sort(sourceOrder, {}, [&](const std::size_t index) {
-        return transport.controls[index].stableId;
+        return source.controls[index].stableId;
     });
     std::ranges::sort(currentOrder, {}, [&](const std::size_t index) {
         return currentMetric.fragments[index].stableId;
@@ -319,37 +379,40 @@ PlanarPressureRegionFragmentOpeningMomentumPrediction buildPrediction(
     std::vector<std::size_t> sourceByCurrent(fragmentCount);
 
     PlanarPressureRegionFragmentOpeningMomentumPrediction result;
-    result.sourceTransportFingerprint = transport.fingerprint;
+    result.sourceTransportFingerprint = sourceTransportFingerprint(source);
+    result.sourceAdjustmentStateFingerprint =
+        sourceAdjustmentStateFingerprint(source);
     result.sourceTransportMetricFingerprint =
         transportTargetMetric.fingerprint;
     result.currentMetricFingerprint = currentMetric.fingerprint;
     result.currentVolumeRateFingerprint = currentVolumeRates.fingerprint;
-    result.densityKgPerCubicMeter = transport.densityKgPerCubicMeter;
+    result.densityKgPerCubicMeter = source.densityKgPerCubicMeter;
     result.timeStepSeconds = currentVolumeRates.durationSeconds;
     result.workingStorageBytes = expectedWorkingBytes;
     auto& diagnostics = result.diagnostics;
     diagnostics.fragmentCount = fragmentCount;
     diagnostics.dofCount = dofCount;
     diagnostics.sourceMomentumKilogramMetersPerSecond =
-        transport.diagnostics.momentumAfterKilogramMetersPerSecond;
+        sourceMomentum(source);
     diagnostics.sourceKineticEnergyJoules =
-        transport.diagnostics.kineticEnergyAfterJoules;
+        sourceKineticEnergy(source);
 
     for (std::size_t offset = 0; offset < fragmentCount; ++offset) {
         const std::size_t sourceIndex = sourceOrder[offset];
         const std::size_t currentIndex = currentOrder[offset];
-        const auto& source = transport.controls[sourceIndex];
+        const auto& sourceControl = source.controls[sourceIndex];
         const auto& current = currentMetric.fragments[currentIndex];
         const auto& rate = currentVolumeRates.fragments[currentIndex];
-        if (source.stableId == 0 || source.stableId != current.stableId
-            || source.regionStableId != current.regionStableId
-            || source.connectedComponentIndex
+        if (sourceControl.stableId == 0
+            || sourceControl.stableId != current.stableId
+            || sourceControl.regionStableId != current.regionStableId
+            || sourceControl.connectedComponentIndex
                 != current.connectedComponentIndex
             || rate.fragmentIndex != currentIndex
             || rate.stableId != current.stableId
             || rate.regionStableId != current.regionStableId
             || !equalWithinRoundoff(
-                source.volumeCubicMeters,
+                sourceControl.volumeCubicMeters,
                 rate.previousVolumeCubicMeters)
             || !equalWithinRoundoff(
                 current.sourceVolumeCubicMeters,
@@ -362,20 +425,20 @@ PlanarPressureRegionFragmentOpeningMomentumPrediction buildPrediction(
             diagnostics.maximumAbsoluteVolumeChangeCubicMeters,
             std::abs(
                 current.sourceVolumeCubicMeters
-                - source.volumeCubicMeters));
+                - sourceControl.volumeCubicMeters));
         diagnostics.maximumSourceSpeedMetersPerSecond = std::max(
             diagnostics.maximumSourceSpeedMetersPerSecond,
-            norm(source.velocityMetersPerSecond));
+            norm(sourceControl.velocityMetersPerSecond));
         const double currentMass = result.densityKgPerCubicMeter
             * current.sourceVolumeCubicMeters;
         diagnostics.remappedMomentumKilogramMetersPerSecond = add(
             diagnostics.remappedMomentumKilogramMetersPerSecond,
             {
-                currentMass * source.velocityMetersPerSecond.x,
-                currentMass * source.velocityMetersPerSecond.y,
-                currentMass * source.velocityMetersPerSecond.z,
+                currentMass * sourceControl.velocityMetersPerSecond.x,
+                currentMass * sourceControl.velocityMetersPerSecond.y,
+                currentMass * sourceControl.velocityMetersPerSecond.z,
             });
-        const double speed = norm(source.velocityMetersPerSecond);
+        const double speed = norm(sourceControl.velocityMetersPerSecond);
         diagnostics.remappedKineticEnergyJoules +=
             0.5 * currentMass * speed * speed;
     }
@@ -394,11 +457,11 @@ PlanarPressureRegionFragmentOpeningMomentumPrediction buildPrediction(
                 "opening momentum-prediction link binding is invalid");
         }
         const double ownerNormal = component(
-            transport.controls[sourceByCurrent[dof.ownerFragmentIndex]]
+            source.controls[sourceByCurrent[dof.ownerFragmentIndex]]
                 .velocityMetersPerSecond,
             dof.axis);
         const double oppositeNormal = component(
-            transport.controls[sourceByCurrent[dof.oppositeFragmentIndex]]
+            source.controls[sourceByCurrent[dof.oppositeFragmentIndex]]
                 .velocityMetersPerSecond,
             dof.axis);
         diagnostics.maximumEndpointNormalVelocityJumpMetersPerSecond =
@@ -527,6 +590,31 @@ predictPlanarPressureRegionFragmentOpeningMomentum(
     const PlanarPressureRegionFragmentOpeningMomentumPredictionLimits& limits) {
     return buildPrediction(
         transport, transportTargetMetric, grid, currentSweep,
+        currentFragments, currentTopology, currentVolumeRates,
+        currentOpeningDefinitions, currentOpenings, currentBaseMetric,
+        currentMetric, limits);
+}
+
+PlanarPressureRegionFragmentOpeningMomentumPrediction
+predictPlanarPressureRegionFragmentOpeningMomentum(
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState&
+        adjustmentState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric&
+        transportTargetMetric,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& currentSweep,
+    const PlanarPressureRegionFragmentSet& currentFragments,
+    const PlanarPressureRegionFragmentTopology& currentTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& currentVolumeRates,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        currentOpeningDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& currentOpenings,
+    const PlanarPressureRegionFragmentVelocityMetric& currentBaseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& currentMetric,
+    const PlanarPressureRegionFragmentOpeningMomentumPredictionLimits& limits) {
+    return buildPrediction(
+        adjustmentState, transportTargetMetric, grid, currentSweep,
         currentFragments, currentTopology, currentVolumeRates,
         currentOpeningDefinitions, currentOpenings, currentBaseMetric,
         currentMetric, limits);
@@ -674,6 +762,44 @@ void validatePlanarPressureRegionFragmentOpeningMomentumPrediction(
     }
     if (prediction != buildPrediction(
             transport, transportTargetMetric, grid, currentSweep,
+            currentFragments, currentTopology, currentVolumeRates,
+            currentOpeningDefinitions, currentOpenings, currentBaseMetric,
+            currentMetric, limits)) {
+        throw std::invalid_argument(
+            "opening momentum prediction is foreign to its source");
+    }
+}
+
+void validatePlanarPressureRegionFragmentOpeningMomentumPrediction(
+    const PlanarPressureRegionFragmentOpeningMomentumPrediction& prediction,
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState&
+        adjustmentState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric&
+        transportTargetMetric,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& currentSweep,
+    const PlanarPressureRegionFragmentSet& currentFragments,
+    const PlanarPressureRegionFragmentTopology& currentTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& currentVolumeRates,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        currentOpeningDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& currentOpenings,
+    const PlanarPressureRegionFragmentVelocityMetric& currentBaseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& currentMetric,
+    const PlanarPressureRegionFragmentOpeningMomentumPredictionLimits& limits) {
+    validateLimits(limits);
+    validatePlanarPressureRegionFragmentOpeningMomentumPredictionIntegrity(
+        prediction);
+    if (prediction.diagnostics.fragmentCount > limits.maximumFragments
+        || prediction.diagnostics.dofCount > limits.maximumDofs
+        || prediction.ownedStorageBytes > limits.maximumOwnedBytes
+        || prediction.workingStorageBytes > limits.maximumWorkingBytes) {
+        throw std::length_error(
+            "opening momentum-prediction validation limit exceeded");
+    }
+    if (prediction != buildPrediction(
+            adjustmentState, transportTargetMetric, grid, currentSweep,
             currentFragments, currentTopology, currentVolumeRates,
             currentOpeningDefinitions, currentOpenings, currentBaseMetric,
             currentMetric, limits)) {

@@ -302,4 +302,86 @@ void validateSceneFluidRegionalOpeningMomentumWallExchange(
     }
 }
 
+fluid::PlanarPressureRegionFragmentOpeningMomentumAdjustmentState
+captureSceneFluidRegionalOpeningMomentumAdjustmentState(
+    const SceneFluidRegionalOpeningMomentumWallExchange& exchange,
+    const fluid::PlanarPressureRegionFragmentOpeningMomentumTransport&
+        transport,
+    const fluid::PlanarPressureRegionFragmentOpeningVelocityMetric& metric,
+    const fluid::PlanarPressureRegionFragmentOpeningMomentumAdjustmentStateSettings&
+        settings,
+    const fluid::PlanarPressureRegionFragmentOpeningMomentumAdjustmentStateLimits&
+        limits) {
+    validateSceneFluidRegionalOpeningMomentumWallExchangeIntegrity(exchange);
+    fluid::validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
+        transport);
+    fluid::validatePlanarPressureRegionFragmentOpeningVelocityMetricIntegrity(
+        metric);
+    const auto& input = exchange.sourceInput;
+    if (!exchange.diagnostics.accepted
+        || exchange.controlVolumes.empty()
+        || exchange.controlVolumes.size() != transport.controls.size()
+        || input.controlVolumes.size() != transport.controls.size()
+        || input.sourceTransportFingerprint != transport.fingerprint
+        || input.sourceTransportMetricFingerprint != metric.fingerprint
+        || transport.targetMetricFingerprint != metric.fingerprint
+        || input.densityKgPerCubicMeter
+            != transport.densityKgPerCubicMeter
+        || input.timeStepSeconds != transport.timeStepSeconds) {
+        throw std::invalid_argument(
+            "regional opening momentum adjustment source is foreign");
+    }
+
+    std::vector<
+        fluid::PlanarPressureRegionFragmentOpeningMomentumTransportControl>
+        adjustedControls;
+    adjustedControls.reserve(transport.controls.size());
+    for (std::size_t index = 0; index < transport.controls.size(); ++index) {
+        const auto& source = transport.controls[index];
+        const auto& inputControl = input.controlVolumes[index];
+        const auto& adjusted = exchange.controlVolumes[index];
+        if (source.fragmentIndex != index
+            || inputControl.controlVolumeIndex != index
+            || adjusted.controlVolumeIndex != index
+            || inputControl.stableId != source.stableId
+            || adjusted.stableId != source.stableId
+            || inputControl.volumeCubicMeters != source.volumeCubicMeters
+            || adjusted.volumeCubicMeters != source.volumeCubicMeters
+            || inputControl.velocityMetersPerSecond
+                != source.velocityMetersPerSecond
+            || inputControl.momentumKilogramMetersPerSecond
+                != source.momentumKilogramMetersPerSecond) {
+            throw std::invalid_argument(
+                "regional opening momentum adjustment control is foreign");
+        }
+        auto control = source;
+        control.velocityMetersPerSecond = adjusted.velocityMetersPerSecond;
+        control.momentumKilogramMetersPerSecond =
+            adjusted.momentumKilogramMetersPerSecond;
+        adjustedControls.push_back(control);
+    }
+    return fluid::capturePlanarPressureRegionFragmentOpeningMomentumAdjustmentState(
+        transport, metric, exchange.fingerprint, adjustedControls, settings,
+        limits);
+}
+
+void validateSceneFluidRegionalOpeningMomentumAdjustmentState(
+    const fluid::PlanarPressureRegionFragmentOpeningMomentumAdjustmentState&
+        state,
+    const SceneFluidRegionalOpeningMomentumWallExchange& exchange,
+    const fluid::PlanarPressureRegionFragmentOpeningMomentumTransport&
+        transport,
+    const fluid::PlanarPressureRegionFragmentOpeningVelocityMetric& metric,
+    const fluid::PlanarPressureRegionFragmentOpeningMomentumAdjustmentStateLimits&
+        limits) {
+    fluid::validatePlanarPressureRegionFragmentOpeningMomentumAdjustmentStateIntegrity(
+        state);
+    if (state
+        != captureSceneFluidRegionalOpeningMomentumAdjustmentState(
+            exchange, transport, metric, state.settings, limits)) {
+        throw std::invalid_argument(
+            "regional opening momentum adjustment state is foreign");
+    }
+}
+
 } // namespace simwing::fsi

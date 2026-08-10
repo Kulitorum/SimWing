@@ -508,6 +508,7 @@ src/fsi/
         planar_region_fragment_opening_velocity_metric.* aperture-aware inertia geometry
         planar_region_fragment_opening_velocity_state.* fragment vector momentum state
         planar_region_fragment_opening_momentum_transport.* conservative ALE donor transport
+        planar_region_fragment_opening_momentum_adjustment_state.* identity-preserving adjusted collocated endpoint
         planar_region_fragment_opening_momentum_prediction.* consecutive face/aperture predictor
         planar_region_fragment_opening_pressure_warm_start.* pressure-only consecutive gauge map
         planar_region_fragment_opening_momentum_pressure_epoch.* transported cold/warm pressure transaction
@@ -2534,11 +2535,23 @@ feeds a second live-aperture transport. Rejected, corrupted, or foreign prior
 transports and continuity/substep-limit failures publish no accepted controls.
 This remains opt-in: it adds no viscosity, wall shear, topology rebase,
 production-worker mutation, or pressure warm-start policy.
+`planar_region_fragment_opening_momentum_adjustment_state.*` now provides the
+fluid-owned boundary for a same-epoch physical adjustment without fabricating
+another accepted transport. It binds a nonzero opaque adjustment fingerprint
+to the exact source transport/target metric and preserves every fragment's
+index, stable fragment/region/component identity, volume, density, and time
+step. Only collocated velocity and momentum may change. Capture independently
+reconstructs `rho*V*u`, aggregate momentum/impulse, and kinetic energy under
+bounded tolerances and storage; integrity and full validation reject corrupt or
+foreign controls. The artifact deliberately knows nothing about scene
+quadrature, the wall law, Structure, topology rebase, or production selection.
 `planar_region_fragment_opening_momentum_prediction.*` now supplies that
-endpoint reconstruction for one consecutive topology-stable epoch. It retains
-each transported fragment vector while diagnosing the momentum and kinetic-
-energy change caused by evaluating it on current physical volume. Each current
-same-region or aperture normal receives the arithmetic mean of its two endpoint
+endpoint reconstruction for one consecutive topology-stable epoch. Its opt-in
+overload accepts the identity-preserving adjusted endpoint, while the original
+transport overload retains its exact arithmetic and fingerprint. Each source
+fragment vector is retained while diagnosing the momentum and kinetic-energy
+change caused by evaluating it on current physical volume. Each current same-
+region or aperture normal receives the arithmetic mean of its two endpoint
 vector components. Fixed Cartesian faces keep that value as relative flow;
 solid traces take exact material motion with zero relative flow; aperture flow
 subtracts exact material speed from the averaged absolute fluid velocity. The
@@ -2897,9 +2910,15 @@ partial-opening oracle loses kinetic energy under nonzero viscosity while
 closing global action/reaction and keeping every traction tangential; zero
 viscosity preserves all controls exactly, and an unsafe explicit step retains
 its source but publishes no adjusted state. A foreign time step, output
-corruption, and aggregate limits reject. This proves numerical reuse without
-yet changing the transported controls used by consecutive pressure prediction,
-applying shear to Structure, or selecting production ownership.
+corruption, and aggregate limits reject. An accepted receipt now maps its
+adjusted controls back onto the exact collocated transport identities and
+captures the fluid-owned adjustment state. The predictor's explicit overload
+then proves that nonzero shear changes the consecutive predictor, while zero
+viscosity preserves the complete nested numeric prediction exactly and adds
+only adjustment provenance. Foreign/corrupt/oversized adjustments and rejected
+wall exchanges cannot publish a prediction source. This remains isolated from
+the existing momentum cycle: it does not change that cycle's raw-transport
+selection, apply shear to Structure, or select production ownership.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

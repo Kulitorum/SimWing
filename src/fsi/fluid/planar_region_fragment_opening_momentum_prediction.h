@@ -1,6 +1,6 @@
 #pragma once
 
-#include "fluid/planar_region_fragment_opening_momentum_transport.h"
+#include "fluid/planar_region_fragment_opening_momentum_adjustment_state.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -64,6 +64,7 @@ struct PlanarPressureRegionFragmentOpeningMomentumPrediction {
         planarPressureRegionFragmentOpeningMomentumPredictionVersion;
     std::uint64_t fingerprint = 0;
     std::uint64_t sourceTransportFingerprint = 0;
+    std::uint64_t sourceAdjustmentStateFingerprint = 0;
     std::uint64_t sourceTransportMetricFingerprint = 0;
     std::uint64_t currentMetricFingerprint = 0;
     std::uint64_t currentVolumeRateFingerprint = 0;
@@ -98,12 +99,50 @@ predictPlanarPressureRegionFragmentOpeningMomentum(
     const PlanarPressureRegionFragmentOpeningMomentumPredictionLimits& limits =
         {});
 
+[[nodiscard]] PlanarPressureRegionFragmentOpeningMomentumPrediction
+predictPlanarPressureRegionFragmentOpeningMomentum(
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState&
+        adjustmentState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric&
+        transportTargetMetric,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& currentSweep,
+    const PlanarPressureRegionFragmentSet& currentFragments,
+    const PlanarPressureRegionFragmentTopology& currentTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& currentVolumeRates,
+    std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        currentOpeningDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& currentOpenings,
+    const PlanarPressureRegionFragmentVelocityMetric& currentBaseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& currentMetric,
+    const PlanarPressureRegionFragmentOpeningMomentumPredictionLimits& limits =
+        {});
+
 void validatePlanarPressureRegionFragmentOpeningMomentumPredictionIntegrity(
     const PlanarPressureRegionFragmentOpeningMomentumPrediction& prediction);
 
 void validatePlanarPressureRegionFragmentOpeningMomentumPrediction(
     const PlanarPressureRegionFragmentOpeningMomentumPrediction& prediction,
     const PlanarPressureRegionFragmentOpeningMomentumTransport& transport,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric&
+        transportTargetMetric,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& currentSweep,
+    const PlanarPressureRegionFragmentSet& currentFragments,
+    const PlanarPressureRegionFragmentTopology& currentTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& currentVolumeRates,
+    std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        currentOpeningDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& currentOpenings,
+    const PlanarPressureRegionFragmentVelocityMetric& currentBaseMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& currentMetric,
+    const PlanarPressureRegionFragmentOpeningMomentumPredictionLimits& limits =
+        {});
+
+void validatePlanarPressureRegionFragmentOpeningMomentumPrediction(
+    const PlanarPressureRegionFragmentOpeningMomentumPrediction& prediction,
+    const PlanarPressureRegionFragmentOpeningMomentumAdjustmentState&
+        adjustmentState,
     const PlanarPressureRegionFragmentOpeningVelocityMetric&
         transportTargetMetric,
     const PeriodicCartesianGrid& grid,

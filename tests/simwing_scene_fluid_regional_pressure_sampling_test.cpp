@@ -9,6 +9,7 @@
 #include "fluid/planar_region_fragment_opening_momentum_cycle.h"
 #include "fluid/planar_region_fragment_opening_momentum_cycle_state.h"
 #include "fluid/planar_region_fragment_opening_momentum_cycle_state_persistence.h"
+#include "fluid/planar_region_fragment_opening_momentum_prediction.h"
 #include "fluid/planar_region_fragment_opening_velocity_metric.h"
 #include "fluid/planar_region_fragment_opening_velocity_state.h"
 #include "scene_fluid_regional_pressure_sampling.h"
@@ -1707,6 +1708,126 @@ void testOpeningMomentumWallExchange() {
               && zeroExchange.diagnostics.viscousDissipationJoules == 0.0,
           "regional opening wall exchange: zero viscosity preserves the mapped transport exactly");
 
+    const auto adjustment =
+        captureSceneFluidRegionalOpeningMomentumAdjustmentState(
+            exchange, endpoint.momentumCycle.transport,
+            endpoint.openingMetric);
+    validateSceneFluidRegionalOpeningMomentumAdjustmentState(
+        adjustment, exchange, endpoint.momentumCycle.transport,
+        endpoint.openingMetric);
+    check(adjustment.sourceTransportFingerprint
+              == endpoint.momentumCycle.transport.fingerprint
+              && adjustment.sourceAdjustmentFingerprint
+                  == exchange.fingerprint
+              && adjustment.sourceMetricFingerprint
+                  == endpoint.openingMetric.fingerprint
+              && adjustment.controls.size()
+                  == endpoint.momentumCycle.transport.controls.size()
+              && adjustment.adjustedMomentumKilogramMetersPerSecond
+                  == exchange.diagnostics
+                         .fluidMomentumAfterKilogramMetersPerSecond
+              && adjustment.adjustmentImpulseKilogramMetersPerSecond
+                  == exchange.diagnostics
+                         .fluidImpulseKilogramMetersPerSecond
+              && adjustment.adjustedKineticEnergyJoules
+                  == exchange.diagnostics.kineticEnergyAfterJoules
+              && adjustment.kineticEnergyChangeJoules < 0.0,
+          "regional opening wall exchange: accepted output captures an exact fluid-owned adjusted momentum endpoint");
+
+    const auto baselinePrediction =
+        predictPlanarPressureRegionFragmentOpeningMomentum(
+            endpoint.momentumCycle.transport, endpoint.openingMetric,
+            endpoint.geometry, endpoint.sweep, endpoint.fragments,
+            endpoint.topology, endpoint.volumeRates,
+            endpoint.openingDefinitions, endpoint.openings,
+            endpoint.baseMetric, endpoint.openingMetric);
+    const auto adjustedPrediction =
+        predictPlanarPressureRegionFragmentOpeningMomentum(
+            adjustment, endpoint.openingMetric, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.baseMetric,
+            endpoint.openingMetric);
+    validatePlanarPressureRegionFragmentOpeningMomentumPrediction(
+        adjustedPrediction, adjustment, endpoint.openingMetric,
+        endpoint.geometry, endpoint.sweep, endpoint.fragments,
+        endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.baseMetric, endpoint.openingMetric);
+    check(adjustedPrediction.sourceTransportFingerprint
+              == baselinePrediction.sourceTransportFingerprint
+              && adjustedPrediction.sourceAdjustmentStateFingerprint
+                  == adjustment.fingerprint
+              && adjustedPrediction.predictedVelocityState
+                  != baselinePrediction.predictedVelocityState
+              && adjustedPrediction.diagnostics.sourceMomentumKilogramMetersPerSecond
+                  == adjustment.adjustedMomentumKilogramMetersPerSecond
+              && adjustedPrediction.diagnostics.sourceKineticEnergyJoules
+                  == adjustment.adjustedKineticEnergyJoules,
+          "regional opening wall exchange: opt-in prediction consumes adjusted tangential momentum with exact provenance");
+
+    const auto zeroAdjustment =
+        captureSceneFluidRegionalOpeningMomentumAdjustmentState(
+            zeroExchange, endpoint.momentumCycle.transport,
+            endpoint.openingMetric);
+    const auto zeroPrediction =
+        predictPlanarPressureRegionFragmentOpeningMomentum(
+            zeroAdjustment, endpoint.openingMetric, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.baseMetric,
+            endpoint.openingMetric);
+    check(zeroAdjustment.controls
+              == endpoint.momentumCycle.transport.controls
+              && zeroPrediction.sourceAdjustmentStateFingerprint
+                  == zeroAdjustment.fingerprint
+              && zeroPrediction.predictedVelocityState
+                  == baselinePrediction.predictedVelocityState
+              && zeroPrediction.diagnostics
+                  == baselinePrediction.diagnostics
+              && zeroPrediction.fingerprint != baselinePrediction.fingerprint,
+          "regional opening wall exchange: zero viscosity preserves the exact numeric prediction while retaining adjustment lineage");
+
+    auto corruptAdjustment = adjustment;
+    corruptAdjustment.controls.front().velocityMetersPerSecond.y += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningMomentumAdjustmentStateIntegrity(
+                corruptAdjustment);
+        },
+        "regional opening wall exchange: corrupt adjusted momentum rejects");
+
+    auto adjustmentLimits =
+        PlanarPressureRegionFragmentOpeningMomentumAdjustmentStateLimits{};
+    adjustmentLimits.maximumFragments = adjustment.controls.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                captureSceneFluidRegionalOpeningMomentumAdjustmentState(
+                    exchange, endpoint.momentumCycle.transport,
+                    endpoint.openingMetric, {}, adjustmentLimits));
+        },
+        "regional opening wall exchange: adjusted-state fragment limit rejects");
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningMomentumAdjustmentState(
+                adjustment, zeroExchange,
+                endpoint.momentumCycle.transport,
+                endpoint.openingMetric);
+        },
+        "regional opening wall exchange: foreign wall exchange rejects adjusted state");
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningMomentumPrediction(
+                adjustedPrediction, zeroAdjustment,
+                endpoint.openingMetric, endpoint.geometry,
+                endpoint.sweep, endpoint.fragments, endpoint.topology,
+                endpoint.volumeRates, endpoint.openingDefinitions,
+                endpoint.openings, endpoint.baseMetric,
+                endpoint.openingMetric);
+        },
+        "regional opening wall exchange: foreign adjustment rejects opt-in prediction");
+
     auto limitedSettings = settings;
     limitedSettings.kinematicViscositySquareMetersPerSecond = 100.0;
     limitedSettings.maximumSubsteps = 1;
@@ -1718,6 +1839,14 @@ void testOpeningMomentumWallExchange() {
               && limited.controlVolumes.empty() && limited.samples.empty()
               && limited.sourceInput == input,
           "regional opening wall exchange: unsafe explicit step retains source but publishes no adjusted state");
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                captureSceneFluidRegionalOpeningMomentumAdjustmentState(
+                    limited, endpoint.momentumCycle.transport,
+                    endpoint.openingMetric));
+        },
+        "regional opening wall exchange: rejected exchange cannot publish adjusted momentum");
 
     auto corrupt = exchange;
     corrupt.samples.front().structureTraction.tractionPascals.y += 1.0;

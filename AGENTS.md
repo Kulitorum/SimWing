@@ -2011,13 +2011,22 @@ makes this a certified aerodynamic solver.
   linearly. It requires exactly one source lineage, local continuity, non-
   increasing kinetic energy, and global internal-momentum closure, but applies
   no pressure, viscosity, wall shear, rebase, or production-worker mutation.
+- `src/fsi/fluid/planar_region_fragment_opening_momentum_adjustment_state.{h,cpp}`
+  captures one identity-preserving collocated momentum endpoint after an
+  independently proven same-epoch adjustment. It retains exact accepted-
+  transport and metric lineage plus fragment/region/component/volume identity,
+  and fingerprints the higher-level adjustment source without importing scene
+  types. It owns no wall law, pressure solve, rebase, Structure mutation, or
+  production selection.
 - `src/fsi/fluid/planar_region_fragment_opening_momentum_prediction.{h,cpp}`
-  maps accepted transported fragment vectors onto one consecutive current
-  opening-aware metric. It retains velocity through the geometric volume
-  remap, arithmetic-averages adjacent vectors onto shared/aperture normals,
-  assigns exact solid material motion, and subtracts material speed from
-  aperture flow. Its nested velocity state is a pressure seed, not a pressure
-  solve, wall-shear step, topology rebase, or worker selection.
+  maps either accepted transported fragment vectors or an exact adjusted
+  momentum state onto one consecutive current opening-aware metric. It retains
+  velocity through the geometric volume remap, arithmetic-averages adjacent
+  vectors onto shared/aperture normals, assigns exact solid material motion,
+  and subtracts material speed from aperture flow. The original transport
+  overload preserves its arithmetic and fingerprint. Its nested velocity state
+  is a pressure seed, not a pressure solve, wall-shear step, topology rebase,
+  or worker selection.
 - `src/fsi/fluid/planar_region_fragment_opening_pressure_warm_start.{h,cpp}`
   maps only an accepted correction-pressure field by exact fragment/component
   identity into one consecutive current opening-connected gauge. It carries
@@ -2179,8 +2188,10 @@ makes this a certified aerodynamic solver.
   two-sided sample impulses, Structure tractions, and the existing wall
   conservation/energy diagnostics; integrity reruns the kernel from the nested
   source. Rejected explicit subcycling retains provenance but publishes no
-  adjusted controls. The result is not yet fed into next-pressure prediction
-  or applied to Structure, and it does not commit a cycle or worker.
+  adjusted controls. An accepted receipt can be captured as the fluid-owned
+  adjusted momentum state and consumed by the predictor's explicit opt-in
+  overload. The existing cycle still consumes raw transport; traction is not
+  applied to Structure, and no cycle or worker is committed.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2800,12 +2811,24 @@ owned/working limits.
 Do not apply pressure, viscosity, wall shear, topology rebase, or select the
 production worker.
 
+For `planar_region_fragment_opening_momentum_adjustment_state.*`, require one
+accepted transport, its exact target metric, a nonzero opaque adjustment
+fingerprint, and one adjusted control for every transported fragment. Preserve
+fragment index, stable fragment/region/component identity, physical volume,
+density, and time step exactly. Reconstruct momentum from `rho*V*u`, close the
+adjusted aggregate momentum/impulse and kinetic-energy ledgers, and reject
+non-finite or tolerance-inconsistent controls, corruption, foreign sources,
+and entity/storage limits. Do not implement the physical adjustment, fabricate
+a second accepted transport, solve pressure, rebase topology, mutate
+Structure, or select production ownership.
+
 For `planar_region_fragment_opening_momentum_prediction.*`, require an
-accepted transport, its exact target metric, and a fully validated consecutive
-current metric/volume-rate/opening epoch. Preserve the complete stable degree,
-fragment, component, face-link, and aperture identity; reject any topology
-change or endpoint-volume mismatch beyond scaled floating-point roundoff. Map
-transported fragments by stable ID, retain their vector velocity while
+accepted transport or identity-preserving adjusted momentum state, its exact
+target metric, and a fully validated consecutive current metric/volume-rate/
+opening epoch. Preserve the complete stable degree, fragment, component, face-
+link, and aperture identity; reject any topology change or endpoint-volume
+mismatch beyond scaled floating-point roundoff. Map source fragments by stable
+ID, retain their vector velocity while
 diagnosing momentum and kinetic energy on current physical volumes, and use
 the arithmetic mean of adjacent vector components as each shared-grid or
 aperture absolute normal predictor. Fixed-grid material velocity is zero,
@@ -2816,9 +2839,12 @@ reconstruction momentum changes without treating either as a pressure force.
 The translating uniform X/Y/Z oracle must remain roundoff-exact through the
 consecutive volume remap and reconstruction; nonuniform and breathing cases
 must retain finite state and genuinely nonzero material-relative aperture
-flow. Reject nested corruption, foreign transport metrics, and owned/working
-limits. Do not project pressure, apply viscosity or wall shear, repair a
-topology rebase, or select production ownership.
+flow. The original transport overload must retain its bit-exact arithmetic and
+fingerprint; zero adjustment must retain the exact same nested numeric
+prediction while recording distinct adjustment lineage. Reject nested
+corruption, foreign transport/adjustment metrics, and owned/working limits. Do
+not project pressure, apply viscosity or wall shear, repair a topology rebase,
+or select production ownership.
 
 For `planar_region_fragment_opening_pressure_warm_start.*`, fully validate the
 prior accepted aperture endpoint and current pressure/operator volume-rate
@@ -3133,9 +3159,12 @@ kernel. Retain the complete zero-exchange input so integrity can independently
 rerun and compare diagnostics, adjusted controls, sample impulses, and
 tractions bit-exactly. Cover nonzero tangential dissipation/action-reaction,
 purely tangential traction, zero-viscosity identity, unsafe-substep rejection,
-corruption, foreign time steps, and aggregate limits. Do not feed adjusted
-momentum into the next pressure prediction, apply traction to Structure,
-commit the cycle owner, or enable a worker.
+corruption, foreign time steps, and aggregate limits. Bind accepted adjusted
+controls back to their exact transport identities through the fluid-owned
+adjustment state; prove zero-viscosity nested-prediction identity and nonzero-
+viscosity predictor influence plus foreign/corrupt/limit rejection. Keep this
+predictor path explicitly opt-in: do not switch the cycle, apply traction to
+Structure, commit the cycle owner, or enable a worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "fluid/planar_region_fragment_opening_momentum_adjustment_state.h"
 #include "scene_fluid_regional_opening_momentum_wall_input.h"
 
 #include <cstddef>
@@ -56,5 +57,31 @@ void validateSceneFluidRegionalOpeningMomentumWallExchange(
     const SceneFluidRegionalOpeningMomentumWallInput& input,
     const SceneFluidRegionWallSettings& settings = {},
     const SceneFluidRegionalOpeningMomentumWallExchangeLimits& limits = {});
+
+// Binds one accepted wall exchange back to the exact transported fragment
+// identities without inventing a second transport transaction. The resulting
+// fluid-owned state is an opt-in predictor source; existing cycle and worker
+// paths continue to consume the unadjusted transport.
+[[nodiscard]]
+fluid::PlanarPressureRegionFragmentOpeningMomentumAdjustmentState
+captureSceneFluidRegionalOpeningMomentumAdjustmentState(
+    const SceneFluidRegionalOpeningMomentumWallExchange& exchange,
+    const fluid::PlanarPressureRegionFragmentOpeningMomentumTransport&
+        transport,
+    const fluid::PlanarPressureRegionFragmentOpeningVelocityMetric& metric,
+    const fluid::PlanarPressureRegionFragmentOpeningMomentumAdjustmentStateSettings&
+        settings = {},
+    const fluid::PlanarPressureRegionFragmentOpeningMomentumAdjustmentStateLimits&
+        limits = {});
+
+void validateSceneFluidRegionalOpeningMomentumAdjustmentState(
+    const fluid::PlanarPressureRegionFragmentOpeningMomentumAdjustmentState&
+        state,
+    const SceneFluidRegionalOpeningMomentumWallExchange& exchange,
+    const fluid::PlanarPressureRegionFragmentOpeningMomentumTransport&
+        transport,
+    const fluid::PlanarPressureRegionFragmentOpeningVelocityMetric& metric,
+    const fluid::PlanarPressureRegionFragmentOpeningMomentumAdjustmentStateLimits&
+        limits = {});
 
 } // namespace simwing::fsi
