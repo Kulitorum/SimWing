@@ -20,6 +20,7 @@
 #include "scene_fluid_regional_opening_momentum_wall_cycle_state_persistence.h"
 #include "scene_fluid_regional_opening_momentum_wall_input.h"
 #include "scene_fluid_regional_opening_momentum_wall_load_application.h"
+#include "scene_fluid_regional_opening_momentum_wall_load_epoch.h"
 #include "scene_fluid_regional_opening_momentum_wall_pressure_epoch.h"
 
 #include <algorithm>
@@ -794,6 +795,43 @@ void validateOpeningMomentumWallLoads(
         endpoint.resistanceDefinitions, endpoint.baseMetric,
         endpoint.openingMetric, scene.state, scene.transfer,
         scene.quadrature, settings, limits);
+}
+
+SceneFluidRegionalOpeningMomentumWallLoadEpoch
+applyOpeningMomentumWallLoadEpoch(
+    const SceneFluidRegionalOpeningMomentumWallCycleState& cycleState,
+    const OpeningRegionalEndpoint& endpoint,
+    SceneFixture& scene,
+    const SceneFluidRegionalOpeningMomentumWallLoadEpochSettings& settings =
+        {},
+    const SceneFluidRegionalOpeningMomentumWallLoadEpochLimits& limits = {}) {
+    return applySceneFluidRegionalOpeningMomentumWallLoadEpoch(
+        cycleState, endpoint.openingMetric, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric, scene.surface.definition, scene.state,
+        scene.transfer, scene.quadrature, scene.structure, settings, limits);
+}
+
+void validateOpeningMomentumWallLoadEpoch(
+    const SceneFluidRegionalOpeningMomentumWallLoadEpoch& epoch,
+    const SceneFluidRegionalOpeningMomentumWallCycleState& cycleState,
+    const OpeningRegionalEndpoint& endpoint,
+    const SceneFixture& scene,
+    const SceneFluidRegionalOpeningMomentumWallLoadEpochSettings& settings =
+        {},
+    const SceneFluidRegionalOpeningMomentumWallLoadEpochLimits& limits = {}) {
+    validateSceneFluidRegionalOpeningMomentumWallLoadEpoch(
+        epoch, cycleState, endpoint.openingMetric,
+        endpoint.pressureOperator, endpoint.basePressureOperator,
+        endpoint.geometry, endpoint.sweep, endpoint.fragments,
+        endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric, scene.surface.definition, scene.state,
+        scene.transfer, scene.quadrature, settings, limits);
 }
 
 void validateOpeningMomentumWallInput(
@@ -2471,6 +2509,115 @@ void testOpeningMomentumWallExchange() {
               beforeForeignWallLoad,
               foreignWallCycleFixture.structure.checkpoint()),
           "regional opening wall-load application: foreign-source rejection retains Structure checkpoint");
+
+    SceneFixture combinedWallLoadFixture(
+        partialOpeningPressureScene(), false);
+    const auto beforeCombinedWallLoad =
+        combinedWallLoadFixture.structure.checkpoint();
+    const auto combinedWallLoadEpoch =
+        applyOpeningMomentumWallLoadEpoch(
+            decodedWallCycleState, endpoint, combinedWallLoadFixture);
+    validateOpeningMomentumWallLoadEpoch(
+        combinedWallLoadEpoch, decodedWallCycleState, endpoint,
+        combinedWallLoadFixture);
+    const auto afterCombinedWallLoad =
+        combinedWallLoadFixture.structure.checkpoint();
+    bool exactNodalHandoff =
+        combinedWallLoadEpoch.pressureLoad.application.nodeLoads.size()
+        == combinedWallLoadEpoch.wallLoad.nodeLoads.size();
+    if (exactNodalHandoff) {
+        for (std::size_t index = 0;
+             index < combinedWallLoadEpoch.wallLoad.nodeLoads.size();
+             ++index) {
+            const auto& pressureNode =
+                combinedWallLoadEpoch.pressureLoad.application
+                    .nodeLoads[index];
+            const auto& wallNode =
+                combinedWallLoadEpoch.wallLoad.nodeLoads[index];
+            exactNodalHandoff = exactNodalHandoff
+                && pressureNode.stableId == wallNode.stableId
+                && pressureNode.structureNode == wallNode.structureNode
+                && pressureNode.resultingPendingForceNewtons
+                    == wallNode.priorPendingForceNewtons;
+        }
+    }
+    check(combinedWallLoadEpoch.applied
+              && combinedWallLoadEpoch.sourceCycleStateFingerprint
+                  == decodedWallCycleState.fingerprint
+              && combinedWallLoadEpoch.pressureLoad.applied
+              && combinedWallLoadEpoch.wallLoad.applied
+              && exactNodalHandoff
+              && combinedWallLoadEpoch
+                     .pressureLoad.application
+                     .resultingPendingForceNewtons
+                  == combinedWallLoadEpoch
+                         .wallLoad.priorPendingForceNewtons
+              && combinedWallLoadEpoch.combinedAppliedForceNewtons
+                  == StructureVector3{
+                      combinedWallLoadEpoch.appliedPressureForceNewtons.x
+                          + combinedWallLoadEpoch.appliedWallForceNewtons.x,
+                      combinedWallLoadEpoch.appliedPressureForceNewtons.y
+                          + combinedWallLoadEpoch.appliedWallForceNewtons.y,
+                      combinedWallLoadEpoch.appliedPressureForceNewtons.z
+                          + combinedWallLoadEpoch.appliedWallForceNewtons.z}
+              && afterCombinedWallLoad.pendingExternalForcesNewtons
+                  != beforeCombinedWallLoad.pendingExternalForcesNewtons
+              && afterCombinedWallLoad.nodes
+                  == beforeCombinedWallLoad.nodes
+              && afterCombinedWallLoad.lastAppliedExternalForceNewtons
+                  == beforeCombinedWallLoad
+                         .lastAppliedExternalForceNewtons,
+          "regional opening momentum wall-load epoch: pressure and wall loads hand off per node under one pending-load transaction");
+
+    SceneFixture repeatedCombinedWallLoadFixture(
+        partialOpeningPressureScene(), false);
+    const auto repeatedCombinedWallLoadEpoch =
+        applyOpeningMomentumWallLoadEpoch(
+            decodedWallCycleState, endpoint,
+            repeatedCombinedWallLoadFixture);
+    check(repeatedCombinedWallLoadEpoch == combinedWallLoadEpoch,
+          "regional opening momentum wall-load epoch: restored-state rebuilt-target replay is deterministic");
+
+    auto corruptCombinedWallLoadEpoch = combinedWallLoadEpoch;
+    corruptCombinedWallLoadEpoch.wallLoad.nodeLoads.front()
+        .priorPendingForceNewtons.x += 1.0;
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningMomentumWallLoadEpochIntegrity(
+                corruptCombinedWallLoadEpoch);
+        },
+        "regional opening momentum wall-load epoch: corrupt nodal handoff rejects");
+    auto foreignCombinedSettings =
+        SceneFluidRegionalOpeningMomentumWallLoadEpochSettings{};
+    foreignCombinedSettings.transfer.momentReferenceMeters.y = 0.5;
+    expectRejected(
+        [&] {
+            validateOpeningMomentumWallLoadEpoch(
+                combinedWallLoadEpoch, decodedWallCycleState, endpoint,
+                combinedWallLoadFixture, foreignCombinedSettings);
+        },
+        "regional opening momentum wall-load epoch: foreign settings reject replay");
+
+    SceneFixture lateLimitedCombinedFixture(
+        partialOpeningPressureScene(), false);
+    const auto beforeLateLimitedCombined =
+        lateLimitedCombinedFixture.structure.checkpoint();
+    auto combinedWallLoadLimits =
+        SceneFluidRegionalOpeningMomentumWallLoadEpochLimits{};
+    combinedWallLoadLimits.maximumOwnedBytes =
+        combinedWallLoadEpoch.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(applyOpeningMomentumWallLoadEpoch(
+                decodedWallCycleState, endpoint,
+                lateLimitedCombinedFixture, {},
+                combinedWallLoadLimits));
+        },
+        "regional opening momentum wall-load epoch: late aggregate limit rejects after nested applications");
+    check(samePublicCheckpoint(
+              beforeLateLimitedCombined,
+              lateLimitedCombinedFixture.structure.checkpoint()),
+          "regional opening momentum wall-load epoch: late outer rejection restores both pressure and wall loads");
 
     const auto rejectingLayers = translatePlanarPressureJumpLayers(
         endpoint.geometry, endpoint.layers, 0.1).layers;

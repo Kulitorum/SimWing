@@ -2217,6 +2217,11 @@ makes this a certified aerodynamic solver.
   equal-and-opposite to the exact adjusted fluid impulse before transactionally
   adding replayable nodal wall loads to existing pending Structure loads. It
   applies neither the retained pressure endpoint nor an XPBD step.
+- `src/fsi/scene_fluid_regional_opening_momentum_wall_load_epoch.{h,cpp}`
+  composes the established retained-solid pressure application and the wall
+  application under one outer Structure checkpoint. Every wall node must begin
+  from the exact pressure-resulting pending force, and late outer rejection
+  restores both nested mutations. It still stops before an XPBD step.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -3249,6 +3254,21 @@ action/reaction closure, corrupt nodal data, foreign settings/quadrature, and
 limit rejection with an unchanged Structure checkpoint. Apply wall traction
 only: do not apply pressure, step XPBD, consume pending loads, persist the
 application, or enable a worker.
+
+For `scene_fluid_regional_opening_momentum_wall_load_epoch.*`, validate the
+compact wall-cycle state before capturing the one outer Structure checkpoint.
+Apply the established regional opening pressure-load epoch first, then the
+wall-load application with the same transfer settings. Require equal node
+counts, stable IDs, Structure indices, and exact per-node equality between each
+pressure result and wall prior, plus aggregate prior + pressure + wall = final
+pending-load closure. Retain both complete nested receipts and bind cycle,
+adjustment, accepted-pressure, traction, metric, scene, transfer, target,
+settings, and Structure-epoch provenance. Perform outer aggregate validation
+after both nested applications so any late failure exercises restoration of
+the pre-pressure Structure checkpoint. Cover restored-`SWRW` deterministic
+replay, nonzero combined loads, exact nodal handoff, corrupt handoff, foreign
+settings, and late-limit rollback. Do not step Structure, consume pending
+loads, advance or commit fluid state, persist the epoch, or enable a worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

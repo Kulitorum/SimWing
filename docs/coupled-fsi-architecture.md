@@ -442,6 +442,7 @@ src/fsi/
     scene_fluid_regional_opening_momentum_wall_cycle_state_persistence.* opt-in SWRW restart codec
     scene_fluid_regional_opening_momentum_wall_cycle_owner.* transactional in-memory owner
     scene_fluid_regional_opening_momentum_wall_load_application.* conservative Structure wall-load receipt
+    scene_fluid_regional_opening_momentum_wall_load_epoch.* atomic pressure-plus-wall pending-load epoch
     scene_fluid_region_link_flow.* current-link region predictor
     scene_fluid_pressure_coupling.* strong pressure/shear feedback
     scene_pressure_cell_geometry.* shared visible/refinement tetrahedra
@@ -2986,6 +2987,17 @@ corrupt node loads, foreign settings or quadrature, and count limits reject
 without changing Structure. This intentionally applies wall shear only: the
 accepted pressure half is not yet applied in the same transaction, pending
 loads are not consumed, XPBD is not stepped, and no worker selects the path.
+`scene_fluid_regional_opening_momentum_wall_load_epoch.*` now composes the
+complete pending-load side of that opt-in endpoint. The established
+retained-solid opening-pressure epoch runs first and the wall application runs
+second with identical transfer settings. Every stable node and Structure index
+must match, and each wall prior pending force must equal the pressure-resulting
+force exactly. Both complete receipts sit under one pre-pressure Structure
+checkpoint, so deliberately failing the late outer aggregate bound restores
+both mutations bit-exactly. The combined prior, pressure, wall, and resulting
+force ledger closes deterministically on rebuilt targets restored from `SWRW`.
+This still stops at pending loads: Structure is not stepped, fluid state is not
+advanced or committed, and no production worker selects the epoch.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
