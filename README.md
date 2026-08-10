@@ -265,6 +265,14 @@ The unique `area / distance` weight is `160/3 m` and the two-sided diagonal sum
 is `320/3 m`. Stable row/entry/gauge identity survives motion within one
 topology segment. This remains an ungauged offline operator with no RHS, solve,
 velocity update, or production pressure ownership.
+An opt-in augmented operator now adds each exact aperture patch to that graph
+with projection weight `open area / center distance`; solid wall area remains
+excluded. The canonical half-square-metre patch adds `1.25 m`, merges the
+exterior/pocket gauges, and gives the authored 70 Pa regional field positive
+opening energy while preserving the connected constant null mode. Empty and
+multi-patch overlays remain deterministic through X/Y/Z. This is mimetic
+projection geometry only, not an aperture velocity update, resistance law,
+authored-pressure relaxation, load correction, or worker solve.
 A transactional conjugate-gradient oracle now solves compatible corrections on
 that operator. It removes only roundoff-sized component RHS imbalance, keeps
 the static regional potential separate, and commits each correction with

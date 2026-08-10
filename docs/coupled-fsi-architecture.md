@@ -499,6 +499,7 @@ src/fsi/
         planar_region_fragment_opening.* exact wall-aperture overlay
         planar_region_fragment_opening_flux.* prescribed aperture flow state
         planar_region_fragment_pressure_operator.* regional graph Laplacian
+        planar_region_fragment_opening_pressure_operator.* aperture graph Laplacian
         planar_region_fragment_pressure_solve.* correction-only CG oracle
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
@@ -2264,6 +2265,16 @@ component's integrated action sums to zero. Row, entry, and gauge identities
 remain stable during motion inside one topology segment even as geometric
 weights update. The operator is deliberately ungauged and owns no source,
 linear solve, velocity correction, opening edge, or production state.
+`planar_region_fragment_opening_pressure_operator.*` is the corresponding
+read-only augmented graph. It retains every sealed same-region edge and adds
+two directed entries per exact aperture patch with `w=open area/center
+distance`; all remaining pressure-wall area stays excluded. Components and
+gauges follow the opening overlay union. The canonical `0.5 m^2` patch adds
+`1.25 m` to the unique weight, joins the exterior/pocket components, preserves
+the connected constant null mode, and gives the authored 70 Pa field energy
+`6125 Pa^2*m`. Empty, parallel-patch, and X/Y/Z assemblies remain bounded and
+deterministic. No RHS, solve, aperture inertia/velocity, resistance, authored-
+jump evolution, traction subtraction, or production ownership follows.
 `planar_region_fragment_pressure_solve.*` provides the corresponding
 transactional conjugate-gradient oracle for a correction field only. The
 integrated RHS must close independently on every graph component; only a

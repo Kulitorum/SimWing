@@ -6,6 +6,7 @@
 #include "fluid/planar_region_fragment_accepted_state.h"
 #include "fluid/planar_region_fragment_opening.h"
 #include "fluid/planar_region_fragment_opening_flux.h"
+#include "fluid/planar_region_fragment_opening_pressure_operator.h"
 #include "fluid/planar_region_fragment_pressure_operator.h"
 #include "fluid/planar_region_fragment_pressure_jump_energy.h"
 #include "fluid/planar_region_fragment_pressure_projection.h"
@@ -25,6 +26,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <numeric>
 #include <set>
 #include <stdexcept>
 #include <vector>
@@ -4192,6 +4194,189 @@ void testPlanarRegionalFragmentPressureOperatorAxesAndRejection() {
         "regional pressure operator rejects mutated topology");
 }
 
+void testPlanarRegionalFragmentOpeningPressureOperator() {
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto base = buildPlanarPressureRegionFragmentPressureOperator(
+        geometry, sweep, fragments, topology);
+    const std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition>
+        definitions{{100, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.5}};
+    const auto openings = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, definitions);
+    const auto op = buildPlanarPressureRegionFragmentOpeningPressureOperator(
+        base, geometry, sweep, fragments, topology, definitions, openings);
+    const auto repeated = buildPlanarPressureRegionFragmentOpeningPressureOperator(
+        base, geometry, sweep, fragments, topology, definitions, openings);
+    check(op == repeated && op.fingerprint != 0
+              && op.sourceBaseOperatorFingerprint == base.fingerprint
+              && op.sourceOpeningFingerprint == openings.fingerprint
+              && op.rows.size() == 24 && op.entries.size() == 130
+              && op.components.size() == 1
+              && op.componentFragmentIndices.size() == 24
+              && op.includedSameRegionGridLinkCount == 64
+              && op.includedOpeningPatchCount == 1,
+          "opening pressure operator is deterministic and joins sealed components");
+    checkNear(op.totalPressureLayerWallAreaSquareMeters, 8.0, 2.0e-15,
+              "opening pressure operator retains total wall area");
+    checkNear(op.totalOpeningAreaSquareMeters, 0.5, 2.0e-15,
+              "opening pressure operator includes exact aperture area");
+    checkNear(op.totalSolidPressureLayerWallAreaSquareMeters, 7.5, 2.0e-15,
+              "opening pressure operator excludes remaining solid wall area");
+    checkNear(op.wallAreaPartitionResidualSquareMeters, 0.0, 2.0e-15,
+              "opening pressure operator closes wall area");
+    checkNear(op.openingGeometryWeightMeters, 1.25, 2.0e-15,
+              "opening pressure operator uses aperture area over center distance");
+    checkNear(op.totalGeometryWeightMeters, 655.0 / 12.0, 4.0e-14,
+              "opening pressure operator adds aperture and grid weights");
+    checkNear(op.totalDiagonalGeometryWeightMeters, 655.0 / 6.0, 8.0e-14,
+              "opening pressure operator closes two-sided diagonal weight");
+
+    std::vector<double> constant(op.rows.size(), 3.0);
+    const auto constantAction =
+        applyPlanarPressureRegionFragmentOpeningPressureOperator(op, constant);
+    check(std::ranges::all_of(
+              constantAction,
+              [](const double value) { return std::abs(value) < 3.0e-14; }),
+          "opening pressure operator retains one connected constant null mode");
+    std::vector<double> regional;
+    regional.reserve(fragments.fragments.size());
+    for (const auto& fragment : fragments.fragments)
+        regional.push_back(fragment.pressurePascals);
+    const auto regionalAction =
+        applyPlanarPressureRegionFragmentOpeningPressureOperator(op, regional);
+    checkNear(dotProduct(regional, regionalAction), 6125.0, 2.0e-12,
+              "opening pressure operator exposes authored pressure across aperture");
+    checkNear(std::accumulate(regionalAction.begin(), regionalAction.end(), 0.0),
+              0.0, 2.0e-13,
+              "opening pressure operator has zero integrated connected action");
+    std::vector<double> first(op.rows.size());
+    std::vector<double> second(op.rows.size());
+    for (std::size_t index = 0; index < first.size(); ++index) {
+        first[index] = 0.25 * static_cast<double>(index) - 1.0;
+        second[index] = std::sin(0.3 * static_cast<double>(index));
+    }
+    const auto firstAction =
+        applyPlanarPressureRegionFragmentOpeningPressureOperator(op, first);
+    const auto secondAction =
+        applyPlanarPressureRegionFragmentOpeningPressureOperator(op, second);
+    checkNear(dotProduct(first, secondAction), dotProduct(second, firstAction),
+              2.0e-12,
+              "opening pressure operator is symmetric");
+    check(dotProduct(first, firstAction) >= 0.0,
+          "opening pressure operator has nonnegative graph energy");
+    validatePlanarPressureRegionFragmentOpeningPressureOperator(
+        op, base, geometry, sweep, fragments, topology, definitions, openings);
+
+    const auto emptyOpenings = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, {});
+    const auto empty = buildPlanarPressureRegionFragmentOpeningPressureOperator(
+        base, geometry, sweep, fragments, topology, {}, emptyOpenings);
+    const auto baseAction = applyPlanarPressureRegionFragmentPressureOperator(
+        base, regional);
+    bool emptyMatchesBase = empty.entries.size() == base.entries.size();
+    const auto emptyAction =
+        applyPlanarPressureRegionFragmentOpeningPressureOperator(
+            empty, regional);
+    for (std::size_t index = 0; index < baseAction.size(); ++index) {
+        emptyMatchesBase = emptyMatchesBase
+            && std::abs(emptyAction[index] - baseAction[index]) < 3.0e-13;
+    }
+    check(emptyMatchesBase
+              && empty.components.size() == base.components.size()
+              && empty.openingGeometryWeightMeters == 0.0,
+          "empty opening operator preserves the sealed base action within roundoff");
+
+    const std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition> shared{
+        {102, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.2},
+        {101, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.3}};
+    auto reversedShared = shared;
+    std::ranges::reverse(reversedShared);
+    const auto sharedOpenings = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, shared);
+    const auto reversedOpenings = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, reversedShared);
+    const auto sharedOp = buildPlanarPressureRegionFragmentOpeningPressureOperator(
+        base, geometry, sweep, fragments, topology, shared, sharedOpenings);
+    const auto reversedOp = buildPlanarPressureRegionFragmentOpeningPressureOperator(
+        base, geometry, sweep, fragments, topology, reversedShared,
+        reversedOpenings);
+    check(sharedOp == reversedOp && sharedOp.entries.size() == 132,
+          "opening pressure operator canonicalizes parallel patches on one tile");
+    checkNear(sharedOp.openingGeometryWeightMeters, 1.25, 2.0e-15,
+              "parallel opening patches add their geometric weights");
+
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> axisLayers{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0}, -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0}, -0.2, -70.0}};
+        const auto axisSweep = makePlanarPressureRegionSweepLedger(
+            geometry, axisLayers, axisLayers, 1.0);
+        const auto axisFragments = buildPlanarPressureRegionFragments(
+            geometry, axisSweep);
+        const auto axisTopology = buildPlanarPressureRegionFragmentTopology(
+            geometry, axisSweep, axisFragments);
+        const auto axisBase = buildPlanarPressureRegionFragmentPressureOperator(
+            geometry, axisSweep, axisFragments, axisTopology);
+        const auto wall = std::ranges::find_if(
+            axisTopology.links, [](const auto& link) {
+                return link.kind
+                    == PlanarPressureRegionFragmentFaceKind::PressureLayerWall;
+            });
+        check(wall != axisTopology.links.end(),
+              "opening pressure operator finds a wall on every axis");
+        if (wall == axisTopology.links.end()) continue;
+        const std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition>
+            axisDefinitions{{100, 1000, wall->surfaceStableId, wall->axis,
+                wall->i, wall->j, wall->k, wall->minusRegionStableId,
+                wall->plusRegionStableId, 0.5 * wall->areaSquareMeters}};
+        const auto axisOpenings = buildPlanarPressureRegionFragmentOpenings(
+            geometry, axisSweep, axisFragments, axisTopology, axisDefinitions);
+        const auto axisOp =
+            buildPlanarPressureRegionFragmentOpeningPressureOperator(
+                axisBase, geometry, axisSweep, axisFragments, axisTopology,
+                axisDefinitions, axisOpenings);
+        check(axisOp.components.size() == 1
+                  && axisOp.entries.size() == axisBase.entries.size() + 2,
+              "opening pressure operator joins components on every axis");
+        checkNear(axisOp.openingGeometryWeightMeters,
+                  0.5 * wall->areaSquareMeters / wall->centerDistanceMeters,
+                  4.0e-15,
+                  "opening pressure operator uses physical geometry on every axis");
+    }
+
+    auto corrupt = op;
+    corrupt.entries.back().geometryWeightMeters += 0.1;
+    expectRejected([&] {
+        validatePlanarPressureRegionFragmentOpeningPressureOperator(
+            corrupt, base, geometry, sweep, fragments, topology,
+            definitions, openings);
+    }, "opening pressure operator rejects entry corruption");
+    auto limits = PlanarPressureRegionFragmentOpeningPressureOperatorLimits{};
+    limits.maximumEntries = 129;
+    expectRejected([&] {
+        static_cast<void>(buildPlanarPressureRegionFragmentOpeningPressureOperator(
+            base, geometry, sweep, fragments, topology, definitions,
+            openings, limits));
+    }, "opening pressure operator enforces entry limits");
+    limits = {};
+    limits.maximumWorkingBytes = 1;
+    expectRejected([&] {
+        static_cast<void>(buildPlanarPressureRegionFragmentOpeningPressureOperator(
+            base, geometry, sweep, fragments, topology, definitions,
+            openings, limits));
+    }, "opening pressure operator enforces working storage limits");
+}
+
 void testPlanarRegionalFragmentPressureCorrectionSolve() {
     const auto geometry = grid();
     const auto layers = pocketLayers();
@@ -7522,6 +7707,7 @@ int main() {
     testPlanarRegionalMovingPressureJumpEnergyAudit();
     testPlanarRegionalFragmentPressureOperator();
     testPlanarRegionalFragmentPressureOperatorAxesAndRejection();
+    testPlanarRegionalFragmentOpeningPressureOperator();
     testPlanarRegionalFragmentPressureCorrectionSolve();
     testPlanarRegionalFragmentPressureCorrectionRollback();
     testPlanarRegionalFragmentPressureProjection();

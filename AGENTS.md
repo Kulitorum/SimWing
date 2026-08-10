@@ -1914,6 +1914,10 @@ makes this a certified aerodynamic solver.
   fragment links. Layer walls create no entries. It retains one deterministic
   gauge per component but owns no RHS, solve, velocity correction, or
   production pressure state.
+- `src/fsi/fluid/planar_region_fragment_opening_pressure_operator.{h,cpp}`
+  augments that graph with exact `open area/center distance` patch weights and
+  opening-connected gauges while excluding remaining solid wall area. It owns
+  no RHS, solve, aperture momentum/resistance, load correction, or worker path.
 - `src/fsi/fluid/planar_region_fragment_pressure_solve.{h,cpp}` solves only a
   component-compatible correction on that operator. It removes admitted RHS
   roundoff, commits roundoff-zero volume-mean corrections, keeps the static
@@ -2372,6 +2376,19 @@ products, wrong-sized or non-finite pressure fields, and row/entry/component/
 byte/nested-topology limit violations. Do not infer a pressure RHS or solve,
 regional velocity correction, opening link, mimetic acceptance, or production
 ownership.
+
+For `planar_region_fragment_opening_pressure_operator.*`, retain every base
+same-region edge and add exactly two directed entries per opening patch with
+weight `area/centerDistance`. Require opening-connected components/gauges,
+complete `opening + solid = pressure-wall area` closure, deterministic empty,
+parallel-patch and authored-order behavior, X/Y/Z geometry, symmetry,
+nonnegative link energy, zero integrated component action, and the connected
+constant null mode. The canonical `0.5 m2` patch must add `1.25 m`, merge the
+13.6/2.4 `m3` components, and give the 70 Pa regional field `6125 Pa2*m`
+energy. Reject source/product corruption and row/entry/component/owned/
+working/nested source limits. Do not infer a RHS/solve, aperture velocity or
+inertia, constitutive resistance, authored-jump evolution, load subtraction,
+or production ownership.
 
 For `planar_region_fragment_pressure_solve.*`, require deterministic recovery
 of a manufactured two-component, zero-volume-mean correction within `3e-11
