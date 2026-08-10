@@ -426,6 +426,7 @@ src/fsi/
     scene_fluid_pressure_face_link.* Cartesian and embedded pressure links
     scene_fluid_pressure_operator.* symmetric integrated graph Laplacian
     scene_fluid_pressure_epoch.* atomic accepted pressure geometry/operator
+    scene_fluid_pressure_epoch_transition.* consecutive rebuilt epoch and row mapping
     scene_fluid_pressure_topology_transition.* shared crossing ownership
     scene_fluid_pressure_volume_rate.* consecutive sparse geometry rates
     scene_fluid_pressure_projection.* link-resolved pressure/flow correction
@@ -833,7 +834,18 @@ local candidates and publishes only the complete fully resolved chain; nested
 corruption, a foreign accepted state, and an excessive aggregate payload all
 reject. This is the atomic geometry/operator input for the next transactional
 coupling owner and still samples no velocity, solves no pressure, and applies
-no load. A
+no load. The consecutive
+`scene_fluid_pressure_epoch_transition.*` receipt now rebuilds that complete
+current pressure epoch while requiring its nested grid epoch to equal an
+independently accepted current geometry remap. It then owns the existing shared
+stable-ID transition from the previous pressure epoch. The explicit stability
+decision means only that no pressure control row appeared or disappeared;
+faces and operator coefficients are rebuilt even on the stable path. A
+stationary accepted step retains every row, while the apex-crossing oracle
+publishes the existing one-row appearance and exact donor map through the same
+atomic receipt. Foreign current geometry, nested corruption, and aggregate
+bounds reject. No fluid state is rebased and no pressure is solved or applied.
+A
 strong feedback owner now uses that atomic input in a real
 load-based fixed point. Each iteration rewinds Structure to the accepted
 macro-step baseline, advances XPBD under the trapezoidal average of the

@@ -782,6 +782,12 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   operator. Its fingerprint binds the complete chain to one Structure surface
   state and its aggregate payload is bounded. It owns geometry/operator
   preparation only, not velocity, a pressure solution, or Structure mutation.
+- `scene_fluid_pressure_epoch_transition.{h,cpp}` atomically rebuilds the
+  complete current pressure epoch against an independently accepted current
+  grid epoch and composes the shared consecutive control-volume transition.
+  Its stability flag means only that no pressure row appeared or disappeared;
+  current face geometry and operator coefficients are always rebuilt. It does
+  not rebase velocity/momentum, solve pressure, apply loads, or select a worker.
 - `scene_fluid_pressure_coupling.{h,cpp}` owns the first strong
   feedback step for that pressure path. It iterates canonical end-pressure
   nodal loads with Aitken relaxation, rewinds Structure before every solve,

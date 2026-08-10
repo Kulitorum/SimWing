@@ -1,4 +1,5 @@
 #include "scene_fluid_pressure_epoch.h"
+#include "scene_fluid_pressure_epoch_transition.h"
 #include "scene_fluid_pressure_sampling.h"
 #include "scene_fluid_mimetic_pressure_epoch.h"
 #include "scene_fluid_mimetic_pressure_sampling.h"
@@ -822,6 +823,27 @@ void testAppearedControlRegionRebase() {
               && topologyTransition.retirementRecipients.empty()
               && topologyTransition.maximumAppearanceDonorCount > 0,
           "pressure topology transition deterministically owns the appeared row and its donors");
+    const auto epochTransition =
+        buildSceneFluidPressureEpochTransition(
+            previousEpoch, fixture.surface.definition, previousState,
+            currentState, grid(), fixture.transfer,
+            fixture.connectivity, currentEpoch.gridEpoch);
+    const auto repeatedEpochTransition =
+        buildSceneFluidPressureEpochTransition(
+            previousEpoch, fixture.surface.definition, previousState,
+            currentState, grid(), fixture.transfer,
+            fixture.connectivity, currentEpoch.gridEpoch);
+    check(epochTransition == repeatedEpochTransition
+              && !epochTransition.controlVolumeTopologyStable
+              && epochTransition.currentPressureEpoch == currentEpoch
+              && epochTransition.topologyTransition == topologyTransition
+              && epochTransition.currentPressureEpoch.gridEpoch
+                  == currentEpoch.gridEpoch,
+          "pressure epoch transition atomically publishes the rebuilt epoch and appeared-row mapping");
+    validateSceneFluidPressureEpochTransition(
+        epochTransition, previousEpoch, fixture.surface.definition,
+        previousState, currentState, grid(), fixture.transfer,
+        fixture.connectivity, currentEpoch.gridEpoch);
     const auto currentMimeticControls =
         buildSceneFluidMimeticControlCells(
             fixture.surface.definition, currentState, grid(),
@@ -1398,6 +1420,69 @@ void testComposedPressureEpoch() {
     validateSceneFluidPressureEpoch(
         first, fixture.surface.definition, state, grid(), fixture.transfer,
         fixture.connectivity);
+
+    advanceApex(fixture, 0.0);
+    const auto stationaryState = captureSceneFluidSurfaceState(
+        fixture.surface.definition,
+        fixture.structureAssembly.mappings,
+        fixture.structure);
+    const auto stationaryEpoch = buildSceneFluidPressureEpoch(
+        fixture.surface.definition, stationaryState, grid(),
+        fixture.transfer, fixture.connectivity);
+    const auto stableTransition =
+        buildSceneFluidPressureEpochTransition(
+            first, fixture.surface.definition, state, stationaryState,
+            grid(), fixture.transfer, fixture.connectivity,
+            stationaryEpoch.gridEpoch);
+    const auto repeatedStableTransition =
+        buildSceneFluidPressureEpochTransition(
+            first, fixture.surface.definition, state, stationaryState,
+            grid(), fixture.transfer, fixture.connectivity,
+            stationaryEpoch.gridEpoch);
+    check(stableTransition == repeatedStableTransition
+              && stableTransition.controlVolumeTopologyStable
+              && stableTransition.currentPressureEpoch == stationaryEpoch
+              && stableTransition.topologyTransition
+                     .retainedControlVolumeCount
+                  == first.pressureControlVolumes.controlVolumes.size()
+              && stableTransition.topologyTransition
+                     .appearedControlVolumeCount == 0
+              && stableTransition.topologyTransition
+                     .disappearedControlVolumeCount == 0,
+          "pressure epoch transition distinguishes a stable control-volume topology while rebuilding current coefficients");
+    validateSceneFluidPressureEpochTransition(
+        stableTransition, first, fixture.surface.definition, state,
+        stationaryState, grid(), fixture.transfer, fixture.connectivity,
+        stationaryEpoch.gridEpoch);
+
+    auto corruptStableTransition = stableTransition;
+    corruptStableTransition.controlVolumeTopologyStable = false;
+    expectInvalid(
+        [&] {
+            validateSceneFluidPressureEpochTransitionIntegrity(
+                corruptStableTransition);
+        },
+        "pressure epoch transition rejects a corrupt stability decision");
+    expectInvalid(
+        [&] {
+            static_cast<void>(buildSceneFluidPressureEpochTransition(
+                first, fixture.surface.definition, state,
+                stationaryState, grid(), fixture.transfer,
+                fixture.connectivity, first.gridEpoch));
+        },
+        "pressure epoch transition rejects a foreign accepted current grid epoch");
+    SceneFluidPressureEpochTransitionLimits transitionLimits;
+    transitionLimits.maximumOwnedBytes =
+        stableTransition.ownedStorageBytes - 1;
+    expectLimited(
+        [&] {
+            static_cast<void>(buildSceneFluidPressureEpochTransition(
+                first, fixture.surface.definition, state,
+                stationaryState, grid(), fixture.transfer,
+                fixture.connectivity, stationaryEpoch.gridEpoch, {},
+                transitionLimits));
+        },
+        "pressure epoch transition enforces its aggregate owned-storage limit");
 
     auto corrupt = first;
     ++corrupt.pressureOperator.entries.front().columnControlVolumeIndex;
