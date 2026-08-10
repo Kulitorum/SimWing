@@ -2304,6 +2304,21 @@ degree identity survives topology-stable motion while breathing updates the
 one-sided metric. The artifact is bounded and fingerprinted, but owns no
 velocity samples, density, kinetic-energy ledger, wall prescription,
 advection, pressure acceptance, or production state.
+`planar_region_fragment_velocity_state.*` turns that geometry into the first
+immutable diagonal-inertia state. One scalar sample is bound to every metric
+degree in its minus-to-plus Cartesian direction. Density times dual volume
+defines its normal momentum, and one half of that mass times velocity squared
+defines its kinetic energy. Shared samples distribute their two half-masses to
+the adjacent fragments; each pressure-wall trace contributes only to its own
+side. Fragment, component, axis, and domain mass therefore close independently
+without erasing a pressure discontinuity. With `rho=1.25 kg/m3`, the canonical
+uniform `[2, -0.5, 0.25] m/s` field closes `20 kg` per axis,
+`[40, -10, 5] kg*m/s`, and `43.125 J`. Independent `+1/-2 m/s` traces on one
+wall close separate exterior/pocket contributions and aggregate to
+`-2.5 kg*m/s` and `3.25 J`. Topology-stable breathing changes component mass
+but preserves global uniform-flow momentum and energy. The bounded,
+fingerprinted state still has no wall prescription, projection certificate,
+pressure-work ledger, transport update, or production ownership.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

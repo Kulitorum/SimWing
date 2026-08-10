@@ -297,6 +297,19 @@ the separate `13.6/2.4 m3` exterior/pocket components close on each axis,
 including rigid motion and breathing geometry. This immutable bounded metric
 contains no velocity values, density, kinetic-energy acceptance, advection, or
 production state.
+A source-bound regional velocity state now applies density to that metric and
+publishes scalar normal momentum plus kinetic energy for every degree of
+freedom. Half-volume contributions reconstruct fragment and component mass on
+each axis, while component/global momentum and energy are summed without
+collapsing the two wall traces. At `1.25 kg/m3`, the canonical uniform
+`[2, -0.5, 0.25] m/s` field has `20 kg` of diagonal mass per axis,
+`[40, -10, 5] kg*m/s` momentum, and `43.125 J` kinetic energy. Assigning
+different `+1/-2 m/s` values to the two sides of one fabric surface keeps their
+exterior/pocket ledgers separate and closes `-2.5 kg*m/s` and `3.25 J`
+globally. Motion updates the source fingerprint and component mass while a
+uniform field preserves global momentum and energy. This immutable state does
+not prescribe wall velocity, prove projection acceptance, transport momentum,
+apply pressure work, or enter production.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

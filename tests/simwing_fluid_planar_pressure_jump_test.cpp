@@ -8,6 +8,7 @@
 #include "fluid/planar_region_fragment_pressure_solve.h"
 #include "fluid/planar_region_fragment_topology.h"
 #include "fluid/planar_region_fragment_velocity_metric.h"
+#include "fluid/planar_region_fragment_velocity_state.h"
 #include "fluid/planar_region_fragment_volume_rate.h"
 #include "fluid/planar_region_sweep.h"
 #include "fluid/projection.h"
@@ -215,6 +216,16 @@ findFragmentVelocityMetricComponent(
         metric.components, regionStableId,
         &PlanarPressureRegionFragmentVelocityMetricComponent::regionStableId);
     return found == metric.components.end() ? nullptr : &*found;
+}
+
+const PlanarPressureRegionFragmentVelocityStateComponent*
+findFragmentVelocityStateComponent(
+    const PlanarPressureRegionFragmentVelocityState& state,
+    const std::uint64_t regionStableId) {
+    const auto found = std::ranges::find(
+        state.components, regionStableId,
+        &PlanarPressureRegionFragmentVelocityStateComponent::regionStableId);
+    return found == state.components.end() ? nullptr : &*found;
 }
 
 double dotProduct(const std::vector<double>& first,
@@ -2887,6 +2898,441 @@ void testPlanarRegionalFragmentVelocityMetricAxesAndRejection() {
         "regional velocity metric rejects mutated source topology");
 }
 
+void testPlanarRegionalFragmentVelocityState() {
+    constexpr double density = 1.25;
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto metric = buildPlanarPressureRegionFragmentVelocityMetric(
+        geometry, sweep, fragments, topology);
+    std::vector<double> velocity(metric.dofs.size(), 0.0);
+    for (const auto& dof : metric.dofs) {
+        switch (dof.axis) {
+        case GridFaceAxis::X:
+            velocity[dof.dofIndex] = 2.0;
+            break;
+        case GridFaceAxis::Y:
+            velocity[dof.dofIndex] = -0.5;
+            break;
+        case GridFaceAxis::Z:
+            velocity[dof.dofIndex] = 0.25;
+            break;
+        }
+    }
+    const auto state = buildPlanarPressureRegionFragmentVelocityState(
+        geometry, sweep, fragments, topology, metric, velocity, density);
+    const auto repeated = buildPlanarPressureRegionFragmentVelocityState(
+        geometry, sweep, fragments, topology, metric, velocity, density);
+    check(state == repeated
+              && state.version
+                  == planarPressureRegionFragmentVelocityStateVersion
+              && state.fingerprint != 0
+              && state.sourceMetricFingerprint == metric.fingerprint
+              && state.sourceFragmentFingerprint == fragments.fingerprint
+              && state.sourceTopologyFingerprint == topology.fingerprint
+              && state.profileAxis == GridFaceAxis::X
+              && state.densityKgPerCubicMeter == density
+              && state.samples.size() == metric.dofs.size()
+              && state.fragments.size() == fragments.fragments.size()
+              && state.components.size() == topology.components.size()
+              && state.sharedRegionGridSampleCount == 64
+              && state.pressureLayerTraceSampleCount == 16
+              && state.maximumAbsoluteVelocityMetersPerSecond == 2.0
+              && state.ownedStorageBytes > 0,
+          "regional velocity state publishes its complete diagonal inertia state");
+    checkNear(state.massByAxisKilograms.x, 20.0, 2.0e-13,
+              "regional velocity state closes X mass");
+    checkNear(state.massByAxisKilograms.y, 20.0, 2.0e-13,
+              "regional velocity state closes Y mass");
+    checkNear(state.massByAxisKilograms.z, 20.0, 2.0e-13,
+              "regional velocity state closes Z mass");
+    checkNear(state.momentumKilogramMetersPerSecond.x, 40.0, 4.0e-13,
+              "regional velocity state closes X momentum");
+    checkNear(state.momentumKilogramMetersPerSecond.y, -10.0, 2.0e-13,
+              "regional velocity state closes Y momentum");
+    checkNear(state.momentumKilogramMetersPerSecond.z, 5.0, 1.0e-13,
+              "regional velocity state closes Z momentum");
+    checkNear(state.kineticEnergyByAxisJoules.x, 40.0, 4.0e-13,
+              "regional velocity state closes X kinetic energy");
+    checkNear(state.kineticEnergyByAxisJoules.y, 2.5, 5.0e-14,
+              "regional velocity state closes Y kinetic energy");
+    checkNear(state.kineticEnergyByAxisJoules.z, 0.625, 2.0e-14,
+              "regional velocity state closes Z kinetic energy");
+    checkNear(state.kineticEnergyJoules, 43.125, 5.0e-13,
+              "regional velocity state closes total kinetic energy");
+    checkNear(
+        std::max({
+            std::abs(state.domainMassClosureResidualByAxisKilograms.x),
+            std::abs(state.domainMassClosureResidualByAxisKilograms.y),
+            std::abs(state.domainMassClosureResidualByAxisKilograms.z),
+            state.maximumAbsoluteFragmentMassClosureResidualKilograms,
+            state.maximumAbsoluteComponentMassClosureResidualKilograms}),
+        0.0, 2.0e-13,
+        "regional velocity state closes every diagonal mass ledger");
+
+    const auto* exterior = findFragmentVelocityStateComponent(state, 1);
+    const auto* pocket = findFragmentVelocityStateComponent(state, 2);
+    check(exterior != nullptr && pocket != nullptr,
+          "regional velocity state retains both pressure components");
+    if (exterior != nullptr && pocket != nullptr) {
+        for (const double mass : {
+                 exterior->massByAxisKilograms.x,
+                 exterior->massByAxisKilograms.y,
+                 exterior->massByAxisKilograms.z}) {
+            checkNear(mass, 17.0, 2.0e-13,
+                      "exterior regional velocity state closes mass");
+        }
+        for (const double mass : {
+                 pocket->massByAxisKilograms.x,
+                 pocket->massByAxisKilograms.y,
+                 pocket->massByAxisKilograms.z}) {
+            checkNear(mass, 3.0, 3.0e-14,
+                      "pocket regional velocity state closes mass");
+        }
+        checkNear(exterior->momentumKilogramMetersPerSecond.x,
+                  34.0, 4.0e-13,
+                  "exterior regional velocity state closes momentum");
+        checkNear(pocket->momentumKilogramMetersPerSecond.x,
+                  6.0, 6.0e-14,
+                  "pocket regional velocity state closes momentum");
+        checkNear(exterior->kineticEnergyJoules,
+                  36.65625, 5.0e-13,
+                  "exterior regional velocity state closes energy");
+        checkNear(pocket->kineticEnergyJoules,
+                  6.46875, 8.0e-14,
+                  "pocket regional velocity state closes energy");
+    }
+
+    for (std::size_t index = 0; index < state.samples.size(); ++index) {
+        const auto& sample = state.samples[index];
+        const auto& dof = metric.dofs[index];
+        check(sample.dofIndex == index
+                  && sample.stableId == dof.stableId
+                  && sample.kind == dof.kind
+                  && sample.sourceFaceLinkStableId
+                      == dof.sourceFaceLinkStableId
+                  && sample.axis == dof.axis
+                  && sample.surfaceStableId == dof.surfaceStableId
+                  && sample.componentIndex == dof.componentIndex
+                  && sample.regionStableId == dof.regionStableId
+                  && sample.normalVelocityMetersPerSecond == velocity[index],
+              "regional velocity sample remains bound to its metric DOF");
+        const double expectedMass =
+            density * dof.dualVolumeCubicMeters;
+        checkNear(sample.normalMomentumKilogramMetersPerSecond,
+                  expectedMass * velocity[index], 2.0e-14,
+                  "regional velocity sample owns scalar normal momentum");
+        checkNear(sample.kineticEnergyJoules,
+                  0.5 * expectedMass * velocity[index] * velocity[index],
+                  2.0e-14,
+                  "regional velocity sample owns diagonal kinetic energy");
+    }
+    for (std::size_t index = 0; index < state.fragments.size(); ++index) {
+        const double expectedMass = density
+            * fragments.fragments[index].volumeCubicMeters;
+        for (const double mass : {
+                 state.fragments[index].massByAxisKilograms.x,
+                 state.fragments[index].massByAxisKilograms.y,
+                 state.fragments[index].massByAxisKilograms.z}) {
+            checkNear(mass, expectedMass, 2.0e-14,
+                      "regional velocity fragment closes physical mass");
+        }
+    }
+    validatePlanarPressureRegionFragmentVelocityState(
+        state, geometry, sweep, fragments, topology, metric);
+
+    const std::vector<double> zeroVelocity(metric.dofs.size(), 0.0);
+    const auto zero = buildPlanarPressureRegionFragmentVelocityState(
+        geometry, sweep, fragments, topology, metric, zeroVelocity, density);
+    check(zero.momentumKilogramMetersPerSecond == Vector3{}
+              && zero.kineticEnergyByAxisJoules == Vector3{}
+              && zero.kineticEnergyJoules == 0.0
+              && zero.maximumAbsoluteVelocityMetersPerSecond == 0.0,
+          "zero regional velocity has exact zero momentum and energy");
+
+    std::vector<double> independentWallVelocity(
+        metric.dofs.size(), 0.0);
+    for (const auto& dof : metric.dofs) {
+        if (dof.surfaceStableId != 10) continue;
+        if (dof.kind
+            == PlanarPressureRegionFragmentVelocityDofKind::
+                PressureLayerMinusTrace) {
+            independentWallVelocity[dof.dofIndex] = 1.0;
+        } else if (dof.kind
+                   == PlanarPressureRegionFragmentVelocityDofKind::
+                       PressureLayerPlusTrace) {
+            independentWallVelocity[dof.dofIndex] = -2.0;
+        }
+    }
+    const auto wall = buildPlanarPressureRegionFragmentVelocityState(
+        geometry, sweep, fragments, topology, metric,
+        independentWallVelocity, density);
+    const auto* wallExterior = findFragmentVelocityStateComponent(wall, 1);
+    const auto* wallPocket = findFragmentVelocityStateComponent(wall, 2);
+    check(wallExterior != nullptr && wallPocket != nullptr,
+          "independent wall traces retain regional ownership");
+    if (wallExterior != nullptr && wallPocket != nullptr) {
+        checkNear(wallExterior->momentumKilogramMetersPerSecond.x,
+                  0.5, 2.0e-14,
+                  "minus wall trace contributes only exterior momentum");
+        checkNear(wallPocket->momentumKilogramMetersPerSecond.x,
+                  -3.0, 3.0e-14,
+                  "plus wall trace contributes only pocket momentum");
+        checkNear(wallExterior->kineticEnergyJoules,
+                  0.25, 2.0e-14,
+                  "minus wall trace contributes only exterior energy");
+        checkNear(wallPocket->kineticEnergyJoules,
+                  3.0, 3.0e-14,
+                  "plus wall trace contributes only pocket energy");
+    }
+    checkNear(wall.momentumKilogramMetersPerSecond.x,
+              -2.5, 4.0e-14,
+              "independent wall traces close aggregate momentum");
+    checkNear(wall.kineticEnergyJoules, 3.25, 4.0e-14,
+              "independent wall traces close aggregate energy");
+}
+
+void testPlanarRegionalFragmentVelocityStateMotionAndRejection() {
+    constexpr double density = 1.25;
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto metric = buildPlanarPressureRegionFragmentVelocityMetric(
+        geometry, sweep, fragments, topology);
+    std::vector<double> velocity(metric.dofs.size(), 0.0);
+    for (const auto& dof : metric.dofs) {
+        velocity[dof.dofIndex] = dof.axis == GridFaceAxis::X ? 1.0
+            : dof.axis == GridFaceAxis::Y ? -0.5 : 0.25;
+    }
+    const auto state = buildPlanarPressureRegionFragmentVelocityState(
+        geometry, sweep, fragments, topology, metric, velocity, density);
+
+    auto breathingLayers = layers;
+    breathingLayers[0].physicalPlaneCoordinateMeters -= 0.1;
+    breathingLayers[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto breathingSweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, breathingLayers, 0.5);
+    const auto breathingFragments = buildPlanarPressureRegionFragments(
+        geometry, breathingSweep);
+    const auto breathingTopology = buildPlanarPressureRegionFragmentTopology(
+        geometry, breathingSweep, breathingFragments);
+    const auto breathingMetric =
+        buildPlanarPressureRegionFragmentVelocityMetric(
+            geometry, breathingSweep, breathingFragments,
+            breathingTopology);
+    std::vector<double> breathingVelocity(
+        breathingMetric.dofs.size(), 0.0);
+    bool identitiesStable = breathingMetric.dofs.size() == metric.dofs.size();
+    for (std::size_t index = 0;
+         index < breathingMetric.dofs.size(); ++index) {
+        const auto& dof = breathingMetric.dofs[index];
+        breathingVelocity[index] = dof.axis == GridFaceAxis::X ? 1.0
+            : dof.axis == GridFaceAxis::Y ? -0.5 : 0.25;
+        identitiesStable = identitiesStable
+            && dof.stableId == metric.dofs[index].stableId;
+    }
+    const auto breathing = buildPlanarPressureRegionFragmentVelocityState(
+        geometry, breathingSweep, breathingFragments, breathingTopology,
+        breathingMetric, breathingVelocity, density);
+    check(identitiesStable && breathing.fingerprint != state.fingerprint,
+          "topology-stable motion preserves velocity identity and updates state");
+    checkNear(breathing.momentumKilogramMetersPerSecond.x,
+              state.momentumKilogramMetersPerSecond.x, 2.0e-13,
+              "breathing preserves uniform X momentum globally");
+    checkNear(breathing.momentumKilogramMetersPerSecond.y,
+              state.momentumKilogramMetersPerSecond.y, 2.0e-13,
+              "breathing preserves uniform Y momentum globally");
+    checkNear(breathing.momentumKilogramMetersPerSecond.z,
+              state.momentumKilogramMetersPerSecond.z, 2.0e-13,
+              "breathing preserves uniform Z momentum globally");
+    checkNear(breathing.kineticEnergyJoules,
+              state.kineticEnergyJoules, 3.0e-13,
+              "breathing preserves uniform kinetic energy globally");
+    const auto* breathingExterior =
+        findFragmentVelocityStateComponent(breathing, 1);
+    const auto* breathingPocket =
+        findFragmentVelocityStateComponent(breathing, 2);
+    check(breathingExterior != nullptr && breathingPocket != nullptr,
+          "breathing velocity state retains both components");
+    if (breathingExterior != nullptr && breathingPocket != nullptr) {
+        checkNear(breathingExterior->massByAxisKilograms.x,
+                  16.0, 2.0e-13,
+                  "breathing exterior state follows current volume");
+        checkNear(breathingPocket->massByAxisKilograms.x,
+                  4.0, 5.0e-14,
+                  "breathing pocket state follows current volume");
+    }
+
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> axisLayers{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        const auto axisSweep = makePlanarPressureRegionSweepLedger(
+            geometry, axisLayers, axisLayers, 1.0);
+        const auto axisFragments = buildPlanarPressureRegionFragments(
+            geometry, axisSweep);
+        const auto axisTopology =
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, axisSweep, axisFragments);
+        const auto axisMetric =
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, axisSweep, axisFragments, axisTopology);
+        std::vector<double> axisVelocity(axisMetric.dofs.size(), 0.0);
+        for (const auto& dof : axisMetric.dofs) {
+            axisVelocity[dof.dofIndex] =
+                dof.axis == GridFaceAxis::X ? 1.0
+                : dof.axis == GridFaceAxis::Y ? -0.5 : 0.25;
+        }
+        const auto axisState =
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, axisSweep, axisFragments, axisTopology,
+                axisMetric, axisVelocity, density);
+        check(axisState.profileAxis == axis,
+              "all-axis regional velocity state retains profile axis");
+        checkNear(axisState.momentumKilogramMetersPerSecond.x,
+                  20.0, 3.0e-13,
+                  "all-axis regional velocity state closes X momentum");
+        checkNear(axisState.momentumKilogramMetersPerSecond.y,
+                  -10.0, 2.0e-13,
+                  "all-axis regional velocity state closes Y momentum");
+        checkNear(axisState.momentumKilogramMetersPerSecond.z,
+                  5.0, 1.0e-13,
+                  "all-axis regional velocity state closes Z momentum");
+        checkNear(axisState.kineticEnergyJoules,
+                  13.125, 3.0e-13,
+                  "all-axis regional velocity state closes kinetic energy");
+    }
+
+    auto corrupt = state;
+    corrupt.fingerprint = 0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVelocityState(
+            corrupt, geometry, sweep, fragments, topology, metric); },
+        "regional velocity state rejects fingerprint corruption");
+    corrupt = state;
+    corrupt.samples[0].normalMomentumKilogramMetersPerSecond += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVelocityState(
+            corrupt, geometry, sweep, fragments, topology, metric); },
+        "regional velocity state rejects sample corruption");
+    corrupt = state;
+    corrupt.fragments[0].massByAxisKilograms.x += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVelocityState(
+            corrupt, geometry, sweep, fragments, topology, metric); },
+        "regional velocity state rejects fragment corruption");
+    corrupt = state;
+    corrupt.components[0].kineticEnergyJoules += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVelocityState(
+            corrupt, geometry, sweep, fragments, topology, metric); },
+        "regional velocity state rejects component corruption");
+
+    auto wrongSize = velocity;
+    wrongSize.pop_back();
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, sweep, fragments, topology, metric, wrongSize,
+                density)); },
+        "regional velocity state rejects a wrong-sized field");
+    auto nonFinite = velocity;
+    nonFinite[0] = std::numeric_limits<double>::quiet_NaN();
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, sweep, fragments, topology, metric, nonFinite,
+                density)); },
+        "regional velocity state rejects a non-finite field");
+    auto overflowing = velocity;
+    overflowing[0] = std::numeric_limits<double>::max();
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, sweep, fragments, topology, metric, overflowing,
+                density)); },
+        "regional velocity state rejects overflowing energy");
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, sweep, fragments, topology, metric, velocity,
+                0.0)); },
+        "regional velocity state rejects zero density");
+
+    auto limits = PlanarPressureRegionFragmentVelocityStateLimits{};
+    limits.maximumSamples = state.samples.size() - 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, sweep, fragments, topology, metric, velocity,
+                density, limits)); },
+        "regional velocity state enforces the sample limit");
+    limits = {};
+    limits.maximumFragments = state.fragments.size() - 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, sweep, fragments, topology, metric, velocity,
+                density, limits)); },
+        "regional velocity state enforces the fragment limit");
+    limits = {};
+    limits.maximumComponents = state.components.size() - 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, sweep, fragments, topology, metric, velocity,
+                density, limits)); },
+        "regional velocity state enforces the component limit");
+    limits = {};
+    limits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, sweep, fragments, topology, metric, velocity,
+                density, limits)); },
+        "regional velocity state enforces the byte limit");
+    limits = {};
+    limits.maximumWorkingBytes = 1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVelocityState(
+            state, geometry, sweep, fragments, topology, metric, limits); },
+        "regional velocity state bounds validation storage");
+    limits = {};
+    limits.metricLimits.maximumDofs = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, sweep, fragments, topology, metric, velocity,
+                density, limits)); },
+        "regional velocity state enforces nested metric limits");
+    auto corruptMetric = metric;
+    corruptMetric.dofs[0].dualVolumeCubicMeters += 0.1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVelocityState(
+                geometry, sweep, fragments, topology, corruptMetric,
+                velocity, density)); },
+        "regional velocity state rejects a mutated source metric");
+}
+
 void testPlanarRegionalFragmentPressureOperator() {
     const auto geometry = grid();
     const auto layers = pocketLayers();
@@ -4329,6 +4775,8 @@ int main() {
     testPlanarRegionalFragmentVolumeRatesAxesAndRejection();
     testPlanarRegionalFragmentVelocityMetric();
     testPlanarRegionalFragmentVelocityMetricAxesAndRejection();
+    testPlanarRegionalFragmentVelocityState();
+    testPlanarRegionalFragmentVelocityStateMotionAndRejection();
     testPlanarRegionalFragmentPressureOperator();
     testPlanarRegionalFragmentPressureOperatorAxesAndRejection();
     testPlanarRegionalFragmentPressureCorrectionSolve();

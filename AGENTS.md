@@ -1927,6 +1927,12 @@ makes this a certified aerodynamic solver.
   two independent one-sided traces. Fragment, component, axis, and domain
   volumes close without carrying velocity, density, energy, or production
   state.
+- `src/fsi/fluid/planar_region_fragment_velocity_state.{h,cpp}` applies one
+  positive density and one finite normal velocity to every regional metric
+  degree. It retains per-DOF momentum/energy and closes fragment, component,
+  axis, and global mass/momentum/kinetic-energy ledgers without averaging the
+  independent pressure-wall traces. It owns no wall prescription, pressure-
+  projection certificate, transport, pressure work, or production state.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2345,6 +2351,20 @@ Reject mutated products/sources, inconsistent half distances, and DOF,
 fragment, component, byte, or nested-topology limit violations. Do not infer
 velocity values, density, kinetic-energy acceptance, wall prescription,
 advection, pressure acceptance, or production ownership.
+
+For `planar_region_fragment_velocity_state.*`, require exact binding to every
+metric degree, positive finite density, finite normal velocity/momentum/energy,
+and half-volume accumulation back to every fragment. At `1.25 kg/m3`, require
+the canonical uniform `[2,-0.5,0.25] m/s` state to close `20 kg` per axis,
+`[40,-10,5] kg*m/s`, and `43.125 J`; distinct `+1/-2 m/s` traces on one wall
+must remain exterior/pocket-owned and close `-2.5 kg*m/s` plus `3.25 J`
+globally. Require X/Y/Z profile-axis coverage and topology-stable breathing to
+preserve uniform global momentum/energy while component mass follows current
+volume. Reject mutated products/sources, wrong-sized or non-finite samples,
+non-positive density, aggregate overflow, and sample/fragment/component/owned-
+byte/working-byte/nested-metric limit violations. Do not infer a wall velocity
+prescription, pressure-projection certificate, transport acceptance, pressure
+work, or production ownership.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.
