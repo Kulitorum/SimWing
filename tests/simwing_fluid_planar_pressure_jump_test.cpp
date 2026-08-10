@@ -104,6 +104,17 @@ double maximumVelocity(const MacVelocityField& velocity) {
     return result;
 }
 
+const PlanarPressureRegionSummary* findRegion(
+    const StaticPlanarPressureRegionProfile& profile,
+    const std::uint64_t regionStableId) {
+    const auto found = std::ranges::find_if(
+        profile.regions,
+        [&](const auto& region) {
+            return region.regionStableId == regionStableId;
+        });
+    return found == profile.regions.end() ? nullptr : &*found;
+}
+
 void testCanonicalAssemblyAndSameFacePocket() {
     const auto geometry = grid();
     const auto authored = pocketLayers();
@@ -272,6 +283,124 @@ void testSeparatedResolutionAndPeriodicWrap() {
           "negative periodically wrapped pocket retains both layers and zero aggregate jump");
 }
 
+void testStaticRegionalPressureProfile() {
+    const auto geometry = grid();
+    auto reversed = pocketLayers();
+    std::ranges::reverse(reversed);
+    const auto first = makeStaticPlanarPressureRegionProfile(
+        geometry, pocketLayers());
+    const auto second = makeStaticPlanarPressureRegionProfile(
+        geometry, reversed);
+    check(first == second
+              && first.axis == GridFaceAxis::X
+              && first.intervals.size() == 2
+              && first.regions.size() == 2,
+          "static regional profile canonicalizes one complete thin pocket");
+    check(first.intervals[0].lowerSurfaceStableId == 10
+              && first.intervals[0].upperSurfaceStableId == 20
+              && first.intervals[0].regionStableId == 2
+              && first.intervals[1].lowerSurfaceStableId == 20
+              && first.intervals[1].upperSurfaceStableId == 10
+              && first.intervals[1].regionStableId == 1,
+          "static regional profile retains the ordered periodic intervals");
+    checkNear(first.geometricDomainVolumeCubicMeters, 16.0, 0.0,
+              "static regional profile retains the grid domain volume");
+    checkNear(first.intervalVolumeCubicMeters, 16.0, 2.0e-15,
+              "static regional profile partitions the complete domain volume");
+    checkNear(first.volumeClosureResidualCubicMeters, 0.0, 2.0e-15,
+              "static regional profile closes its interval volume ledger");
+    checkNear(first.intervals[0].volumeCubicMeters, 2.4, 2.0e-15,
+              "static regional profile retains the physical thin-pocket volume");
+    const auto* exterior = findRegion(first, 1);
+    const auto* interior = findRegion(first, 2);
+    check(exterior != nullptr && interior != nullptr,
+          "static regional profile summarizes both authored regions");
+    if (exterior != nullptr && interior != nullptr) {
+        checkNear(exterior->volumeCubicMeters, 13.6, 2.0e-15,
+                  "static regional profile retains the exterior volume");
+        checkNear(interior->volumeCubicMeters, 2.4, 2.0e-15,
+                  "static regional profile retains the pocket volume");
+        checkNear(exterior->pressurePascals, -10.5, 2.0e-14,
+                  "static regional profile gauges the exterior pressure by volume");
+        checkNear(interior->pressurePascals, 59.5, 2.0e-14,
+                  "static regional profile recovers the intermediate pocket pressure");
+        checkNear(interior->pressurePascals - exterior->pressurePascals,
+                  70.0, 2.0e-14,
+                  "static regional profile preserves the authored pressure jump");
+    }
+    checkNear(first.achievedVolumeMeanPressurePascals, 0.0, 2.0e-15,
+              "static regional profile applies the requested zero pressure gauge");
+    const auto shifted = makeStaticPlanarPressureRegionProfile(
+        geometry, pocketLayers(), 12.5);
+    const auto* shiftedExterior = findRegion(shifted, 1);
+    const auto* shiftedInterior = findRegion(shifted, 2);
+    check(shiftedExterior != nullptr && shiftedInterior != nullptr,
+          "static regional profile retains both regions under a shifted gauge");
+    if (shiftedExterior != nullptr && shiftedInterior != nullptr) {
+        checkNear(shifted.achievedVolumeMeanPressurePascals,
+                  12.5, 4.0e-15,
+                  "static regional profile applies a nonzero volume pressure gauge");
+        checkNear(shiftedInterior->pressurePascals
+                      - shiftedExterior->pressurePascals,
+                  70.0, 2.0e-14,
+                  "static regional pressure differences are gauge invariant");
+    }
+
+    const auto sameFace = translatePlanarPressureJumpLayers(
+        geometry, pocketLayers(), 0.5);
+    const auto separated = translatePlanarPressureJumpLayers(
+        geometry, sameFace.layers, 0.6);
+    const auto sameFaceProfile = makeStaticPlanarPressureRegionProfile(
+        geometry, sameFace.layers);
+    const auto separatedProfile = makeStaticPlanarPressureRegionProfile(
+        geometry, separated.layers);
+    for (const auto* translated : {&sameFaceProfile, &separatedProfile}) {
+        const auto* translatedExterior = findRegion(*translated, 1);
+        const auto* translatedInterior = findRegion(*translated, 2);
+        check(translatedExterior != nullptr && translatedInterior != nullptr,
+              "translated static profile retains both pressure regions");
+        if (translatedExterior != nullptr && translatedInterior != nullptr) {
+            checkNear(translatedInterior->volumeCubicMeters,
+                      2.4, 4.0e-15,
+                      "rigid layer translation preserves the thin-pocket volume");
+            checkNear(translatedInterior->pressurePascals
+                          - translatedExterior->pressurePascals,
+                      70.0, 2.0e-14,
+                      "rigid layer translation preserves the regional pressure difference");
+        }
+    }
+
+    auto invalid = pocketLayers();
+    invalid[1].pressureJumpPascals = -60.0;
+    expectRejected(
+        [&] { static_cast<void>(makeStaticPlanarPressureRegionProfile(
+            geometry, invalid)); },
+        "static regional profile rejects a non-closing pressure cycle");
+    const std::vector<PlanarPressureJumpLayerDefinition> repeatedRegion{
+        {10, 1, 2,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 1, 0},
+         -1.4, 10.0},
+        {20, 2, 1,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 1, 0},
+         -0.8, -9.0},
+        {30, 1, 3,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 2, 0},
+         -0.2, 19.0},
+        {40, 3, 1,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 2, 0},
+         0.4, -20.0},
+    };
+    expectRejected(
+        [&] { static_cast<void>(makeStaticPlanarPressureRegionProfile(
+            geometry, repeatedRegion)); },
+        "static regional profile rejects an inconsistent repeated region potential");
+    expectRejected(
+        [&] { static_cast<void>(makeStaticPlanarPressureRegionProfile(
+            geometry, pocketLayers(),
+            std::numeric_limits<double>::quiet_NaN())); },
+        "static regional profile rejects a non-finite pressure gauge");
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -321,6 +450,18 @@ void testAllAxisAssembly() {
                 : collapsed.zFaceJumpsPascals()[index]);
         check(aggregate == 0.0,
               "same-face pocket retains its zero dense jump on each axis");
+        const auto profile = makeStaticPlanarPressureRegionProfile(
+            geometry, translated.layers);
+        const double expectedPocketVolume = axis == GridFaceAxis::X
+            ? 2.4 : 4.8;
+        const auto* pocket = findRegion(profile, 2);
+        check(pocket != nullptr,
+              "static regional profile retains the pocket on each axis");
+        if (pocket != nullptr) {
+            checkNear(pocket->volumeCubicMeters,
+                      expectedPocketVolume, 4.0e-15,
+                      "static regional profile uses the physical transverse area on each axis");
+        }
     }
 }
 
@@ -398,6 +539,7 @@ void testTransactionalRejection() {
 int main() {
     testCanonicalAssemblyAndSameFacePocket();
     testSeparatedResolutionAndPeriodicWrap();
+    testStaticRegionalPressureProfile();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {

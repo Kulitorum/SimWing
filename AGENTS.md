@@ -1860,7 +1860,10 @@ makes this a certified aerodynamic solver.
   transverse X/Y/Z tiles, and transactionally translates each layer through at
   most one adjacent or wrapped face epoch. Same-face layers remain distinct in
   the sparse field, but the present dense stencil still aggregates their signed
-  jumps and cannot solve an independent intermediate subcell pressure.
+  jumps. Its static regional profile exactly partitions the unwrapped period,
+  requires a closed pressure potential, and volume-gauges each distinct region;
+  it owns no regional velocity degree of freedom and does not enter production
+  projection arithmetic.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2135,8 +2138,12 @@ planes, stable closed region chains, deterministic authored-order
 canonicalization, adjacent and periodic one-face translation, and transactional
 exact-boundary/skipped-segment rejection. The canonical same-face thin pocket
 must retain both layer fractions while its current dense jump remains exactly
-zero; only the separated-face state recovers the intermediate analytic
-pressure. This exposes the unresolved subcell limitation; it is not acceptance
+zero. Its static profile must retain the physical interval volumes, recover the
+70 Pa regional difference under zero and nonzero volume-mean gauges, remain
+rigid-translation invariant, and reject non-closing or inconsistent pressure
+potentials. Only the separated-face state enters the current projection as an
+intermediate cell pressure. The profile has no regional velocity unknown; this
+exposes the unresolved subcell momentum/flux limitation and is not acceptance
 of moving folded-interface physics.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with

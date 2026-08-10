@@ -2122,10 +2122,17 @@ skipped-segment motion, broken or nonperiodic region chains, mixed axes,
 duplicate surfaces, and invalid coordinates reject transactionally. When the
 canonical `+70/-70 Pa` pocket enters one face segment, both ordered layers and
 their distinct fractions remain inspectable but the current dense stencil sums
-them to zero and cannot recover the intermediate subcell pressure. When they
-separate onto adjacent faces, the analytic pressure pocket returns without
-spurious flow. This deliberately exposes the remaining regional-subcell or
-conservative unresolved-interface requirement; it is not a leakage closure,
+them to zero. A separate static regional profile partitions the full unwrapped
+period into exact layer-bounded volumes, requires the pressure-jump cycle and
+every repeated region potential to close exactly, and applies one declared
+volume-mean gauge. The canonical pocket then retains its physical `2.4 m^3`
+interior volume and 70 Pa regional pressure difference even while both layers
+share a face; separated layers produce the same regional profile while the
+ordinary sharp projection also recovers its cell pressure. Non-closing cycles,
+inconsistent repeated regions, and non-finite gauges reject transactionally.
+The profile owns no regional velocity degrees of freedom and does not enter the
+production projection. It therefore exposes rather than closes the remaining
+regional-subcell momentum/flux requirement; it is not a leakage closure,
 deforming folded-surface tracker, or moving folded-interface solve.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding

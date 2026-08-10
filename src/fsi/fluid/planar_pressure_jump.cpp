@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -24,6 +25,32 @@ double domainLength(const PeriodicCartesianGrid& grid,
     }
     throw std::invalid_argument(
         "planar pressure-jump axis is invalid");
+}
+
+double transverseArea(const PeriodicCartesianGrid& grid,
+                      const GridFaceAxis axis) {
+    const Vector3 lower = grid.lowerMeters();
+    const Vector3 upper = grid.upperMeters();
+    double area = 0.0;
+    switch (axis) {
+    case GridFaceAxis::X:
+        area = (upper.y - lower.y) * (upper.z - lower.z);
+        break;
+    case GridFaceAxis::Y:
+        area = (upper.x - lower.x) * (upper.z - lower.z);
+        break;
+    case GridFaceAxis::Z:
+        area = (upper.x - lower.x) * (upper.y - lower.y);
+        break;
+    default:
+        throw std::invalid_argument(
+            "planar pressure-jump axis is invalid");
+    }
+    if (!std::isfinite(area) || !(area > 0.0)) {
+        throw std::invalid_argument(
+            "planar pressure-jump transverse area is invalid");
+    }
+    return area;
 }
 
 std::size_t transverseTileCount(const GridCellCounts counts,
@@ -238,6 +265,140 @@ PlanarPressureJumpLayerTranslation translatePlanarPressureJumpLayers(
     }
     static_cast<void>(makePlanarPressureJumpField(
         grid, result.layers));
+    return result;
+}
+
+StaticPlanarPressureRegionProfile makeStaticPlanarPressureRegionProfile(
+    const PeriodicCartesianGrid& grid,
+    const std::span<const PlanarPressureJumpLayerDefinition> layers,
+    const double volumeMeanPressurePascals) {
+    if (!std::isfinite(volumeMeanPressurePascals)) {
+        throw std::invalid_argument(
+            "planar pressure region mean pressure must be finite");
+    }
+    const auto canonical = canonicalLayers(grid, layers);
+
+    StaticPlanarPressureRegionProfile result;
+    result.axis = canonical.front().topology.axis;
+    result.windowLowerCoordinateMeters =
+        canonical.front().physicalPlaneCoordinateMeters;
+    const double length = domainLength(grid, result.axis);
+    result.windowUpperCoordinateMeters =
+        result.windowLowerCoordinateMeters + length;
+    const double area = transverseArea(grid, result.axis);
+    result.geometricDomainVolumeCubicMeters = area * length;
+    result.requestedVolumeMeanPressurePascals =
+        volumeMeanPressurePascals;
+    if (!std::isfinite(result.windowUpperCoordinateMeters)
+        || !std::isfinite(result.geometricDomainVolumeCubicMeters)
+        || !(result.geometricDomainVolumeCubicMeters > 0.0)) {
+        throw std::invalid_argument(
+            "planar pressure region domain geometry is invalid");
+    }
+
+    std::map<std::uint64_t, double> pressureOffsets;
+    std::map<std::uint64_t, double> regionVolumes;
+    pressureOffsets.emplace(
+        canonical.front().minusRegionStableId, 0.0);
+    result.intervals.reserve(canonical.size());
+    double cumulativeJump = 0.0;
+    double totalVolume = 0.0;
+    double volumeWeightedOffset = 0.0;
+    for (std::size_t index = 0; index < canonical.size(); ++index) {
+        const auto& layer = canonical[index];
+        cumulativeJump += layer.pressureJumpPascals;
+        if (!std::isfinite(cumulativeJump)) {
+            throw std::invalid_argument(
+                "planar pressure region cumulative jump is non-finite");
+        }
+        if (index + 1 == canonical.size() && cumulativeJump != 0.0) {
+            throw std::invalid_argument(
+                "planar pressure region jump cycle does not close exactly");
+        }
+        const auto [offset, inserted] = pressureOffsets.emplace(
+            layer.plusRegionStableId, cumulativeJump);
+        if (!inserted && offset->second != cumulativeJump) {
+            throw std::invalid_argument(
+                "planar pressure region has inconsistent repeated pressure potential");
+        }
+
+        const auto& next = canonical[(index + 1) % canonical.size()];
+        const double upperCoordinate = index + 1 < canonical.size()
+            ? next.physicalPlaneCoordinateMeters
+            : result.windowUpperCoordinateMeters;
+        const double thickness = upperCoordinate
+            - layer.physicalPlaneCoordinateMeters;
+        const double volume = area * thickness;
+        if (!std::isfinite(thickness) || !(thickness > 0.0)
+            || !std::isfinite(volume) || !(volume > 0.0)) {
+            throw std::invalid_argument(
+                "planar pressure region interval geometry is invalid");
+        }
+        totalVolume += volume;
+        volumeWeightedOffset += volume * cumulativeJump;
+        regionVolumes[layer.plusRegionStableId] += volume;
+        if (!std::isfinite(totalVolume)
+            || !std::isfinite(volumeWeightedOffset)
+            || !std::isfinite(regionVolumes[layer.plusRegionStableId])) {
+            throw std::invalid_argument(
+                "planar pressure region accumulation is non-finite");
+        }
+        result.intervals.push_back({
+            layer.surfaceStableId,
+            next.surfaceStableId,
+            layer.plusRegionStableId,
+            layer.physicalPlaneCoordinateMeters,
+            upperCoordinate,
+            volume,
+            cumulativeJump,
+        });
+    }
+    if (!(totalVolume > 0.0)) {
+        throw std::invalid_argument(
+            "planar pressure region interval volume is empty");
+    }
+
+    const double gaugeShift = volumeMeanPressurePascals
+        - volumeWeightedOffset / totalVolume;
+    if (!std::isfinite(gaugeShift)) {
+        throw std::invalid_argument(
+            "planar pressure region gauge shift is non-finite");
+    }
+    double achievedWeightedPressure = 0.0;
+    for (auto& interval : result.intervals) {
+        interval.pressurePascals += gaugeShift;
+        achievedWeightedPressure += interval.volumeCubicMeters
+            * interval.pressurePascals;
+        if (!std::isfinite(interval.pressurePascals)
+            || !std::isfinite(achievedWeightedPressure)) {
+            throw std::invalid_argument(
+                "planar pressure region pressure accumulation is non-finite");
+        }
+    }
+    result.regions.reserve(pressureOffsets.size());
+    for (const auto& [regionStableId, pressureOffset] : pressureOffsets) {
+        const auto volume = regionVolumes.find(regionStableId);
+        if (volume == regionVolumes.end()
+            || !(volume->second > 0.0)) {
+            throw std::invalid_argument(
+                "planar pressure region has no positive interval volume");
+        }
+        result.regions.push_back({
+            regionStableId,
+            volume->second,
+            pressureOffset + gaugeShift,
+        });
+    }
+    result.intervalVolumeCubicMeters = totalVolume;
+    result.volumeClosureResidualCubicMeters = totalVolume
+        - result.geometricDomainVolumeCubicMeters;
+    result.achievedVolumeMeanPressurePascals =
+        achievedWeightedPressure / totalVolume;
+    if (!std::isfinite(result.volumeClosureResidualCubicMeters)
+        || !std::isfinite(result.achievedVolumeMeanPressurePascals)) {
+        throw std::invalid_argument(
+            "planar pressure region diagnostics are non-finite");
+    }
     return result;
 }
 

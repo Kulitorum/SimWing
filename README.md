@@ -177,9 +177,13 @@ same arithmetic. A thin multi-layer pressure oracle builds complete X/Y/Z
 closed region chains and rigidly translates them through adjacent faces and
 periodic wraps. Its `+70/-70 Pa` pocket deliberately records the current
 limitation: both same-face layers and fractions remain visible, but their dense
-stencil sum is zero and there is no independent intermediate subcell pressure
-until they occupy separate faces. This is moving-topology groundwork, not a
-general folded-fabric or leakage solve.
+stencil sum is zero. A separate static regional profile now partitions the
+exact one-period interval volumes and reconstructs a consistent pressure
+potential, recovering the physical thin-pocket volume and 70 Pa pressure
+difference under a declared volume-mean gauge. It creates no regional velocity
+degree of freedom and does not change the projection, so this remains
+moving-topology groundwork rather than a general folded-fabric or leakage
+solve.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.
