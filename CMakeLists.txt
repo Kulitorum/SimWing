@@ -572,6 +572,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/planar_region_fragment_pressure_solve.h
     src/fsi/fluid/planar_region_fragment_pressure_projection.cpp
     src/fsi/fluid/planar_region_fragment_pressure_projection.h
+    src/fsi/fluid/planar_region_fragment_volume_rate.cpp
+    src/fsi/fluid/planar_region_fragment_volume_rate.h
     src/fsi/fluid/planar_cut_surface.cpp
     src/fsi/fluid/planar_cut_surface.h
     src/fsi/fluid/porous_interface.cpp

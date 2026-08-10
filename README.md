@@ -261,9 +261,21 @@ pressure-layer walls must remain exactly zero-flow. Manufactured divergence is
 cancelled below `3e-14 m3/s` on X/Y/Z, uniform wall-tangential flow is
 preserved, and a failed pressure solve publishes neither corrected velocity
 nor its pressure warm start. Projection work has an explicit storage ceiling.
-Moving layers remain rejected until local fragment swept-volume rates exist,
-and this opt-in oracle still owns no face momentum mass, opening conductance,
-kinetic-energy claim, or production worker state.
+Moving layers remain rejected until the local fragment volume-rate ledger is
+explicitly composed into continuity, and this opt-in oracle still owns no face
+momentum mass, opening conductance, kinetic-energy claim, or production worker
+state.
+A separate topology-stable fragment volume-rate ledger now supplies that local
+moving geometry without yet changing the projection. It reconstructs each
+current control's previous volume from its two exact layer-boundary
+displacements and makes `change = current - previous` bit-exact. Canonical
+breathing assigns `+1.6/-1.6 m3/s` to the pocket/exterior components while
+every fixed Cartesian cell and the global periodic domain remain closed;
+rigid motion instead exchanges volume locally with zero component change.
+The result closes independently through fragments, cells, regions, and graph
+components on X/Y/Z. It is bounded, fingerprinted, and rejects a layer that
+crosses a grid segment because appearance/retirement ownership is not yet
+defined. The static projection does not consume this ledger yet.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

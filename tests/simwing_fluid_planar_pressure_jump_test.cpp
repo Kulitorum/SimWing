@@ -7,6 +7,7 @@
 #include "fluid/planar_region_fragment_pressure_projection.h"
 #include "fluid/planar_region_fragment_pressure_solve.h"
 #include "fluid/planar_region_fragment_topology.h"
+#include "fluid/planar_region_fragment_volume_rate.h"
 #include "fluid/planar_region_sweep.h"
 #include "fluid/projection.h"
 
@@ -183,6 +184,26 @@ findFragmentOperatorComponent(
         &PlanarPressureRegionFragmentPressureOperatorComponent::
             regionStableId);
     return found == pressureOperator.components.end() ? nullptr : &*found;
+}
+
+const PlanarPressureRegionFragmentRegionVolumeRate*
+findFragmentVolumeRateRegion(
+    const PlanarPressureRegionFragmentVolumeRateSet& rates,
+    const std::uint64_t regionStableId) {
+    const auto found = std::ranges::find(
+        rates.regions, regionStableId,
+        &PlanarPressureRegionFragmentRegionVolumeRate::regionStableId);
+    return found == rates.regions.end() ? nullptr : &*found;
+}
+
+const PlanarPressureRegionFragmentComponentVolumeRate*
+findFragmentVolumeRateComponent(
+    const PlanarPressureRegionFragmentVolumeRateSet& rates,
+    const std::uint64_t regionStableId) {
+    const auto found = std::ranges::find(
+        rates.components, regionStableId,
+        &PlanarPressureRegionFragmentComponentVolumeRate::regionStableId);
+    return found == rates.components.end() ? nullptr : &*found;
 }
 
 double dotProduct(const std::vector<double>& first,
@@ -2207,6 +2228,335 @@ void testPlanarRegionalFragmentTopologyAxesAndRejection() {
         "regional fragment topology rejects mutated source geometry");
 }
 
+void testPlanarRegionalFragmentVolumeRates() {
+    const auto geometry = grid();
+    const auto previousLayers = pocketLayers();
+    auto breathingLayers = previousLayers;
+    breathingLayers[0].physicalPlaneCoordinateMeters -= 0.1;
+    breathingLayers[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, previousLayers, breathingLayers, 0.5);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto rates = buildPlanarPressureRegionFragmentVolumeRates(
+        geometry, sweep, fragments, topology);
+    const auto repeated = buildPlanarPressureRegionFragmentVolumeRates(
+        geometry, sweep, fragments, topology);
+    check(rates == repeated
+              && rates.version
+                  == planarPressureRegionFragmentVolumeRateVersion
+              && rates.fingerprint != 0
+              && rates.sourceFragmentFingerprint == fragments.fingerprint
+              && rates.sourceTopologyFingerprint == topology.fingerprint
+              && rates.sourceSweepVersion == sweep.version
+              && rates.axis == GridFaceAxis::X
+              && rates.durationSeconds == 0.5
+              && rates.topologyStable
+              && rates.fragments.size() == 24
+              && rates.cells.size() == 16
+              && rates.regions.size() == 2
+              && rates.components.size() == 2
+              && rates.ownedStorageBytes > 0,
+          "regional fragment volume rates publish a deterministic local ledger");
+    checkNear(rates.maximumAbsoluteFragmentVolumeChangeCubicMeters,
+              0.2, 3.0e-16,
+              "breathing volume rates retain the largest local volume change");
+    checkNear(rates.maximumAbsoluteFragmentVolumeRateCubicMetersPerSecond,
+              0.4, 6.0e-16,
+              "breathing volume rates retain the largest local dV/dt");
+    checkNear(rates.maximumAbsoluteCellClosureResidualCubicMeters,
+              0.0, 3.0e-16,
+              "breathing fragment rates close every fixed Cartesian cell");
+    checkNear(rates.maximumAbsoluteRegionClosureResidualCubicMeters,
+              0.0, 3.0e-15,
+              "breathing fragment rates close the source region sweep");
+    checkNear(
+        rates.maximumAbsoluteComponentVolumeRateCubicMetersPerSecond,
+        1.6, 3.0e-15,
+        "breathing fragment rates retain component volume demand");
+    checkNear(rates.globalGeometryVolumeChangeCubicMeters,
+              0.0, 3.0e-15,
+              "breathing fragment rates conserve the periodic domain");
+    checkNear(rates.globalGeometryVolumeChangeRateCubicMetersPerSecond,
+              0.0, 6.0e-15,
+              "breathing fragment dV/dt cancels globally");
+
+    const auto* pocket = findFragmentVolumeRateRegion(rates, 2);
+    const auto* exterior = findFragmentVolumeRateRegion(rates, 1);
+    const auto* pocketComponent = findFragmentVolumeRateComponent(rates, 2);
+    const auto* exteriorComponent = findFragmentVolumeRateComponent(rates, 1);
+    check(pocket != nullptr && exterior != nullptr
+              && pocketComponent != nullptr && exteriorComponent != nullptr,
+          "regional fragment volume rates retain both pressure components");
+    if (pocket != nullptr && exterior != nullptr
+        && pocketComponent != nullptr && exteriorComponent != nullptr) {
+        checkNear(pocket->previousVolumeCubicMeters,
+                  2.4, 4.0e-14,
+                  "breathing pocket rates reconstruct previous volume");
+        checkNear(pocket->currentVolumeCubicMeters,
+                  3.2, 4.0e-14,
+                  "breathing pocket rates retain current volume");
+        checkNear(pocket->geometryVolumeChangeCubicMeters,
+                  0.8, 4.0e-15,
+                  "breathing pocket fragment changes sum exactly");
+        checkNear(pocket->geometryVolumeChangeRateCubicMetersPerSecond,
+                  1.6, 8.0e-15,
+                  "breathing pocket fragment rates sum exactly");
+        checkNear(exterior->geometryVolumeChangeCubicMeters,
+                  -0.8, 4.0e-15,
+                  "breathing exterior fragment changes oppose the pocket");
+        checkNear(
+            exterior->geometryVolumeChangeRateCubicMetersPerSecond,
+            -1.6, 8.0e-15,
+            "breathing exterior fragment rates oppose the pocket");
+        checkNear(pocketComponent->geometryVolumeChangeCubicMeters,
+                  pocket->geometryVolumeChangeCubicMeters, 0.0,
+                  "pocket component and region share one volume ledger");
+        checkNear(exteriorComponent->geometryVolumeChangeCubicMeters,
+                  exterior->geometryVolumeChangeCubicMeters, 0.0,
+                  "exterior component and region share one volume ledger");
+    }
+    std::size_t pocketFragmentCount = 0;
+    for (const auto& rate : rates.fragments) {
+        checkNear(rate.currentVolumeCubicMeters
+                      - rate.previousVolumeCubicMeters,
+                  rate.geometryVolumeChangeCubicMeters, 0.0,
+                  "local fragment volume rate retains exact endpoint identity");
+        checkNear(rate.geometryVolumeChangeRateCubicMetersPerSecond,
+                  rate.geometryVolumeChangeCubicMeters / 0.5, 0.0,
+                  "local fragment dV/dt uses the exact epoch duration");
+        if (rate.regionStableId == 2) {
+            ++pocketFragmentCount;
+            checkNear(rate.lowerBoundaryDisplacementMeters,
+                      -0.1, 3.0e-16,
+                      "pocket control retains lower-wall displacement");
+            checkNear(rate.upperBoundaryDisplacementMeters,
+                      0.1, 3.0e-16,
+                      "pocket control retains upper-wall displacement");
+            checkNear(rate.lowerBoundaryVelocityMetersPerSecond,
+                      -0.2, 6.0e-16,
+                      "pocket control retains lower-wall velocity");
+            checkNear(rate.upperBoundaryVelocityMetersPerSecond,
+                      0.2, 6.0e-16,
+                      "pocket control retains upper-wall velocity");
+            checkNear(rate.previousVolumeCubicMeters,
+                      0.6, 2.0e-15,
+                      "pocket control reconstructs its previous local volume");
+            checkNear(rate.currentVolumeCubicMeters,
+                      0.8, 2.0e-15,
+                      "pocket control retains its expanded local volume");
+        }
+    }
+    check(pocketFragmentCount == 4,
+          "breathing volume rates retain all four pocket controls");
+    validatePlanarPressureRegionFragmentVolumeRates(
+        rates, geometry, sweep, fragments, topology);
+
+    const auto staticSweep = makePlanarPressureRegionSweepLedger(
+        geometry, previousLayers, previousLayers, 1.0);
+    const auto staticFragments = buildPlanarPressureRegionFragments(
+        geometry, staticSweep);
+    const auto staticTopology = buildPlanarPressureRegionFragmentTopology(
+        geometry, staticSweep, staticFragments);
+    const auto staticRates = buildPlanarPressureRegionFragmentVolumeRates(
+        geometry, staticSweep, staticFragments, staticTopology);
+    check(staticRates.maximumAbsoluteFragmentVolumeChangeCubicMeters == 0.0
+              && staticRates
+                      .maximumAbsoluteFragmentVolumeRateCubicMetersPerSecond
+                  == 0.0
+              && staticRates
+                      .maximumAbsoluteComponentVolumeRateCubicMetersPerSecond
+                  == 0.0,
+          "static regional fragments publish exact zero geometry rates");
+    for (const auto& rate : staticRates.fragments) {
+        check(rate.previousVolumeCubicMeters == rate.currentVolumeCubicMeters,
+              "static regional fragments preserve exact endpoint volume");
+    }
+
+    const auto translatedLayers = translatePlanarPressureJumpLayers(
+        geometry, previousLayers, 0.1).layers;
+    const auto translatedSweep = makePlanarPressureRegionSweepLedger(
+        geometry, previousLayers, translatedLayers, 1.0);
+    const auto translatedFragments = buildPlanarPressureRegionFragments(
+        geometry, translatedSweep);
+    const auto translatedTopology =
+        buildPlanarPressureRegionFragmentTopology(
+            geometry, translatedSweep, translatedFragments);
+    const auto translatedRates =
+        buildPlanarPressureRegionFragmentVolumeRates(
+            geometry, translatedSweep, translatedFragments,
+            translatedTopology);
+    checkNear(
+        translatedRates.maximumAbsoluteFragmentVolumeChangeCubicMeters,
+        0.1, 3.0e-16,
+        "rigid translation retains local exchange across fixed grid faces");
+    checkNear(
+        translatedRates.maximumAbsoluteComponentVolumeRateCubicMetersPerSecond,
+        0.0, 3.0e-15,
+        "rigid translation preserves every component volume");
+    checkNear(translatedRates.maximumAbsoluteCellClosureResidualCubicMeters,
+              0.0, 3.0e-16,
+              "rigid translation closes every fixed cell");
+}
+
+void testPlanarRegionalFragmentVolumeRatesAxesAndRejection() {
+    const auto geometry = grid();
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> previous{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        auto current = previous;
+        current[0].physicalPlaneCoordinateMeters -= 0.1;
+        current[1].physicalPlaneCoordinateMeters += 0.1;
+        const auto sweep = makePlanarPressureRegionSweepLedger(
+            geometry, previous, current, 0.5);
+        const auto fragments = buildPlanarPressureRegionFragments(
+            geometry, sweep);
+        const auto topology = buildPlanarPressureRegionFragmentTopology(
+            geometry, sweep, fragments);
+        const auto rates = buildPlanarPressureRegionFragmentVolumeRates(
+            geometry, sweep, fragments, topology);
+        const double crossSection = axis == GridFaceAxis::X ? 4.0 : 8.0;
+        const auto* pocket = findFragmentVolumeRateRegion(rates, 2);
+        check(rates.axis == axis && rates.topologyStable
+                  && pocket != nullptr,
+              "regional fragment volume rates retain every profile axis");
+        if (pocket != nullptr) {
+            checkNear(pocket->geometryVolumeChangeCubicMeters,
+                      0.2 * crossSection, 8.0e-15,
+                      "all-axis pocket volume change scales by cross-section");
+            checkNear(
+                pocket->geometryVolumeChangeRateCubicMetersPerSecond,
+                0.4 * crossSection, 1.6e-14,
+                "all-axis pocket dV/dt scales by cross-section");
+        }
+        checkNear(rates.maximumAbsoluteCellClosureResidualCubicMeters,
+                  0.0, 4.0e-16,
+                  "all-axis fragment rates close each fixed cell");
+        checkNear(rates.globalGeometryVolumeChangeCubicMeters,
+                  0.0, 8.0e-15,
+                  "all-axis fragment rates conserve domain volume");
+    }
+
+    const auto previous = pocketLayers();
+    const auto stableCurrent = translatePlanarPressureJumpLayers(
+        geometry, previous, 0.1).layers;
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, previous, stableCurrent, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto rates = buildPlanarPressureRegionFragmentVolumeRates(
+        geometry, sweep, fragments, topology);
+
+    const auto rebasedCurrent = translatePlanarPressureJumpLayers(
+        geometry, previous, 0.5).layers;
+    const auto rebasedSweep = makePlanarPressureRegionSweepLedger(
+        geometry, previous, rebasedCurrent, 1.0);
+    const auto rebasedFragments = buildPlanarPressureRegionFragments(
+        geometry, rebasedSweep);
+    const auto rebasedTopology = buildPlanarPressureRegionFragmentTopology(
+        geometry, rebasedSweep, rebasedFragments);
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, rebasedSweep, rebasedFragments,
+                rebasedTopology)); },
+        "regional fragment volume rates reject a Cartesian topology rebase");
+
+    auto corrupt = rates;
+    corrupt.fingerprint = 0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVolumeRates(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional fragment volume rates reject fingerprint corruption");
+    corrupt = rates;
+    corrupt.fragments[0].previousVolumeCubicMeters += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVolumeRates(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional fragment volume rates reject control corruption");
+    corrupt = rates;
+    corrupt.cells[0].fragmentCount += 1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVolumeRates(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional fragment volume rates reject cell corruption");
+    corrupt = rates;
+    corrupt.regions[0].geometryVolumeChangeCubicMeters += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVolumeRates(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional fragment volume rates reject region corruption");
+    corrupt = rates;
+    corrupt.components[0].geometryVolumeChangeRateCubicMetersPerSecond += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentVolumeRates(
+            corrupt, geometry, sweep, fragments, topology); },
+        "regional fragment volume rates reject component corruption");
+
+    auto limits = PlanarPressureRegionFragmentVolumeRateLimits{};
+    limits.maximumFragments = rates.fragments.size() - 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional fragment volume rates enforce the fragment limit");
+    limits = {};
+    limits.maximumCells = rates.cells.size() - 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional fragment volume rates enforce the cell limit");
+    limits = {};
+    limits.maximumRegions = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional fragment volume rates enforce the region limit");
+    limits = {};
+    limits.maximumComponents = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional fragment volume rates enforce the component limit");
+    limits = {};
+    limits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional fragment volume rates enforce the byte limit");
+    limits = {};
+    limits.topologyLimits.maximumLinks = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, sweep, fragments, topology, limits)); },
+        "regional fragment volume rates enforce nested topology limits");
+    auto corruptTopology = topology;
+    corruptTopology.links[0].stableId ^= 1U;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, sweep, fragments, corruptTopology)); },
+        "regional fragment volume rates reject mutated source topology");
+}
+
 void testPlanarRegionalFragmentPressureOperator() {
     const auto geometry = grid();
     const auto layers = pocketLayers();
@@ -3389,6 +3739,8 @@ int main() {
     testPlanarRegionalFragmentsAllAxesAndRejection();
     testPlanarRegionalFragmentTopology();
     testPlanarRegionalFragmentTopologyAxesAndRejection();
+    testPlanarRegionalFragmentVolumeRates();
+    testPlanarRegionalFragmentVolumeRatesAxesAndRejection();
     testPlanarRegionalFragmentPressureOperator();
     testPlanarRegionalFragmentPressureOperatorAxesAndRejection();
     testPlanarRegionalFragmentPressureCorrectionSolve();

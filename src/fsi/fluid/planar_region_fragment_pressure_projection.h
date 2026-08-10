@@ -63,10 +63,11 @@ struct PlanarPressureRegionFragmentPressureProjectionDiagnostics {
 // jump is not part of the correction solve.
 //
 // This first velocity slice deliberately rejects moving layer geometry until
-// local fragment swept-volume rates have an authoritative mapping. It owns no
-// face momentum mass, kinetic-energy claim, opening conductance, or production
-// worker state. Both link velocities and pressure correction are committed
-// only after the solve and an explicit corrected-continuity check succeed.
+// the separate local fragment volume-rate product is explicitly composed into
+// its continuity RHS. It owns no face momentum mass, kinetic-energy claim,
+// opening conductance, or production worker state. Both link velocities and
+// pressure correction are committed only after the solve and an explicit
+// corrected-continuity check succeed.
 [[nodiscard]] PlanarPressureRegionFragmentPressureProjectionDiagnostics
 projectStaticPlanarPressureRegionFragmentFaceVelocities(
     const PlanarPressureRegionFragmentPressureOperator& pressureOperator,

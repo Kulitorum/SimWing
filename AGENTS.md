@@ -1915,6 +1915,11 @@ makes this a certified aerodynamic solver.
   walls require exact zero flow. Velocity and pressure commit together only
   after recomputed continuity closes. Moving layers, face momentum mass,
   opening conductance, and production integration remain outside this slice.
+- `src/fsi/fluid/planar_region_fragment_volume_rate.{h,cpp}` reconstructs
+  topology-stable previous volume and constant geometry `dV/dt` for every
+  current regional fragment from its layer-boundary displacements. It closes
+  cell, region, component, and global ledgers, rejects Cartesian rebases, and
+  is not yet consumed by pressure projection or production.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2298,6 +2303,19 @@ wrong-sized/non-finite fields, invalid density/time/tolerances, and working or
 nested-operator limit violations. Do not infer local swept-volume mapping,
 face momentum mass, kinetic-energy acceptance, opening conductance, or
 production ownership.
+
+For `planar_region_fragment_volume_rate.*`, require canonical breathing to
+publish `+1.6/-1.6 m3/s` pocket/exterior component rates while every fixed
+Cartesian cell and the global domain close. Require bit-exact
+`change = current - previous`, strictly positive reconstructed previous
+volumes, exact boundary displacement/velocity provenance, static zero rates,
+rigid-motion zero component change with nonzero local exchange, and X/Y/Z
+cross-section scaling. Require deterministic source fingerprints and fragment,
+cell, region, component, global, and storage ledgers. Reject any layer crossing
+a Cartesian segment, mutated products/sources, and fragment/cell/region/
+component/byte/nested-topology limit violations. Do not infer topology-rebase
+appearance or retirement, pressure RHS composition, face momentum mass,
+opening flow, or production ownership.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.
