@@ -2470,6 +2470,20 @@ blocker evidence. It deliberately performs no local mass rescaling: such a
 repair can conserve one diagonal degree while violating ALE free-stream/GCL
 behavior because only swept-volume flux determines where exchanged momentum
 belongs.
+`planar_region_fragment_opening_velocity_metric.*` supplies the complete
+aperture-aware inertia geometry needed before that transport can be defined.
+It retains each same-region Cartesian degree, partitions every pressure-wall
+half-volume by retained solid area, and replaces open area with one shared
+negative-to-positive aperture degree carrying distinct minus/plus half-
+volumes. A partial wall therefore adds no duplicate mass, while a fully open
+wall replaces its two independent solid traces with one connected-fluid
+degree. Fragment and opening-connected-component incidences recover their
+physical volume independently on X/Y/Z; the canonical moving transition keeps
+all stable degree identities while updating the changed half-volume metrics.
+The bounded fingerprinted artifact still owns geometry only. Material and
+aperture velocity assignment, collocated vector momentum, swept-volume
+transport, pressure acceptance, topology rebase, and worker selection remain
+separate later contracts.
 `planar_region_fragment_opening_pressure_epoch.*` composes that warm product
 with the existing resistance-plus-augmented-projection transaction. It builds
 all four mutable fields privately, advances them together, and captures a new

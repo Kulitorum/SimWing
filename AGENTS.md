@@ -1982,6 +1982,12 @@ makes this a certified aerodynamic solver.
   mass, momentum, and kinetic-energy changes plus aggregate ledgers. It is
   blocker evidence for a future swept-volume ALE transport, not a local mass-
   rescale repair or an alternate continuation.
+- `src/fsi/fluid/planar_region_fragment_opening_velocity_metric.{h,cpp}`
+  partitions the regional diagonal inertia basis by physical wall area.
+  Retained solid area owns independent one-sided traces while every aperture
+  patch owns one shared two-half-volume degree. Fragment and opening-connected
+  component volumes close independently on X/Y/Z. It owns geometry only, not
+  velocity, momentum transport, pressure acceptance, or worker state.
 - `src/fsi/fluid/planar_region_fragment_opening_pressure_epoch.{h,cpp}`
   privately composes that continuation with resistance, augmented projection,
   and accepted-state capture. Numerical rejection publishes a typed stage and
@@ -2640,6 +2646,17 @@ continuation/source corruption and sample/owned/working limits. Do not repair
 the drift by rescaling velocity: without swept-volume flux that would not
 prove free-stream/GCL preservation or momentum advection. Do not feed this
 audit into pressure acceptance or the worker.
+
+For `planar_region_fragment_opening_velocity_metric.*`, fully validate the
+sealed base metric and exact opening overlay before replacing each pressure-
+wall half-volume by its retained-solid fraction plus one shared degree per
+aperture patch. Preserve same-region grid degrees, derive stable identities
+from link/patch identity, and close every fragment, opening-connected
+component, axis, domain, and wall-area partition without duplicating aperture
+inertia. Cover partial and fully open walls, moving topology-stable identity,
+X/Y/Z, corruption, foreign endpoints, and owned/working limits. This product
+does not assign material or fluid velocity, density, momentum, energy,
+transport, pressure acceptance, topology rebase, or production ownership.
 
 For `planar_region_fragment_opening_pressure_epoch.*`, build continuation
 fields privately and pass them through the complete resistance-plus-projection

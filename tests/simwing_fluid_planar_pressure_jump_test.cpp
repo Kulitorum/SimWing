@@ -8,6 +8,7 @@
 #include "fluid/planar_region_fragment_opening_accepted_state_persistence.h"
 #include "fluid/planar_region_fragment_opening_continuation.h"
 #include "fluid/planar_region_fragment_opening_continuation_momentum_audit.h"
+#include "fluid/planar_region_fragment_opening_velocity_metric.h"
 #include "fluid/planar_region_fragment_opening_load_state.h"
 #include "fluid/planar_region_fragment_opening_pressure_state.h"
 #include "fluid/planar_region_fragment_opening.h"
@@ -8354,6 +8355,45 @@ void testPlanarRegionalPressureDrivenOpeningProjection() {
         };
         const auto openings = buildPlanarPressureRegionFragmentOpenings(
             geometry, sweep, fragments, topology, definitions);
+        const auto baseVelocityMetric =
+            buildPlanarPressureRegionFragmentVelocityMetric(
+                geometry, sweep, fragments, topology);
+        const auto openingVelocityMetric =
+            buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+                geometry, sweep, fragments, topology,
+                baseVelocityMetric, definitions, openings);
+        const auto apertureDof = std::ranges::find_if(
+            openingVelocityMetric.dofs,
+            [](const auto& dof) {
+                return dof.kind
+                    == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                        OpeningPatch;
+            });
+        check(apertureDof != openingVelocityMetric.dofs.end()
+                  && openingVelocityMetric.profileAxis == axis
+                  && apertureDof->axis == axis
+                  && apertureDof->sourceOpeningPatchStableId == 100
+                  && openingVelocityMetric.openingPatchDofCount == 1
+                  && openingVelocityMetric.solidWallTraceDofCount
+                      == 2 * topology.pressureLayerWallLinkCount,
+              "opening velocity metric retains the same aperture inertia contract on every axis");
+        checkNear(
+            std::max({
+                std::abs(openingVelocityMetric
+                             .domainVolumeClosureResidualByAxisCubicMeters.x),
+                std::abs(openingVelocityMetric
+                             .domainVolumeClosureResidualByAxisCubicMeters.y),
+                std::abs(openingVelocityMetric
+                             .domainVolumeClosureResidualByAxisCubicMeters.z),
+                openingVelocityMetric
+                    .maximumAbsoluteFragmentVolumeClosureResidualCubicMeters,
+                openingVelocityMetric
+                    .maximumAbsoluteComponentVolumeClosureResidualCubicMeters}),
+            0.0, 2.0e-13,
+            "opening velocity metric closes all-axis fragment inertia");
+        validatePlanarPressureRegionFragmentOpeningVelocityMetric(
+            openingVelocityMetric, geometry, sweep, fragments, topology,
+            baseVelocityMetric, definitions, openings);
         const auto pressureOperator =
             buildPlanarPressureRegionFragmentOpeningPressureOperator(
                 base, geometry, sweep, fragments, topology, definitions,
@@ -9103,6 +9143,156 @@ void testPlanarRegionalResistedOpeningPressureStep() {
         buildPlanarPressureRegionFragmentOpeningPressureOperator(
             base, geometry, sweep, fragments, topology, definitions,
             openings);
+    const auto velocityMetric =
+        buildPlanarPressureRegionFragmentVelocityMetric(
+            geometry, sweep, fragments, topology);
+    const auto openingVelocityMetric =
+        buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+            geometry, sweep, fragments, topology, velocityMetric,
+            definitions, openings);
+    const auto repeatedOpeningVelocityMetric =
+        buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+            geometry, sweep, fragments, topology, velocityMetric,
+            definitions, openings);
+    check(openingVelocityMetric == repeatedOpeningVelocityMetric
+              && openingVelocityMetric.version
+                  == planarPressureRegionFragmentOpeningVelocityMetricVersion
+              && openingVelocityMetric.fingerprint != 0
+              && openingVelocityMetric.sourceBaseMetricFingerprint
+                  == velocityMetric.fingerprint
+              && openingVelocityMetric.sourceOpeningFingerprint
+                  == openings.fingerprint
+              && openingVelocityMetric.sharedRegionGridDofCount
+                  == topology.sameRegionGridLinkCount
+              && openingVelocityMetric.solidWallTraceDofCount
+                  == 2 * topology.pressureLayerWallLinkCount
+              && openingVelocityMetric.openingPatchDofCount
+                  == openings.patches.size()
+              && openingVelocityMetric.dofs.size()
+                  == velocityMetric.dofs.size() + openings.patches.size()
+              && openingVelocityMetric.fragments.size()
+                  == fragments.fragments.size()
+              && openingVelocityMetric.components.size()
+                  == openings.connectedComponents.size()
+              && openingVelocityMetric.ownedStorageBytes > 0
+              && openingVelocityMetric.workingStorageBytes > 0,
+          "opening velocity metric deterministically partitions the regional inertia basis");
+    checkNear(
+        openingVelocityMetric.totalOpeningAreaSquareMeters,
+        patchArea, 2.0e-15,
+        "opening velocity metric retains exact aperture area");
+    checkNear(
+        openingVelocityMetric.totalSolidWallAreaSquareMeters
+            + openingVelocityMetric.totalOpeningAreaSquareMeters,
+        openingVelocityMetric.totalPressureWallAreaSquareMeters,
+        2.0e-15,
+        "opening velocity metric closes the physical wall-area partition");
+    const double domainVolume = geometry.cellVolumeCubicMeters()
+        * static_cast<double>(geometry.cellCount());
+    checkNear(openingVelocityMetric.dualVolumeByAxisCubicMeters.x,
+              domainVolume, 2.0e-13,
+              "opening velocity metric closes X domain volume");
+    checkNear(openingVelocityMetric.dualVolumeByAxisCubicMeters.y,
+              domainVolume, 2.0e-13,
+              "opening velocity metric closes Y domain volume");
+    checkNear(openingVelocityMetric.dualVolumeByAxisCubicMeters.z,
+              domainVolume, 2.0e-13,
+              "opening velocity metric closes Z domain volume");
+    checkNear(
+        std::max({
+            std::abs(openingVelocityMetric
+                         .domainVolumeClosureResidualByAxisCubicMeters.x),
+            std::abs(openingVelocityMetric
+                         .domainVolumeClosureResidualByAxisCubicMeters.y),
+            std::abs(openingVelocityMetric
+                         .domainVolumeClosureResidualByAxisCubicMeters.z),
+            openingVelocityMetric
+                .maximumAbsoluteFragmentVolumeClosureResidualCubicMeters,
+            openingVelocityMetric
+                .maximumAbsoluteComponentVolumeClosureResidualCubicMeters}),
+        0.0, 2.0e-13,
+        "opening velocity metric closes every fragment and connected component");
+    const auto openingDof = std::ranges::find_if(
+        openingVelocityMetric.dofs,
+        [](const auto& dof) {
+            return dof.kind
+                == PlanarPressureRegionFragmentOpeningVelocityDofKind::
+                    OpeningPatch;
+        });
+    check(openingDof != openingVelocityMetric.dofs.end()
+              && openingDof->sourceOpeningPatchStableId == 100
+              && openingDof->sourceFaceLinkStableId == wall->stableId
+              && openingDof->ownerFragmentIndex
+                  == wall->minusFragmentIndex
+              && openingDof->oppositeFragmentIndex
+                  == wall->plusFragmentIndex,
+          "opening velocity metric binds the aperture to both fluid half-volumes");
+    if (openingDof != openingVelocityMetric.dofs.end()) {
+        checkNear(
+            openingDof->dualVolumeCubicMeters,
+            patchArea * wall->centerDistanceMeters, 2.0e-15,
+            "opening velocity metric recovers the exact aperture plug volume");
+    }
+    validatePlanarPressureRegionFragmentOpeningVelocityMetricIntegrity(
+        openingVelocityMetric);
+    validatePlanarPressureRegionFragmentOpeningVelocityMetric(
+        openingVelocityMetric, geometry, sweep, fragments, topology,
+        velocityMetric, definitions, openings);
+    auto corruptOpeningVelocityMetric = openingVelocityMetric;
+    corruptOpeningVelocityMetric.dofs[0].dualVolumeCubicMeters += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningVelocityMetricIntegrity(
+                corruptOpeningVelocityMetric);
+        },
+        "opening velocity metric rejects DOF corruption");
+    auto openingVelocityMetricLimits =
+        PlanarPressureRegionFragmentOpeningVelocityMetricLimits{};
+    openingVelocityMetricLimits.maximumOwnedBytes =
+        openingVelocityMetric.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+                    geometry, sweep, fragments, topology, velocityMetric,
+                    definitions, openings, openingVelocityMetricLimits));
+        },
+        "opening velocity metric enforces its owned-storage limit");
+    auto fullOpeningDefinitions = definitions;
+    fullOpeningDefinitions[0].areaSquareMeters = wall->areaSquareMeters;
+    const auto fullOpenings = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, fullOpeningDefinitions);
+    const auto fullOpeningVelocityMetric =
+        buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+            geometry, sweep, fragments, topology, velocityMetric,
+            fullOpeningDefinitions, fullOpenings);
+    check(fullOpeningVelocityMetric.solidWallTraceDofCount
+                  + 2
+              == openingVelocityMetric.solidWallTraceDofCount
+              && fullOpeningVelocityMetric.openingPatchDofCount == 1
+              && fullOpeningVelocityMetric.dofs.size() + 1
+                  == velocityMetric.dofs.size(),
+          "fully open wall replaces both solid traces with one shared aperture degree");
+    checkNear(
+        fullOpeningVelocityMetric.totalSolidWallAreaSquareMeters
+            + fullOpeningVelocityMetric.totalOpeningAreaSquareMeters,
+        fullOpeningVelocityMetric.totalPressureWallAreaSquareMeters,
+        2.0e-15,
+        "fully open velocity metric retains exact wall-area closure");
+    checkNear(
+        std::max({
+            std::abs(fullOpeningVelocityMetric
+                         .domainVolumeClosureResidualByAxisCubicMeters.x),
+            std::abs(fullOpeningVelocityMetric
+                         .domainVolumeClosureResidualByAxisCubicMeters.y),
+            std::abs(fullOpeningVelocityMetric
+                         .domainVolumeClosureResidualByAxisCubicMeters.z),
+            fullOpeningVelocityMetric
+                .maximumAbsoluteFragmentVolumeClosureResidualCubicMeters,
+            fullOpeningVelocityMetric
+                .maximumAbsoluteComponentVolumeClosureResidualCubicMeters}),
+        0.0, 2.0e-13,
+        "fully open velocity metric loses no fragment or component inertia");
     const double requiredFlow =
         -volumeRates.components[wall->minusComponentIndex]
              .geometryVolumeChangeRateCubicMetersPerSecond;
@@ -9343,6 +9533,70 @@ void testPlanarRegionalResistedOpeningPressureStep() {
         buildPlanarPressureRegionFragmentOpeningPressureOperator(
             nextBase, geometry, nextSweep, nextFragments, nextTopology,
             definitions, nextOpenings);
+    const auto nextVelocityMetric =
+        buildPlanarPressureRegionFragmentVelocityMetric(
+            geometry, nextSweep, nextFragments, nextTopology);
+    const auto nextOpeningVelocityMetric =
+        buildPlanarPressureRegionFragmentOpeningVelocityMetric(
+            geometry, nextSweep, nextFragments, nextTopology,
+            nextVelocityMetric, definitions, nextOpenings);
+    check(nextOpeningVelocityMetric.dofs.size()
+                  == openingVelocityMetric.dofs.size()
+              && nextOpeningVelocityMetric.fragments.size()
+                  == openingVelocityMetric.fragments.size()
+              && nextOpeningVelocityMetric.components.size()
+                  == openingVelocityMetric.components.size(),
+          "opening velocity metric retains topology-stable entity coverage");
+    bool openingMetricChanged = false;
+    for (std::size_t index = 0;
+         index < openingVelocityMetric.dofs.size(); ++index) {
+        const auto& previousDof = openingVelocityMetric.dofs[index];
+        const auto& nextDof = nextOpeningVelocityMetric.dofs[index];
+        check(previousDof.stableId == nextDof.stableId
+                  && previousDof.kind == nextDof.kind
+                  && previousDof.sourceFaceLinkStableId
+                      == nextDof.sourceFaceLinkStableId
+                  && previousDof.sourceOpeningPatchStableId
+                      == nextDof.sourceOpeningPatchStableId,
+              "opening velocity metric preserves stable DOF identity across motion");
+        openingMetricChanged = openingMetricChanged
+            || previousDof.dualVolumeCubicMeters
+                != nextDof.dualVolumeCubicMeters;
+    }
+    check(openingMetricChanged,
+          "opening velocity metric updates moving half-volumes while retaining exact global closure");
+    checkNear(
+        std::max({
+            std::abs(nextOpeningVelocityMetric
+                         .domainVolumeClosureResidualByAxisCubicMeters.x),
+            std::abs(nextOpeningVelocityMetric
+                         .domainVolumeClosureResidualByAxisCubicMeters.y),
+            std::abs(nextOpeningVelocityMetric
+                         .domainVolumeClosureResidualByAxisCubicMeters.z)}),
+        0.0, 2.0e-13,
+        "moving opening velocity metric retains global volume closure");
+    validatePlanarPressureRegionFragmentOpeningVelocityMetric(
+        nextOpeningVelocityMetric, geometry, nextSweep, nextFragments,
+        nextTopology, nextVelocityMetric, definitions, nextOpenings);
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningVelocityMetric(
+                openingVelocityMetric, geometry, nextSweep, nextFragments,
+                nextTopology, nextVelocityMetric, definitions,
+                nextOpenings);
+        },
+        "opening velocity metric rejects a foreign moving endpoint");
+    openingVelocityMetricLimits = {};
+    openingVelocityMetricLimits.maximumWorkingBytes =
+        openingVelocityMetric.workingStorageBytes - 1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningVelocityMetric(
+                openingVelocityMetric, geometry, sweep, fragments,
+                topology, velocityMetric, definitions, openings,
+                openingVelocityMetricLimits);
+        },
+        "opening velocity metric enforces validation working storage");
     const auto continuation =
         buildPlanarPressureRegionFragmentOpeningContinuation(
             acceptedState, pressureOperator, base, geometry, sweep,
