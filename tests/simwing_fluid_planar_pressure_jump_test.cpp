@@ -2,6 +2,7 @@
 #include "fluid/planar_region_flux.h"
 #include "fluid/planar_region_opening_flow.h"
 #include "fluid/planar_region_opening_power.h"
+#include "fluid/planar_region_fragment.h"
 #include "fluid/planar_region_sweep.h"
 #include "fluid/projection.h"
 
@@ -10,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <set>
 #include <stdexcept>
 #include <vector>
 
@@ -148,6 +150,15 @@ const PlanarPressureRegionOpeningBalance* findOpeningRegion(
         allocation.regions, regionStableId,
         &PlanarPressureRegionOpeningBalance::regionStableId);
     return found == allocation.regions.end() ? nullptr : &*found;
+}
+
+const PlanarPressureRegionFragmentRegionSummary* findFragmentRegion(
+    const PlanarPressureRegionFragmentSet& fragments,
+    const std::uint64_t regionStableId) {
+    const auto found = std::ranges::find(
+        fragments.regions, regionStableId,
+        &PlanarPressureRegionFragmentRegionSummary::regionStableId);
+    return found == fragments.regions.end() ? nullptr : &*found;
 }
 
 void testCanonicalAssemblyAndSameFacePocket() {
@@ -1568,6 +1579,266 @@ void testRegionalOpeningPressurePower() {
         "regional opening power enforces nested source limits");
 }
 
+void testPlanarRegionalControlFragments() {
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto repeated = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    check(fragments == repeated
+              && fragments.version == planarPressureRegionFragmentVersion
+              && fragments.fingerprint != 0
+              && fragments.fragments.size() == 24
+              && fragments.regions.size() == 2
+              && fragments.cells.size() == 16
+              && fragments.maximumFragmentsPerCell == 3
+              && fragments.ownedStorageBytes > 0,
+          "planar regional fragments preserve a deterministic same-cell pocket");
+    checkNear(fragments.fragmentVolumeCubicMeters,
+              16.0, 4.0e-14,
+              "planar regional fragment volume closes the domain");
+    checkNear(fragments.domainVolumeClosureResidualCubicMeters,
+              0.0, 4.0e-14,
+              "planar regional fragments retain zero domain-volume residual");
+    checkNear(
+        fragments.maximumAbsoluteCellVolumeClosureResidualCubicMeters,
+        0.0, 4.0e-14,
+        "planar regional fragments close every Cartesian cell volume");
+    checkNear(
+        fragments
+            .maximumAbsoluteCellFirstMomentClosureResidualCubicMetersSquared,
+        0.0, 4.0e-14,
+        "planar regional fragments close every Cartesian cell centroid moment");
+
+    const auto* exterior = findFragmentRegion(fragments, 1);
+    const auto* pocket = findFragmentRegion(fragments, 2);
+    check(exterior != nullptr && pocket != nullptr,
+          "planar regional fragments retain both pressure regions");
+    if (exterior != nullptr && pocket != nullptr) {
+        check(exterior->fragmentCount == 20
+                  && pocket->fragmentCount == 4,
+              "planar regional fragments retain per-region control counts");
+        checkNear(exterior->volumeCubicMeters,
+                  13.6, 4.0e-14,
+                  "planar regional fragments retain exterior volume");
+        checkNear(pocket->volumeCubicMeters,
+                  2.4, 4.0e-14,
+                  "planar regional fragments retain thin-pocket volume");
+        checkNear(pocket->pressurePascals - exterior->pressurePascals,
+                  70.0, 1.0e-13,
+                  "planar regional fragments retain regional pressure difference");
+    }
+
+    std::size_t tripleCells = 0;
+    for (const auto& cell : fragments.cells) {
+        checkNear(cell.fragmentVolumeCubicMeters,
+                  1.0, 4.0e-14,
+                  "planar regional fragment cell volume is analytic");
+        if (cell.fragmentCount == 3) {
+            ++tripleCells;
+            check(cell.i == 1,
+                  "same-cell pocket fragments occupy the authored axial cell");
+        }
+    }
+    check(tripleCells == 4,
+          "same-cell pocket creates three controls in every transverse tile");
+
+    std::size_t pocketFragments = 0;
+    std::set<std::uint64_t> stableIds;
+    for (const auto& fragment : fragments.fragments) {
+        stableIds.insert(fragment.stableId);
+        if (fragment.regionStableId == 2) {
+            ++pocketFragments;
+            check(fragment.i == 1
+                      && fragment.lowerBoundary.kind
+                          == PlanarPressureRegionFragmentBoundaryKind::PressureLayer
+                      && fragment.lowerBoundary.surfaceStableId == 10
+                      && fragment.upperBoundary.kind
+                          == PlanarPressureRegionFragmentBoundaryKind::PressureLayer
+                      && fragment.upperBoundary.surfaceStableId == 20,
+                  "thin-pocket controls retain both authored layer boundaries");
+            checkNear(fragment.volumeCubicMeters,
+                      0.6, 4.0e-15,
+                      "thin-pocket control owns its physical subcell volume");
+            checkNear(fragment.wrappedCentroidMeters.x,
+                      -0.5, 4.0e-15,
+                      "thin-pocket control owns its physical subcell centroid");
+        }
+    }
+    check(pocketFragments == 4
+              && stableIds.size() == fragments.fragments.size(),
+          "planar regional fragments have unique stable control identities");
+    validatePlanarPressureRegionFragments(
+        fragments, geometry, sweep);
+}
+
+void testPlanarRegionalFragmentsAllAxesAndRejection() {
+    const auto geometry = grid();
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> layers{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        const auto sweep = makePlanarPressureRegionSweepLedger(
+            geometry, layers, layers, 1.0);
+        const auto fragments = buildPlanarPressureRegionFragments(
+            geometry, sweep);
+        const std::size_t expectedCount = axis == GridFaceAxis::X
+            ? 24 : 32;
+        const double expectedPocketVolume = axis == GridFaceAxis::X
+            ? 2.4 : 4.8;
+        const auto* pocket = findFragmentRegion(fragments, 2);
+        check(fragments.axis == axis
+                  && fragments.fragments.size() == expectedCount
+                  && fragments.maximumFragmentsPerCell == 3
+                  && pocket != nullptr,
+              "planar regional fragments preserve same-cell topology on every axis");
+        if (pocket != nullptr) {
+            checkNear(pocket->volumeCubicMeters,
+                      expectedPocketVolume, 8.0e-14,
+                      "planar regional fragments use physical volume on every axis");
+        }
+        checkNear(
+            fragments.maximumAbsoluteCellVolumeClosureResidualCubicMeters,
+            0.0, 8.0e-14,
+            "planar regional fragments close cell volume on every axis");
+    }
+
+    const auto layers = pocketLayers();
+    const auto translated = translatePlanarPressureJumpLayers(
+        geometry, layers, 0.5).layers;
+    const auto movedSweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, translated, 1.0);
+    const auto moved = buildPlanarPressureRegionFragments(
+        geometry, movedSweep);
+    const auto* movedPocket = findFragmentRegion(moved, 2);
+    check(movedPocket != nullptr,
+          "translated planar regional fragments retain the pocket region");
+    if (movedPocket != nullptr) {
+        checkNear(movedPocket->volumeCubicMeters,
+                  2.4, 4.0e-14,
+                  "translated planar regional fragments preserve pocket volume");
+    }
+    checkNear(moved.domainVolumeClosureResidualCubicMeters,
+              0.0, 4.0e-14,
+              "translated planar regional fragments preserve domain volume");
+
+    const std::vector<PlanarPressureJumpLayerDefinition> wrapping{
+        {10, 1, 2,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 3, 0},
+         1.2, 70.0},
+        {20, 2, 1,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 0, 1},
+         1.8, -70.0},
+    };
+    const auto wrapped = translatePlanarPressureJumpLayers(
+        geometry, wrapping, 0.5).layers;
+    const auto wrappedFragments = buildPlanarPressureRegionFragments(
+        geometry,
+        makePlanarPressureRegionSweepLedger(
+            geometry, wrapping, wrapped, 1.0));
+    const auto* wrappedPocket = findFragmentRegion(wrappedFragments, 2);
+    check(wrappedPocket != nullptr,
+          "periodically rebased planar fragments retain the pocket region");
+    if (wrappedPocket != nullptr) {
+        checkNear(wrappedPocket->volumeCubicMeters,
+                  2.4, 4.0e-14,
+                  "periodically rebased planar fragments preserve pocket volume");
+    }
+    checkNear(
+        wrappedFragments
+            .maximumAbsoluteCellVolumeClosureResidualCubicMeters,
+        0.0, 4.0e-14,
+        "periodically rebased planar fragments close every wrapped cell");
+
+    const std::vector<PlanarPressureJumpLayerDefinition> reverseWrapping{
+        {10, 1, 2,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 3, -1},
+         -2.8, 70.0},
+        {20, 2, 1,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 0, 0},
+         -2.2, -70.0},
+    };
+    const auto reverseWrapped = translatePlanarPressureJumpLayers(
+        geometry, reverseWrapping, -0.5).layers;
+    const auto reverseWrappedFragments =
+        buildPlanarPressureRegionFragments(
+            geometry,
+            makePlanarPressureRegionSweepLedger(
+                geometry, reverseWrapping, reverseWrapped, 1.0));
+    checkNear(
+        reverseWrappedFragments
+            .maximumAbsoluteCellVolumeClosureResidualCubicMeters,
+        0.0, 4.0e-14,
+        "negative periodically rebased planar fragments close every wrapped cell");
+
+    auto corrupt = moved;
+    corrupt.fingerprint = 0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragments(
+            corrupt, geometry, movedSweep); },
+        "planar regional fragment validation rejects fingerprint corruption");
+    corrupt = moved;
+    corrupt.fragments[0].volumeCubicMeters += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragments(
+            corrupt, geometry, movedSweep); },
+        "planar regional fragment validation rejects control corruption");
+    corrupt = moved;
+    corrupt.regions[0].volumeCubicMeters += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragments(
+            corrupt, geometry, movedSweep); },
+        "planar regional fragment validation rejects region corruption");
+    corrupt = moved;
+    corrupt.cells[0].fragmentCount += 1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragments(
+            corrupt, geometry, movedSweep); },
+        "planar regional fragment validation rejects cell corruption");
+
+    auto limits = PlanarPressureRegionFragmentLimits{};
+    limits.maximumIntervals = 1;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragments(
+            geometry, movedSweep, limits)); },
+        "planar regional fragments enforce the interval limit");
+    limits = {};
+    limits.maximumRegions = 1;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragments(
+            geometry, movedSweep, limits)); },
+        "planar regional fragments enforce the region limit");
+    limits = {};
+    limits.maximumCells = 1;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragments(
+            geometry, movedSweep, limits)); },
+        "planar regional fragments enforce the cell limit");
+    limits = {};
+    limits.maximumFragments = 1;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragments(
+            geometry, movedSweep, limits)); },
+        "planar regional fragments enforce the control limit");
+    limits = {};
+    limits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragments(
+            geometry, movedSweep, limits)); },
+        "planar regional fragments enforce the byte limit");
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -1714,6 +1985,8 @@ int main() {
     testRegionalOpeningFlowFeasibility();
     testRegionalOpeningFlowAllAxesAndRejection();
     testRegionalOpeningPressurePower();
+    testPlanarRegionalControlFragments();
+    testPlanarRegionalFragmentsAllAxesAndRejection();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {

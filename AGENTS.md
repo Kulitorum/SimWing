@@ -1889,6 +1889,11 @@ makes this a certified aerodynamic solver.
   separates local uphill pressure-power deficits from net graph demand and
   closes midpoint opening power against regional `p*dV/dt`. It does not invent
   an aerodynamic energy source or opening constitutive law.
+- `src/fsi/fluid/planar_region_fragment.{h,cpp}` splits the current planar
+  pressure profile at Cartesian faces and expands every axial segment over the
+  transverse tiles. It retains layer/grid boundary provenance, periodic image,
+  stable fragment identity, physical volume/centroid, regional pressure, and
+  exact cell/region/domain closure. It owns no connectivity or velocity state.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2209,6 +2214,16 @@ uphill link. Reject infeasible allocation sources, mutated fingerprints/
 opening/region/aggregate ledgers, invalid tolerances, and opening/region/byte or
 nested source-limit violations. Never treat the audit as dynamic-pressure or
 momentum closure.
+
+For `planar_region_fragment.*`, require the canonical 16-cell grid to publish
+24 controls, with four axial cells split into three exterior/pocket/exterior
+fragments and the pocket retained as four `0.6 m^3` controls bounded by layer
+IDs 10/20. Require unique deterministic fragment IDs, 13.6/2.4 `m^3` regional
+volume and 70 Pa pressure difference, exact per-cell volume and first-moment
+closure, X/Y/Z physical scaling, rigid translation, and signed periodic
+rebases. Reject mutated fragment/region/cell/fingerprint ledgers and interval/
+region/cell/fragment/byte limit violations. Do not infer connectivity, a
+regional velocity basis, mimetic pressure acceptance, or production wiring.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

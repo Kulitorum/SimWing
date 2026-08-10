@@ -217,6 +217,15 @@ kinetic source; deflation releases the same power. Opening pressure power plus
 regional `p*dV/dt` closes to roundoff. Local uphill deficits and the net graph
 deficit are reported separately, without inventing an opening constitutive law
 or energy source.
+A one-epoch planar regional fragment builder now performs the missing spatial
+split. It cuts every Cartesian cell at the current pressure layers and emits
+one full-dimensional control per transverse tile, with stable boundary
+identity, physical volume/centroid, and regional pressure. The canonical
+16-cell grid becomes 24 controls: four cells each contain separate
+exterior/pocket/exterior fragments, and the thin pocket remains four `0.6 m³`
+layer-to-layer controls. Per-cell volume and first moment, per-region volume,
+and the periodic domain all close through X/Y/Z and signed rebases. No
+connectivity, velocity basis, or pressure solve uses these controls yet.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

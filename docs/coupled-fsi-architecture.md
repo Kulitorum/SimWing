@@ -494,6 +494,7 @@ src/fsi/
         planar_region_flux.* minimum impermeability/relative-flux screen
         planar_region_opening_flow.* bounded opening-graph feasibility oracle
         planar_region_opening_power.* midpoint pressure-power audit
+        planar_region_fragment.* layer-split Cartesian control geometry
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
         porous_topology.*   compatibility API over planar face topology
@@ -2193,6 +2194,19 @@ feasible through one opening but moves `1.6 m^3/s` up a 70 Pa rise, requiring
 downhill link against a `24 W` uphill link, so local deficits and the zero net
 external deficit remain separate. The audit is immutable, source-bound, and
 bounded; it supplies neither dynamic pressure nor a constitutive opening law.
+`planar_region_fragment.*` supplies the first spatial control geometry that
+does not collapse several regional intervals into one ordinary cell. It splits
+the current profile at every Cartesian face and expands each axial segment over
+all transverse tiles. Every fragment retains wrapped cell coordinates,
+unwrapped axial image, layer-versus-grid boundary provenance, deterministic
+stable identity, physical volume and centroid, and the regional pressure
+potential. The canonical `4 x 2 x 2` grid grows from 16 cells to 24 controls:
+the four transverse tiles in one X cell each own exterior/pocket/exterior
+fragments, with the pocket represented by four `0.6 m^3` layer-to-layer
+controls. X/Y/Z, rigid motion, and positive/negative periodic rebases preserve
+per-cell volume/first moment, per-region volume, and domain closure. This is
+one-epoch geometry only; face connectivity, regional velocity/momentum,
+mimetic assembly, and production pressure ownership remain deliberately open.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
