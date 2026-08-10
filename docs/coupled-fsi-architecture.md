@@ -496,6 +496,7 @@ src/fsi/
         planar_region_opening_power.* midpoint pressure-power audit
         planar_region_fragment.* layer-split Cartesian control geometry
         planar_region_fragment_topology.* paired grid/wall control faces
+        planar_region_fragment_opening.* exact wall-aperture overlay
         planar_region_fragment_pressure_operator.* regional graph Laplacian
         planar_region_fragment_pressure_solve.* correction-only CG oracle
         porous_interface.* calibrated flux-driven porous jump and ledger
@@ -2223,6 +2224,19 @@ and component identity survives motion inside one topology segment, while
 X/Y/Z and positive/negative periodic rebases rebuild closed candidates. The
 graph does not yet assign face velocity, opening conductance, momentum mass,
 or a mimetic pressure operator.
+`planar_region_fragment_opening.*` overlays exact authored aperture patches on
+that immutable sealed graph. Each patch binds nonzero patch/opening/surface
+identity, the exact X/Y/Z pressure-wall tile, its oriented region and base-
+component pair, and a positive area no larger than the tile. Canonical opening
+and patch ordering is independent of authored order; patches from distinct
+openings may share a tile, while the tile partition must close as opening plus
+remaining solid area without repair. Opening links publish a deterministic
+union of the base pressure components, but preserve the complete base-to-
+connected mapping and source fingerprints. The canonical `0.5 m^2` patch
+joins the 13.6/2.4 `m^3` exterior/pocket components and retains the full
+`16 m^3`; an empty overlay leaves both components sealed. This artifact owns
+no aperture conductance, flux, velocity degree, pressure equation, solid-wall
+load subtraction, Structure mutation, or worker selection.
 `planar_region_fragment_pressure_operator.*` assembles the corresponding
 orthogonal integrated graph Laplacian while preserving that wall exclusion.
 Each same-region link contributes `area / center distance` to both endpoint

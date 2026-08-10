@@ -4,6 +4,7 @@
 #include "fluid/planar_region_opening_power.h"
 #include "fluid/planar_region_fragment.h"
 #include "fluid/planar_region_fragment_accepted_state.h"
+#include "fluid/planar_region_fragment_opening.h"
 #include "fluid/planar_region_fragment_pressure_operator.h"
 #include "fluid/planar_region_fragment_pressure_jump_energy.h"
 #include "fluid/planar_region_fragment_pressure_projection.h"
@@ -6488,6 +6489,303 @@ void testPlanarRegionalMovingFragmentPressureProjectionAllAxes() {
     }
 }
 
+void testPlanarRegionalFragmentOpeningTopology() {
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+
+    const auto empty = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, {});
+    check(empty.patches.empty() && empty.partitions.empty()
+              && empty.openings.empty()
+              && empty.baseComponents.size() == 2
+              && empty.connectedComponents.size() == 2
+              && empty.connectedComponents[0].baseComponentCount == 1
+              && empty.connectedComponents[1].baseComponentCount == 1
+              && empty.totalOpeningAreaSquareMeters == 0.0
+              && empty.totalTouchedWallAreaSquareMeters == 0.0
+              && empty.totalSolidAreaOnTouchedWallsSquareMeters == 0.0
+              && empty.wallAreaPartitionResidualSquareMeters == 0.0,
+          "regional fragment openings preserve the sealed base components when empty");
+
+    const std::vector<
+        PlanarPressureRegionFragmentOpeningPatchDefinition> single{
+        {100, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.5},
+    };
+    const auto opened = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, single);
+    const auto repeated = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, single);
+    check(opened == repeated
+              && opened.version
+                  == planarPressureRegionFragmentOpeningVersion
+              && opened.fingerprint != 0
+              && opened.sourceFragmentFingerprint == fragments.fingerprint
+              && opened.sourceTopologyFingerprint == topology.fingerprint
+              && opened.profileAxis == GridFaceAxis::X
+              && opened.patches.size() == 1
+              && opened.partitions.size() == 1
+              && opened.openings.size() == 1
+              && opened.baseComponents.size() == 2
+              && opened.connectedComponents.size() == 1
+              && opened.ownedStorageBytes > 0
+              && opened.workingStorageBytes > 0,
+          "regional fragment opening capture is deterministic and source-bound");
+    const auto& patch = opened.patches[0];
+    check(patch.patchStableId == 100
+              && patch.openingStableId == 1000
+              && patch.surfaceStableId == 10
+              && patch.axis == GridFaceAxis::X
+              && patch.i == 1 && patch.j == 0 && patch.k == 0
+              && patch.negativeSideRegionStableId == 1
+              && patch.positiveSideRegionStableId == 2
+              && patch.areaSquareMeters == 0.5
+              && patch.sourceWallAreaSquareMeters == 1.0
+              && patch.sourceWallAreaFraction == 0.5
+              && patch.minusBaseComponentIndex
+                  != patch.plusBaseComponentIndex,
+          "regional fragment opening retains its exact wall tile and orientation");
+    const auto& partition = opened.partitions[0];
+    check(partition.sourceFaceLinkStableId
+                  == patch.sourceFaceLinkStableId
+              && partition.openingPatchCount == 1
+              && partition.wallAreaSquareMeters == 1.0
+              && partition.openingAreaSquareMeters == 0.5
+              && partition.solidAreaSquareMeters == 0.5
+              && partition.openingAreaFraction == 0.5,
+          "regional fragment opening partitions one wall without area repair");
+    check(opened.openings[0].openingStableId == 1000
+              && opened.openings[0].patchCount == 1
+              && opened.openings[0].areaSquareMeters == 0.5
+              && opened.connectedComponents[0].baseComponentCount == 2
+              && opened.connectedComponents[0].fragmentCount
+                  == fragments.fragments.size()
+              && opened.connectedComponents[0].openingPatchCount == 1,
+          "regional fragment opening merges both pressure components exactly");
+    checkNear(opened.connectedComponents[0].volumeCubicMeters,
+              16.0, 2.0e-15,
+              "regional fragment opening component retains total domain volume");
+    check(opened.baseComponents[0].connectedComponentIndex == 0
+              && opened.baseComponents[1].connectedComponentIndex == 0
+              && opened.baseComponents[0].connectedComponentStableId
+                  == opened.connectedComponents[0].stableId
+              && opened.baseComponents[1].connectedComponentStableId
+                  == opened.connectedComponents[0].stableId,
+          "regional fragment opening publishes the complete base-component union");
+    check(opened.totalOpeningAreaSquareMeters == 0.5
+              && opened.totalTouchedWallAreaSquareMeters == 1.0
+              && opened.totalSolidAreaOnTouchedWallsSquareMeters == 0.5
+              && opened.wallAreaPartitionResidualSquareMeters == 0.0,
+          "regional fragment opening closes its global wall-area partition");
+    validatePlanarPressureRegionFragmentOpenings(
+        opened, geometry, sweep, fragments, topology, single);
+
+    std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition> multiple{
+        {103, 2000, 20, GridFaceAxis::X, 1, 0, 1, 2, 1, 0.5},
+        {102, 1000, 10, GridFaceAxis::X, 1, 1, 0, 1, 2, 0.25},
+        {101, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.25},
+    };
+    auto reversed = multiple;
+    std::ranges::reverse(reversed);
+    const auto multi = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, multiple);
+    const auto reversedMulti = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, reversed);
+    check(multi == reversedMulti && multi.patches.size() == 3
+              && multi.partitions.size() == 3
+              && multi.openings.size() == 2
+              && multi.openings[0].openingStableId == 1000
+              && multi.openings[0].patchCount == 2
+              && multi.openings[0].areaSquareMeters == 0.5
+              && multi.openings[1].openingStableId == 2000
+              && multi.openings[1].patchCount == 1
+              && multi.openings[1].areaSquareMeters == 0.5
+              && multi.totalOpeningAreaSquareMeters == 1.0
+              && multi.totalTouchedWallAreaSquareMeters == 3.0
+              && multi.totalSolidAreaOnTouchedWallsSquareMeters == 2.0,
+          "regional fragment openings canonicalize multi-patch authored order");
+
+    const std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition>
+        sharedTile{
+            {110, 3000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.3},
+            {111, 4000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.2},
+        };
+    const auto shared = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, sharedTile);
+    check(shared.partitions.size() == 1
+              && shared.partitions[0].openingPatchCount == 2
+              && shared.partitions[0].openingAreaSquareMeters == 0.5
+              && shared.partitions[0].solidAreaSquareMeters == 0.5,
+          "regional fragment openings aggregate multiple apertures on one wall tile");
+
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> axisLayers{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        const auto axisSweep = makePlanarPressureRegionSweepLedger(
+            geometry, axisLayers, axisLayers, 1.0);
+        const auto axisFragments = buildPlanarPressureRegionFragments(
+            geometry, axisSweep);
+        const auto axisTopology =
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, axisSweep, axisFragments);
+        const auto wall = std::ranges::find_if(
+            axisTopology.links,
+            [](const auto& link) {
+                return link.kind
+                    == PlanarPressureRegionFragmentFaceKind::
+                        PressureLayerWall;
+            });
+        check(wall != axisTopology.links.end(),
+              "regional fragment opening finds a wall on every profile axis");
+        if (wall == axisTopology.links.end()) continue;
+        const std::vector<
+            PlanarPressureRegionFragmentOpeningPatchDefinition> definition{
+            {100, 1000, wall->surfaceStableId, wall->axis,
+             wall->i, wall->j, wall->k,
+             wall->minusRegionStableId, wall->plusRegionStableId,
+             0.5 * wall->areaSquareMeters},
+        };
+        const auto axisOpenings =
+            buildPlanarPressureRegionFragmentOpenings(
+                geometry, axisSweep, axisFragments, axisTopology,
+                definition);
+        check(axisOpenings.profileAxis == axis
+                  && axisOpenings.patches.size() == 1
+                  && axisOpenings.patches[0].sourceFaceLinkStableId
+                      == wall->stableId
+                  && axisOpenings.partitions[0].openingAreaFraction == 0.5
+                  && axisOpenings.connectedComponents.size() == 1,
+              "regional fragment opening ownership closes on every profile axis");
+    }
+
+    auto corrupt = opened;
+    corrupt.patches[0].areaSquareMeters += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentOpenings(
+            corrupt, geometry, sweep, fragments, topology, single); },
+        "regional fragment-opening validation rejects patch corruption");
+    corrupt = opened;
+    corrupt.baseComponents[0].connectedComponentStableId += 1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentOpenings(
+            corrupt, geometry, sweep, fragments, topology, single); },
+        "regional fragment-opening validation rejects component corruption");
+
+    auto invalid = single;
+    invalid.push_back(
+        {100, 2000, 20, GridFaceAxis::X, 1, 0, 0, 2, 1, 0.25});
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, invalid)); },
+        "regional fragment openings reject duplicate patch identity");
+    invalid = single;
+    invalid[0].surfaceStableId = 999;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, invalid)); },
+        "regional fragment openings reject a missing wall tile");
+    invalid = single;
+    invalid[0].openingStableId = 0;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, invalid)); },
+        "regional fragment openings reject invalid stable identity");
+    invalid = single;
+    invalid[0].axis = GridFaceAxis::Y;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, invalid)); },
+        "regional fragment openings reject a foreign wall orientation");
+    invalid = single;
+    std::swap(invalid[0].negativeSideRegionStableId,
+              invalid[0].positiveSideRegionStableId);
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, invalid)); },
+        "regional fragment openings reject reversed side regions");
+    invalid = single;
+    invalid[0].areaSquareMeters = 1.01;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, invalid)); },
+        "regional fragment openings reject a patch larger than its wall");
+    invalid = single;
+    invalid[0].areaSquareMeters = 0.0;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, invalid)); },
+        "regional fragment openings reject nonpositive patch area");
+    invalid = sharedTile;
+    invalid[1].areaSquareMeters = 0.8;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, invalid)); },
+        "regional fragment openings reject aggregate overfill on one wall");
+    invalid = multiple;
+    invalid[2].openingStableId = 2000;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, invalid)); },
+        "regional fragment openings reject one opening spread across surfaces");
+
+    auto limits = PlanarPressureRegionFragmentOpeningLimits{};
+    limits.maximumPatches = 1;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, multiple, limits)); },
+        "regional fragment openings enforce the patch limit");
+    limits = {};
+    limits.maximumPartitions = 1;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, multiple, limits)); },
+        "regional fragment openings enforce the partition limit");
+    limits = {};
+    limits.maximumOpenings = 1;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, multiple, limits)); },
+        "regional fragment openings enforce the opening limit");
+    limits = {};
+    limits.maximumConnectedComponents = 1;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, {}, limits)); },
+        "regional fragment openings enforce the connected-component limit");
+    limits = {};
+    limits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, single, limits)); },
+        "regional fragment openings enforce the owned-byte limit");
+    limits = {};
+    limits.maximumWorkingBytes = 1;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, single, limits)); },
+        "regional fragment openings enforce the working-byte limit");
+    limits = {};
+    limits.topologyLimits.maximumLinks = 1;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, single, limits)); },
+        "regional fragment openings enforce nested topology limits");
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -6638,6 +6936,7 @@ int main() {
     testPlanarRegionalFragmentsAllAxesAndRejection();
     testPlanarRegionalFragmentTopology();
     testPlanarRegionalFragmentTopologyAxesAndRejection();
+    testPlanarRegionalFragmentOpeningTopology();
     testPlanarRegionalFragmentVolumeRates();
     testPlanarRegionalFragmentVolumeRatesAxesAndRejection();
     testPlanarRegionalFragmentVelocityMetric();

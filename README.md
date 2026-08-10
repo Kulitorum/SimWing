@@ -235,6 +235,17 @@ exactly zero conductance. All six face incidences and boundary area close per
 fragment through X/Y/Z, rigid in-segment motion, and signed periodic rebases.
 This is connectivity evidence only; it still owns no regional velocity or
 pressure solve.
+An immutable fragment-opening overlay can now partition exact aperture area
+out of those pressure-layer wall tiles without changing the sealed source
+graph. Every patch names a stable opening and surface, one exact X/Y/Z wall
+key, its oriented region pair, and positive area. Canonical ordering makes
+multi-patch openings authored-order independent, multiple openings can share
+one tile, and every touched wall closes as `open area + solid area`. The
+canonical `0.5 m²` aperture joins the exterior and pocket base components into
+one opening-connected component while an empty overlay preserves both sealed
+components. This is topology for the next intake-flow discretization only: it
+owns no conductance, flux or velocity degree, pressure equation, fabric-load
+subtraction, or worker state.
 A bounded symmetric pressure operator now acts on that graph without crossing
 fabric. Its 24 rows contain 128 directed entries from the 64 same-region links;
 the eight layer walls contribute no entry. The canonical regional pressure is

@@ -1899,6 +1899,11 @@ makes this a certified aerodynamic solver.
   pressure-layer pairs retain two-sided wall geometry and signed static jump
   with zero conductance. The graph assigns deterministic connected components
   but owns no velocity, momentum, opening link, or pressure solve.
+- `src/fsi/fluid/planar_region_fragment_opening.{h,cpp}` overlays immutable
+  authored aperture patches on exact pressure-wall tiles. It partitions
+  touched wall area into open/solid ownership and publishes the deterministic
+  opening-connected union of sealed base components. It owns no conductance,
+  flux, velocity degree, pressure equation, load subtraction, or worker state.
 - `src/fsi/fluid/planar_region_fragment_pressure_operator.{h,cpp}` assembles
   an ungauged symmetric integrated graph Laplacian from only the same-region
   fragment links. Layer walls create no entries. It retains one deterministic
@@ -2315,6 +2320,21 @@ periodic rebase closure, and deep rejection of mutated link/fragment/component/
 fingerprint products plus link/component/byte/nested-source limits. Do not
 infer a regional face velocity, opening conductance, momentum operator,
 mimetic pressure acceptance, or production wiring.
+
+For `planar_region_fragment_opening.*`, require every positive-area patch to
+bind one exact pressure-layer wall by nonzero stable patch/opening/surface ID,
+X/Y/Z tile key, and authored negative/positive region orientation. Require
+authored-order-independent canonicalization, unique patch IDs, deterministic
+multi-patch opening summaries, shared-tile aggregation, and exact
+`opening + solid = wall` area closure without overfill. An empty overlay must
+preserve the sealed base components; one canonical `0.5 m^2` aperture must
+join the exterior/pocket base components while retaining their complete
+mapping and `16 m^3` total volume. Reject missing/reversed/foreign walls,
+invalid IDs or area, one opening that disagrees on surface/orientation/region/
+base-component pair, mutated products, overfilled tiles, and patch/partition/
+opening/component/owned/working/nested-topology limit violations. Do not infer
+conductance, opening flux or velocity, pressure coupling, fabric-load
+subtraction, Structure mutation, or production ownership.
 
 For `planar_region_fragment_pressure_operator.*`, require 24 rows and 128
 directed entries from the 64 same-region links, with all eight layer walls
