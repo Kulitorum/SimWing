@@ -26,7 +26,8 @@ struct SceneFluidRegionalOpeningMomentumWallCycleStateLimits {
 // staggered bridge between those endpoints without retaining transient solver
 // diagnostics or the complete wall exchange.
 //
-// This state is not serialized and is not consumed by a production worker.
+// This state is serialized only by its dedicated SWRW companion, never by
+// SWRM, and is not consumed by a production worker.
 struct SceneFluidRegionalOpeningMomentumWallCycleState {
     std::uint32_t version =
         sceneFluidRegionalOpeningMomentumWallCycleStateVersion;

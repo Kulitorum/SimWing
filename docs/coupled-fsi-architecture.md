@@ -439,6 +439,7 @@ src/fsi/
     scene_fluid_regional_opening_momentum_wall_exchange.* isolated regional wall exchange
     scene_fluid_regional_opening_momentum_wall_pressure_epoch.* adjusted predictor/pressure receipt
     scene_fluid_regional_opening_momentum_wall_cycle_state.* compact accepted staggered endpoint
+    scene_fluid_regional_opening_momentum_wall_cycle_state_persistence.* opt-in SWRW restart codec
     scene_fluid_regional_opening_momentum_wall_cycle_owner.* transactional in-memory owner
     scene_fluid_region_link_flow.* current-link region predictor
     scene_fluid_pressure_coupling.* strong pressure/shear feedback
@@ -2959,9 +2960,18 @@ quadrature. The owner builds a complete candidate before a no-throw swap:
 checkpoint/restore reproduces the exact following ALE transport, a genuine
 one-iteration breathing-pressure rejection returns false and retains the prior
 state exactly, and corrupt traction, foreign quadrature, and limits reject
-without mutation. This state is deliberately in-memory only; it is not in the
-`SWRM` codec, does not apply traction or step Structure, and is not selected by
-the production worker.
+without mutation. Its dedicated persistence companion now owns a deterministic
+bounded checksummed little-endian `SWRW` envelope without changing `SWRM`.
+Adjusted collocated controls and minimal conservative quadrature tractions are
+primary wire data; accepted pressure remains a nested `SWRO` artifact, so
+decode rebuilds derived opening flux from trusted accepted-geometry sources.
+Only a complete state that matches the live source metric, accepted pressure
+geometry/operator/opening/resistance, and exact scene quadrature is published.
+Bit-exact round trip reproduces the following ALE transport; foreign pressure
+or quadrature sources, checksum and semantic corruption, truncation, trailing
+data, and record/byte limits retain the destination transactionally. The codec
+does not apply traction or step Structure and is not selected by the production
+worker.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

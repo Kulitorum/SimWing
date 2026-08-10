@@ -2207,7 +2207,10 @@ makes this a certified aerodynamic solver.
   accepted pressure at the consecutive metric, and conservative wall traction
   at the exact quadrature epoch. The transactional owner commits/restores only
   complete validated candidates and retains its prior state on rejected
-  pressure. It is in-memory only and is not a production owner.
+  pressure. Its dedicated `..._state_persistence.{h,cpp}` codec owns the
+  checksummed little-endian `SWRW` envelope: adjusted controls and conservative
+  traction are primary wire data, while accepted pressure remains nested
+  `SWRO`. This remains opt-in and is not a production owner.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -3214,6 +3217,14 @@ invalid/corrupt/foreign inputs throw before mutation. Cover checkpoint/restore,
 exact next-transport replay, genuine truncated-pressure rejection, corrupt
 traction, foreign quadrature, and limits. Do not serialize this state through
 `SWRM`, apply traction, step Structure, retry numerics, or enable a worker.
+Its persistence companion must use distinct `SWRW` magic, encode adjusted
+controls and the minimal conservative traction directly, embed accepted
+pressure through `SWRO`, and validate exact transport metric, accepted pressure
+geometry/operator/opening/resistance, and scene quadrature before transactional
+publication. Cover deterministic bit-exact round trip, restored next-transport
+replay, foreign pressure/quadrature sources, checksum and recomputed-checksum
+corruption, truncation, trailing data, record/byte limits, and retained decode/
+encode destinations. Do not modify the established `SWRM` wire contract.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

@@ -17,6 +17,7 @@
 #include "scene_fluid_regional_opening_momentum_load_epoch.h"
 #include "scene_fluid_regional_opening_momentum_wall_exchange.h"
 #include "scene_fluid_regional_opening_momentum_wall_cycle_owner.h"
+#include "scene_fluid_regional_opening_momentum_wall_cycle_state_persistence.h"
 #include "scene_fluid_regional_opening_momentum_wall_input.h"
 #include "scene_fluid_regional_opening_momentum_wall_pressure_epoch.h"
 
@@ -50,6 +51,23 @@ void checkNear(const double actual,
                      "FAIL: %s (actual %.17g, expected %.17g)\n",
                      message, actual, expected);
         ++failures;
+    }
+}
+
+void refreshOpeningMomentumWallCycleStatePersistenceChecksum(
+    std::vector<std::uint8_t>& bytes) {
+    constexpr std::size_t envelopeBytes = 24;
+    constexpr std::size_t checksumOffset = 16;
+    constexpr std::uint64_t offsetBasis = 14695981039346656037ULL;
+    constexpr std::uint64_t prime = 1099511628211ULL;
+    std::uint64_t value = offsetBasis;
+    for (std::size_t index = envelopeBytes; index < bytes.size(); ++index) {
+        value ^= bytes[index];
+        value *= prime;
+    }
+    for (std::size_t byte = 0; byte < sizeof(value); ++byte) {
+        bytes[checksumOffset + byte] = static_cast<std::uint8_t>(
+            value >> (8U * byte));
     }
 }
 
@@ -2068,6 +2086,225 @@ void testOpeningMomentumWallExchange() {
                   == exchange.samples.size(),
           "regional opening wall-cycle state: compact endpoint retains adjusted momentum, accepted pressure, and matching traction");
 
+    using WallCyclePersistenceErrorCode =
+        SceneFluidRegionalOpeningMomentumWallCycleStatePersistenceErrorCode;
+    using WallCyclePersistenceError =
+        SceneFluidRegionalOpeningMomentumWallCycleStatePersistenceError;
+    using WallCyclePersistenceLimits =
+        SceneFluidRegionalOpeningMomentumWallCycleStatePersistenceLimits;
+    const auto serializeWallCycleState =
+        [&](const SceneFluidRegionalOpeningMomentumWallCycleState& source,
+            std::vector<std::uint8_t>& destination,
+            WallCyclePersistenceError* error,
+            const WallCyclePersistenceLimits& limits) {
+            return serializeSceneFluidRegionalOpeningMomentumWallCycleState(
+                source, endpoint.openingMetric,
+                endpoint.pressureOperator,
+                endpoint.basePressureOperator, endpoint.geometry,
+                endpoint.sweep, endpoint.fragments, endpoint.topology,
+                endpoint.volumeRates, endpoint.openingDefinitions,
+                endpoint.openings, endpoint.resistanceDefinitions,
+                endpoint.baseMetric, endpoint.openingMetric,
+                fixture.quadrature, destination, error, limits);
+        };
+    const auto deserializeWallCycleState =
+        [&](const std::span<const std::uint8_t> source,
+            SceneFluidRegionalOpeningMomentumWallCycleState& destination,
+            WallCyclePersistenceError* error,
+            const WallCyclePersistenceLimits& limits) {
+            return deserializeSceneFluidRegionalOpeningMomentumWallCycleState(
+                source, endpoint.openingMetric,
+                endpoint.pressureOperator,
+                endpoint.basePressureOperator, endpoint.geometry,
+                endpoint.sweep, endpoint.fragments, endpoint.topology,
+                endpoint.volumeRates, endpoint.openingDefinitions,
+                endpoint.openings, endpoint.resistanceDefinitions,
+                endpoint.baseMetric, endpoint.openingMetric,
+                fixture.quadrature, destination, error, limits);
+        };
+
+    WallCyclePersistenceError wallCyclePersistenceError;
+    const WallCyclePersistenceLimits defaultWallCyclePersistenceLimits;
+    std::vector<std::uint8_t> wallCycleBytes;
+    std::vector<std::uint8_t> repeatedWallCycleBytes;
+    check(serializeWallCycleState(
+              wallCycleState, wallCycleBytes,
+              &wallCyclePersistenceError,
+              defaultWallCyclePersistenceLimits)
+              && wallCyclePersistenceError.code
+                  == WallCyclePersistenceErrorCode::None
+              && serializeWallCycleState(
+                  wallCycleState, repeatedWallCycleBytes,
+                  &wallCyclePersistenceError,
+                  defaultWallCyclePersistenceLimits)
+              && wallCycleBytes == repeatedWallCycleBytes
+              && wallCycleBytes.size() > 24
+              && wallCycleBytes[0] == 'S'
+              && wallCycleBytes[1] == 'W'
+              && wallCycleBytes[2] == 'R'
+              && wallCycleBytes[3] == 'W',
+          "regional opening wall-cycle persistence: SWRW encoding is deterministic");
+    SceneFluidRegionalOpeningMomentumWallCycleState decodedWallCycleState;
+    std::vector<std::uint8_t> decodedWallCycleBytes;
+    check(deserializeWallCycleState(
+              wallCycleBytes, decodedWallCycleState,
+              &wallCyclePersistenceError,
+              defaultWallCyclePersistenceLimits)
+              && wallCyclePersistenceError.code
+                  == WallCyclePersistenceErrorCode::None
+              && decodedWallCycleState == wallCycleState
+              && serializeWallCycleState(
+                  decodedWallCycleState, decodedWallCycleBytes,
+                  &wallCyclePersistenceError,
+                  defaultWallCyclePersistenceLimits)
+              && decodedWallCycleBytes == wallCycleBytes,
+          "regional opening wall-cycle persistence: adjusted momentum, pressure, and traction round trip bit-exactly");
+
+    const auto expectWallCyclePersistenceRejected =
+        [&](const std::vector<std::uint8_t>& candidateBytes,
+            const WallCyclePersistenceErrorCode expectedCode,
+            const WallCyclePersistenceLimits& limits) {
+            auto retainedState = wallCycleState;
+            const auto before = retainedState;
+            WallCyclePersistenceError rejectedError;
+            const bool decoded = deserializeWallCycleState(
+                candidateBytes, retainedState, &rejectedError, limits);
+            return !decoded && rejectedError.code == expectedCode
+                && retainedState == before;
+        };
+    auto corruptWallCycleBytes = wallCycleBytes;
+    corruptWallCycleBytes[0] ^= 0x01U;
+    check(expectWallCyclePersistenceRejected(
+              corruptWallCycleBytes,
+              WallCyclePersistenceErrorCode::InvalidMagic,
+              defaultWallCyclePersistenceLimits),
+          "regional opening wall-cycle persistence: foreign magic rejects transactionally");
+    corruptWallCycleBytes = wallCycleBytes;
+    corruptWallCycleBytes[4] = 2;
+    corruptWallCycleBytes[5] = 0;
+    check(expectWallCyclePersistenceRejected(
+              corruptWallCycleBytes,
+              WallCyclePersistenceErrorCode::UnsupportedVersion,
+              defaultWallCyclePersistenceLimits),
+          "regional opening wall-cycle persistence: unsupported protocol rejects transactionally");
+    corruptWallCycleBytes = wallCycleBytes;
+    corruptWallCycleBytes.back() ^= 0x01U;
+    check(expectWallCyclePersistenceRejected(
+              corruptWallCycleBytes,
+              WallCyclePersistenceErrorCode::ChecksumMismatch,
+              defaultWallCyclePersistenceLimits),
+          "regional opening wall-cycle persistence: payload corruption is detected");
+    corruptWallCycleBytes = wallCycleBytes;
+    constexpr std::size_t encodedWallCycleStateFingerprintOffset = 40;
+    corruptWallCycleBytes[encodedWallCycleStateFingerprintOffset] ^= 0x01U;
+    refreshOpeningMomentumWallCycleStatePersistenceChecksum(
+        corruptWallCycleBytes);
+    check(expectWallCyclePersistenceRejected(
+              corruptWallCycleBytes,
+              WallCyclePersistenceErrorCode::InvalidData,
+              defaultWallCyclePersistenceLimits),
+          "regional opening wall-cycle persistence: recomputed-checksum state corruption rejects");
+    corruptWallCycleBytes = wallCycleBytes;
+    corruptWallCycleBytes.pop_back();
+    check(expectWallCyclePersistenceRejected(
+              corruptWallCycleBytes,
+              WallCyclePersistenceErrorCode::Truncated,
+              defaultWallCyclePersistenceLimits),
+          "regional opening wall-cycle persistence: truncation rejects transactionally");
+    corruptWallCycleBytes = wallCycleBytes;
+    corruptWallCycleBytes.push_back(0);
+    check(expectWallCyclePersistenceRejected(
+              corruptWallCycleBytes,
+              WallCyclePersistenceErrorCode::TrailingData,
+              defaultWallCyclePersistenceLimits),
+          "regional opening wall-cycle persistence: trailing bytes reject transactionally");
+
+    auto wallCyclePersistenceLimits = defaultWallCyclePersistenceLimits;
+    wallCyclePersistenceLimits.maximumAdjustmentControls =
+        wallCycleState.adjustedMomentum.controls.size() - 1;
+    check(expectWallCyclePersistenceRejected(
+              wallCycleBytes,
+              WallCyclePersistenceErrorCode::LimitExceeded,
+              wallCyclePersistenceLimits),
+          "regional opening wall-cycle persistence: adjusted-control limit rejects");
+    wallCyclePersistenceLimits = defaultWallCyclePersistenceLimits;
+    wallCyclePersistenceLimits.maximumWallTractions =
+        wallCycleState.wallTractions.tractions.size() - 1;
+    check(expectWallCyclePersistenceRejected(
+              wallCycleBytes,
+              WallCyclePersistenceErrorCode::LimitExceeded,
+              wallCyclePersistenceLimits),
+          "regional opening wall-cycle persistence: traction-record limit rejects");
+
+    SceneFixture foreignWallCycleFixture(false);
+    auto foreignDecodedWallCycleState = wallCycleState;
+    const auto beforeForeignDecode = foreignDecodedWallCycleState;
+    check(!deserializeSceneFluidRegionalOpeningMomentumWallCycleState(
+              wallCycleBytes, endpoint.openingMetric,
+              endpoint.pressureOperator,
+              endpoint.basePressureOperator, endpoint.geometry,
+              endpoint.sweep, endpoint.fragments, endpoint.topology,
+              endpoint.volumeRates, endpoint.openingDefinitions,
+              endpoint.openings, endpoint.resistanceDefinitions,
+              endpoint.baseMetric, endpoint.openingMetric,
+              foreignWallCycleFixture.quadrature,
+              foreignDecodedWallCycleState, &wallCyclePersistenceError)
+              && wallCyclePersistenceError.code
+                  == WallCyclePersistenceErrorCode::SourceMismatch
+              && foreignDecodedWallCycleState == beforeForeignDecode,
+          "regional opening wall-cycle persistence: foreign quadrature rejects transactionally");
+    const OpeningRegionalEndpoint foreignWallPressureEndpoint(true);
+    foreignDecodedWallCycleState = wallCycleState;
+    const auto beforeForeignPressureDecode = foreignDecodedWallCycleState;
+    check(!deserializeSceneFluidRegionalOpeningMomentumWallCycleState(
+              wallCycleBytes, endpoint.openingMetric,
+              foreignWallPressureEndpoint.pressureOperator,
+              foreignWallPressureEndpoint.basePressureOperator,
+              foreignWallPressureEndpoint.geometry,
+              foreignWallPressureEndpoint.sweep,
+              foreignWallPressureEndpoint.fragments,
+              foreignWallPressureEndpoint.topology,
+              foreignWallPressureEndpoint.volumeRates,
+              foreignWallPressureEndpoint.openingDefinitions,
+              foreignWallPressureEndpoint.openings,
+              foreignWallPressureEndpoint.resistanceDefinitions,
+              endpoint.baseMetric, endpoint.openingMetric,
+              fixture.quadrature, foreignDecodedWallCycleState,
+              &wallCyclePersistenceError)
+              && wallCyclePersistenceError.code
+                  == WallCyclePersistenceErrorCode::SourceMismatch
+              && foreignDecodedWallCycleState
+                  == beforeForeignPressureDecode,
+          "regional opening wall-cycle persistence: foreign accepted-pressure sources reject transactionally");
+
+    wallCyclePersistenceLimits = defaultWallCyclePersistenceLimits;
+    wallCyclePersistenceLimits.maximumEncodedBytes =
+        wallCycleBytes.size() - 1;
+    std::vector<std::uint8_t> retainedWallCycleEncoding{1, 2, 3};
+    const auto retainedWallCycleEncodingBefore =
+        retainedWallCycleEncoding;
+    check(!serializeWallCycleState(
+              wallCycleState, retainedWallCycleEncoding,
+              &wallCyclePersistenceError, wallCyclePersistenceLimits)
+              && wallCyclePersistenceError.code
+                  == WallCyclePersistenceErrorCode::LimitExceeded
+              && retainedWallCycleEncoding
+                  == retainedWallCycleEncodingBefore,
+          "regional opening wall-cycle persistence: encode byte limit retains destination");
+    auto corruptEncodedWallCycleState = wallCycleState;
+    corruptEncodedWallCycleState.wallTractions.tractions.front()
+        .tractionPascals.x += 1.0;
+    retainedWallCycleEncoding = retainedWallCycleEncodingBefore;
+    check(!serializeWallCycleState(
+              corruptEncodedWallCycleState, retainedWallCycleEncoding,
+              &wallCyclePersistenceError,
+              defaultWallCyclePersistenceLimits)
+              && wallCyclePersistenceError.code
+                  == WallCyclePersistenceErrorCode::InvalidData
+              && retainedWallCycleEncoding
+                  == retainedWallCycleEncodingBefore,
+          "regional opening wall-cycle persistence: corrupt in-memory traction does not replace bytes");
+
     SceneFluidRegionalOpeningMomentumWallCycleOwner wallCycleOwner;
     check(wallCycleOwner.tryCommit(
               wallPressureEpoch, exchange, endpoint.openingMetric,
@@ -2077,7 +2314,7 @@ void testOpeningMomentumWallExchange() {
           "regional opening wall-cycle owner: accepted receipt commits atomically");
     SceneFluidRegionalOpeningMomentumWallCycleOwner restoredWallCycleOwner;
     restoredWallCycleOwner.restore(
-        wallCycleOwner.checkpoint(), endpoint.openingMetric,
+        decodedWallCycleState, endpoint.openingMetric,
         endpoint.pressureOperator, endpoint.basePressureOperator,
         endpoint.geometry, endpoint.sweep, endpoint.fragments,
         endpoint.topology, endpoint.volumeRates,
@@ -2188,7 +2425,6 @@ void testOpeningMomentumWallExchange() {
                     wallCycleLimits));
         },
         "regional opening wall-cycle state: traction limit rejects before publication");
-    SceneFixture foreignWallCycleFixture(false);
     const auto beforeForeignRestore = restoredWallCycleOwner.checkpoint();
     expectRejected(
         [&] {
