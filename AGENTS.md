@@ -1904,6 +1904,11 @@ makes this a certified aerodynamic solver.
   touched wall area into open/solid ownership and publishes the deterministic
   opening-connected union of sealed base components. It owns no conductance,
   flux, velocity degree, pressure equation, load subtraction, or worker state.
+- `src/fsi/fluid/planar_region_fragment_opening_flux.{h,cpp}` assigns explicit
+  stable-ID-keyed material-relative velocity and `area*velocity` flow to those
+  patches. It publishes equal-and-opposite fragment/base/connected-component
+  ledgers but owns no pressure law, aperture inertia, geometry rate, pressure
+  RHS, load subtraction, or worker state.
 - `src/fsi/fluid/planar_region_fragment_pressure_operator.{h,cpp}` assembles
   an ungauged symmetric integrated graph Laplacian from only the same-region
   fragment links. Layer walls create no entries. It retains one deterministic
@@ -2334,6 +2339,22 @@ invalid IDs or area, one opening that disagrees on surface/orientation/region/
 base-component pair, mutated products, overfilled tiles, and patch/partition/
 opening/component/owned/working/nested-topology limit violations. Do not infer
 conductance, opening flux or velocity, pressure coupling, fabric-load
+subtraction, Structure mutation, or production ownership.
+
+For `planar_region_fragment_opening_flux.*`, require exactly one finite
+stable-ID-keyed relative-normal-velocity sample per opening patch and
+authored-order-independent canonicalization. Positive `Q=A*u_relative` must
+leave the negative-side fragment/base component and enter the positive side;
+aggregate openings must report their area-weighted velocity. Every opening-
+connected component and the global fragment ledger must cancel within the
+published scale-derived roundoff tolerance. The canonical `0.5 m^2`, `3.2
+m/s` sample must carry `1.6 m^3/s`; when compared externally with the breathing
+volume-rate ledger it must make the `-1.6/+1.6 m^3/s` exterior/pocket base
+components compatible. Cover X/Y/Z physical area, multiple patches/openings,
+zero-flow sealed topology, sign, corruption, missing/foreign/duplicate/non-
+finite samples, and patch/opening/fragment/base-component/connected-component/
+owned/working/nested-opening limits. Do not infer conductance, a pressure-drop
+law, aperture momentum or energy, pressure RHS integration, solid-wall load
 subtraction, Structure mutation, or production ownership.
 
 For `planar_region_fragment_pressure_operator.*`, require 24 rows and 128

@@ -246,6 +246,16 @@ one opening-connected component while an empty overlay preserves both sealed
 components. This is topology for the next intake-flow discretization only: it
 owns no conductance, flux or velocity degree, pressure equation, fabric-load
 subtraction, or worker state.
+A source-bound opening-flux state now assigns one stable-ID-keyed material-
+relative normal velocity to every exact patch. Positive flow follows the
+authored negative-to-positive region orientation; equal-and-opposite ledgers
+retain every incident fragment, sealed base component, aggregate opening, and
+opening-connected component. A `3.2 m/s` sample through the canonical
+`0.5 m²` patch carries `1.6 m³/s`, exactly offsetting the exterior/pocket
+component volume rates in the breathing geometry while remaining globally
+conservative. This is prescribed kinematics, not an intake model: it owns no
+conductance, pressure-drop law, aperture inertia, pressure RHS, or automatic
+energy source.
 A bounded symmetric pressure operator now acts on that graph without crossing
 fabric. Its 24 rows contain 128 directed entries from the 64 same-region links;
 the eight layer walls contribute no entry. The canonical regional pressure is

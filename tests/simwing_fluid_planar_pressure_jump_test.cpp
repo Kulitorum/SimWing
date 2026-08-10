@@ -5,6 +5,7 @@
 #include "fluid/planar_region_fragment.h"
 #include "fluid/planar_region_fragment_accepted_state.h"
 #include "fluid/planar_region_fragment_opening.h"
+#include "fluid/planar_region_fragment_opening_flux.h"
 #include "fluid/planar_region_fragment_pressure_operator.h"
 #include "fluid/planar_region_fragment_pressure_jump_energy.h"
 #include "fluid/planar_region_fragment_pressure_projection.h"
@@ -6786,6 +6787,365 @@ void testPlanarRegionalFragmentOpeningTopology() {
         "regional fragment openings enforce nested topology limits");
 }
 
+void testPlanarRegionalFragmentOpeningFluxState() {
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+
+    const std::vector<
+        PlanarPressureRegionFragmentOpeningPatchDefinition> definitions{
+        {100, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.5},
+    };
+    const auto openings = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, definitions);
+    const std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+        samples{{100, 3.2}};
+    const auto state = buildPlanarPressureRegionFragmentOpeningFluxState(
+        geometry, sweep, fragments, topology, definitions, openings,
+        samples);
+    const auto repeated =
+        buildPlanarPressureRegionFragmentOpeningFluxState(
+            geometry, sweep, fragments, topology, definitions, openings,
+            samples);
+    check(state == repeated
+              && state.version
+                  == planarPressureRegionFragmentOpeningFluxVersion
+              && state.fingerprint != 0
+              && state.sourceOpeningFingerprint == openings.fingerprint
+              && state.sourceFragmentFingerprint == fragments.fingerprint
+              && state.sourceTopologyFingerprint == topology.fingerprint
+              && state.profileAxis == GridFaceAxis::X
+              && state.patches.size() == 1
+              && state.openings.size() == 1
+              && state.fragments.size() == fragments.fragments.size()
+              && state.baseComponents.size() == topology.components.size()
+              && state.connectedComponents.size() == 1
+              && state.ownedStorageBytes > 0
+              && state.workingStorageBytes > 0,
+          "regional fragment opening flux is deterministic and source-bound");
+    const auto& patch = state.patches[0];
+    check(patch.patchStableId == 100
+              && patch.openingStableId == 1000
+              && patch.sourceFaceLinkStableId
+                  == openings.patches[0].sourceFaceLinkStableId
+              && patch.minusFragmentIndex
+                  == openings.patches[0].minusFragmentIndex
+              && patch.plusFragmentIndex
+                  == openings.patches[0].plusFragmentIndex
+              && patch.areaSquareMeters == 0.5
+              && patch.relativeNormalVelocityMetersPerSecond == 3.2,
+          "regional fragment opening flux retains exact patch provenance");
+    checkNear(patch.relativeVolumeFlowRateCubicMetersPerSecond,
+              1.6, 8.0e-15,
+              "regional fragment opening flux uses area times relative velocity");
+    checkNear(
+        state.fragments[patch.minusFragmentIndex]
+            .outwardRelativeVolumeFlowRateCubicMetersPerSecond,
+        1.6, 8.0e-15,
+        "regional fragment opening flux leaves the minus fragment");
+    checkNear(
+        state.fragments[patch.plusFragmentIndex]
+            .outwardRelativeVolumeFlowRateCubicMetersPerSecond,
+        -1.6, 8.0e-15,
+        "regional fragment opening flux enters the plus fragment");
+    checkNear(
+        state.baseComponents[patch.minusBaseComponentIndex]
+            .outwardRelativeVolumeFlowRateCubicMetersPerSecond,
+        1.6, 8.0e-15,
+        "regional fragment opening flux leaves the minus base component");
+    checkNear(
+        state.baseComponents[patch.plusBaseComponentIndex]
+            .outwardRelativeVolumeFlowRateCubicMetersPerSecond,
+        -1.6, 8.0e-15,
+        "regional fragment opening flux enters the plus base component");
+    check(state.openings[0].patchCount == 1
+              && state.openings[0].areaSquareMeters == 0.5
+              && state.openings[0]
+                     .relativeVolumeFlowRateCubicMetersPerSecond == 1.6
+              && state.openings[0]
+                     .areaWeightedRelativeNormalVelocityMetersPerSecond
+                  == 3.2,
+          "regional fragment opening flux publishes its opening aggregate");
+    checkNear(
+        state.connectedComponents[0]
+            .outwardRelativeVolumeFlowRateCubicMetersPerSecond,
+        0.0, state.conservationToleranceCubicMetersPerSecond,
+        "regional fragment opening flux closes its connected component");
+    checkNear(state.globalOutwardRelativeVolumeFlowRateCubicMetersPerSecond,
+              0.0, state.conservationToleranceCubicMetersPerSecond,
+              "regional fragment opening flux closes globally");
+    validatePlanarPressureRegionFragmentOpeningFluxState(
+        state, geometry, sweep, fragments, topology, definitions, openings,
+        samples);
+
+    const auto emptyOpenings = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, {});
+    const auto empty = buildPlanarPressureRegionFragmentOpeningFluxState(
+        geometry, sweep, fragments, topology, {}, emptyOpenings, {});
+    check(empty.patches.empty() && empty.openings.empty()
+              && empty.fragments.size() == fragments.fragments.size()
+              && empty.baseComponents.size() == 2
+              && empty.connectedComponents.size() == 2
+              && empty.maximumAbsoluteRelativeNormalVelocityMetersPerSecond
+                  == 0.0
+              && empty.totalAbsolutePatchVolumeFlowRateCubicMetersPerSecond
+                  == 0.0
+              && empty.globalOutwardRelativeVolumeFlowRateCubicMetersPerSecond
+                  == 0.0
+              && empty.conservationToleranceCubicMetersPerSecond == 0.0,
+          "regional fragment opening flux preserves a sealed zero-flow overlay");
+
+    const std::vector<
+        PlanarPressureRegionFragmentOpeningPatchDefinition> multiple{
+        {103, 2000, 20, GridFaceAxis::X, 1, 0, 1, 2, 1, 0.5},
+        {102, 1000, 10, GridFaceAxis::X, 1, 1, 0, 1, 2, 0.25},
+        {101, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.25},
+    };
+    const auto multipleOpenings =
+        buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, multiple);
+    std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+        multipleSamples{{103, -1.0}, {101, 4.0}, {102, 2.0}};
+    auto reversedSamples = multipleSamples;
+    std::ranges::reverse(reversedSamples);
+    const auto multi = buildPlanarPressureRegionFragmentOpeningFluxState(
+        geometry, sweep, fragments, topology, multiple, multipleOpenings,
+        multipleSamples);
+    const auto canonicalMulti =
+        buildPlanarPressureRegionFragmentOpeningFluxState(
+            geometry, sweep, fragments, topology, multiple,
+            multipleOpenings, reversedSamples);
+    check(multi == canonicalMulti && multi.patches.size() == 3
+              && multi.patches[0].patchStableId == 101
+              && multi.patches[1].patchStableId == 102
+              && multi.patches[2].patchStableId == 103
+              && multi.openings[0]
+                     .relativeVolumeFlowRateCubicMetersPerSecond == 1.5
+              && multi.openings[0]
+                     .areaWeightedRelativeNormalVelocityMetersPerSecond
+                  == 3.0
+              && multi.openings[1]
+                     .relativeVolumeFlowRateCubicMetersPerSecond == -0.5
+              && multi.openings[1]
+                     .areaWeightedRelativeNormalVelocityMetersPerSecond
+                  == -1.0,
+          "regional fragment opening flux canonicalizes samples and aggregates patches");
+
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> axisLayers{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        const auto axisSweep = makePlanarPressureRegionSweepLedger(
+            geometry, axisLayers, axisLayers, 1.0);
+        const auto axisFragments = buildPlanarPressureRegionFragments(
+            geometry, axisSweep);
+        const auto axisTopology =
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, axisSweep, axisFragments);
+        const auto wall = std::ranges::find_if(
+            axisTopology.links,
+            [](const auto& link) {
+                return link.kind
+                    == PlanarPressureRegionFragmentFaceKind::
+                        PressureLayerWall;
+            });
+        check(wall != axisTopology.links.end(),
+              "regional fragment opening flux finds a wall on every axis");
+        if (wall == axisTopology.links.end()) continue;
+        const std::vector<
+            PlanarPressureRegionFragmentOpeningPatchDefinition>
+            axisDefinitions{
+                {100, 1000, wall->surfaceStableId, wall->axis,
+                 wall->i, wall->j, wall->k,
+                 wall->minusRegionStableId, wall->plusRegionStableId,
+                 0.5 * wall->areaSquareMeters},
+            };
+        const auto axisOpenings =
+            buildPlanarPressureRegionFragmentOpenings(
+                geometry, axisSweep, axisFragments, axisTopology,
+                axisDefinitions);
+        const std::vector<
+            PlanarPressureRegionFragmentOpeningVelocitySample>
+            axisSamples{{100, 1.25}};
+        const auto axisState =
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, axisSweep, axisFragments, axisTopology,
+                axisDefinitions, axisOpenings, axisSamples);
+        check(axisState.profileAxis == axis
+                  && axisState.patches[0]
+                         .relativeVolumeFlowRateCubicMetersPerSecond
+                      == 0.625 * wall->areaSquareMeters
+                  && axisState.globalOutwardRelativeVolumeFlowRateCubicMetersPerSecond
+                      == 0.0,
+              "regional fragment opening flux uses physical patch area on every axis");
+    }
+
+    auto current = layers;
+    current[0].physicalPlaneCoordinateMeters -= 0.1;
+    current[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto breathingSweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, current, 0.5);
+    const auto breathingFragments = buildPlanarPressureRegionFragments(
+        geometry, breathingSweep);
+    const auto breathingTopology =
+        buildPlanarPressureRegionFragmentTopology(
+            geometry, breathingSweep, breathingFragments);
+    const auto breathingWall = std::ranges::find_if(
+        breathingTopology.links,
+        [](const auto& link) {
+            return link.kind
+                    == PlanarPressureRegionFragmentFaceKind::PressureLayerWall
+                && link.surfaceStableId == 10 && link.j == 0 && link.k == 0;
+        });
+    check(breathingWall != breathingTopology.links.end(),
+          "regional fragment opening flux finds the breathing intake tile");
+    if (breathingWall != breathingTopology.links.end()) {
+        const std::vector<
+            PlanarPressureRegionFragmentOpeningPatchDefinition>
+            breathingDefinitions{
+                {100, 1000, breathingWall->surfaceStableId,
+                 breathingWall->axis, breathingWall->i, breathingWall->j,
+                 breathingWall->k, breathingWall->minusRegionStableId,
+                 breathingWall->plusRegionStableId, 0.5},
+            };
+        const auto breathingOpenings =
+            buildPlanarPressureRegionFragmentOpenings(
+                geometry, breathingSweep, breathingFragments,
+                breathingTopology, breathingDefinitions);
+        const auto breathingState =
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, breathingSweep, breathingFragments,
+                breathingTopology, breathingDefinitions,
+                breathingOpenings, samples);
+        const auto volumeRates =
+            buildPlanarPressureRegionFragmentVolumeRates(
+                geometry, breathingSweep, breathingFragments,
+                breathingTopology);
+        for (const auto& component : volumeRates.components) {
+            checkNear(
+                component.geometryVolumeChangeRateCubicMetersPerSecond
+                    + breathingState.baseComponents[component.componentIndex]
+                          .outwardRelativeVolumeFlowRateCubicMetersPerSecond,
+                0.0, 1.6e-14,
+                "prescribed regional opening flux makes breathing component-compatible");
+        }
+    }
+
+    auto corrupt = state;
+    corrupt.patches[0].relativeVolumeFlowRateCubicMetersPerSecond += 0.1;
+    expectRejected(
+        [&] { validatePlanarPressureRegionFragmentOpeningFluxState(
+            corrupt, geometry, sweep, fragments, topology, definitions,
+            openings, samples); },
+        "regional fragment-opening flux validation rejects corruption");
+    std::vector<PlanarPressureRegionFragmentOpeningVelocitySample> invalid;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, definitions,
+                openings, invalid)); },
+        "regional fragment opening flux rejects a missing sample");
+    invalid = {{999, 3.2}};
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, definitions,
+                openings, invalid)); },
+        "regional fragment opening flux rejects a foreign sample");
+    invalid = {{100, std::numeric_limits<double>::quiet_NaN()}};
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, definitions,
+                openings, invalid)); },
+        "regional fragment opening flux rejects non-finite velocity");
+    invalid = {{101, 1.0}, {101, 2.0}, {103, 3.0}};
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, multiple,
+                multipleOpenings, invalid)); },
+        "regional fragment opening flux rejects duplicate sample identity");
+
+    auto limits = PlanarPressureRegionFragmentOpeningFluxLimits{};
+    limits.maximumPatches = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, multiple,
+                multipleOpenings, multipleSamples, limits)); },
+        "regional fragment opening flux enforces the patch limit");
+    limits = {};
+    limits.maximumOpenings = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, multiple,
+                multipleOpenings, multipleSamples, limits)); },
+        "regional fragment opening flux enforces the opening limit");
+    limits = {};
+    limits.maximumFragments = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, definitions,
+                openings, samples, limits)); },
+        "regional fragment opening flux enforces the fragment limit");
+    limits = {};
+    limits.maximumBaseComponents = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, definitions,
+                openings, samples, limits)); },
+        "regional fragment opening flux enforces the base-component limit");
+    limits = {};
+    limits.maximumConnectedComponents = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, {}, emptyOpenings,
+                {}, limits)); },
+        "regional fragment opening flux enforces the connected-component limit");
+    limits = {};
+    limits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, definitions,
+                openings, samples, limits)); },
+        "regional fragment opening flux enforces the owned-byte limit");
+    limits = {};
+    limits.maximumWorkingBytes = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, definitions,
+                openings, samples, limits)); },
+        "regional fragment opening flux enforces the working-byte limit");
+    limits = {};
+    limits.openingLimits.maximumPatches = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, multiple,
+                multipleOpenings, multipleSamples, limits)); },
+        "regional fragment opening flux enforces nested opening limits");
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -6937,6 +7297,7 @@ int main() {
     testPlanarRegionalFragmentTopology();
     testPlanarRegionalFragmentTopologyAxesAndRejection();
     testPlanarRegionalFragmentOpeningTopology();
+    testPlanarRegionalFragmentOpeningFluxState();
     testPlanarRegionalFragmentVolumeRates();
     testPlanarRegionalFragmentVolumeRatesAxesAndRejection();
     testPlanarRegionalFragmentVelocityMetric();

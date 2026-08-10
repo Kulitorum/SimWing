@@ -497,6 +497,7 @@ src/fsi/
         planar_region_fragment.* layer-split Cartesian control geometry
         planar_region_fragment_topology.* paired grid/wall control faces
         planar_region_fragment_opening.* exact wall-aperture overlay
+        planar_region_fragment_opening_flux.* prescribed aperture flow state
         planar_region_fragment_pressure_operator.* regional graph Laplacian
         planar_region_fragment_pressure_solve.* correction-only CG oracle
         porous_interface.* calibrated flux-driven porous jump and ledger
@@ -2237,6 +2238,19 @@ joins the 13.6/2.4 `m^3` exterior/pocket components and retains the full
 `16 m^3`; an empty overlay leaves both components sealed. This artifact owns
 no aperture conductance, flux, velocity degree, pressure equation, solid-wall
 load subtraction, Structure mutation, or worker selection.
+`planar_region_fragment_opening_flux.*` gives those patches explicit oriented
+relative-flow kinematics without prescribing their cause. Inputs are keyed by
+patch stable ID and canonicalized independently of caller order. Each patch
+publishes `Q=A*u_relative`; the minus fragment/base component receives `+Q`
+outward and the plus side receives `-Q`. Opening summaries preserve the area-
+weighted velocity, while opening-connected components and the periodic domain
+must cancel within a scale-derived roundoff envelope. The canonical
+`0.5 m^2` patch at `3.2 m/s` carries `1.6 m^3/s`; combined externally with the
+topology-stable volume-rate ledger, this exactly makes the expanding pocket and
+shrinking exterior component-compatible. The state itself does not compose
+geometry `dV/dt`, enter the pressure RHS, choose conductance/resistance or
+aperture inertia, subtract solid-wall traction, mutate Structure, or select a
+worker solver.
 `planar_region_fragment_pressure_operator.*` assembles the corresponding
 orthogonal integrated graph Laplacian while preserving that wall exclusion.
 Each same-region link contributes `area / center distance` to both endpoint
