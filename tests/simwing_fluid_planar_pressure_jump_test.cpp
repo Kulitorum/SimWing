@@ -9266,6 +9266,9 @@ void testPlanarRegionalOpeningMomentumTransport() {
                 targetVolumeRates);
         check(transport == repeatedTransport && transport.diagnostics.accepted
                   && transport.diagnostics.finite
+                  && transport.sourceStateFingerprint
+                      == sourceState.fingerprint
+                  && transport.sourceTransportFingerprint == 0
                   && transport.diagnostics.failureStage
                       == PlanarPressureRegionFragmentOpeningMomentumTransportFailureStage::
                           None
@@ -9488,6 +9491,62 @@ void testPlanarRegionalOpeningMomentumTransport() {
             predictionVolumeRates, definitions, predictionOpenings,
             zeroResistance, predictionBaseMetric, predictionMetric,
             momentumPressureSettings);
+
+        const auto acceptedPressureFlow =
+            capturePlanarPressureRegionFragmentOpeningVelocityState(
+                momentumPressureEpoch.acceptedState,
+                predictionPressureOperator,
+                predictionBasePressureOperator, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates, definitions, predictionOpenings,
+                zeroResistance, predictionBaseMetric, predictionMetric);
+        const auto secondTransport =
+            advancePlanarPressureRegionFragmentOpeningMomentum(
+                transport, targetMetric, acceptedPressureFlow,
+                predictionMetric, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates);
+        const auto repeatedSecondTransport =
+            advancePlanarPressureRegionFragmentOpeningMomentum(
+                transport, targetMetric, acceptedPressureFlow,
+                predictionMetric, geometry, predictionSweep,
+                predictionFragments, predictionTopology,
+                predictionVolumeRates);
+        check(secondTransport == repeatedSecondTransport
+                  && secondTransport.diagnostics.accepted
+                  && secondTransport.sourceStateFingerprint == 0
+                  && secondTransport.sourceTransportFingerprint
+                      == transport.fingerprint
+                  && secondTransport.sourceMetricFingerprint
+                      == targetMetric.fingerprint
+                  && secondTransport.diagnostics
+                         .momentumBeforeKilogramMetersPerSecond
+                      == transport.diagnostics
+                             .momentumAfterKilogramMetersPerSecond
+                  && secondTransport.diagnostics
+                         .momentumResidualNormKilogramMetersPerSecond
+                      < 2.0e-13,
+              "accepted pressure flow drives a deterministic second momentum transport on every axis");
+        for (const auto& control : secondTransport.controls) {
+            checkNear(control.velocityMetersPerSecond.x,
+                      uniformVelocity.x, 3.0e-14,
+                      "re-entrant momentum transport preserves uniform X velocity");
+            checkNear(control.velocityMetersPerSecond.y,
+                      uniformVelocity.y, 3.0e-14,
+                      "re-entrant momentum transport preserves uniform Y velocity");
+            checkNear(control.velocityMetersPerSecond.z,
+                      uniformVelocity.z, 3.0e-14,
+                      "re-entrant momentum transport preserves uniform Z velocity");
+        }
+        checkNear(
+            secondTransport.diagnostics.advectiveKineticEnergyLossJoules,
+            0.0, 6.0e-13,
+            "uniform re-entrant transport has zero mixing loss");
+        validatePlanarPressureRegionFragmentOpeningMomentumTransport(
+            secondTransport, transport, targetMetric,
+            acceptedPressureFlow, predictionMetric, geometry,
+            predictionSweep, predictionFragments, predictionTopology,
+            predictionVolumeRates);
 
         if (axis != GridFaceAxis::X) continue;
         std::vector<double> nonuniformNormal(
@@ -9815,6 +9874,54 @@ void testPlanarRegionalOpeningMomentumTransport() {
                 breathingPredictionBaseMetric,
                 breathingPredictionMetric, momentumPressureSettings);
 
+            const auto breathingAcceptedPressureFlow =
+                capturePlanarPressureRegionFragmentOpeningVelocityState(
+                    breathingMomentumPressureEpoch.acceptedState,
+                    breathingPredictionPressureOperator,
+                    breathingPredictionBasePressureOperator, geometry,
+                    breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology,
+                    breathingPredictionVolumeRates, definitions,
+                    breathingPredictionOpenings, zeroResistance,
+                    breathingPredictionBaseMetric,
+                    breathingPredictionMetric);
+            const auto breathingSecondTransport =
+                advancePlanarPressureRegionFragmentOpeningMomentum(
+                    breathingTransport, breathingMetric,
+                    breathingAcceptedPressureFlow,
+                    breathingPredictionMetric, geometry,
+                    breathingPredictionSweep,
+                    breathingPredictionFragments,
+                    breathingPredictionTopology,
+                    breathingPredictionVolumeRates);
+            check(breathingSecondTransport.diagnostics.accepted
+                      && breathingSecondTransport
+                             .sourceTransportFingerprint
+                          == breathingTransport.fingerprint
+                      && breathingSecondTransport.diagnostics
+                             .maximumAbsoluteOpeningRelativeVolumeFlowRateCubicMetersPerSecond
+                          > 0.0
+                      && breathingSecondTransport.diagnostics
+                             .kineticEnergyAfterJoules
+                          <= breathingSecondTransport.diagnostics
+                                 .kineticEnergyBeforeJoules
+                              + breathingSecondTransport.settings
+                                    .absoluteEnergyToleranceJoules
+                      && breathingSecondTransport.diagnostics
+                             .momentumResidualNormKilogramMetersPerSecond
+                          <= breathingSecondTransport.settings
+                                 .absoluteMomentumToleranceKilogramMetersPerSecond,
+                  "accepted breathing pressure flow advances exact prior transported momentum");
+            validatePlanarPressureRegionFragmentOpeningMomentumTransport(
+                breathingSecondTransport, breathingTransport,
+                breathingMetric, breathingAcceptedPressureFlow,
+                breathingPredictionMetric, geometry,
+                breathingPredictionSweep,
+                breathingPredictionFragments,
+                breathingPredictionTopology,
+                breathingPredictionVolumeRates);
+
             auto truncatedMomentumPressureSettings =
                 momentumPressureSettings;
             truncatedMomentumPressureSettings.projection.pressureSolve
@@ -9880,6 +9987,39 @@ void testPlanarRegionalOpeningMomentumTransport() {
                       == PlanarPressureRegionFragmentOpeningMomentumTransportFailureStage::
                           SubstepLimit,
               "opening momentum transport rejects a step beyond its subcycling limit");
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    advancePlanarPressureRegionFragmentOpeningMomentum(
+                        substepRejected, targetMetric,
+                        acceptedPressureFlow, predictionMetric, geometry,
+                        predictionSweep, predictionFragments,
+                        predictionTopology, predictionVolumeRates));
+            },
+            "re-entrant momentum transport rejects an unaccepted source transport");
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    advancePlanarPressureRegionFragmentOpeningMomentum(
+                        transport, sourceMetric, acceptedPressureFlow,
+                        predictionMetric, geometry, predictionSweep,
+                        predictionFragments, predictionTopology,
+                        predictionVolumeRates));
+            },
+            "re-entrant momentum transport rejects a foreign source metric");
+        auto corruptSourceTransport = transport;
+        corruptSourceTransport.controls[0]
+            .momentumKilogramMetersPerSecond.x += 0.1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    advancePlanarPressureRegionFragmentOpeningMomentum(
+                        corruptSourceTransport, targetMetric,
+                        acceptedPressureFlow, predictionMetric, geometry,
+                        predictionSweep, predictionFragments,
+                        predictionTopology, predictionVolumeRates));
+            },
+            "re-entrant momentum transport rejects corrupted source controls");
 
         std::vector<double> incompatibleNormal(
             targetMetric.dofs.size(), 0.0);

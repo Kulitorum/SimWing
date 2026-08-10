@@ -1995,12 +1995,15 @@ makes this a certified aerodynamic solver.
   aperture velocities from validated pressure state and geometry motion. It
   owns no transport, projection, rebase, or worker selection.
 - `src/fsi/fluid/planar_region_fragment_opening_momentum_transport.{h,cpp}`
-  performs the first topology-stable ALE advance on that collocated state.
-  Corrected same-region and aperture-relative flow carries the complete vector
-  momentum by deterministic donor-cell substeps while physical fragment
-  volumes move linearly. It requires local continuity, non-increasing kinetic
-  energy, and global internal-momentum closure, but applies no pressure,
-  viscosity, wall shear, rebase, or production-worker mutation.
+  performs topology-stable ALE advances on exact collocated momentum. The
+  first epoch consumes a velocity state; every re-entrant epoch consumes the
+  prior accepted transport controls directly and uses the pressure-corrected
+  current velocity state only for target relative flows. Corrected same-region
+  and aperture-relative flow carries the complete vector momentum by
+  deterministic donor-cell substeps while physical fragment volumes move
+  linearly. It requires exactly one source lineage, local continuity, non-
+  increasing kinetic energy, and global internal-momentum closure, but applies
+  no pressure, viscosity, wall shear, rebase, or production-worker mutation.
 - `src/fsi/fluid/planar_region_fragment_opening_momentum_prediction.{h,cpp}`
   maps accepted transported fragment vectors onto one consecutive current
   opening-aware metric. It retains velocity through the geometric volume
@@ -2701,21 +2704,28 @@ material solid-wall motion, and material-plus-relative aperture flow. Reject
 composition/source corruption, foreign endpoints, and owned/working limits
 before allocation. Do not advance transport, pressure, topology, or a worker.
 
-For `planar_region_fragment_opening_momentum_transport.*`, fully validate both
-opening-aware velocity states, their metrics, and the current topology-stable
-volume-rate epoch before mapping fragments by stable identity. Independently
-reconstructed endpoint volumes may differ only by scaled floating-point
-roundoff. Transport only through same-region Cartesian and aperture degrees;
-retained solid traces have zero inter-fragment mass flux. Require corrected
+For `planar_region_fragment_opening_momentum_transport.*`, require exactly one
+source lineage. The first epoch fully validates its source opening-aware
+velocity state; a re-entrant epoch fully validates and directly consumes the
+prior accepted transport controls bound to their exact target metric. Never
+reconstruct prior transported momentum through a face-based velocity state.
+Fully validate the target flow state, target metric, and current topology-
+stable volume-rate epoch before mapping fragments by stable identity.
+Independently reconstructed endpoint volumes may differ only by scaled
+floating-point roundoff. Transport only through same-region Cartesian and
+aperture degrees; retained solid traces have zero inter-fragment mass flux.
+Require corrected
 `dV/dt + div(Q_relative) = 0` per fragment, linearly advance each physical
 volume, and use first-order donor selection to carry the complete collocated
 vector momentum. Deterministically subcycle against the minimum endpoint
 volume so every outgoing-volume Courant number is bounded. Each accepted
 substep must be finite and non-increasing in collocated kinetic energy, and the
 complete internal step must conserve all three momentum components. Cover
-roundoff-exact moving uniform flow on X/Y/Z, nonuniform dissipative transport,
-a genuinely nonzero aperture-flow transfer, substep-limit rejection,
-continuity rejection, corruption, foreign endpoints, and owned/working limits.
+roundoff-exact moving uniform flow on X/Y/Z, a deterministic second transport
+fed by an accepted pressure endpoint, nonuniform dissipative transport, a
+genuinely nonzero aperture-flow transfer, rejected/corrupted prior transports,
+substep-limit rejection, continuity rejection, foreign endpoints, and
+owned/working limits.
 Do not apply pressure, viscosity, wall shear, topology rebase, or select the
 production worker.
 

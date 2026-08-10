@@ -172,6 +172,7 @@ std::uint64_t transportFingerprint(
     Fingerprint fingerprint;
     fingerprint.integer(transport.version);
     fingerprint.integer(transport.sourceStateFingerprint);
+    fingerprint.integer(transport.sourceTransportFingerprint);
     fingerprint.integer(transport.sourceMetricFingerprint);
     fingerprint.integer(transport.targetFlowStateFingerprint);
     fingerprint.integer(transport.targetMetricFingerprint);
@@ -268,8 +269,52 @@ std::size_t requiredSubsteps(const double fullStepCourant,
     return static_cast<std::size_t>(required);
 }
 
+const auto& momentumSourceControls(
+    const PlanarPressureRegionFragmentOpeningVelocityState& source) {
+    return source.fragments;
+}
+
+const auto& momentumSourceControls(
+    const PlanarPressureRegionFragmentOpeningMomentumTransport& source) {
+    return source.controls;
+}
+
+Vector3 momentumSourceVelocity(
+    const PlanarPressureRegionFragmentOpeningVelocityStateFragment& source) {
+    return source.collocatedVelocityMetersPerSecond;
+}
+
+Vector3 momentumSourceVelocity(
+    const PlanarPressureRegionFragmentOpeningMomentumTransportControl& source) {
+    return source.velocityMetersPerSecond;
+}
+
+template<typename Source>
+void validateMomentumSource(
+    const Source& source,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& sourceMetric,
+    const PlanarPressureRegionFragmentOpeningMomentumTransportLimits& limits) {
+    if constexpr (std::is_same_v<
+                      Source,
+                      PlanarPressureRegionFragmentOpeningVelocityState>) {
+        validatePlanarPressureRegionFragmentOpeningVelocityState(
+            source, sourceMetric, limits.stateLimits);
+    } else {
+        validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
+            source);
+        validatePlanarPressureRegionFragmentOpeningVelocityMetricIntegrity(
+            sourceMetric);
+        if (!source.diagnostics.accepted
+            || source.targetMetricFingerprint != sourceMetric.fingerprint) {
+            throw std::invalid_argument(
+                "opening momentum-transport source transport is invalid");
+        }
+    }
+}
+
+template<typename Source>
 PlanarPressureRegionFragmentOpeningMomentumTransport buildTransport(
-    const PlanarPressureRegionFragmentOpeningVelocityState& sourceState,
+    const Source& sourceArtifact,
     const PlanarPressureRegionFragmentOpeningVelocityMetric& sourceMetric,
     const PlanarPressureRegionFragmentOpeningVelocityState& targetFlowState,
     const PlanarPressureRegionFragmentOpeningVelocityMetric& targetMetric,
@@ -286,8 +331,7 @@ PlanarPressureRegionFragmentOpeningMomentumTransport buildTransport(
         throw std::invalid_argument(
             "opening momentum-transport settings are invalid");
     }
-    validatePlanarPressureRegionFragmentOpeningVelocityState(
-        sourceState, sourceMetric, limits.stateLimits);
+    validateMomentumSource(sourceArtifact, sourceMetric, limits);
     validatePlanarPressureRegionFragmentOpeningVelocityState(
         targetFlowState, targetMetric, limits.stateLimits);
     validatePlanarPressureRegionFragmentVolumeRates(
@@ -295,14 +339,15 @@ PlanarPressureRegionFragmentOpeningMomentumTransport buildTransport(
         targetTopology, limits.volumeRateLimits);
     const std::size_t fragmentCount = targetMetric.fragments.size();
     const std::size_t dofCount = targetMetric.dofs.size();
+    const auto& sourceControls = momentumSourceControls(sourceArtifact);
     if (fragmentCount == 0
         || sourceMetric.fragments.size() != fragmentCount
         || sourceMetric.dofs.size() != dofCount
-        || sourceState.fragments.size() != fragmentCount
+        || sourceControls.size() != fragmentCount
         || targetFlowState.fragments.size() != fragmentCount
         || targetVolumeRates.fragments.size() != fragmentCount
         || sourceMetric.components.size() != targetMetric.components.size()
-        || sourceState.densityKgPerCubicMeter
+        || sourceArtifact.densityKgPerCubicMeter
             != targetFlowState.densityKgPerCubicMeter
         || sourceMetric.profileAxis != targetMetric.profileAxis
         || targetMetric.profileAxis != targetVolumeRates.axis
@@ -343,12 +388,18 @@ PlanarPressureRegionFragmentOpeningMomentumTransport buildTransport(
     }
 
     PlanarPressureRegionFragmentOpeningMomentumTransport result;
-    result.sourceStateFingerprint = sourceState.fingerprint;
+    if constexpr (std::is_same_v<
+                      Source,
+                      PlanarPressureRegionFragmentOpeningVelocityState>) {
+        result.sourceStateFingerprint = sourceArtifact.fingerprint;
+    } else {
+        result.sourceTransportFingerprint = sourceArtifact.fingerprint;
+    }
     result.sourceMetricFingerprint = sourceMetric.fingerprint;
     result.targetFlowStateFingerprint = targetFlowState.fingerprint;
     result.targetMetricFingerprint = targetMetric.fingerprint;
     result.targetVolumeRateFingerprint = targetVolumeRates.fingerprint;
-    result.densityKgPerCubicMeter = sourceState.densityKgPerCubicMeter;
+    result.densityKgPerCubicMeter = sourceArtifact.densityKgPerCubicMeter;
     result.timeStepSeconds = targetVolumeRates.durationSeconds;
     result.settings = settings;
     result.workingStorageBytes = workingBytes;
@@ -360,7 +411,7 @@ PlanarPressureRegionFragmentOpeningMomentumTransport buildTransport(
     std::iota(sourceOrder.begin(), sourceOrder.end(), 0);
     std::iota(targetOrder.begin(), targetOrder.end(), 0);
     std::ranges::sort(sourceOrder, {}, [&](const std::size_t index) {
-        return sourceState.fragments[index].stableId;
+        return sourceControls[index].stableId;
     });
     std::ranges::sort(targetOrder, {}, [&](const std::size_t index) {
         return targetFlowState.fragments[index].stableId;
@@ -369,7 +420,7 @@ PlanarPressureRegionFragmentOpeningMomentumTransport buildTransport(
     for (std::size_t offset = 0; offset < fragmentCount; ++offset) {
         const std::size_t sourceIndex = sourceOrder[offset];
         const std::size_t targetIndex = targetOrder[offset];
-        const auto& source = sourceState.fragments[sourceIndex];
+        const auto& source = sourceControls[sourceIndex];
         const auto& target = targetFlowState.fragments[targetIndex];
         const auto& rate = targetVolumeRates.fragments[targetIndex];
         if (source.stableId == 0 || source.stableId != target.stableId
@@ -499,7 +550,7 @@ PlanarPressureRegionFragmentOpeningMomentumTransport buildTransport(
         diagnostics.maximumContinuityResidualCubicMetersPerSecond = std::max(
             diagnostics.maximumContinuityResidualCubicMetersPerSecond,
             std::abs(residual));
-        const double previousVolume = sourceState.fragments[
+        const double previousVolume = sourceControls[
             sourceByTarget[index]].volumeCubicMeters;
         const double currentVolume =
             targetFlowState.fragments[index].volumeCubicMeters;
@@ -545,14 +596,14 @@ PlanarPressureRegionFragmentOpeningMomentumTransport buildTransport(
     for (std::size_t targetIndex = 0;
          targetIndex < fragmentCount; ++targetIndex) {
         const auto& source =
-            sourceState.fragments[sourceByTarget[targetIndex]];
+            sourceControls[sourceByTarget[targetIndex]];
         candidate.push_back({
             targetIndex,
             targetFlowState.fragments[targetIndex].stableId,
             targetFlowState.fragments[targetIndex].regionStableId,
             targetFlowState.fragments[targetIndex].connectedComponentIndex,
             source.volumeCubicMeters,
-            source.collocatedVelocityMetersPerSecond,
+            momentumSourceVelocity(source),
             source.momentumKilogramMetersPerSecond,
         });
     }
@@ -592,7 +643,7 @@ PlanarPressureRegionFragmentOpeningMomentumTransport buildTransport(
                 candidate[index].momentumKilogramMetersPerSecond = add(
                     candidate[index].momentumKilogramMetersPerSecond,
                     impulse[index]);
-                const double sourceVolume = sourceState.fragments[
+                const double sourceVolume = sourceControls[
                     sourceByTarget[index]].volumeCubicMeters;
                 const double targetVolume =
                     targetFlowState.fragments[index].volumeCubicMeters;
@@ -654,8 +705,8 @@ PlanarPressureRegionFragmentOpeningMomentumTransport buildTransport(
             diagnostics.maximumVelocityChangeMetersPerSecond,
             norm(subtract(
                 candidate[index].velocityMetersPerSecond,
-                sourceState.fragments[sourceByTarget[index]]
-                    .collocatedVelocityMetersPerSecond)));
+                momentumSourceVelocity(
+                    sourceControls[sourceByTarget[index]]))));
     }
     diagnostics.finite = finiteVector(
             diagnostics.momentumBeforeKilogramMetersPerSecond)
@@ -717,6 +768,27 @@ advancePlanarPressureRegionFragmentOpeningMomentum(
         settings, limits);
 }
 
+PlanarPressureRegionFragmentOpeningMomentumTransport
+advancePlanarPressureRegionFragmentOpeningMomentum(
+    const PlanarPressureRegionFragmentOpeningMomentumTransport&
+        sourceTransport,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& sourceMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityState& targetFlowState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& targetMetric,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& targetSweep,
+    const PlanarPressureRegionFragmentSet& targetFragments,
+    const PlanarPressureRegionFragmentTopology& targetTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& targetVolumeRates,
+    const PlanarPressureRegionFragmentOpeningMomentumTransportSettings&
+        settings,
+    const PlanarPressureRegionFragmentOpeningMomentumTransportLimits& limits) {
+    return buildTransport(
+        sourceTransport, sourceMetric, targetFlowState, targetMetric, grid,
+        targetSweep, targetFragments, targetTopology, targetVolumeRates,
+        settings, limits);
+}
+
 void validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
     const PlanarPressureRegionFragmentOpeningMomentumTransport& transport) {
     const auto& diagnostics = transport.diagnostics;
@@ -756,10 +828,13 @@ void validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
             != PlanarPressureRegionFragmentOpeningMomentumTransportFailureStage::
                 None
         && transport.controls.empty() && transport.ownedStorageBytes == 0;
+    const bool validSourceLineage =
+        (transport.sourceStateFingerprint != 0)
+        != (transport.sourceTransportFingerprint != 0);
     if (transport.version
             != planarPressureRegionFragmentOpeningMomentumTransportVersion
         || transport.fingerprint == 0
-        || transport.sourceStateFingerprint == 0
+        || !validSourceLineage
         || transport.sourceMetricFingerprint == 0
         || transport.targetFlowStateFingerprint == 0
         || transport.targetMetricFingerprint == 0
@@ -849,6 +924,37 @@ void validatePlanarPressureRegionFragmentOpeningMomentumTransport(
             sourceState, sourceMetric, targetFlowState, targetMetric, grid,
             targetSweep, targetFragments, targetTopology, targetVolumeRates,
             transport.settings, limits)) {
+        throw std::invalid_argument(
+            "opening momentum transport is foreign to its source");
+    }
+}
+
+void validatePlanarPressureRegionFragmentOpeningMomentumTransport(
+    const PlanarPressureRegionFragmentOpeningMomentumTransport& transport,
+    const PlanarPressureRegionFragmentOpeningMomentumTransport&
+        sourceTransport,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& sourceMetric,
+    const PlanarPressureRegionFragmentOpeningVelocityState& targetFlowState,
+    const PlanarPressureRegionFragmentOpeningVelocityMetric& targetMetric,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& targetSweep,
+    const PlanarPressureRegionFragmentSet& targetFragments,
+    const PlanarPressureRegionFragmentTopology& targetTopology,
+    const PlanarPressureRegionFragmentVolumeRateSet& targetVolumeRates,
+    const PlanarPressureRegionFragmentOpeningMomentumTransportLimits& limits) {
+    validateLimits(limits);
+    validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
+        transport);
+    if (transport.controls.size() > limits.maximumFragments
+        || transport.ownedStorageBytes > limits.maximumOwnedBytes
+        || transport.workingStorageBytes > limits.maximumWorkingBytes) {
+        throw std::length_error(
+            "opening momentum-transport validation limit exceeded");
+    }
+    if (transport != buildTransport(
+            sourceTransport, sourceMetric, targetFlowState, targetMetric,
+            grid, targetSweep, targetFragments, targetTopology,
+            targetVolumeRates, transport.settings, limits)) {
         throw std::invalid_argument(
             "opening momentum transport is foreign to its source");
     }

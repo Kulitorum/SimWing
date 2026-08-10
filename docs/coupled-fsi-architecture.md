@@ -2506,23 +2506,27 @@ fully validates the pressure flow and volume-rate epoch before mapping solid
 material motion and material-plus-relative aperture velocity. The immutable
 state is the source representation for later ALE transport; it does not yet
 advect momentum, project pressure, rebase topology, or enter the worker.
-`planar_region_fragment_opening_momentum_transport.*` now performs that first
-topology-stable ALE advance. It maps previous and current fragments by stable
-identity, admits only roundoff-scale differences between independently
-reconstructed endpoint volumes, and consumes the pressure-corrected relative
-flow on same-region Cartesian and aperture degrees. Retained solid traces move
-with their material but carry no inter-fragment mass. Deterministic subcycling
-bounds outgoing-volume Courant number against the smallest endpoint volume;
-first-order donor selection then carries the complete collocated vector
-momentum while fragment volumes move linearly. Every accepted substep is
-finite and non-increasing in collocated kinetic energy, and pair exchanges
-conserve global three-component momentum. Translating uniform flow is a
-roundoff-exact discrete-GCL solution on X/Y/Z; a nonuniform fixture dissipates
-energy without losing momentum, and a separate breathing fixture proves full
-vector transfer through a genuinely nonzero aperture flow. Continuity and
-substep-limit failures publish typed empty results. This remains an opt-in
-transport artifact: it adds no pressure, viscosity, wall shear, topology
-rebase, endpoint face reconstruction, or worker selection.
+`planar_region_fragment_opening_momentum_transport.*` now performs consecutive
+topology-stable ALE advances. Its first epoch consumes collocated vectors from
+an opening velocity state; every re-entrant epoch consumes the preceding
+accepted transport controls directly, so exact collocated momentum never
+round-trips through a reconstructed face field. Exactly one source lineage is
+fingerprinted. The target pressure-corrected state supplies only relative flow
+on same-region Cartesian and aperture degrees. Previous and current fragments
+map by stable identity, and independently reconstructed endpoint volumes may
+differ only at roundoff scale. Retained solid traces move with their material
+but carry no inter-fragment mass. Deterministic subcycling bounds outgoing-
+volume Courant number against the smallest endpoint volume; first-order donor
+selection then carries the complete vector momentum while fragment volumes
+move linearly. Every accepted substep is finite and non-increasing in
+collocated kinetic energy, and pair exchanges conserve global three-component
+momentum. Translating uniform flow remains a roundoff-exact discrete-GCL
+solution through a pressure-accepted second step on X/Y/Z; nonuniform flow
+dissipates energy without losing momentum, and breathing pressure correction
+feeds a second live-aperture transport. Rejected, corrupted, or foreign prior
+transports and continuity/substep-limit failures publish no accepted controls.
+This remains opt-in: it adds no viscosity, wall shear, topology rebase,
+production-worker mutation, or pressure warm-start policy.
 `planar_region_fragment_opening_momentum_prediction.*` now supplies that
 endpoint reconstruction for one consecutive topology-stable epoch. It retains
 each transported fragment vector while diagnosing the momentum and kinetic-
