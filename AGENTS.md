@@ -1944,15 +1944,19 @@ makes this a certified aerodynamic solver.
 - `src/fsi/fluid/planar_region_fragment_opening_resistance.{h,cpp}` applies
   stable-ID-keyed calibrated Darcy–Forchheimer loss to exact aperture samples.
   It reuses the implicit-midpoint porous plug with patch area/center distance,
-  permits an explicit zero-loss identity, closes passive momentum/energy, and
-  commits samples plus rebuilt flux together. It does not invent coefficients,
-  driving pressure, traction, or production state by itself.
+  permits an explicit passive zero-loss identity, and closes momentum/energy.
+  Its separate opt-in setting reroutes the authored wall jump as the signed
+  aperture-fluid pressure rise; zero resistance then remains an active
+  inviscid drive. It commits samples plus rebuilt flux together and does not
+  invent coefficients, relax authored pressure, apply Structure traction, or
+  select production state.
 - `src/fsi/fluid/planar_region_fragment_opening_pressure_step.{h,cpp}` applies
-  resistance to the predicted aperture samples, then ends with the augmented
-  pressure projection so the accepted endpoint remains continuous. It closes
-  the combined geometry-work/correction-energy/dissipation identity and owns
-  the outer four-field transaction, but no scene mapping, traction, rebase, or
-  production path.
+  resistance and optional fixed authored-pressure drive to the predicted
+  aperture samples, then ends with the augmented pressure projection so the
+  accepted endpoint remains continuous. It closes the combined authored-plus-
+  geometry-work/correction-energy/dissipation identity and owns the outer
+  four-field transaction, but no pressure relaxation, scene mapping, traction,
+  rebase, or production path.
 - `src/fsi/fluid/planar_region_fragment_opening_surface_load.{h,cpp}` is the
   opt-in load-area counterpart. It binds the exact opening partitions to the
   composed pressure-wall load ledger, removes traction from aperture area,
@@ -2491,18 +2495,21 @@ ownership.
 
 For `planar_region_fragment_opening_resistance.*`, require exactly one finite
 nonnegative stable-ID-keyed Darcy–Forchheimer definition per exact aperture
-patch; zero/zero must be a bit-exact inviscid identity rather than an invented
-loss. Active patches use fluid mass `rho*area*centerDistance` and the canonical
-zero-driving-pressure implicit-midpoint porous oracle. Require odd forward/
-reverse velocity response, non-increasing aperture kinetic energy, per-patch
-pressure-impulse/momentum and midpoint-work/dissipation closure, aggregate
+patch. Passive mode must use fluid mass `rho*area*centerDistance` and the
+canonical zero-driving-pressure midpoint oracle; require odd forward/reverse
+response, non-increasing kinetic energy, and a bit-exact zero/zero identity.
+The explicit authored-drive mode must instead use
+`p_minus-p_plus=-authoredJump`, reroute `area*rise` force and impulse onto the
+oriented opening-fluid degree, and keep zero resistance as an active inviscid
+update. Require X/Y/Z and reversed-wall sign, per-patch pressure-impulse/
+momentum and midpoint drive-work/dissipation/kinetic-energy closure, aggregate
 energy closure, deterministic multi-patch definition ordering, and exact
 source/result flux fingerprints. Samples and rebuilt immutable flux commit as
 one transaction. Reject missing/duplicate/foreign IDs, negative/non-finite
 coefficients, corrupt flux, invalid density/time, and patch/owned/working/
 nested-flux limits. Do not infer resistance values without authoritative
-intake/material data, driving pressure, projection splitting, traction,
-rebase, or production ownership.
+intake/material data, relax authored pressure, apply Structure traction,
+rebase topology, or select production ownership.
 
 For `planar_region_fragment_opening_pressure_step.*`, resistance must advance
 the predicted opening samples before the augmented projection; never publish a
@@ -2511,13 +2518,18 @@ canonical compatible `1.6 m3/s` breathing flow, active resistance must create
 a nonzero predicted continuity deficit and the pressure stage must restore the
 complete aperture flow plus local/connected-component closure. Require the
 aggregate identity `deltaK = geometryPressureWork -
-correctionKineticEnergy - resistanceDissipation`. A zero-resistance definition
-must reproduce direct projection bit-for-bit. Copy topology-link velocity,
-opening samples, immutable flux, and pressure before either nested stage and
-commit all four only after nested and aggregate acceptance; truncated pressure
-solve after successful resistance must roll back all four. Enforce outer and
-nested storage limits. Do not infer scene coefficient mapping, topology
-rebase, open-area traction correction, or production ownership.
+correctionKineticEnergy - resistanceDissipation` in passive mode. With the
+explicit authored-drive setting, require the extended identity
+`deltaK = authoredPressureWork + geometryPressureWork -
+correctionKineticEnergy - resistanceDissipation`, a changed compensating
+pressure field, and the same restored final continuity. A passive zero-
+resistance definition must reproduce direct projection bit-for-bit. Copy
+topology-link velocity, opening samples, immutable flux, and pressure before
+either nested stage and commit all four only after nested and aggregate
+acceptance; a truncated pressure solve after either successful resistance or
+authored drive must roll back all four. Enforce outer and nested storage
+limits. Do not infer authored-pressure relaxation, scene coefficient mapping,
+topology rebase, Structure traction application, or production ownership.
 
 For `planar_region_fragment_volume_rate.*`, require canonical breathing to
 publish `+1.6/-1.6 m3/s` pocket/exterior component rates while every fixed

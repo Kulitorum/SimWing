@@ -91,6 +91,8 @@ advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
         settings.projection.densityKgPerCubicMeter;
     resistanceSettings.timeStepSeconds =
         settings.projection.timeStepSeconds;
+    resistanceSettings.useAuthoredPressureDrive =
+        settings.useAuthoredPressureDrive;
     diagnostics.resistance =
         advancePlanarPressureRegionFragmentOpeningResistance(
             grid, sweep, fragments, topology, openingDefinitions, openings,
@@ -129,12 +131,15 @@ advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
         - diagnostics.kineticEnergyBeforeJoules;
     diagnostics.geometryPressureWorkJoules =
         diagnostics.projection.geometryPressureWorkJoules;
+    diagnostics.authoredPressureWorkJoules =
+        diagnostics.resistance.authoredPressureWorkJoules;
     diagnostics.correctionKineticEnergyJoules =
         diagnostics.projection.correctionKineticEnergyJoules;
     diagnostics.dissipatedEnergyJoules =
         diagnostics.resistance.dissipatedEnergyJoules;
     diagnostics.energyResidualJoules =
         diagnostics.kineticEnergyChangeJoules
+        - diagnostics.authoredPressureWorkJoules
         - diagnostics.geometryPressureWorkJoules
         + diagnostics.correctionKineticEnergyJoules
         + diagnostics.dissipatedEnergyJoules;
@@ -145,6 +150,7 @@ advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
             diagnostics.kineticEnergyBeforeJoules,
             diagnostics.kineticEnergyAfterJoules,
             diagnostics.kineticEnergyChangeJoules,
+            diagnostics.authoredPressureWorkJoules,
             diagnostics.geometryPressureWorkJoules,
             diagnostics.correctionKineticEnergyJoules,
             diagnostics.dissipatedEnergyJoules,
@@ -155,6 +161,7 @@ advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
             diagnostics.kineticEnergyBeforeJoules,
             diagnostics.kineticEnergyAfterJoules,
             diagnostics.kineticEnergyChangeJoules,
+            diagnostics.authoredPressureWorkJoules,
             diagnostics.geometryPressureWorkJoules,
             diagnostics.correctionKineticEnergyJoules,
             diagnostics.dissipatedEnergyJoules,

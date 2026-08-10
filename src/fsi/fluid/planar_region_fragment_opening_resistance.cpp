@@ -151,6 +151,91 @@ double roundoffTolerance(const std::initializer_list<double> values) {
     return 1024.0 * std::numeric_limits<double>::epsilon() * scale;
 }
 
+PorousPlugFlowDiagnostics inviscidDrivenDiagnostics(
+    double& velocity,
+    const double density,
+    const double length,
+    const double area,
+    const double drivingPressureRise,
+    const double timeStep) {
+    const double velocityChange = timeStep * drivingPressureRise
+        / (density * length);
+    const double candidateVelocity = velocity + velocityChange;
+    PorousPlugFlowDiagnostics result;
+    result.accepted = true;
+    result.velocityBeforeMetersPerSecond = velocity;
+    result.midpointVelocityMetersPerSecond =
+        0.5 * (velocity + candidateVelocity);
+    result.velocityAfterMetersPerSecond = candidateVelocity;
+    result.fluidMassKilograms = density * length * area;
+    result.momentumBeforeNewtonSeconds =
+        result.fluidMassKilograms * velocity;
+    result.momentumAfterNewtonSeconds =
+        result.fluidMassKilograms * candidateVelocity;
+    result.netPressureImpulseNewtonSeconds =
+        area * drivingPressureRise * timeStep;
+    result.momentumResidualNewtonSeconds =
+        result.momentumAfterNewtonSeconds
+        - result.momentumBeforeNewtonSeconds
+        - result.netPressureImpulseNewtonSeconds;
+    result.kineticEnergyBeforeJoules = 0.5 * result.fluidMassKilograms
+        * velocity * velocity;
+    result.kineticEnergyAfterJoules = 0.5 * result.fluidMassKilograms
+        * candidateVelocity * candidateVelocity;
+    result.drivingPressureWorkJoules = area * drivingPressureRise
+        * result.midpointVelocityMetersPerSecond * timeStep;
+    result.energyResidualJoules =
+        result.kineticEnergyAfterJoules
+        - result.kineticEnergyBeforeJoules
+        - result.drivingPressureWorkJoules;
+    if (!std::ranges::all_of(
+            std::initializer_list<double>{
+                velocityChange,
+                result.midpointVelocityMetersPerSecond,
+                result.velocityAfterMetersPerSecond,
+                result.fluidMassKilograms,
+                result.momentumBeforeNewtonSeconds,
+                result.momentumAfterNewtonSeconds,
+                result.netPressureImpulseNewtonSeconds,
+                result.momentumResidualNewtonSeconds,
+                result.kineticEnergyBeforeJoules,
+                result.kineticEnergyAfterJoules,
+                result.drivingPressureWorkJoules,
+                result.energyResidualJoules,
+            },
+            [](const double value) { return std::isfinite(value); })
+        || std::abs(result.momentumResidualNewtonSeconds)
+            > roundoffTolerance({
+                result.momentumBeforeNewtonSeconds,
+                result.momentumAfterNewtonSeconds,
+                result.netPressureImpulseNewtonSeconds})
+        || std::abs(result.energyResidualJoules)
+            > roundoffTolerance({
+                result.kineticEnergyBeforeJoules,
+                result.kineticEnergyAfterJoules,
+                result.drivingPressureWorkJoules})) {
+        throw std::overflow_error(
+            "inviscid authored opening drive does not close");
+    }
+    velocity = candidateVelocity;
+    return result;
+}
+
+Vector3 scaledVector(const Vector3& value, const double scale) {
+    return {value.x * scale, value.y * scale, value.z * scale};
+}
+
+void addVector(Vector3& target, const Vector3& value) {
+    target.x += value.x;
+    target.y += value.y;
+    target.z += value.z;
+}
+
+bool finiteVector(const Vector3& value) {
+    return std::isfinite(value.x) && std::isfinite(value.y)
+        && std::isfinite(value.z);
+}
+
 } // namespace
 
 PlanarPressureRegionFragmentOpeningResistanceDiagnostics
@@ -219,6 +304,8 @@ advancePlanarPressureRegionFragmentOpeningResistance(
     diagnostics.resistanceDefinitionFingerprint =
         definitionFingerprint(canonical);
     diagnostics.settings = settings;
+    diagnostics.usesAuthoredPressureDrive =
+        settings.useAuthoredPressureDrive;
     diagnostics.ownedStorageBytes = ownedBytes;
     diagnostics.workingStorageBytes = workingBytes;
     diagnostics.patches.reserve(openings.patches.size());
@@ -250,14 +337,48 @@ advancePlanarPressureRegionFragmentOpeningResistance(
                 "opening-resistance source mapping is incomplete");
         }
         auto& sample = candidateSamples[*orderedSample];
+        if (patch.sourceFaceLinkIndex >= topology.links.size()) {
+            throw std::logic_error(
+                "opening-resistance source wall is missing");
+        }
+        const auto& sourceWall =
+            topology.links[patch.sourceFaceLinkIndex];
+        if (sourceWall.kind
+                != PlanarPressureRegionFragmentFaceKind::PressureLayerWall
+            || sourceWall.stableId != patch.sourceFaceLinkStableId
+            || sourceWall.surfaceStableId != patch.surfaceStableId
+            || sourceWall.unitNormalMinusToPlus
+                != patch.unitNormalNegativeToPositive) {
+            throw std::logic_error(
+                "opening-resistance source wall identity is inconsistent");
+        }
+        const double authoredPressureJump =
+            sourceWall.pressureJumpPascals;
+        const double drivingPressureRise =
+            settings.useAuthoredPressureDrive
+            ? -authoredPressureJump : 0.0;
+        const Vector3 authoredPressureForce = scaledVector(
+            patch.unitNormalNegativeToPositive,
+            drivingPressureRise * patch.areaSquareMeters);
+        const Vector3 authoredPressureImpulse = scaledVector(
+            authoredPressureForce, settings.timeStepSeconds);
         PorousPlugFlowDiagnostics plugFlow;
-        const bool identity = zeroResistance(definition->resistance);
+        const bool noResistance = zeroResistance(definition->resistance);
+        const bool identity = noResistance && drivingPressureRise == 0.0;
+        if (noResistance) ++diagnostics.zeroResistancePatchCount;
         if (identity) {
-            ++diagnostics.zeroResistancePatchCount;
             plugFlow = identityDiagnostics(
                 sample.relativeNormalVelocityMetersPerSecond,
                 settings.densityKgPerCubicMeter,
                 patch.centerDistanceMeters, patch.areaSquareMeters);
+        } else if (noResistance) {
+            plugFlow = inviscidDrivenDiagnostics(
+                sample.relativeNormalVelocityMetersPerSecond,
+                settings.densityKgPerCubicMeter,
+                patch.centerDistanceMeters,
+                patch.areaSquareMeters,
+                drivingPressureRise,
+                settings.timeStepSeconds);
         } else {
             PorousPlugFlowSettings plugSettings;
             plugSettings.resistance = definition->resistance;
@@ -266,7 +387,7 @@ advancePlanarPressureRegionFragmentOpeningResistance(
             plugSettings.flowLengthMeters = patch.centerDistanceMeters;
             plugSettings.crossSectionAreaSquareMeters =
                 patch.areaSquareMeters;
-            plugSettings.drivingPressureRisePascals = 0.0;
+            plugSettings.drivingPressureRisePascals = drivingPressureRise;
             plugSettings.timeStepSeconds = settings.timeStepSeconds;
             plugFlow = advancePorousPlugFlow(
                 sample.relativeNormalVelocityMetersPerSecond,
@@ -275,6 +396,12 @@ advancePlanarPressureRegionFragmentOpeningResistance(
         diagnostics.maximumAbsoluteMidpointPressureDropPascals = std::max(
             diagnostics.maximumAbsoluteMidpointPressureDropPascals,
             std::abs(plugFlow.midpointPressureDropPascals));
+        diagnostics.maximumAbsoluteAuthoredPressureJumpPascals = std::max(
+            diagnostics.maximumAbsoluteAuthoredPressureJumpPascals,
+            std::abs(authoredPressureJump));
+        diagnostics.maximumAbsoluteDrivingPressureRisePascals = std::max(
+            diagnostics.maximumAbsoluteDrivingPressureRisePascals,
+            std::abs(drivingPressureRise));
         diagnostics.maximumAbsoluteMomentumResidualKilogramMetersPerSecond =
             std::max(
                 diagnostics
@@ -284,8 +411,16 @@ advancePlanarPressureRegionFragmentOpeningResistance(
             plugFlow.kineticEnergyBeforeJoules;
         diagnostics.kineticEnergyAfterJoules +=
             plugFlow.kineticEnergyAfterJoules;
+        diagnostics.authoredPressureWorkJoules +=
+            plugFlow.drivingPressureWorkJoules;
         diagnostics.dissipatedEnergyJoules +=
             plugFlow.porousDissipationJoules;
+        addVector(
+            diagnostics.authoredPressureForceOnOpeningFluidNewtons,
+            authoredPressureForce);
+        addVector(
+            diagnostics.authoredPressureImpulseOnOpeningFluidNewtonSeconds,
+            authoredPressureImpulse);
         diagnostics.patches.push_back({
             patch.patchIndex,
             patch.patchStableId,
@@ -295,6 +430,10 @@ advancePlanarPressureRegionFragmentOpeningResistance(
             patch.centerDistanceMeters,
             definition->resistance,
             identity,
+            authoredPressureJump,
+            drivingPressureRise,
+            authoredPressureForce,
+            authoredPressureImpulse,
             plugFlow,
         });
     }
@@ -308,30 +447,40 @@ advancePlanarPressureRegionFragmentOpeningResistance(
         - diagnostics.kineticEnergyBeforeJoules;
     diagnostics.energyResidualJoules =
         diagnostics.kineticEnergyChangeJoules
+        - diagnostics.authoredPressureWorkJoules
         + diagnostics.dissipatedEnergyJoules;
     diagnostics.energyToleranceJoules = roundoffTolerance({
         diagnostics.kineticEnergyBeforeJoules,
         diagnostics.kineticEnergyAfterJoules,
+        diagnostics.authoredPressureWorkJoules,
         diagnostics.dissipatedEnergyJoules,
     });
     diagnostics.finite = std::ranges::all_of(
         std::initializer_list<double>{
             diagnostics.maximumAbsoluteMidpointPressureDropPascals,
+            diagnostics.maximumAbsoluteAuthoredPressureJumpPascals,
+            diagnostics.maximumAbsoluteDrivingPressureRisePascals,
             diagnostics
                 .maximumAbsoluteMomentumResidualKilogramMetersPerSecond,
             diagnostics.kineticEnergyBeforeJoules,
             diagnostics.kineticEnergyAfterJoules,
             diagnostics.kineticEnergyChangeJoules,
+            diagnostics.authoredPressureWorkJoules,
             diagnostics.dissipatedEnergyJoules,
             diagnostics.energyResidualJoules,
             diagnostics.energyToleranceJoules,
-        }, [](const double value) { return std::isfinite(value); });
+        }, [](const double value) { return std::isfinite(value); })
+        && finiteVector(
+            diagnostics.authoredPressureForceOnOpeningFluidNewtons)
+        && finiteVector(
+            diagnostics.authoredPressureImpulseOnOpeningFluidNewtonSeconds);
     diagnostics.nonIncreasingKineticEnergy = diagnostics.finite
         && diagnostics.kineticEnergyAfterJoules
             <= diagnostics.kineticEnergyBeforeJoules
                 + diagnostics.energyToleranceJoules;
     diagnostics.accepted = diagnostics.finite
-        && diagnostics.nonIncreasingKineticEnergy
+        && (settings.useAuthoredPressureDrive
+            || diagnostics.nonIncreasingKineticEnergy)
         && diagnostics.dissipatedEnergyJoules
             >= -diagnostics.energyToleranceJoules
         && std::abs(diagnostics.energyResidualJoules)

@@ -11,6 +11,7 @@ namespace simwing::fsi::fluid {
 
 struct PlanarPressureRegionFragmentOpeningPressureStepSettings {
     PlanarPressureRegionFragmentOpeningPressureProjectionSettings projection;
+    bool useAuthoredPressureDrive = false;
 
     bool operator==(
         const PlanarPressureRegionFragmentOpeningPressureStepSettings&) const =
@@ -38,6 +39,7 @@ struct PlanarPressureRegionFragmentOpeningPressureStepDiagnostics {
     double kineticEnergyAfterJoules = 0.0;
     double kineticEnergyChangeJoules = 0.0;
     double geometryPressureWorkJoules = 0.0;
+    double authoredPressureWorkJoules = 0.0;
     double correctionKineticEnergyJoules = 0.0;
     double dissipatedEnergyJoules = 0.0;
     double energyResidualJoules = 0.0;
@@ -48,20 +50,21 @@ struct PlanarPressureRegionFragmentOpeningPressureStepDiagnostics {
         const = default;
 };
 
-// One opt-in constrained aperture update. Calibrated passive resistance first
-// advances the predicted material-relative opening samples. The augmented
-// pressure projection then corrects Cartesian and opening velocities together
-// so the published endpoint closes moving continuity. The aggregate identity
-// is
+// One opt-in constrained aperture update. Calibrated resistance first advances
+// the predicted material-relative opening samples. When explicitly enabled,
+// the same midpoint stage also reroutes each wall's fixed authored pressure
+// jump into the corresponding opening-fluid degree. The augmented pressure
+// projection then corrects Cartesian and opening velocities together so the
+// published endpoint closes moving continuity. The aggregate identity is
 //
-//   deltaK = geometryPressureWork
+//   deltaK = authoredPressureWork + geometryPressureWork
 //            - correctionKineticEnergy
 //            - resistanceDissipation.
 //
 // All four caller-owned fields are copied before either nested stage and commit
 // together only after nested and aggregate acceptance. The step owns no
-// authored static-pressure evolution, traction subtraction, topology rebase,
-// scene coefficient mapping, or production selection.
+// authored static-pressure evolution/relaxation, traction application,
+// topology rebase, scene coefficient mapping, or production selection.
 [[nodiscard]] PlanarPressureRegionFragmentOpeningPressureStepDiagnostics
 advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
     const PlanarPressureRegionFragmentOpeningPressureOperator& pressureOperator,

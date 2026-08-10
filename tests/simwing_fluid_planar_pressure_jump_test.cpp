@@ -8509,6 +8509,10 @@ void testPlanarRegionalOpeningResistance() {
               && openingFlux == repeatedFlux
               && diagnostics.accepted && diagnostics.finite
               && diagnostics.nonIncreasingKineticEnergy
+              && !diagnostics.usesAuthoredPressureDrive
+              && diagnostics.authoredPressureWorkJoules == 0.0
+              && diagnostics.authoredPressureForceOnOpeningFluidNewtons
+                  == Vector3{}
               && diagnostics.sourceOpeningFingerprint == openings.fingerprint
               && diagnostics.sourceOpeningFluxFingerprint
                   == sourceFlux.fingerprint
@@ -8583,6 +8587,212 @@ void testPlanarRegionalOpeningResistance() {
               && identity.dissipatedEnergyJoules == 0.0
               && identity.energyResidualJoules == 0.0,
           "zero opening resistance is a bit-exact inviscid identity");
+
+    auto drivenSettings = settings;
+    drivenSettings.useAuthoredPressureDrive = true;
+    std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+        drivenSamples{{100, 0.0}};
+    auto drivenFlux = buildPlanarPressureRegionFragmentOpeningFluxState(
+        geometry, sweep, fragments, topology, definitions, openings,
+        drivenSamples);
+    auto repeatedDrivenSamples = drivenSamples;
+    auto repeatedDrivenFlux = drivenFlux;
+    const auto driven =
+        advancePlanarPressureRegionFragmentOpeningResistance(
+            geometry, sweep, fragments, topology, definitions, openings,
+            resistance, drivenSamples, drivenFlux, drivenSettings);
+    const auto repeatedDriven =
+        advancePlanarPressureRegionFragmentOpeningResistance(
+            geometry, sweep, fragments, topology, definitions, openings,
+            resistance, repeatedDrivenSamples, repeatedDrivenFlux,
+            drivenSettings);
+    check(driven == repeatedDriven
+              && drivenSamples == repeatedDrivenSamples
+              && drivenFlux == repeatedDrivenFlux
+              && driven.accepted && driven.finite
+              && driven.usesAuthoredPressureDrive
+              && !driven.nonIncreasingKineticEnergy
+              && driven.patches.size() == 1
+              && !driven.patches[0].zeroResistanceIdentity
+              && driven.patches[0].authoredPressureJumpPascals == 70.0
+              && driven.patches[0].drivingPressureRisePascals == -70.0
+              && driven.maximumAbsoluteAuthoredPressureJumpPascals == 70.0
+              && driven.maximumAbsoluteDrivingPressureRisePascals == 70.0,
+          "authored opening pressure drive is deterministic and explicit");
+    check(drivenSamples[0].relativeNormalVelocityMetersPerSecond < 0.0
+              && driven.patches[0]
+                         .authoredPressureForceOnOpeningFluidNewtons.x
+                  == -35.0
+              && driven.patches[0]
+                         .authoredPressureForceOnOpeningFluidNewtons.y
+                  == 0.0
+              && driven.patches[0]
+                         .authoredPressureForceOnOpeningFluidNewtons.z
+                  == 0.0
+              && driven.authoredPressureForceOnOpeningFluidNewtons
+                  == driven.patches[0]
+                         .authoredPressureForceOnOpeningFluidNewtons
+              && driven.authoredPressureImpulseOnOpeningFluidNewtonSeconds
+                  == driven.patches[0]
+                         .authoredPressureImpulseOnOpeningFluidNewtonSeconds
+              && driven.authoredPressureWorkJoules > 0.0
+              && driven.dissipatedEnergyJoules > 0.0
+              && driven.kineticEnergyChangeJoules > 0.0
+              && std::abs(driven.energyResidualJoules)
+                  <= driven.energyToleranceJoules,
+          "authored pressure jump accelerates aperture fluid with closed impulse and work");
+    checkNear(
+        driven.authoredPressureImpulseOnOpeningFluidNewtonSeconds.x,
+        -0.7, 2.0e-16,
+        "authored opening pressure impulse uses area times rise times duration");
+
+    std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+        inviscidDrivenSamples{{100, 0.0}};
+    auto inviscidDrivenFlux =
+        buildPlanarPressureRegionFragmentOpeningFluxState(
+            geometry, sweep, fragments, topology, definitions, openings,
+            inviscidDrivenSamples);
+    const auto inviscidDriven =
+        advancePlanarPressureRegionFragmentOpeningResistance(
+            geometry, sweep, fragments, topology, definitions, openings,
+            zeroResistance, inviscidDrivenSamples, inviscidDrivenFlux,
+            drivenSettings);
+    check(inviscidDriven.accepted
+              && inviscidDriven.zeroResistancePatchCount == 1
+              && !inviscidDriven.patches[0].zeroResistanceIdentity
+              && inviscidDrivenSamples[0]
+                     .relativeNormalVelocityMetersPerSecond
+                  < 0.0
+              && inviscidDriven.dissipatedEnergyJoules == 0.0
+              && inviscidDriven.authoredPressureWorkJoules > 0.0
+              && std::abs(inviscidDriven.energyResidualJoules)
+                  <= inviscidDriven.energyToleranceJoules,
+          "zero resistance remains an active inviscid authored-pressure drive");
+
+    const auto oppositeWall = std::ranges::find_if(
+        topology.links,
+        [](const auto& link) {
+            return link.kind
+                    == PlanarPressureRegionFragmentFaceKind::PressureLayerWall
+                && link.surfaceStableId == 20;
+        });
+    check(oppositeWall != topology.links.end(),
+          "authored opening drive finds the opposite wall");
+    if (oppositeWall != topology.links.end()) {
+        const std::vector<
+            PlanarPressureRegionFragmentOpeningPatchDefinition>
+            oppositeDefinitions{{
+                200, 2000, oppositeWall->surfaceStableId,
+                oppositeWall->axis, oppositeWall->i, oppositeWall->j,
+                oppositeWall->k, oppositeWall->minusRegionStableId,
+                oppositeWall->plusRegionStableId, 0.5,
+            }};
+        const auto oppositeOpenings =
+            buildPlanarPressureRegionFragmentOpenings(
+                geometry, sweep, fragments, topology,
+                oppositeDefinitions);
+        const std::vector<
+            PlanarPressureRegionFragmentOpeningResistanceDefinition>
+            oppositeResistance{{200, {8.0, 3.0}}};
+        std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+            oppositeSamples{{200, 0.0}};
+        auto oppositeFlux =
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology,
+                oppositeDefinitions, oppositeOpenings, oppositeSamples);
+        const auto opposite =
+            advancePlanarPressureRegionFragmentOpeningResistance(
+                geometry, sweep, fragments, topology,
+                oppositeDefinitions, oppositeOpenings,
+                oppositeResistance, oppositeSamples, oppositeFlux,
+                drivenSettings);
+        check(opposite.accepted
+                  && opposite.patches[0].authoredPressureJumpPascals
+                      == -70.0
+                  && opposite.patches[0].drivingPressureRisePascals
+                      == 70.0
+                  && oppositeSamples[0]
+                         .relativeNormalVelocityMetersPerSecond
+                      > 0.0,
+              "reversed authored wall jump reverses aperture acceleration");
+        checkNear(
+            oppositeSamples[0].relativeNormalVelocityMetersPerSecond,
+            -drivenSamples[0].relativeNormalVelocityMetersPerSecond,
+            2.0e-15,
+            "opposite authored opening drive is sign symmetric");
+    }
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> axisLayers{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        const auto axisSweep = makePlanarPressureRegionSweepLedger(
+            geometry, axisLayers, axisLayers, settings.timeStepSeconds);
+        const auto axisFragments = buildPlanarPressureRegionFragments(
+            geometry, axisSweep);
+        const auto axisTopology =
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, axisSweep, axisFragments);
+        const auto axisWall = std::ranges::find_if(
+            axisTopology.links,
+            [](const auto& link) {
+                return link.kind
+                        == PlanarPressureRegionFragmentFaceKind::
+                            PressureLayerWall
+                    && link.surfaceStableId == 10;
+            });
+        check(axisWall != axisTopology.links.end(),
+              "authored opening drive finds its wall on every axis");
+        if (axisWall == axisTopology.links.end()) continue;
+        const std::vector<
+            PlanarPressureRegionFragmentOpeningPatchDefinition>
+            axisDefinitions{{
+                100, 1000, axisWall->surfaceStableId, axisWall->axis,
+                axisWall->i, axisWall->j, axisWall->k,
+                axisWall->minusRegionStableId,
+                axisWall->plusRegionStableId,
+                0.5 * axisWall->areaSquareMeters,
+            }};
+        const auto axisOpenings =
+            buildPlanarPressureRegionFragmentOpenings(
+                geometry, axisSweep, axisFragments, axisTopology,
+                axisDefinitions);
+        std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+            axisSamples{{100, 0.0}};
+        auto axisFlux =
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, axisSweep, axisFragments, axisTopology,
+                axisDefinitions, axisOpenings, axisSamples);
+        const auto axisDriven =
+            advancePlanarPressureRegionFragmentOpeningResistance(
+                geometry, axisSweep, axisFragments, axisTopology,
+                axisDefinitions, axisOpenings, resistance, axisSamples,
+                axisFlux, drivenSettings);
+        const Vector3 expectedForce = axis == GridFaceAxis::X
+            ? Vector3{-35.0, 0.0, 0.0}
+            : axis == GridFaceAxis::Y
+            ? Vector3{0.0, -35.0, 0.0}
+            : Vector3{0.0, 0.0, -35.0};
+        check(axisDriven.accepted
+                  && axisDriven.authoredPressureForceOnOpeningFluidNewtons
+                      == expectedForce
+                  && axisDriven.patches[0]
+                         .authoredPressureForceOnOpeningFluidNewtons
+                      == expectedForce
+                  && axisSamples[0]
+                         .relativeNormalVelocityMetersPerSecond
+                      < 0.0
+                  && std::abs(axisDriven.energyResidualJoules)
+                      <= axisDriven.energyToleranceJoules,
+              "authored aperture force and work close on every axis");
+    }
 
     const std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition>
         parallelDefinitions{
@@ -8850,6 +9060,7 @@ void testPlanarRegionalResistedOpeningPressureStep() {
               "resisted pressure step publishes the required aperture flux");
     check(diagnostics.dissipatedEnergyJoules > 0.0
               && diagnostics.correctionKineticEnergyJoules > 0.0
+              && diagnostics.authoredPressureWorkJoules == 0.0
               && std::abs(diagnostics.energyResidualJoules)
                   <= diagnostics.energyToleranceJoules,
           "resisted pressure step closes loss plus projection energy");
@@ -8858,6 +9069,48 @@ void testPlanarRegionalResistedOpeningPressureStep() {
             == PlanarPressureRegionFragmentFaceKind::PressureLayerWall) {
             check(velocity[link.linkIndex] == 0.0,
                   "resisted pressure step retains solid-wall zero flow");
+        }
+    }
+
+    auto authoredDriveSettings = settings;
+    authoredDriveSettings.useAuthoredPressureDrive = true;
+    auto authoredDriveVelocity = initialVelocity;
+    auto authoredDriveSamples = initialSamples;
+    auto authoredDriveFlux = initialFlux;
+    auto authoredDrivePressure = initialPressure;
+    const auto authoredDrive =
+        advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            volumeRates, definitions, openings, resistance,
+            authoredDriveVelocity, authoredDriveSamples,
+            authoredDriveFlux, authoredDrivePressure,
+            authoredDriveSettings);
+    check(authoredDrive.accepted && authoredDrive.finite
+              && authoredDrive.energyAccepted
+              && authoredDrive.resistance.accepted
+              && authoredDrive.resistance.usesAuthoredPressureDrive
+              && authoredDrive.resistance.patches[0]
+                     .drivingPressureRisePascals
+                  == -wall->pressureJumpPascals
+              && authoredDrive.authoredPressureWorkJoules
+                  == authoredDrive.resistance.authoredPressureWorkJoules
+              && authoredDrive.dissipatedEnergyJoules > 0.0
+              && authoredDrive.correctionKineticEnergyJoules > 0.0
+              && std::abs(authoredDrive.energyResidualJoules)
+                  <= authoredDrive.energyToleranceJoules,
+          "composed opening step closes authored drive, resistance, and projection energy");
+    checkNear(
+        authoredDriveSamples[0].relativeNormalVelocityMetersPerSecond,
+        initialSamples[0].relativeNormalVelocityMetersPerSecond,
+        4.0e-11,
+        "projection restores required intake after authored pressure drive");
+    check(authoredDrivePressure != pressure,
+          "authored aperture drive changes the compensating correction pressure");
+    for (const auto& link : topology.links) {
+        if (link.kind
+            == PlanarPressureRegionFragmentFaceKind::PressureLayerWall) {
+            check(authoredDriveVelocity[link.linkIndex] == 0.0,
+                  "authored-pressure composed step retains solid-wall zero flow");
         }
     }
 
@@ -8917,6 +9170,29 @@ void testPlanarRegionalResistedOpeningPressureStep() {
               && rejectedFlux == initialFlux
               && rejectedPressure == initialPressure,
           "failed resisted projection rolls back all composed fields");
+
+    auto rejectedAuthoredVelocity = initialVelocity;
+    auto rejectedAuthoredSamples = initialSamples;
+    auto rejectedAuthoredFlux = initialFlux;
+    auto rejectedAuthoredPressure = initialPressure;
+    auto truncatedAuthoredSettings = truncatedSettings;
+    truncatedAuthoredSettings.useAuthoredPressureDrive = true;
+    const auto rejectedAuthored =
+        advanceMovingPlanarPressureRegionFragmentOpeningPressureStep(
+            pressureOperator, base, geometry, sweep, fragments, topology,
+            volumeRates, definitions, openings, resistance,
+            rejectedAuthoredVelocity, rejectedAuthoredSamples,
+            rejectedAuthoredFlux, rejectedAuthoredPressure,
+            truncatedAuthoredSettings);
+    check(!rejectedAuthored.accepted
+              && rejectedAuthored.resistance.accepted
+              && rejectedAuthored.resistance.usesAuthoredPressureDrive
+              && !rejectedAuthored.projection.accepted
+              && rejectedAuthoredVelocity == initialVelocity
+              && rejectedAuthoredSamples == initialSamples
+              && rejectedAuthoredFlux == initialFlux
+              && rejectedAuthoredPressure == initialPressure,
+          "failed projection rolls back the completed authored-pressure stage");
 
     auto limits = PlanarPressureRegionFragmentOpeningPressureStepLimits{};
     limits.maximumWorkingBytes = 1;

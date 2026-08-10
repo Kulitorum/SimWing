@@ -2372,33 +2372,39 @@ topology-transition handling, or production ownership.
 `planar_region_fragment_opening_resistance.*` provides the separate passive
 split step needed around that inviscid projection. One stable-ID-keyed
 Darcy–Forchheimer pair is required per exact patch. Active pairs advance a
-zero-driving-pressure fluid slug with mass
+fluid slug with mass
 `rho*openArea*fragmentCenterDistance` through the established implicit-
-midpoint porous-flow oracle; zero/zero is an explicit bit-exact identity.
-Forward/reverse velocity decays symmetrically, each patch closes resistance
-pressure impulse to momentum and midpoint loss work to kinetic-energy change,
-and the aggregate kinetic energy is non-increasing. Caller sample order and
-authored definition order do not change the canonical result. Samples and the
-rebuilt immutable opening-flux state commit together, with bounded storage and
-source fingerprints. The coefficients must be supplied by authoritative
-intake/material data; this step does not invent them, add driving pressure,
-modify traction, or enter production by itself.
+midpoint porous-flow oracle. The default passive mode retains zero driving
+pressure: zero/zero is a bit-exact identity, forward/reverse velocity decays
+symmetrically, and aggregate kinetic energy is non-increasing. A separate
+explicit setting now uses the source wall's fixed authored jump as the signed
+rise `p_minus-p_plus`. That reroutes `area*rise` force and impulse onto the
+opening-fluid degree; even zero resistance remains an active inviscid drive.
+Each patch and the aggregate close midpoint authored work minus porous
+dissipation to kinetic-energy change on X/Y/Z. Caller sample order and authored
+definition order do not change the canonical result. Samples and the rebuilt
+immutable opening-flux state commit together, with bounded storage and source
+fingerprints. The coefficients must be supplied by authoritative intake/
+material data; this step does not invent them, relax authored pressure, apply
+Structure traction, or enter production by itself.
 `planar_region_fragment_opening_pressure_step.*` composes the accepted order:
-passive resistance updates the predicted aperture samples, then the augmented
-projection corrects Cartesian and opening velocities together. Ending with
-projection is load-bearing: resistance alone creates a continuity deficit,
-whereas the published endpoint must remain constrained. In the canonical
-breathing state, active resistance first reduces the compatible `1.6 m^3/s`
-intake and the pressure stage restores the full required flow and local/
-component continuity. The combined kinetic-energy ledger closes
-`deltaK = geometryPressureWork - correctionKineticEnergy - dissipation`.
-Zero resistance reproduces direct projection bit-for-bit. Candidate topology
-velocities, opening samples, flux state, and pressure live off to the side
-through both stages and commit only after nested and aggregate acceptance, so
-a truncated pressure solve rolls back the already-computed resistance update.
+resistance and optional fixed authored-pressure drive update the predicted
+aperture samples, then the augmented projection corrects Cartesian and opening
+velocities together. Ending with projection is load-bearing: the first stage
+creates a continuity deficit, whereas the published endpoint must remain
+constrained. In the canonical breathing state, active resistance first changes
+the compatible `1.6 m^3/s` intake and the pressure stage restores the full
+required flow and local/component continuity. Passive mode closes
+`deltaK = geometryPressureWork - correctionKineticEnergy - dissipation`;
+authored-drive mode adds `authoredPressureWork` to the right-hand side and
+changes the compensating correction pressure. Passive zero resistance
+reproduces direct projection bit-for-bit. Candidate topology velocities,
+opening samples, flux state, and pressure live off to the side through both
+stages and commit only after nested and aggregate acceptance, so a truncated
+pressure solve rolls back the already-computed resistance or authored drive.
 The composition is bounded and opt-in; it still has no scene coefficient
-mapping, rebase ownership, or worker selection, and it does not itself own
-pressure-load transfer.
+mapping, authored-pressure relaxation, rebase ownership, or worker selection,
+and it does not itself own pressure-load transfer.
 `planar_region_fragment_opening_surface_load.*` provides the corresponding
 opt-in pressure-load area partition. It binds the immutable aperture overlay
 to the composed wall-load ledger, preserves the tile pressure-jump traction,
