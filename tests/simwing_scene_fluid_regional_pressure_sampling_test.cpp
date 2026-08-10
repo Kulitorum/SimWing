@@ -23,6 +23,7 @@
 #include "scene_fluid_regional_opening_momentum_wall_input.h"
 #include "scene_fluid_regional_opening_momentum_wall_load_application.h"
 #include "scene_fluid_regional_opening_momentum_wall_load_epoch.h"
+#include "scene_fluid_regional_opening_momentum_wall_post_step_geometry.h"
 #include "scene_fluid_regional_opening_momentum_wall_pressure_epoch.h"
 #include "scene_fluid_regional_opening_momentum_wall_structure_step_epoch.h"
 
@@ -3145,6 +3146,217 @@ void testOpeningMomentumWallExchange() {
               && retainedCoupledEncoding
                   == std::vector<std::uint8_t>({1, 2, 3}),
           "regional opening wall coupled persistence: encode byte limit retains destination");
+
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                buildSceneFluidRegionalOpeningMomentumWallPostStepGeometry(
+                    coupledCheckpoint,
+                    coupledOwnerSources.surface.definition,
+                    coupledOwnerSources.structureAssembly.mappings, grid(),
+                    coupledOwnerSources.transfer,
+                    coupledOwner.structure()));
+        },
+        "regional opening wall post-step geometry: out-of-domain structural endpoint rejects without changing grids");
+
+    auto fixedStructureDefinition =
+        coupledOwnerSources.structureAssembly.definition;
+    for (auto& node : fixedStructureDefinition.nodes) {
+        node.fixed = true;
+    }
+    Structure fixedSourceStructure(fixedStructureDefinition);
+    SceneFluidSurfaceTransfer fixedTransfer(
+        coupledOwnerSources.surface.definition,
+        coupledOwnerSources.structureAssembly.mappings,
+        fixedSourceStructure);
+    const auto fixedSourceState = captureSceneFluidSurfaceState(
+        coupledOwnerSources.surface.definition,
+        coupledOwnerSources.structureAssembly.mappings,
+        fixedSourceStructure);
+    const auto fixedSourceGridEpoch = buildSceneFluidGridEpoch(
+        coupledOwnerSources.surface.definition, fixedSourceState, grid(),
+        fixedTransfer);
+    const auto fixedWallInput =
+        captureSceneFluidRegionalOpeningMomentumWallInput(
+            endpoint.momentumCycle.transport, endpoint.acceptedFlow,
+            endpoint.pressureOperator, endpoint.basePressureOperator,
+            endpoint.geometry, endpoint.sweep, endpoint.fragments,
+            endpoint.topology, endpoint.volumeRates,
+            endpoint.openingDefinitions, endpoint.openings,
+            endpoint.resistanceDefinitions, endpoint.baseMetric,
+            endpoint.openingMetric,
+            coupledOwnerSources.surface.definition, fixedSourceState,
+            fixedSourceGridEpoch.quadrature);
+    const auto fixedWallExchange =
+        exchangeSceneFluidRegionalOpeningMomentumWall(
+            fixedWallInput, settings);
+    const auto fixedWallPressureEpoch =
+        acceptSceneFluidRegionalOpeningMomentumWallPressureEpoch(
+            fixedWallExchange, endpoint.momentumCycle.transport,
+            endpoint.openingMetric, endpoint.pressureOperator,
+            endpoint.basePressureOperator, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.resistanceDefinitions,
+            endpoint.baseMetric, endpoint.openingMetric, {},
+            endpoint.momentumCycle.pressureSettings);
+    const auto fixedWallCycleState =
+        captureSceneFluidRegionalOpeningMomentumWallCycleState(
+            fixedWallPressureEpoch, fixedWallExchange,
+            endpoint.openingMetric, endpoint.openingMetric,
+            fixedSourceGridEpoch.quadrature);
+    SceneFluidRegionalOpeningMomentumWallCoupledStateOwner fixedCoupledOwner{
+        Structure(fixedStructureDefinition)};
+    fixedCoupledOwner.advance(
+        fixedWallCycleState, endpoint.openingMetric,
+        endpoint.pressureOperator, endpoint.basePressureOperator,
+        endpoint.geometry, endpoint.sweep, endpoint.fragments,
+        endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric, coupledOwnerSources.surface.definition,
+        fixedSourceState, fixedTransfer, fixedSourceGridEpoch.quadrature,
+        structureStepSettings);
+    const auto fixedCoupledCheckpoint = fixedCoupledOwner.checkpoint();
+    const auto postStepGeometry =
+        buildSceneFluidRegionalOpeningMomentumWallPostStepGeometry(
+            fixedCoupledCheckpoint,
+            coupledOwnerSources.surface.definition,
+            coupledOwnerSources.structureAssembly.mappings, grid(),
+            fixedTransfer, fixedCoupledOwner.structure());
+    validateSceneFluidRegionalOpeningMomentumWallPostStepGeometry(
+        postStepGeometry, fixedCoupledCheckpoint,
+        coupledOwnerSources.surface.definition,
+        coupledOwnerSources.structureAssembly.mappings, grid(),
+        fixedTransfer, fixedCoupledOwner.structure());
+    const PeriodicCartesianGrid foreignPostStepGrid(
+        {8, 2, 2}, {-2.0, -1.0, -1.0}, {2.0, 1.0, 1.0});
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningMomentumWallPostStepGeometry(
+                postStepGeometry, fixedCoupledCheckpoint,
+                coupledOwnerSources.surface.definition,
+                coupledOwnerSources.structureAssembly.mappings,
+                foreignPostStepGrid, fixedTransfer,
+                fixedCoupledOwner.structure());
+        },
+        "regional opening wall post-step geometry: foreign CFD grid rejects receipt replay");
+    check(postStepGeometry.version
+                  == sceneFluidRegionalOpeningMomentumWallPostStepGeometryVersion
+              && postStepGeometry.fingerprint != 0
+              && postStepGeometry.sourceCoupledStateFingerprint
+                  == fixedCoupledCheckpoint.fingerprint
+              && postStepGeometry.sourceSurfaceStateFingerprint
+                  == fixedSourceState.fingerprint
+              && postStepGeometry.previousAcceptedStepCount == 0
+              && postStepGeometry.currentAcceptedStepCount == 1
+              && postStepGeometry.surfaceState.acceptedStepCount == 1
+              && postStepGeometry.surfaceState.simulationTimeSeconds
+                  == structureStepSettings.structure.timeStepSeconds
+              && postStepGeometry.surfaceState
+                  != fixedSourceState
+              && postStepGeometry.gridEpoch.fingerprint != 0
+              && postStepGeometry.gridEpoch.quadrature.fingerprint != 0
+              && postStepGeometry.ownedStorageBytes
+                  > postStepGeometry.gridEpoch.ownedStorageBytes,
+          "regional opening wall post-step geometry: accepted Structure publishes the next authoritative surface/grid epoch");
+
+    SceneFluidRegionalOpeningMomentumWallCoupledStateOwner
+        restoredFixedCoupledOwner{Structure(fixedStructureDefinition)};
+    restoredFixedCoupledOwner.restore(
+        fixedCoupledCheckpoint, endpoint.openingMetric,
+        endpoint.pressureOperator, endpoint.basePressureOperator,
+        endpoint.geometry, endpoint.sweep, endpoint.fragments,
+        endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric, coupledOwnerSources.surface.definition,
+        fixedSourceState, fixedTransfer, fixedSourceGridEpoch.quadrature,
+        structureStepSettings);
+    const auto restoredPostStepGeometry =
+        buildSceneFluidRegionalOpeningMomentumWallPostStepGeometry(
+            restoredFixedCoupledOwner.state(),
+            coupledOwnerSources.surface.definition,
+            coupledOwnerSources.structureAssembly.mappings, grid(),
+            fixedTransfer, restoredFixedCoupledOwner.structure());
+    check(restoredPostStepGeometry == postStepGeometry,
+          "regional opening wall post-step geometry: restored coupled owner rebuild is deterministic");
+
+    auto corruptPostStepGeometry = postStepGeometry;
+    corruptPostStepGeometry.surfaceState.vertices.front()
+        .positionMeters.x += 1.0;
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningMomentumWallPostStepGeometryIntegrity(
+                corruptPostStepGeometry);
+        },
+        "regional opening wall post-step geometry: corrupt surface state rejects");
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                buildSceneFluidRegionalOpeningMomentumWallPostStepGeometry(
+                    fixedCoupledCheckpoint,
+                    coupledOwnerSources.surface.definition,
+                    coupledOwnerSources.structureAssembly.mappings, grid(),
+                    fixedTransfer, fixedSourceStructure));
+        },
+        "regional opening wall post-step geometry: stale pre-step Structure rejects");
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                buildSceneFluidRegionalOpeningMomentumWallPostStepGeometry(
+                    fixedCoupledCheckpoint,
+                    foreignWallCycleFixture.surface.definition,
+                    foreignWallCycleFixture.structureAssembly.mappings,
+                    grid(), foreignWallCycleFixture.transfer,
+                    fixedCoupledOwner.structure()));
+        },
+        "regional opening wall post-step geometry: foreign source surface rejects");
+
+    auto postStepGeometryLimits =
+        SceneFluidRegionalOpeningMomentumWallPostStepGeometryLimits{};
+    postStepGeometryLimits.maximumSurfaceVertices =
+        postStepGeometry.surfaceState.vertices.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                buildSceneFluidRegionalOpeningMomentumWallPostStepGeometry(
+                    fixedCoupledCheckpoint,
+                    coupledOwnerSources.surface.definition,
+                    coupledOwnerSources.structureAssembly.mappings, grid(),
+                    fixedTransfer, fixedCoupledOwner.structure(),
+                    postStepGeometryLimits));
+        },
+        "regional opening wall post-step geometry: surface vertex limit rejects");
+    postStepGeometryLimits = {};
+    postStepGeometryLimits.structureCheckpoint.maximumEncodedBytes =
+        fixedCoupledCheckpoint.structureStep
+            .afterStructureCheckpoint.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                buildSceneFluidRegionalOpeningMomentumWallPostStepGeometry(
+                    fixedCoupledCheckpoint,
+                    coupledOwnerSources.surface.definition,
+                    coupledOwnerSources.structureAssembly.mappings, grid(),
+                    fixedTransfer, fixedCoupledOwner.structure(),
+                    postStepGeometryLimits));
+        },
+        "regional opening wall post-step geometry: retained Structure byte limit rejects");
+    postStepGeometryLimits = {};
+    postStepGeometryLimits.maximumOwnedBytes =
+        postStepGeometry.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                buildSceneFluidRegionalOpeningMomentumWallPostStepGeometry(
+                    fixedCoupledCheckpoint,
+                    coupledOwnerSources.surface.definition,
+                    coupledOwnerSources.structureAssembly.mappings, grid(),
+                    fixedTransfer, fixedCoupledOwner.structure(),
+                    postStepGeometryLimits));
+        },
+        "regional opening wall post-step geometry: late aggregate limit rejects complete candidate");
 
     const auto rejectingLayers = translatePlanarPressureJumpLayers(
         endpoint.geometry, endpoint.layers, 0.1).layers;

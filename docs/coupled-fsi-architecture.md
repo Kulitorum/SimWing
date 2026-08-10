@@ -446,6 +446,7 @@ src/fsi/
     scene_fluid_regional_opening_momentum_wall_structure_step_epoch.* replayable one-step XPBD consumption
     scene_fluid_regional_opening_momentum_wall_coupled_state.* atomic in-memory fluid/Structure owner
     scene_fluid_regional_opening_momentum_wall_coupled_state_persistence.* replay-validated SWRC restart
+    scene_fluid_regional_opening_momentum_wall_post_step_geometry.* authoritative next surface/grid geometry
     scene_fluid_region_link_flow.* current-link region predictor
     scene_fluid_pressure_coupling.* strong pressure/shear feedback
     scene_pressure_cell_geometry.* shared visible/refinement tetrahedra
@@ -3034,6 +3035,18 @@ coupled fingerprint and both Structure byte streams are exact. Corrupt outer or
 nested identity, foreign quadrature/topology, truncation, trailing data, and
 bounds retain the destination. This changes neither nested protocol nor any
 production checkpoint/worker path.
+`scene_fluid_regional_opening_momentum_wall_post_step_geometry.*` is the first
+authoritative geometry handoff after that restored coupled endpoint. It first
+requires the live Structure to serialize byte-for-byte as the retained
+post-step checkpoint, binds the original scene surface and conservative
+transfer topology, captures the next accepted surface epoch, and rebuilds every
+established Cartesian grid-geometry stage through quadrature. A restored owner
+produces an identical receipt. Stale Structure, foreign scene/grid sources,
+corrupt payloads, bounded storage, and the deliberately violent membrane that
+leaves the active grid all reject; the grid is never silently enlarged. This
+receipt stops at geometry. It does not classify pressure topology as stable,
+construct the next pressure graph, rebase fluid state, run another solve, or
+change production selection.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

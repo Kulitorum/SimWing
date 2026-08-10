@@ -2243,6 +2243,13 @@ makes this a certified aerodynamic solver.
   reconstructs the omitted diagnostic/load receipt by one bounded deterministic
   replay before transactional decode publication. It does not change `SWRW`,
   `SWST`, or any production checkpoint.
+- `src/fsi/scene_fluid_regional_opening_momentum_wall_post_step_geometry.{h,cpp}`
+  binds the exact live post-step Structure retained by that coupled endpoint,
+  captures the next authoritative scene-surface state, and rebuilds the complete
+  established Cartesian grid-geometry epoch. It rejects stale/foreign Structure
+  and scene sources and any surface outside the caller-owned CFD grid. This is a
+  geometry handoff only: it does not claim stable pressure topology, rebase fluid
+  state, solve the next pressure epoch, or select a worker.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -3331,6 +3338,17 @@ round trip, restored Structure and next-fluid continuation, magic/checksum,
 recomputed-checksum outer identity and nested-`SWRW` corruption, truncation,
 trailing data, foreign quadrature/Structure topology, encode/decode limits, and
 retained destinations. Do not alter nested wire contracts or add worker I/O.
+
+For `scene_fluid_regional_opening_momentum_wall_post_step_geometry.*`, require
+the supplied live Structure checkpoint encoding to equal the coupled receipt's
+retained post-step bytes before capturing geometry. Bind the original surface,
+transfer topology, Structure definition, accepted step/time, coupled/step/load
+lineage, and rebuilt grid epoch. Rebuild and fully validate every established
+grid-geometry stage on the caller-owned grid; reject an out-of-domain surface
+rather than silently resizing or replacing that grid. Cover deterministic
+restored-owner rebuild, stale Structure, foreign surface/grid, corrupt state,
+and nested/aggregate limits. Do not infer pressure-topology stability, build
+new pressure controls, rebase fluid fields, run a solve, or select a worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.
