@@ -497,6 +497,7 @@ src/fsi/
         planar_region_fragment.* layer-split Cartesian control geometry
         planar_region_fragment_topology.* paired grid/wall control faces
         planar_region_fragment_pressure_operator.* regional graph Laplacian
+        planar_region_fragment_pressure_solve.* correction-only CG oracle
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
         porous_topology.*   compatibility API over planar face topology
@@ -2235,6 +2236,19 @@ component's integrated action sums to zero. Row, entry, and gauge identities
 remain stable during motion inside one topology segment even as geometric
 weights update. The operator is deliberately ungauged and owns no source,
 linear solve, velocity correction, opening edge, or production state.
+`planar_region_fragment_pressure_solve.*` provides the corresponding
+transactional conjugate-gradient oracle for a correction field only. The
+integrated RHS must close independently on every graph component; only a
+declared roundoff-sized component mean may be removed. Iterates remain in the
+constant-free subspace, and a converged candidate is shifted to roundoff-zero
+volume-weighted mean using the physical fragment volumes. The separate static
+regional potential is never passed as a correction, so a zero RHS removes
+arbitrary correction gauges while preserving every authored 70 Pa wall jump.
+The canonical manufactured two-component correction is recovered within
+`3e-11 Pa`, with an explicitly recomputed maximum residual below
+`2e-12 Pa*m` and volume-mean residual below `3e-16 Pa`. Incompatible and
+iteration-truncated solves leave their warm start bit-for-bit unchanged. No
+regional velocity divergence or production pressure source owns this solve.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

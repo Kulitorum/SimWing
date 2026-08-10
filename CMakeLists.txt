@@ -568,6 +568,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/planar_region_fragment_topology.h
     src/fsi/fluid/planar_region_fragment_pressure_operator.cpp
     src/fsi/fluid/planar_region_fragment_pressure_operator.h
+    src/fsi/fluid/planar_region_fragment_pressure_solve.cpp
+    src/fsi/fluid/planar_region_fragment_pressure_solve.h
     src/fsi/fluid/planar_cut_surface.cpp
     src/fsi/fluid/planar_cut_surface.h
     src/fsi/fluid/porous_interface.cpp

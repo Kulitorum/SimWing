@@ -244,6 +244,15 @@ The unique `area / distance` weight is `160/3 m` and the two-sided diagonal sum
 is `320/3 m`. Stable row/entry/gauge identity survives motion within one
 topology segment. This remains an ungauged offline operator with no RHS, solve,
 velocity update, or production pressure ownership.
+A transactional conjugate-gradient oracle now solves compatible corrections on
+that operator. It removes only roundoff-sized component RHS imbalance, keeps
+the static regional potential separate, and commits each correction with
+roundoff-zero volume mean per component. A manufactured two-component field is
+recovered to `3e-11 Pa` with a recomputed residual below `2e-12 Pa·m`; a zero
+RHS removes correction gauges while preserving every authored 70 Pa wall jump.
+Incompatible or iteration-truncated attempts leave the warm start bit-for-bit
+unchanged. No velocity divergence, pressure RHS, or production step invokes
+this solve yet.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

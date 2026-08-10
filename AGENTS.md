@@ -1904,6 +1904,11 @@ makes this a certified aerodynamic solver.
   fragment links. Layer walls create no entries. It retains one deterministic
   gauge per component but owns no RHS, solve, velocity correction, or
   production pressure state.
+- `src/fsi/fluid/planar_region_fragment_pressure_solve.{h,cpp}` solves only a
+  component-compatible correction on that operator. It removes admitted RHS
+  roundoff, commits roundoff-zero volume-mean corrections, keeps the static
+  regional potential separate, and rolls back the warm start on failure. It
+  owns no divergence source or production pressure update.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2262,6 +2267,18 @@ products, wrong-sized or non-finite pressure fields, and row/entry/component/
 byte/nested-topology limit violations. Do not infer a pressure RHS or solve,
 regional velocity correction, opening link, mimetic acceptance, or production
 ownership.
+
+For `planar_region_fragment_pressure_solve.*`, require deterministic recovery
+of a manufactured two-component, zero-volume-mean correction within `3e-11
+Pa`, with recomputed maximum residual below `2e-12 Pa*m` and correction
+volume-mean residual below `3e-16 Pa`. A zero RHS must remove only correction
+gauges and preserve every static +/-70 Pa wall jump. Require X/Y/Z zero-RHS
+closure, independent component compatibility diagnostics, and bit-exact warm-
+start rollback for incompatible or iteration-truncated solves. Reject mutated
+operator/source products, wrong-sized or non-finite fields, non-finite/empty
+tolerance policies, and a zero iteration bound. Do not infer a regional
+velocity divergence, physical pressure RHS, projection acceptance, or
+production ownership.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

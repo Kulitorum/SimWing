@@ -4,6 +4,7 @@
 #include "fluid/planar_region_opening_power.h"
 #include "fluid/planar_region_fragment.h"
 #include "fluid/planar_region_fragment_pressure_operator.h"
+#include "fluid/planar_region_fragment_pressure_solve.h"
 #include "fluid/planar_region_fragment_topology.h"
 #include "fluid/planar_region_sweep.h"
 #include "fluid/projection.h"
@@ -190,6 +191,38 @@ double dotProduct(const std::vector<double>& first,
         result += first[index] * second[index];
     }
     return result;
+}
+
+double fragmentCorrectionVolumeMean(
+    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentPressureOperatorComponent& component,
+    const std::vector<double>& values) {
+    double moment = 0.0;
+    for (std::size_t offset = 0;
+         offset < component.fragmentCount; ++offset) {
+        const std::size_t index =
+            pressureOperator.componentFragmentIndices[
+                component.firstFragmentMember + offset];
+        moment += fragments.fragments[index].volumeCubicMeters
+            * values[index];
+    }
+    return moment / component.totalVolumeCubicMeters;
+}
+
+void subtractFragmentCorrectionVolumeMeans(
+    const PlanarPressureRegionFragmentPressureOperator& pressureOperator,
+    const PlanarPressureRegionFragmentSet& fragments,
+    std::vector<double>& values) {
+    for (const auto& component : pressureOperator.components) {
+        const double mean = fragmentCorrectionVolumeMean(
+            pressureOperator, fragments, component, values);
+        for (std::size_t offset = 0;
+             offset < component.fragmentCount; ++offset) {
+            values[pressureOperator.componentFragmentIndices[
+                component.firstFragmentMember + offset]] -= mean;
+        }
+    }
 }
 
 void testCanonicalAssemblyAndSameFacePocket() {
@@ -2501,6 +2534,282 @@ void testPlanarRegionalFragmentPressureOperatorAxesAndRejection() {
         "regional pressure operator rejects mutated topology");
 }
 
+void testPlanarRegionalFragmentPressureCorrectionSolve() {
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto pressureOperator =
+        buildPlanarPressureRegionFragmentPressureOperator(
+            geometry, sweep, fragments, topology);
+
+    std::vector<double> manufactured(pressureOperator.rows.size(), 0.0);
+    for (std::size_t index = 0; index < manufactured.size(); ++index) {
+        const double sample = static_cast<double>(index + 1);
+        manufactured[index] =
+            std::sin(0.31 * sample) + 0.07 * std::cos(0.17 * sample);
+    }
+    subtractFragmentCorrectionVolumeMeans(
+        pressureOperator, fragments, manufactured);
+    const auto rightHandSide =
+        applyPlanarPressureRegionFragmentPressureOperator(
+            pressureOperator, manufactured);
+    std::vector<double> firstCorrection(
+        pressureOperator.rows.size(), 0.0);
+    std::vector<double> secondCorrection = firstCorrection;
+    PlanarPressureRegionFragmentPressureSolveSettings settings;
+    settings.absoluteResidualTolerancePascalsMeters = 1.0e-13;
+    settings.relativeResidualTolerance = 1.0e-12;
+    settings.maximumIterations = 200;
+    const auto first =
+        solvePlanarPressureRegionFragmentPressureCorrection(
+            pressureOperator, geometry, sweep, fragments, topology,
+            rightHandSide, firstCorrection, settings);
+    const auto second =
+        solvePlanarPressureRegionFragmentPressureCorrection(
+            pressureOperator, geometry, sweep, fragments, topology,
+            rightHandSide, secondCorrection, settings);
+    check(first == second && firstCorrection == secondCorrection
+              && first.compatible && first.converged && first.finite
+              && first.pressureOperatorFingerprint
+                  == pressureOperator.fingerprint
+              && first.fragmentFingerprint == fragments.fingerprint
+              && first.rowCount == pressureOperator.rows.size()
+              && first.componentCount == 2
+              && first.components.size() == 2
+              && first.iterationCount > 0
+              && first.iterationCount <= settings.maximumIterations,
+          "regional pressure correction solve converges deterministically");
+    double maximumRecoveryError = 0.0;
+    for (std::size_t index = 0; index < manufactured.size(); ++index) {
+        maximumRecoveryError = std::max(
+            maximumRecoveryError,
+            std::abs(firstCorrection[index] - manufactured[index]));
+    }
+    check(maximumRecoveryError < 3.0e-11,
+          "regional pressure correction solve recovers the manufactured field");
+    const auto recoveredRightHandSide =
+        applyPlanarPressureRegionFragmentPressureOperator(
+            pressureOperator, firstCorrection);
+    double maximumResidual = 0.0;
+    for (std::size_t index = 0; index < rightHandSide.size(); ++index) {
+        maximumResidual = std::max(
+            maximumResidual,
+            std::abs(recoveredRightHandSide[index]
+                     - rightHandSide[index]));
+    }
+    check(maximumResidual < 2.0e-12
+              && first.finalResidualL2PascalsMeters < 1.0e-13
+              && first.finalResidualMaximumPascalsMeters < 2.0e-12,
+          "regional pressure correction solve closes its recomputed residual");
+    for (const auto& component : pressureOperator.components) {
+        checkNear(
+            fragmentCorrectionVolumeMean(
+                pressureOperator, fragments, component, firstCorrection),
+            0.0, 3.0e-16,
+            "regional pressure correction has roundoff-zero volume mean");
+        checkNear(first.components[component.componentIndex]
+                      .rightHandSideSumPascalsMeters,
+                  0.0, 2.0e-14,
+                  "regional pressure correction RHS is component-compatible");
+    }
+    check(first.maximumAbsoluteCorrectionVolumeMeanPascals < 3.0e-16,
+          "regional pressure correction diagnoses its bounded gauge residual");
+
+    std::vector<double> constantCorrection(
+        pressureOperator.rows.size(), 0.0);
+    for (const auto& component : pressureOperator.components) {
+        const double constant = component.regionStableId == 1 ? 12.0 : -7.0;
+        for (std::size_t offset = 0;
+             offset < component.fragmentCount; ++offset) {
+            constantCorrection[
+                pressureOperator.componentFragmentIndices[
+                    component.firstFragmentMember + offset]] = constant;
+        }
+    }
+    const std::vector<double> zeroRightHandSide(
+        pressureOperator.rows.size(), 0.0);
+    const auto zero =
+        solvePlanarPressureRegionFragmentPressureCorrection(
+            pressureOperator, geometry, sweep, fragments, topology,
+            zeroRightHandSide, constantCorrection, settings);
+    check(zero.compatible && zero.converged && zero.finite
+              && zero.iterationCount == 0,
+          "zero regional RHS accepts without an artificial pressure mode");
+    for (const double value : constantCorrection) {
+        checkNear(value, 0.0, 2.0e-29,
+                  "zero regional RHS removes only correction gauges");
+    }
+    for (const auto& link : topology.links) {
+        if (link.kind
+            != PlanarPressureRegionFragmentFaceKind::PressureLayerWall) {
+            continue;
+        }
+        const double totalMinus = fragments.fragments[
+            link.minusFragmentIndex].pressurePascals
+            + constantCorrection[link.minusFragmentIndex];
+        const double totalPlus = fragments.fragments[
+            link.plusFragmentIndex].pressurePascals
+            + constantCorrection[link.plusFragmentIndex];
+        checkNear(totalPlus - totalMinus,
+                  link.pressureJumpPascals, 0.0,
+                  "zero correction preserves the authored static wall jump");
+    }
+}
+
+void testPlanarRegionalFragmentPressureCorrectionRollback() {
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 1.0);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const auto pressureOperator =
+        buildPlanarPressureRegionFragmentPressureOperator(
+            geometry, sweep, fragments, topology);
+    std::vector<double> manufactured(pressureOperator.rows.size(), 0.0);
+    for (std::size_t index = 0; index < manufactured.size(); ++index) {
+        manufactured[index] =
+            std::sin(0.23 * static_cast<double>(index + 1));
+    }
+    subtractFragmentCorrectionVolumeMeans(
+        pressureOperator, fragments, manufactured);
+    const auto compatibleRightHandSide =
+        applyPlanarPressureRegionFragmentPressureOperator(
+            pressureOperator, manufactured);
+
+    auto incompatibleRightHandSide = compatibleRightHandSide;
+    incompatibleRightHandSide[
+        pressureOperator.components[0].gaugeFragmentIndex] += 1.0e-4;
+    std::vector<double> warmStart(
+        pressureOperator.rows.size(), 0.125);
+    const auto originalWarmStart = warmStart;
+    const auto incompatible =
+        solvePlanarPressureRegionFragmentPressureCorrection(
+            pressureOperator, geometry, sweep, fragments, topology,
+            incompatibleRightHandSide, warmStart);
+    check(!incompatible.compatible && !incompatible.converged
+              && incompatible.finite && warmStart == originalWarmStart
+              && incompatible
+                      .maximumAbsoluteComponentCompatibilityPascalsMeters
+                  > 9.9e-5,
+          "incompatible regional pressure RHS rolls back transactionally");
+
+    PlanarPressureRegionFragmentPressureSolveSettings truncatedSettings;
+    truncatedSettings.absoluteResidualTolerancePascalsMeters = 1.0e-16;
+    truncatedSettings.relativeResidualTolerance = 0.0;
+    truncatedSettings.maximumIterations = 1;
+    warmStart = originalWarmStart;
+    const auto truncated =
+        solvePlanarPressureRegionFragmentPressureCorrection(
+            pressureOperator, geometry, sweep, fragments, topology,
+            compatibleRightHandSide, warmStart, truncatedSettings);
+    check(truncated.compatible && !truncated.converged
+              && truncated.iterationCount == 1
+              && warmStart == originalWarmStart,
+          "truncated regional pressure solve preserves its warm start");
+
+    for (const GridFaceAxis axis
+         : {GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        const std::size_t firstFace = axis == GridFaceAxis::X ? 1 : 0;
+        const std::size_t secondFace = axis == GridFaceAxis::X ? 2 : 1;
+        const std::vector<PlanarPressureJumpLayerDefinition> axisLayers{
+            {10, 1, 2,
+             {movingPlanarFaceTopologyVersion, axis, firstFace, 0},
+             -0.8, 70.0},
+            {20, 2, 1,
+             {movingPlanarFaceTopologyVersion, axis, secondFace, 0},
+             -0.2, -70.0},
+        };
+        const auto axisSweep = makePlanarPressureRegionSweepLedger(
+            geometry, axisLayers, axisLayers, 1.0);
+        const auto axisFragments = buildPlanarPressureRegionFragments(
+            geometry, axisSweep);
+        const auto axisTopology =
+            buildPlanarPressureRegionFragmentTopology(
+                geometry, axisSweep, axisFragments);
+        const auto axisOperator =
+            buildPlanarPressureRegionFragmentPressureOperator(
+                geometry, axisSweep, axisFragments, axisTopology);
+        std::vector<double> correction(axisOperator.rows.size(), 3.0);
+        const auto diagnostics =
+            solvePlanarPressureRegionFragmentPressureCorrection(
+                axisOperator, geometry, axisSweep, axisFragments,
+                axisTopology,
+                std::vector<double>(axisOperator.rows.size(), 0.0),
+                correction);
+        check(diagnostics.compatible && diagnostics.converged
+                  && diagnostics.finite
+                  && diagnostics.iterationCount == 0,
+              "zero regional pressure correction closes on every axis");
+        for (const double value : correction) {
+            checkNear(value, 0.0, 2.0e-29,
+                      "all-axis regional correction gauge is roundoff-zero");
+        }
+    }
+
+    expectRejected(
+        [&] { auto correction = originalWarmStart;
+            static_cast<void>(
+                solvePlanarPressureRegionFragmentPressureCorrection(
+                    pressureOperator, geometry, sweep, fragments,
+                    topology, std::vector<double>(1), correction)); },
+        "regional pressure solve rejects a wrong-sized RHS");
+    expectRejected(
+        [&] { auto correction = std::vector<double>(1);
+            static_cast<void>(
+                solvePlanarPressureRegionFragmentPressureCorrection(
+                    pressureOperator, geometry, sweep, fragments,
+                    topology, compatibleRightHandSide, correction)); },
+        "regional pressure solve rejects a wrong-sized correction");
+    auto nonfinite = compatibleRightHandSide;
+    nonfinite[0] = std::numeric_limits<double>::quiet_NaN();
+    expectRejected(
+        [&] { auto correction = originalWarmStart;
+            static_cast<void>(
+                solvePlanarPressureRegionFragmentPressureCorrection(
+                    pressureOperator, geometry, sweep, fragments,
+                    topology, nonfinite, correction)); },
+        "regional pressure solve rejects non-finite fields");
+    auto invalidSettings =
+        PlanarPressureRegionFragmentPressureSolveSettings{};
+    invalidSettings.maximumIterations = 0;
+    expectRejected(
+        [&] { auto correction = originalWarmStart;
+            static_cast<void>(
+                solvePlanarPressureRegionFragmentPressureCorrection(
+                    pressureOperator, geometry, sweep, fragments,
+                    topology, compatibleRightHandSide, correction,
+                    invalidSettings)); },
+        "regional pressure solve rejects a zero iteration bound");
+    invalidSettings = {};
+    invalidSettings.absoluteResidualTolerancePascalsMeters =
+        std::numeric_limits<double>::quiet_NaN();
+    expectRejected(
+        [&] { auto correction = originalWarmStart;
+            static_cast<void>(
+                solvePlanarPressureRegionFragmentPressureCorrection(
+                    pressureOperator, geometry, sweep, fragments,
+                    topology, compatibleRightHandSide, correction,
+                    invalidSettings)); },
+        "regional pressure solve rejects invalid tolerances");
+    auto corruptOperator = pressureOperator;
+    corruptOperator.entries[0].geometryWeightMeters += 0.1;
+    expectRejected(
+        [&] { auto correction = originalWarmStart;
+            static_cast<void>(
+                solvePlanarPressureRegionFragmentPressureCorrection(
+                    corruptOperator, geometry, sweep, fragments,
+                    topology, compatibleRightHandSide, correction)); },
+        "regional pressure solve rejects a mutated operator");
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -2653,6 +2962,8 @@ int main() {
     testPlanarRegionalFragmentTopologyAxesAndRejection();
     testPlanarRegionalFragmentPressureOperator();
     testPlanarRegionalFragmentPressureOperatorAxesAndRejection();
+    testPlanarRegionalFragmentPressureCorrectionSolve();
+    testPlanarRegionalFragmentPressureCorrectionRollback();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {
