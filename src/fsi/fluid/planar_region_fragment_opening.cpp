@@ -32,6 +32,10 @@ public:
         integer(std::bit_cast<std::uint64_t>(value));
     }
 
+    void boolean(const bool value) {
+        integer(static_cast<std::uint8_t>(value ? 1U : 0U));
+    }
+
     template<typename Enumeration>
     void enumeration(const Enumeration value) {
         integer(static_cast<std::underlying_type_t<Enumeration>>(value));
@@ -189,6 +193,7 @@ std::uint64_t openingFingerprint(
         fingerprint.real(patch.sourceWallAreaSquareMeters);
         fingerprint.real(patch.sourceWallAreaFraction);
         fingerprint.real(patch.centerDistanceMeters);
+        fingerprint.boolean(patch.usesAuthoredCentroid);
         fingerprintVector(fingerprint, patch.wrappedCentroidMeters);
         fingerprintVector(
             fingerprint, patch.unitNormalNegativeToPositive);
@@ -214,6 +219,11 @@ std::uint64_t openingFingerprint(
         fingerprint.real(partition.openingAreaSquareMeters);
         fingerprint.real(partition.solidAreaSquareMeters);
         fingerprint.real(partition.openingAreaFraction);
+        fingerprint.boolean(partition.hasExactSubtileCentroids);
+        fingerprintVector(
+            fingerprint, partition.openingAreaWeightedCentroidMeters);
+        fingerprintVector(
+            fingerprint, partition.solidAreaWeightedCentroidMeters);
     }
     fingerprint.integer(static_cast<std::uint64_t>(
         openings.openings.size()));
@@ -289,7 +299,84 @@ WallKey wallKey(
             definition.i, definition.j, definition.k};
 }
 
+bool finiteVector(const Vector3& value) {
+    return std::isfinite(value.x) && std::isfinite(value.y)
+        && std::isfinite(value.z);
+}
+
+double coordinate(const Vector3& value, const GridFaceAxis axis) {
+    if (axis == GridFaceAxis::X) return value.x;
+    if (axis == GridFaceAxis::Y) return value.y;
+    return value.z;
+}
+
+Vector3 scaledVector(const Vector3& value, const double scale) {
+    return {value.x * scale, value.y * scale, value.z * scale};
+}
+
+Vector3 vectorSum(const Vector3& first, const Vector3& second) {
+    return {
+        first.x + second.x,
+        first.y + second.y,
+        first.z + second.z,
+    };
+}
+
+Vector3 vectorDifference(const Vector3& first, const Vector3& second) {
+    return {
+        first.x - second.x,
+        first.y - second.y,
+        first.z - second.z,
+    };
+}
+
+double maximumAbsoluteComponent(const Vector3& value) {
+    return std::max({
+        std::abs(value.x), std::abs(value.y), std::abs(value.z)});
+}
+
+double centroidTolerance(const PeriodicCartesianGrid& grid,
+                         const Vector3& first,
+                         const Vector3& second) {
+    const Vector3 spacing = grid.cellSpacingMeters();
+    return 4096.0 * std::numeric_limits<double>::epsilon()
+        * std::max({
+            std::abs(first.x), std::abs(first.y), std::abs(first.z),
+            std::abs(second.x), std::abs(second.y), std::abs(second.z),
+            spacing.x, spacing.y, spacing.z, 1.0});
+}
+
+void validateSubtileCentroid(
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionFragmentFaceLink& link,
+    const Vector3& centroid) {
+    if (!finiteVector(centroid)) {
+        throw std::invalid_argument(
+            "planar regional fragment-opening centroid is non-finite");
+    }
+    const Vector3 spacing = grid.cellSpacingMeters();
+    const double tolerance = centroidTolerance(
+        grid, centroid, link.wrappedCentroidMeters);
+    if (std::abs(coordinate(centroid, link.axis)
+                 - coordinate(link.wrappedCentroidMeters, link.axis))
+            > tolerance) {
+        throw std::invalid_argument(
+            "planar regional fragment-opening centroid is off its wall plane");
+    }
+    for (const auto axis : {
+             GridFaceAxis::X, GridFaceAxis::Y, GridFaceAxis::Z}) {
+        if (axis == link.axis) continue;
+        if (std::abs(coordinate(centroid, axis)
+                     - coordinate(link.wrappedCentroidMeters, axis))
+                > 0.5 * coordinate(spacing, axis) + tolerance) {
+            throw std::invalid_argument(
+                "planar regional fragment-opening centroid is outside its wall tile");
+        }
+    }
+}
+
 PlanarPressureRegionFragmentOpeningSet buildOpeningSet(
+    const PeriodicCartesianGrid& grid,
     const PlanarPressureRegionFragmentSet& fragments,
     const PlanarPressureRegionFragmentTopology& topology,
     const std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
@@ -409,6 +496,10 @@ PlanarPressureRegionFragmentOpeningSet buildOpeningSet(
             throw std::invalid_argument(
                 "planar regional fragment-opening patch is incompatible with its wall");
         }
+        if (definition.authoredWrappedCentroidMeters.has_value()) {
+            validateSubtileCentroid(
+                grid, link, *definition.authoredWrappedCentroidMeters);
+        }
         result.patches.push_back({
             result.patches.size(),
             definition.patchStableId,
@@ -432,7 +523,9 @@ PlanarPressureRegionFragmentOpeningSet buildOpeningSet(
             link.areaSquareMeters,
             definition.areaSquareMeters / link.areaSquareMeters,
             link.centerDistanceMeters,
-            link.wrappedCentroidMeters,
+            definition.authoredWrappedCentroidMeters.has_value(),
+            definition.authoredWrappedCentroidMeters.value_or(
+                link.wrappedCentroidMeters),
             link.unitNormalMinusToPlus,
         });
         result.totalOpeningAreaSquareMeters += definition.areaSquareMeters;
@@ -465,12 +558,21 @@ PlanarPressureRegionFragmentOpeningSet buildOpeningSet(
         partition.negativeSideRegionStableId = link.minusRegionStableId;
         partition.positiveSideRegionStableId = link.plusRegionStableId;
         partition.wallAreaSquareMeters = link.areaSquareMeters;
+        Vector3 openingFirstMoment;
+        bool allCentroidsAuthored = true;
         while (offset < partitionOrder.size()
                && result.patches[partitionOrder[offset]].sourceFaceLinkIndex
                    == link.linkIndex) {
+            const auto& patch = result.patches[partitionOrder[offset]];
             ++partition.openingPatchCount;
-            partition.openingAreaSquareMeters +=
-                result.patches[partitionOrder[offset]].areaSquareMeters;
+            partition.openingAreaSquareMeters += patch.areaSquareMeters;
+            openingFirstMoment = vectorSum(
+                openingFirstMoment,
+                scaledVector(
+                    patch.wrappedCentroidMeters,
+                    patch.areaSquareMeters));
+            allCentroidsAuthored =
+                allCentroidsAuthored && patch.usesAuthoredCentroid;
             ++offset;
         }
         if (partition.openingAreaSquareMeters
@@ -484,6 +586,40 @@ PlanarPressureRegionFragmentOpeningSet buildOpeningSet(
         partition.openingAreaFraction =
             partition.openingAreaSquareMeters
             / partition.wallAreaSquareMeters;
+        const Vector3 wallFirstMoment = scaledVector(
+            link.wrappedCentroidMeters,
+            partition.wallAreaSquareMeters);
+        if (allCentroidsAuthored) {
+            partition.openingAreaWeightedCentroidMeters = scaledVector(
+                openingFirstMoment,
+                1.0 / partition.openingAreaSquareMeters);
+            if (partition.solidAreaSquareMeters > 0.0) {
+                partition.solidAreaWeightedCentroidMeters = scaledVector(
+                    vectorDifference(wallFirstMoment, openingFirstMoment),
+                    1.0 / partition.solidAreaSquareMeters);
+                validateSubtileCentroid(
+                    grid, link,
+                    partition.solidAreaWeightedCentroidMeters);
+            } else {
+                const double tolerance = centroidTolerance(
+                    grid, link.wrappedCentroidMeters,
+                    partition.openingAreaWeightedCentroidMeters)
+                    * partition.wallAreaSquareMeters;
+                if (maximumAbsoluteComponent(vectorDifference(
+                        wallFirstMoment, openingFirstMoment)) > tolerance) {
+                    throw std::invalid_argument(
+                        "planar regional fragment-opening full-tile centroid does not close");
+                }
+                partition.solidAreaWeightedCentroidMeters =
+                    link.wrappedCentroidMeters;
+            }
+            partition.hasExactSubtileCentroids = true;
+        } else {
+            partition.openingAreaWeightedCentroidMeters =
+                link.wrappedCentroidMeters;
+            partition.solidAreaWeightedCentroidMeters =
+                link.wrappedCentroidMeters;
+        }
         result.totalTouchedWallAreaSquareMeters +=
             partition.wallAreaSquareMeters;
         result.totalSolidAreaOnTouchedWallsSquareMeters +=
@@ -652,7 +788,7 @@ buildPlanarPressureRegionFragmentOpenings(
     validatePlanarPressureRegionFragmentTopology(
         topology, grid, sweep, fragments, limits.topologyLimits);
     auto result = buildOpeningSet(
-        fragments, topology, definitions, limits);
+        grid, fragments, topology, definitions, limits);
     validatePlanarPressureRegionFragmentOpenings(
         result, grid, sweep, fragments, topology, definitions, limits);
     return result;
@@ -684,7 +820,7 @@ void validatePlanarPressureRegionFragmentOpenings(
         || openings.ownedStorageBytes != ownedStorageBytes(openings)
         || openings.fingerprint != openingFingerprint(openings)
         || openings != buildOpeningSet(
-                           fragments, topology, definitions, limits)) {
+                           grid, fragments, topology, definitions, limits)) {
         throw std::invalid_argument(
             "planar regional fragment-opening set is invalid");
     }

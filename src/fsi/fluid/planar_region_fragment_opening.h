@@ -4,13 +4,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
 namespace simwing::fsi::fluid {
 
 inline constexpr std::uint32_t
-    planarPressureRegionFragmentOpeningVersion = 1;
+    planarPressureRegionFragmentOpeningVersion = 2;
 
 struct PlanarPressureRegionFragmentOpeningPatchDefinition {
     std::uint64_t patchStableId = 0;
@@ -23,6 +24,9 @@ struct PlanarPressureRegionFragmentOpeningPatchDefinition {
     std::uint64_t negativeSideRegionStableId = 0;
     std::uint64_t positiveSideRegionStableId = 0;
     double areaSquareMeters = 0.0;
+    // Exact sub-tile centroid from the authoritative opening partition when
+    // available. An omitted centroid preserves the original area-only model.
+    std::optional<Vector3> authoredWrappedCentroidMeters;
 
     bool operator==(
         const PlanarPressureRegionFragmentOpeningPatchDefinition&) const =
@@ -52,6 +56,7 @@ struct PlanarPressureRegionFragmentOpeningPatch {
     double sourceWallAreaSquareMeters = 0.0;
     double sourceWallAreaFraction = 0.0;
     double centerDistanceMeters = 0.0;
+    bool usesAuthoredCentroid = false;
     Vector3 wrappedCentroidMeters;
     Vector3 unitNormalNegativeToPositive;
 
@@ -75,6 +80,9 @@ struct PlanarPressureRegionFragmentOpeningWallPartition {
     double openingAreaSquareMeters = 0.0;
     double solidAreaSquareMeters = 0.0;
     double openingAreaFraction = 0.0;
+    bool hasExactSubtileCentroids = false;
+    Vector3 openingAreaWeightedCentroidMeters;
+    Vector3 solidAreaWeightedCentroidMeters;
 
     bool operator==(
         const PlanarPressureRegionFragmentOpeningWallPartition&) const =
@@ -137,6 +145,10 @@ struct PlanarPressureRegionFragmentOpeningLimits {
 // connection. Multiple patches may share a tile or one opening, but one
 // opening must keep one surface, orientation, side-region pair, and pair of
 // base pressure components. Open area may never exceed the source wall area.
+// Optional authoritative wrapped patch centroids must lie on and inside their
+// wall tile. A fully centroid-authored partition derives the retained-solid
+// centroid by exact first-moment subtraction; area-only input retains the wall
+// centroid as an explicit compatibility model.
 //
 // The overlay also publishes the pressure-component union induced by those
 // apertures. It changes no source topology and owns no conductance, flux,

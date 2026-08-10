@@ -2451,10 +2451,15 @@ and splits each touched wall exactly into removed opening area and retained
 solid area. Force, time-integrated impulse, origin moment, and moving material
 work close independently per tile, authored surface, and globally; untouched
 tiles preserve the sealed handoff bit-exactly and a fully open tile has exact
-zero retained load. Since the opening contract currently authors area and wall
-identity but no separate sub-tile centroid, both fractions share the exact
-wall-tile centroid rather than inventing a moment arm. The ledger is immutable
-and completes the accepted-flow -> connected-pressure -> full-wall-load ->
+zero retained load. Opening patch definitions may additionally carry exact
+wrapped sub-tile centroids from the authoritative scene opening partition.
+When every patch on a partially open wall supplies one, the overlay closes the
+opening and retained-solid first moments to the full wall and the load ledger
+uses their distinct centroids for origin moments. Off-plane, out-of-tile, and
+physically impossible residual centroids reject. Area-only definitions remain
+compatible and deliberately share the wall centroid without claiming sub-tile
+geometry. The ledger is immutable and completes the accepted-flow ->
+connected-pressure -> full-wall-load ->
 retained-solid-load transaction. It does not apply Structure loads, replace the
 accepted regional endpoint, handle rebases, or enter a production worker.
 `planar_region_fragment_opening_load_state.*` supplies the atomic ownership

@@ -1901,9 +1901,11 @@ makes this a certified aerodynamic solver.
   but owns no velocity, momentum, opening link, or pressure solve.
 - `src/fsi/fluid/planar_region_fragment_opening.{h,cpp}` overlays immutable
   authored aperture patches on exact pressure-wall tiles. It partitions
-  touched wall area into open/solid ownership and publishes the deterministic
-  opening-connected union of sealed base components. It owns no conductance,
-  flux, velocity degree, pressure equation, load subtraction, or worker state.
+  touched wall area into open/solid ownership, optionally retains exact
+  authored sub-tile centroids with first-moment closure, and publishes the
+  deterministic opening-connected union of sealed base components. It owns no
+  conductance, flux, velocity degree, pressure equation, load subtraction, or
+  worker state.
 - `src/fsi/fluid/planar_region_fragment_opening_flux.{h,cpp}` assigns explicit
   stable-ID-keyed material-relative velocity and `area*velocity` flow to those
   patches. It publishes equal-and-opposite fragment/base/connected-component
@@ -1974,9 +1976,9 @@ makes this a certified aerodynamic solver.
   opt-in load-area counterpart. It binds the exact opening partitions to the
   composed pressure-wall load ledger, removes traction from aperture area,
   and retains force, impulse, origin moment, and material work only on the
-  solid tile remainder. Opening patches currently inherit the wall-tile
-  centroid, so sub-tile moment arms are deliberately not invented. It mutates
-  neither Structure nor worker state.
+  solid tile remainder. Fully authored sub-tile centroids produce distinct
+  opening/solid moment arms; the compatible area-only path deliberately uses
+  the wall centroid. It mutates neither Structure nor worker state.
 - `src/fsi/fluid/planar_region_fragment_opening_load_state.{h,cpp}` atomically
   owns the accepted aperture-flow continuation, opening-connected pressure,
   full-wall loads, and opening/solid load partition after recursively
@@ -2711,12 +2713,16 @@ fully open tile must retain exact zero solid load. Pressure traction itself is
 unchanged and remains jump/gauge based. Require authored/correction/total force
 splits, time-integrated impulse, origin moment, and moving material work to
 partition and aggregate per surface and globally on X/Y/Z. Multiple patches
-on one tile must canonicalize through the opening partition. Treat every patch
-centroid as the source wall-tile centroid until independent sub-tile geometry
-is authored; never invent a moment arm. Reject corrupt/foreign nested sources
-and tile/surface/owned/working/nested-opening limits. Do not infer sub-tile
-traction variation, Structure mutation, accepted-state replacement, rebase,
-or production selection.
+on one tile must canonicalize through the opening partition. When authored
+wrapped sub-tile centroids are present for every patch on a partial tile,
+require them to be finite, on the source wall plane, inside that tile, and to
+yield an in-tile retained-solid centroid through exact first-moment closure;
+use the distinct opening/solid centroids for moment arms. A full-tile authored
+opening must recover the source first moment. Preserve the area-only fallback
+at the wall centroid without claiming sub-tile geometry. Reject corrupt/
+foreign nested sources and tile/surface/owned/working/nested-opening limits.
+Do not infer sub-tile traction variation, Structure mutation, accepted-state
+replacement, rebase, or production selection.
 
 For `planar_region_fragment_opening_load_state.*`, require recursive integrity
 and full validation of its accepted-flow, connected-pressure, full-wall-load,

@@ -402,9 +402,14 @@ the open area, and retains those quantities plus origin moment on only the
 solid remainder. Untouched walls reproduce the sealed load bit-exactly, a
 fully open tile carries exact zero structural pressure load, and moving X/Y/Z
 fixtures close the removed-plus-solid force, impulse, moment, and work ledgers.
-The current aperture model authors area but no independent sub-tile centroid,
-so both fractions intentionally use the wall-tile centroid. This is immutable
-handoff data only; it neither mutates Structure nor selects a worker path. The
+An aperture patch may now carry the exact wrapped centroid from the existing
+scene opening partition. When every patch on a partially open tile supplies
+one, the ledger derives distinct opening and retained-solid centroids from
+first-moment closure and uses them for origin moments. Area-only callers remain
+compatible and intentionally use the wall-tile centroid without claiming
+sub-tile geometry. Off-plane, out-of-tile, and impossible retained centroids
+reject. This is immutable handoff data only; it neither mutates Structure nor
+selects a worker path. The
 opt-in aperture transaction therefore now has one complete immutable endpoint:
 accepted flow -> opening-connected total pressure -> full-wall load -> removed-
 aperture/retained-solid load. It does not yet distribute the retained load to

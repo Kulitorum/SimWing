@@ -208,7 +208,12 @@ void fingerprintTile(
     fingerprint.real(tile.openingAreaSquareMeters);
     fingerprint.real(tile.solidAreaSquareMeters);
     fingerprint.real(tile.openingAreaFraction);
+    fingerprint.boolean(tile.hasExactSubtileCentroids);
     fingerprintVector(fingerprint, tile.wrappedCentroidMeters);
+    fingerprintVector(
+        fingerprint, tile.openingAreaWeightedCentroidMeters);
+    fingerprintVector(
+        fingerprint, tile.solidAreaWeightedCentroidMeters);
     fingerprintVector(fingerprint, tile.unitNormalMinusToPlus);
     fingerprintVector(
         fingerprint, tile.authoredPressureTractionOnSheetPascals);
@@ -393,10 +398,13 @@ void addTileToSurface(
     addVector(
         surface.openingAreaWeightedCentroidMeters,
         scaledVector(
-            tile.wrappedCentroidMeters, tile.openingAreaSquareMeters));
+            tile.openingAreaWeightedCentroidMeters,
+            tile.openingAreaSquareMeters));
     addVector(
         surface.solidAreaWeightedCentroidMeters,
-        scaledVector(tile.wrappedCentroidMeters, tile.solidAreaSquareMeters));
+        scaledVector(
+            tile.solidAreaWeightedCentroidMeters,
+            tile.solidAreaSquareMeters));
     addVector(
         surface.openingRemovedAuthoredPressureForceOnSheetNewtons,
         tile.openingRemovedAuthoredPressureForceOnSheetNewtons);
@@ -574,13 +582,21 @@ PlanarPressureRegionFragmentOpeningSurfaceLoadLedger buildLedger(
         const auto work = partitionScalar(
             source.totalPressureWorkToSheetJoules,
             openingArea, solidArea, source.areaSquareMeters);
+        const bool exactSubtileCentroids = touched
+            && partition->hasExactSubtileCentroids;
+        const Vector3 openingCentroid = touched
+            ? partition->openingAreaWeightedCentroidMeters
+            : source.wrappedCentroidMeters;
+        const Vector3 solidCentroid = touched
+            ? partition->solidAreaWeightedCentroidMeters
+            : source.wrappedCentroidMeters;
         const Vector3 sourceMoment = crossProduct(
             source.wrappedCentroidMeters,
             source.totalPressureForceOnSheetNewtons);
         const Vector3 openingMoment = crossProduct(
-            source.wrappedCentroidMeters, total.opening);
+            openingCentroid, total.opening);
         const Vector3 solidMoment = crossProduct(
-            source.wrappedCentroidMeters, total.solid);
+            solidCentroid, total.solid);
         if (!finiteVector(authored.opening) || !finiteVector(authored.solid)
             || !finiteVector(correction.opening)
             || !finiteVector(correction.solid)
@@ -612,7 +628,10 @@ PlanarPressureRegionFragmentOpeningSurfaceLoadLedger buildLedger(
             openingArea,
             solidArea,
             openingFraction,
+            exactSubtileCentroids,
             source.wrappedCentroidMeters,
+            openingCentroid,
+            solidCentroid,
             source.unitNormalMinusToPlus,
             source.authoredPressureTractionOnSheetPascals,
             source.correctionPressureTractionOnSheetPascals,

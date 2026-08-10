@@ -5544,6 +5544,64 @@ void testPlanarRegionalFragmentProjectionEnergyAudit() {
         openingAdjustedLoads, surfaceLoads, pressureState, geometry, sweep,
         fragments, topology, loadOpening, loadOpenings);
 
+    auto centroidLoadOpening = loadOpening;
+    centroidLoadOpening[0].authoredWrappedCentroidMeters =
+        Vector3{-0.8, -0.75, -0.5};
+    const auto centroidLoadOpenings =
+        buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, centroidLoadOpening);
+    const auto centroidAdjustedLoads =
+        capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+            surfaceLoads, pressureState, geometry, sweep, fragments,
+            topology, centroidLoadOpening, centroidLoadOpenings);
+    const auto centroidAdjustedTile = std::ranges::find(
+        centroidAdjustedLoads.tiles,
+        centroidLoadOpenings.patches[0].sourceFaceLinkStableId,
+        &PlanarPressureRegionFragmentOpeningSurfaceLoadTile::
+            sourceFaceLinkStableId);
+    check(centroidAdjustedTile != centroidAdjustedLoads.tiles.end()
+              && centroidAdjustedTile->hasExactSubtileCentroids,
+          "opening-aware surface load retains exact sub-tile centroid provenance");
+    if (centroidAdjustedTile != centroidAdjustedLoads.tiles.end()) {
+        checkNear(
+            centroidAdjustedTile->openingAreaWeightedCentroidMeters.y,
+            -0.75, 0.0,
+            "opening-aware surface load retains the aperture centroid");
+        checkNear(
+            centroidAdjustedTile->solidAreaWeightedCentroidMeters.y,
+            -0.25, 0.0,
+            "opening-aware surface load derives the retained centroid");
+        const auto centroidCross = [](const Vector3& first,
+                                      const Vector3& second) {
+            return Vector3{
+                first.y * second.z - first.z * second.y,
+                first.z * second.x - first.x * second.z,
+                first.x * second.y - first.y * second.x,
+            };
+        };
+        const Vector3 expectedOpeningMoment = centroidCross(
+            centroidAdjustedTile->openingAreaWeightedCentroidMeters,
+            centroidAdjustedTile
+                ->openingRemovedTotalPressureForceOnSheetNewtons);
+        const Vector3 expectedSolidMoment = centroidCross(
+            centroidAdjustedTile->solidAreaWeightedCentroidMeters,
+            centroidAdjustedTile->solidTotalPressureForceOnSheetNewtons);
+        check(centroidAdjustedTile
+                      ->openingRemovedTotalPressureMomentOnSheetNewtonMeters
+                  == expectedOpeningMoment
+                  && centroidAdjustedTile
+                         ->solidTotalPressureMomentOnSheetNewtonMeters
+                      == expectedSolidMoment,
+              "opening-aware surface load uses distinct exact moment arms");
+    }
+    checkNear(
+        centroidAdjustedLoads.maximumAbsoluteMomentPartitionResidualNewtonMeters,
+        0.0, 3.0e-14,
+        "opening-aware exact centroid moments close to the source wall");
+    validatePlanarPressureRegionFragmentOpeningSurfaceLoads(
+        centroidAdjustedLoads, surfaceLoads, pressureState, geometry, sweep,
+        fragments, topology, centroidLoadOpening, centroidLoadOpenings);
+
     const std::vector<
         PlanarPressureRegionFragmentOpeningPatchDefinition> fullLoadOpening{
         {100, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 1.0},
@@ -7393,6 +7451,35 @@ void testPlanarRegionalFragmentOpeningTopology() {
     validatePlanarPressureRegionFragmentOpenings(
         opened, geometry, sweep, fragments, topology, single);
 
+    auto centroidAuthored = single;
+    centroidAuthored[0].authoredWrappedCentroidMeters =
+        Vector3{-0.8, -0.75, -0.5};
+    const auto centroidOpened = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, centroidAuthored);
+    check(centroidOpened.patches[0].usesAuthoredCentroid
+              && centroidOpened.patches[0].wrappedCentroidMeters
+                  == *centroidAuthored[0].authoredWrappedCentroidMeters
+              && centroidOpened.partitions[0].hasExactSubtileCentroids,
+          "regional fragment opening retains authored sub-tile centroid provenance");
+    checkNear(
+        centroidOpened.partitions[0]
+            .openingAreaWeightedCentroidMeters.y,
+        -0.75, 0.0,
+        "regional fragment opening retains exact aperture first moment");
+    checkNear(
+        centroidOpened.partitions[0]
+            .solidAreaWeightedCentroidMeters.y,
+        -0.25, 0.0,
+        "regional fragment opening derives exact retained-solid first moment");
+    checkNear(
+        centroidOpened.partitions[0]
+            .solidAreaWeightedCentroidMeters.z,
+        -0.5, 0.0,
+        "regional fragment opening preserves the unaffected centroid coordinate");
+    validatePlanarPressureRegionFragmentOpenings(
+        centroidOpened, geometry, sweep, fragments, topology,
+        centroidAuthored);
+
     std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition> multiple{
         {103, 2000, 20, GridFaceAxis::X, 1, 0, 1, 2, 1, 0.5},
         {102, 1000, 10, GridFaceAxis::X, 1, 1, 0, 1, 2, 0.25},
@@ -7543,6 +7630,34 @@ void testPlanarRegionalFragmentOpeningTopology() {
         [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
             geometry, sweep, fragments, topology, invalid)); },
         "regional fragment openings reject aggregate overfill on one wall");
+    invalid = centroidAuthored;
+    invalid[0].authoredWrappedCentroidMeters =
+        Vector3{-0.7, -0.75, -0.5};
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, invalid)); },
+        "regional fragment openings reject a centroid off its wall plane");
+    invalid = centroidAuthored;
+    invalid[0].authoredWrappedCentroidMeters =
+        Vector3{-0.8, 0.1, -0.5};
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, invalid)); },
+        "regional fragment openings reject a centroid outside its wall tile");
+    invalid = centroidAuthored;
+    invalid[0].areaSquareMeters = 0.9;
+    invalid[0].authoredWrappedCentroidMeters =
+        Vector3{-0.8, -0.9, -0.5};
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, invalid)); },
+        "regional fragment openings reject an impossible retained-solid centroid");
+    invalid = centroidAuthored;
+    invalid[0].areaSquareMeters = 1.0;
+    expectRejected(
+        [&] { static_cast<void>(buildPlanarPressureRegionFragmentOpenings(
+            geometry, sweep, fragments, topology, invalid)); },
+        "regional fragment openings reject a full-tile first-moment mismatch");
     invalid = multiple;
     invalid[2].openingStableId = 2000;
     expectRejected(

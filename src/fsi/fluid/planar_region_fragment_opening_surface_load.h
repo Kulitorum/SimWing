@@ -11,7 +11,7 @@
 namespace simwing::fsi::fluid {
 
 inline constexpr std::uint32_t
-    planarPressureRegionFragmentOpeningSurfaceLoadVersion = 1;
+    planarPressureRegionFragmentOpeningSurfaceLoadVersion = 2;
 
 struct PlanarPressureRegionFragmentOpeningSurfaceLoadTile {
     std::size_t tileIndex = 0;
@@ -30,7 +30,10 @@ struct PlanarPressureRegionFragmentOpeningSurfaceLoadTile {
     double openingAreaSquareMeters = 0.0;
     double solidAreaSquareMeters = 0.0;
     double openingAreaFraction = 0.0;
+    bool hasExactSubtileCentroids = false;
     Vector3 wrappedCentroidMeters;
+    Vector3 openingAreaWeightedCentroidMeters;
+    Vector3 solidAreaWeightedCentroidMeters;
     Vector3 unitNormalMinusToPlus;
     Vector3 authoredPressureTractionOnSheetPascals;
     Vector3 correctionPressureTractionOnSheetPascals;
@@ -97,11 +100,12 @@ struct PlanarPressureRegionFragmentOpeningSurfaceLoadLimits {
 
 // Opt-in conservative pressure-load area partition for an exact aperture
 // overlay. The source pressure traction is uniform on each regional wall tile.
-// Every opening patch currently inherits that tile's wrapped centroid, so the
-// opening-removed and retained-solid force, moment, impulse, and material work
-// are the exact area fractions of that finite-volume tile. A future sub-tile
-// opening centroid must be authored before this contract may claim a different
-// moment arm.
+// An opening patch may carry an exact wrapped sub-tile centroid from the
+// authoritative opening partition. When every patch on a partially open tile
+// does so, the opening and retained-solid first moments recover the source wall
+// first moment exactly and pressure moments use the corresponding distinct
+// centroids. The original area-only input remains supported and deliberately
+// falls back to the wall-tile centroid without claiming sub-tile geometry.
 //
 // This ledger mutates neither fluid nor Structure state and is not selected by
 // a production worker. It preserves the complete source tile set, including a
