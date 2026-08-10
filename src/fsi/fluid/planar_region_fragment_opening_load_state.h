@@ -67,6 +67,28 @@ struct PlanarPressureRegionFragmentOpeningLoadState {
         const PlanarPressureRegionFragmentOpeningLoadState&) const = default;
 };
 
+// Deterministically composes accepted opening flow through connected-gauge
+// pressure, full-wall loads, and retained-solid aperture partition before
+// capturing the same immutable load state exposed by the lower-level overload.
+[[nodiscard]] PlanarPressureRegionFragmentOpeningLoadState
+composePlanarPressureRegionFragmentOpeningLoadState(
+    const PlanarPressureRegionFragmentOpeningAcceptedState& acceptedState,
+    const PlanarPressureRegionFragmentOpeningPressureOperator& pressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator& basePressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    std::span<const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
+    std::span<const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        resistanceDefinitions,
+    const PlanarPressureRegionFragmentOpeningPressureStateSettings& settings =
+        {},
+    const PlanarPressureRegionFragmentOpeningLoadStateLimits& limits = {});
+
 [[nodiscard]] PlanarPressureRegionFragmentOpeningLoadState
 capturePlanarPressureRegionFragmentOpeningLoadState(
     const PlanarPressureRegionFragmentOpeningAcceptedState& acceptedState,

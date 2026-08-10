@@ -17,6 +17,7 @@
 #include "fluid/planar_region_fragment_opening_momentum_cycle_owner.h"
 #include "fluid/planar_region_fragment_opening_momentum_cycle_state.h"
 #include "fluid/planar_region_fragment_opening_momentum_cycle_state_persistence.h"
+#include "fluid/planar_region_fragment_opening_momentum_load_state.h"
 #include "fluid/planar_region_fragment_opening_momentum_pressure_epoch.h"
 #include "fluid/planar_region_fragment_opening_pressure_state.h"
 #include "fluid/planar_region_fragment_opening.h"
@@ -9874,6 +9875,82 @@ void testPlanarRegionalOpeningMomentumTransport() {
                   && restoredOwner.checkpoint()
                       == restoredBootstrapCycleState,
               "opening momentum-cycle owner transactionally restores SWRM state");
+        const auto transportedOpeningLoadState =
+            composePlanarPressureRegionFragmentOpeningMomentumLoadState(
+                restoredOwner.state(), predictionVolumeRates,
+                predictionMetric, warmPressureOperator,
+                warmBasePressureOperator, geometry, warmSweep,
+                warmFragments, warmTopology, warmVolumeRates,
+                definitions, warmOpenings, zeroResistance, warmMetric);
+        const auto repeatedTransportedOpeningLoadState =
+            composePlanarPressureRegionFragmentOpeningMomentumLoadState(
+                restoredOwner.state(), predictionVolumeRates,
+                predictionMetric, warmPressureOperator,
+                warmBasePressureOperator, geometry, warmSweep,
+                warmFragments, warmTopology, warmVolumeRates,
+                definitions, warmOpenings, zeroResistance, warmMetric);
+        check(transportedOpeningLoadState
+                      == repeatedTransportedOpeningLoadState
+                  && transportedOpeningLoadState.accepted
+                  && transportedOpeningLoadState.acceptedFlow
+                      == restoredOwner.state().acceptedState
+                  && transportedOpeningLoadState
+                         .sourceAcceptedStateFingerprint
+                      == restoredOwner.state().acceptedState.fingerprint
+                  && transportedOpeningLoadState
+                         .sourceVolumeRateFingerprint
+                      == warmVolumeRates.fingerprint
+                  && transportedOpeningLoadState
+                         .openingSurfaceLoads.accepted,
+              "restored transported cycle composes one deterministic retained-solid pressure-load endpoint");
+        validatePlanarPressureRegionFragmentOpeningLoadState(
+            transportedOpeningLoadState, warmPressureOperator,
+            warmBasePressureOperator, geometry, warmSweep, warmFragments,
+            warmTopology, warmVolumeRates, definitions, warmOpenings,
+            zeroResistance);
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    composePlanarPressureRegionFragmentOpeningMomentumLoadState(
+                        restoredOwner.state(), targetVolumeRates,
+                        predictionMetric, warmPressureOperator,
+                        warmBasePressureOperator, geometry, warmSweep,
+                        warmFragments, warmTopology, warmVolumeRates,
+                        definitions, warmOpenings, zeroResistance,
+                        warmMetric));
+            },
+            "transported opening-load composition rejects a foreign momentum-volume epoch");
+        auto transportedLoadLimits =
+            PlanarPressureRegionFragmentOpeningMomentumLoadStateLimits{};
+        transportedLoadLimits.loadState.maximumOwnedBytes =
+            transportedOpeningLoadState.ownedStorageBytes - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    composePlanarPressureRegionFragmentOpeningMomentumLoadState(
+                        restoredOwner.state(), predictionVolumeRates,
+                        predictionMetric, warmPressureOperator,
+                        warmBasePressureOperator, geometry, warmSweep,
+                        warmFragments, warmTopology, warmVolumeRates,
+                        definitions, warmOpenings, zeroResistance,
+                        warmMetric, {}, transportedLoadLimits));
+            },
+            "transported opening-load composition enforces aggregate load storage limits");
+        transportedLoadLimits = {};
+        transportedLoadLimits.cycleState.transport.maximumFragments =
+            restoredOwner.state().transport.controls.size() - 1;
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    composePlanarPressureRegionFragmentOpeningMomentumLoadState(
+                        restoredOwner.state(), predictionVolumeRates,
+                        predictionMetric, warmPressureOperator,
+                        warmBasePressureOperator, geometry, warmSweep,
+                        warmFragments, warmTopology, warmVolumeRates,
+                        definitions, warmOpenings, zeroResistance,
+                        warmMetric, {}, transportedLoadLimits));
+            },
+            "transported opening-load composition enforces source-state limits");
 
         const auto expectCycleStatePersistenceRejected =
             [&](const std::vector<std::uint8_t>& candidateBytes,
@@ -10085,6 +10162,20 @@ void testPlanarRegionalOpeningMomentumTransport() {
                   && restoredOwner.state().acceptedState
                       == postBootstrapCycle.acceptedState,
               "opening momentum-cycle owner atomically replaces bootstrap with the repeated cycle");
+        const auto fourthTransportedOpeningLoadState =
+            composePlanarPressureRegionFragmentOpeningMomentumLoadState(
+                restoredOwner.state(), warmVolumeRates, warmMetric,
+                fourthPressureOperator, fourthBasePressureOperator,
+                geometry, fourthSweep, fourthFragments, fourthTopology,
+                fourthVolumeRates, definitions, fourthOpenings,
+                zeroResistance, fourthMetric);
+        check(fourthTransportedOpeningLoadState.accepted
+                  && fourthTransportedOpeningLoadState.acceptedFlow
+                      == postBootstrapCycle.acceptedState
+                  && fourthTransportedOpeningLoadState
+                         .sourceVolumeRateFingerprint
+                      == fourthVolumeRates.fingerprint,
+              "repeated owner state composes the consecutive fourth-geometry load endpoint");
         std::vector<double> nonuniformNormal(
             sourceMetric.dofs.size(), 0.0);
         std::vector<double> nonuniformMaterial(
@@ -11222,6 +11313,18 @@ void testPlanarRegionalOpeningMomentumTransport() {
                     corruptCapturedCycleState);
             },
             "opening momentum-cycle restart state rejects nested endpoint corruption");
+        expectRejected(
+            [&] {
+                static_cast<void>(
+                    composePlanarPressureRegionFragmentOpeningMomentumLoadState(
+                        corruptCapturedCycleState, predictionVolumeRates,
+                        predictionMetric, warmPressureOperator,
+                        warmBasePressureOperator, geometry, warmSweep,
+                        warmFragments, warmTopology, warmVolumeRates,
+                        definitions, warmOpenings, zeroResistance,
+                        warmMetric));
+            },
+            "transported opening-load composition rejects corrupt cycle state");
         expectRejected(
             [&] {
                 static_cast<void>(
@@ -12936,7 +13039,13 @@ void testPlanarRegionalResistedOpeningPressureStep() {
             openingAdjustedSurfaceLoads, pressureOperator, base, geometry,
             sweep, fragments, topology, volumeRates, definitions, openings,
             resistance);
+    const auto composedOpeningLoadState =
+        composePlanarPressureRegionFragmentOpeningLoadState(
+            acceptedState, pressureOperator, base, geometry, sweep,
+            fragments, topology, volumeRates, definitions, openings,
+            resistance);
     check(openingLoadState == repeatedOpeningLoadState
+              && composedOpeningLoadState == openingLoadState
               && openingLoadState.version
                   == planarPressureRegionFragmentOpeningLoadStateVersion
               && openingLoadState.fingerprint != 0

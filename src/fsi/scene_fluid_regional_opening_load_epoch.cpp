@@ -133,49 +133,6 @@ std::uint64_t epochFingerprint(
     return fingerprint.value();
 }
 
-fluid::PlanarPressureRegionFragmentOpeningLoadState buildLoadState(
-    const fluid::PlanarPressureRegionFragmentOpeningAcceptedState&
-        acceptedState,
-    const fluid::PlanarPressureRegionFragmentOpeningPressureOperator&
-        pressureOperator,
-    const fluid::PlanarPressureRegionFragmentPressureOperator&
-        basePressureOperator,
-    const fluid::PeriodicCartesianGrid& grid,
-    const fluid::PlanarPressureRegionSweepLedger& sweep,
-    const fluid::PlanarPressureRegionFragmentSet& fragments,
-    const fluid::PlanarPressureRegionFragmentTopology& topology,
-    const fluid::PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
-    const std::span<
-        const fluid::PlanarPressureRegionFragmentOpeningPatchDefinition>
-        openingDefinitions,
-    const fluid::PlanarPressureRegionFragmentOpeningSet& openings,
-    const std::span<
-        const fluid::PlanarPressureRegionFragmentOpeningResistanceDefinition>
-        resistanceDefinitions,
-    const SceneFluidRegionalOpeningLoadEpochSettings& settings,
-    const SceneFluidRegionalOpeningLoadEpochLimits& limits) {
-    const auto pressure =
-        fluid::composePlanarPressureRegionFragmentOpeningPressureState(
-            acceptedState, pressureOperator, basePressureOperator, grid,
-            sweep, fragments, topology, volumeRates, openingDefinitions,
-            openings, resistanceDefinitions, settings.pressureState,
-            limits.loadState.pressureStateLimits);
-    const auto surfaceLoads =
-        fluid::capturePlanarPressureRegionFragmentSurfaceLoads(
-            pressure,
-            limits.loadState.surfaceLoadLimits.surfaceLoadLimits);
-    const auto openingSurfaceLoads =
-        fluid::capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
-            surfaceLoads, pressure, grid, sweep, fragments, topology,
-            openingDefinitions, openings,
-            limits.loadState.surfaceLoadLimits);
-    return fluid::capturePlanarPressureRegionFragmentOpeningLoadState(
-        acceptedState, pressure, surfaceLoads, openingSurfaceLoads,
-        pressureOperator, basePressureOperator, grid, sweep, fragments,
-        topology, volumeRates, openingDefinitions, openings,
-        resistanceDefinitions, limits.loadState);
-}
-
 void validateAggregateLimits(
     const SceneFluidRegionalOpeningLoadEpoch& epoch,
     const SceneFluidRegionalOpeningLoadEpochLimits& limits) {
@@ -216,10 +173,11 @@ applySceneFluidRegionalOpeningLoadEpoch(
     const SceneFluidRegionalOpeningLoadEpochSettings& settings,
     const SceneFluidRegionalOpeningLoadEpochLimits& limits) {
     validateLimits(limits);
-    auto loadState = buildLoadState(
+    auto loadState =
+        fluid::composePlanarPressureRegionFragmentOpeningLoadState(
         acceptedState, pressureOperator, basePressureOperator, grid, sweep,
         fragments, topology, volumeRates, openingDefinitions, openings,
-        resistanceDefinitions, settings, limits);
+        resistanceDefinitions, settings.pressureState, limits.loadState);
     auto samples = sampleSceneFluidRegionalOpeningPressure(
         loadState, pressureOperator, basePressureOperator, grid, sweep,
         fragments, topology, volumeRates, openingDefinitions, openings,
@@ -394,10 +352,11 @@ void validateSceneFluidRegionalOpeningLoadEpoch(
     }
     validateAggregateLimits(epoch, limits);
 
-    const auto expectedLoadState = buildLoadState(
+    const auto expectedLoadState =
+        fluid::composePlanarPressureRegionFragmentOpeningLoadState(
         acceptedState, pressureOperator, basePressureOperator, grid, sweep,
         fragments, topology, volumeRates, openingDefinitions, openings,
-        resistanceDefinitions, settings, limits);
+        resistanceDefinitions, settings.pressureState, limits.loadState);
     if (epoch.loadState != expectedLoadState) {
         throw std::invalid_argument(
             "regional opening load epoch changed its load state");

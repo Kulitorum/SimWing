@@ -2074,7 +2074,15 @@ makes this a certified aerodynamic solver.
   full-wall loads, and opening/solid load partition after recursively
   validating their exact lineage. It exposes bounded full/removed/solid area,
   force, impulse, origin moment, and material-work totals but performs no scene
-  mapping, Structure mutation, or worker selection.
+  mapping, Structure mutation, or worker selection. Its public composing
+  overload is the single deterministic pressure-to-retained-solid pipeline
+  shared by direct fluid callers and the scene load epoch.
+- `src/fsi/fluid/planar_region_fragment_opening_momentum_load_state.{h,cpp}`
+  binds the accepted cycle pair to that load pipeline. It first validates exact
+  collocated transport against the current metric/volume epoch and accepted
+  pressure against the consecutive next epoch, then composes the existing
+  opening load state from the accepted half. It applies no Structure load and
+  adds no viscosity, wall shear, rebase, or production selection.
 - `src/fsi/fluid/planar_region_fragment_volume_rate.{h,cpp}` reconstructs
   topology-stable previous volume and constant geometry `dV/dt` for every
   current regional fragment from its layer-boundary displacements. It closes
@@ -3004,6 +3012,15 @@ owned bytes in one overflow-safe aggregate limit. Reject nested or aggregate
 corruption, mixed accepted-flow/pressure lineage, foreign sources, and nested
 limits. Do not infer scene quadrature mapping, Structure application,
 checkpoint persistence, rebase, or production ownership.
+
+For `planar_region_fragment_opening_momentum_load_state.*`, validate the whole
+accepted cycle state against its exact transport-volume/current-metric and
+accepted-pressure/next-metric sources before composing any load. The returned
+opening load state must retain the cycle's accepted pressure endpoint exactly
+and match the shared manual/scene composition bit-for-bit. Preserve rejection
+of foreign current volume epochs, cycle corruption, and both source-state and
+load-state limits. Do not apply Structure traction or infer viscosity, wall
+shear, rebase, or production selection from this adapter.
 
 For `planar_region_fragment_accepted_state.*`, require the pressure state to
 name the exact projected after-state and require all three nested products to

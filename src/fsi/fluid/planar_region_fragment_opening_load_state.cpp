@@ -262,6 +262,45 @@ PlanarPressureRegionFragmentOpeningLoadState buildState(
 } // namespace
 
 PlanarPressureRegionFragmentOpeningLoadState
+composePlanarPressureRegionFragmentOpeningLoadState(
+    const PlanarPressureRegionFragmentOpeningAcceptedState& acceptedState,
+    const PlanarPressureRegionFragmentOpeningPressureOperator& pressureOperator,
+    const PlanarPressureRegionFragmentPressureOperator& basePressureOperator,
+    const PeriodicCartesianGrid& grid,
+    const PlanarPressureRegionSweepLedger& sweep,
+    const PlanarPressureRegionFragmentSet& fragments,
+    const PlanarPressureRegionFragmentTopology& topology,
+    const PlanarPressureRegionFragmentVolumeRateSet& volumeRates,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningPatchDefinition>
+        openingDefinitions,
+    const PlanarPressureRegionFragmentOpeningSet& openings,
+    const std::span<
+        const PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        resistanceDefinitions,
+    const PlanarPressureRegionFragmentOpeningPressureStateSettings& settings,
+    const PlanarPressureRegionFragmentOpeningLoadStateLimits& limits) {
+    const auto pressure =
+        composePlanarPressureRegionFragmentOpeningPressureState(
+            acceptedState, pressureOperator, basePressureOperator, grid,
+            sweep, fragments, topology, volumeRates, openingDefinitions,
+            openings, resistanceDefinitions, settings,
+            limits.pressureStateLimits);
+    const auto surfaceLoads =
+        capturePlanarPressureRegionFragmentSurfaceLoads(
+            pressure, limits.surfaceLoadLimits.surfaceLoadLimits);
+    const auto openingSurfaceLoads =
+        capturePlanarPressureRegionFragmentOpeningSurfaceLoads(
+            surfaceLoads, pressure, grid, sweep, fragments, topology,
+            openingDefinitions, openings, limits.surfaceLoadLimits);
+    return capturePlanarPressureRegionFragmentOpeningLoadState(
+        acceptedState, pressure, surfaceLoads, openingSurfaceLoads,
+        pressureOperator, basePressureOperator, grid, sweep, fragments,
+        topology, volumeRates, openingDefinitions, openings,
+        resistanceDefinitions, limits);
+}
+
+PlanarPressureRegionFragmentOpeningLoadState
 capturePlanarPressureRegionFragmentOpeningLoadState(
     const PlanarPressureRegionFragmentOpeningAcceptedState& acceptedState,
     const PlanarPressureRegionFragmentOpeningPressureState& pressureState,

@@ -2621,6 +2621,23 @@ the fourth geometry, commits that repeated pair, and proves both failed-cycle
 commit and corrupt-state restore leave it bit-exact. The owner does not build
 geometry, choose solver settings or retry policy, perform persistence I/O,
 rebase topology, or opt the production worker into this path.
+`planar_region_fragment_opening_load_state.*` now also exposes its established
+pressure-to-load construction as one public deterministic composer. It is the
+same connected-gauge pressure, full-wall load, exact aperture subtraction, and
+retained-solid capture sequence previously private to the scene load epoch;
+that epoch now delegates to the shared function without changing arithmetic.
+`planar_region_fragment_opening_momentum_load_state.*` supplies the narrow
+transported-cycle adapter above it. Before any load is built, the exact
+collocated controls must validate against their current volume-rate and
+opening-aware metric epoch, while accepted pressure must validate against the
+consecutive next operator/geometry/opening/metric epoch. Only then does the
+shared composer publish a recursively certified opening load state whose
+accepted-flow fingerprint is the cycle endpoint. A restored bootstrap and its
+repeated fourth-geometry owner state each produce deterministic retained-solid
+loads; foreign transport volume provenance, corrupted cycle state, and nested
+source/load limits reject. The adapter mutates neither Structure nor cycle
+state and still adds no viscous/wall-shear load, topology rebase, or production
+worker selection.
 `planar_region_fragment_opening_pressure_epoch.*` composes that warm product
 with the existing resistance-plus-augmented-projection transaction. It builds
 all four mutable fields privately, advances them together, and captures a new
