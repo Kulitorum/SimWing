@@ -441,6 +441,8 @@ add_library(simwing_scene_fluid_cell_volume STATIC
     src/fsi/scene_fluid_regional_opening_momentum_wall_cycle_state_persistence.h
     src/fsi/scene_fluid_regional_opening_momentum_wall_cycle_owner.cpp
     src/fsi/scene_fluid_regional_opening_momentum_wall_cycle_owner.h
+    src/fsi/scene_fluid_regional_opening_momentum_wall_load_application.cpp
+    src/fsi/scene_fluid_regional_opening_momentum_wall_load_application.h
     src/fsi/scene_fluid_regional_opening_momentum_wall_input.cpp
     src/fsi/scene_fluid_regional_opening_momentum_wall_input.h
     src/fsi/scene_fluid_wall_exchange_kernel.cpp

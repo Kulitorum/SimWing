@@ -2211,6 +2211,12 @@ makes this a certified aerodynamic solver.
   checksummed little-endian `SWRW` envelope: adjusted controls and conservative
   traction are primary wire data, while accepted pressure remains nested
   `SWRO`. This remains opt-in and is not a production owner.
+- `src/fsi/scene_fluid_regional_opening_momentum_wall_load_application.{h,cpp}`
+  is the first Structure-facing consumer of that compact state. It requires
+  the retained wall traction integrated over the adjustment time step to close
+  equal-and-opposite to the exact adjusted fluid impulse before transactionally
+  adding replayable nodal wall loads to existing pending Structure loads. It
+  applies neither the retained pressure endpoint nor an XPBD step.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -3225,6 +3231,24 @@ publication. Cover deterministic bit-exact round trip, restored next-transport
 replay, foreign pressure/quadrature sources, checksum and recomputed-checksum
 corruption, truncation, trailing data, record/byte limits, and retained decode/
 encode destinations. Do not modify the established `SWRM` wire contract.
+
+For `scene_fluid_regional_opening_momentum_wall_load_application.*`, fully
+validate the compact cycle state against live transport/accepted metrics,
+pressure geometry/operator/opening/resistance, and quadrature before evaluating
+its retained wall traction through the exact scene surface transfer. Require
+the integrated Structure wall impulse over the adjustment time step to close
+equal-and-opposite to the retained fluid adjustment impulse under explicit
+bounded tolerances. Bind the cycle/adjustment/traction/exchange, quadrature,
+surface-state, transfer, target, settings, and Structure epoch fingerprints;
+record every prior/applied/resulting nodal pending force. Construct all source,
+transfer, action/reaction, limit, and expected-pending data before mutation,
+then checkpoint Structure and restore it on any post-application failure. Full
+validation must re-evaluate the transfer and every applied node load. Cover a
+restored `SWRW` state, deterministic rebuilt-target replay, nonzero load and
+action/reaction closure, corrupt nodal data, foreign settings/quadrature, and
+limit rejection with an unchanged Structure checkpoint. Apply wall traction
+only: do not apply pressure, step XPBD, consume pending loads, persist the
+application, or enable a worker.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

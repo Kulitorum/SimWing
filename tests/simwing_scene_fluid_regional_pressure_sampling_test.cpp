@@ -19,6 +19,7 @@
 #include "scene_fluid_regional_opening_momentum_wall_cycle_owner.h"
 #include "scene_fluid_regional_opening_momentum_wall_cycle_state_persistence.h"
 #include "scene_fluid_regional_opening_momentum_wall_input.h"
+#include "scene_fluid_regional_opening_momentum_wall_load_application.h"
 #include "scene_fluid_regional_opening_momentum_wall_pressure_epoch.h"
 
 #include <algorithm>
@@ -753,6 +754,45 @@ SceneFluidRegionalOpeningMomentumWallInput captureOpeningMomentumWallInput(
         endpoint.openingDefinitions, endpoint.openings,
         endpoint.resistanceDefinitions, endpoint.baseMetric,
         endpoint.openingMetric, scene.surface.definition, scene.state,
+        scene.quadrature, settings, limits);
+}
+
+SceneFluidRegionalOpeningMomentumWallLoadApplication
+applyOpeningMomentumWallLoads(
+    const SceneFluidRegionalOpeningMomentumWallCycleState& cycleState,
+    const OpeningRegionalEndpoint& endpoint,
+    SceneFixture& scene,
+    const SceneFluidRegionalOpeningMomentumWallLoadApplicationSettings&
+        settings = {},
+    const SceneFluidRegionalOpeningMomentumWallLoadApplicationLimits& limits =
+        {}) {
+    return applySceneFluidRegionalOpeningMomentumWallLoads(
+        cycleState, endpoint.openingMetric, endpoint.pressureOperator,
+        endpoint.basePressureOperator, endpoint.geometry, endpoint.sweep,
+        endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric, scene.state, scene.transfer,
+        scene.quadrature, scene.structure, settings, limits);
+}
+
+void validateOpeningMomentumWallLoads(
+    const SceneFluidRegionalOpeningMomentumWallLoadApplication& application,
+    const SceneFluidRegionalOpeningMomentumWallCycleState& cycleState,
+    const OpeningRegionalEndpoint& endpoint,
+    const SceneFixture& scene,
+    const SceneFluidRegionalOpeningMomentumWallLoadApplicationSettings&
+        settings = {},
+    const SceneFluidRegionalOpeningMomentumWallLoadApplicationLimits& limits =
+        {}) {
+    validateSceneFluidRegionalOpeningMomentumWallLoadApplication(
+        application, cycleState, endpoint.openingMetric,
+        endpoint.pressureOperator, endpoint.basePressureOperator,
+        endpoint.geometry, endpoint.sweep, endpoint.fragments,
+        endpoint.topology, endpoint.volumeRates,
+        endpoint.openingDefinitions, endpoint.openings,
+        endpoint.resistanceDefinitions, endpoint.baseMetric,
+        endpoint.openingMetric, scene.state, scene.transfer,
         scene.quadrature, settings, limits);
 }
 
@@ -2332,6 +2372,105 @@ void testOpeningMomentumWallExchange() {
     check(restoredWallCycleOwner.state() == wallCycleState
               && restoredNextTransport == adjustedNextTransport,
           "regional opening wall-cycle owner: restored endpoint replays the exact next transport");
+
+    SceneFixture wallLoadFixture(partialOpeningPressureScene(), false);
+    const auto beforeWallLoad = wallLoadFixture.structure.checkpoint();
+    const auto wallLoadApplication = applyOpeningMomentumWallLoads(
+        decodedWallCycleState, endpoint, wallLoadFixture);
+    validateOpeningMomentumWallLoads(
+        wallLoadApplication, decodedWallCycleState, endpoint,
+        wallLoadFixture);
+    const auto afterWallLoad = wallLoadFixture.structure.checkpoint();
+    const auto& actionReactionResidual =
+        wallLoadApplication
+            .actionReactionResidualKilogramMetersPerSecond;
+    check(wallLoadApplication.applied
+              && wallLoadApplication.sourceCycleStateFingerprint
+                  == decodedWallCycleState.fingerprint
+              && wallLoadApplication.sourceWallTractionFingerprint
+                  == decodedWallCycleState.wallTractions.fingerprint
+              && wallLoadApplication.nodeLoads.size()
+                  == wallLoadFixture.transfer.nodes().size()
+              && (std::abs(
+                      wallLoadApplication.appliedWallForceNewtons.x)
+                      > 0.0
+                  || std::abs(
+                      wallLoadApplication.appliedWallForceNewtons.y)
+                      > 0.0
+                  || std::abs(
+                      wallLoadApplication.appliedWallForceNewtons.z)
+                      > 0.0)
+              && std::abs(actionReactionResidual.x) < 1.0e-12
+              && std::abs(actionReactionResidual.y) < 1.0e-12
+              && std::abs(actionReactionResidual.z) < 1.0e-12
+              && afterWallLoad.pendingExternalForcesNewtons
+                  != beforeWallLoad.pendingExternalForcesNewtons
+              && afterWallLoad.nodes == beforeWallLoad.nodes
+              && afterWallLoad.lastAppliedExternalForceNewtons
+                  == beforeWallLoad.lastAppliedExternalForceNewtons,
+          "regional opening wall-load application: restored SWRW traction closes action/reaction and changes only pending loads");
+
+    SceneFixture repeatedWallLoadFixture(
+        partialOpeningPressureScene(), false);
+    const auto repeatedWallLoadApplication =
+        applyOpeningMomentumWallLoads(
+            decodedWallCycleState, endpoint, repeatedWallLoadFixture);
+    check(repeatedWallLoadApplication == wallLoadApplication,
+          "regional opening wall-load application: rebuilt target replay is deterministic");
+
+    auto corruptWallLoadApplication = wallLoadApplication;
+    corruptWallLoadApplication.nodeLoads.front()
+        .appliedWallForceNewtons.x += 1.0;
+    expectRejected(
+        [&] {
+            validateSceneFluidRegionalOpeningMomentumWallLoadApplicationIntegrity(
+                corruptWallLoadApplication);
+        },
+        "regional opening wall-load application: corrupt nodal force rejects");
+    auto foreignWallLoadSettings =
+        SceneFluidRegionalOpeningMomentumWallLoadApplicationSettings{};
+    foreignWallLoadSettings.transfer.momentReferenceMeters.x = 0.25;
+    expectRejected(
+        [&] {
+            validateOpeningMomentumWallLoads(
+                wallLoadApplication, decodedWallCycleState, endpoint,
+                wallLoadFixture, foreignWallLoadSettings);
+        },
+        "regional opening wall-load application: foreign settings reject replay");
+
+    SceneFixture limitedWallLoadFixture(
+        partialOpeningPressureScene(), false);
+    const auto beforeLimitedWallLoad =
+        limitedWallLoadFixture.structure.checkpoint();
+    auto wallLoadLimits =
+        SceneFluidRegionalOpeningMomentumWallLoadApplicationLimits{};
+    wallLoadLimits.maximumNodeLoads =
+        wallLoadApplication.nodeLoads.size() - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(applyOpeningMomentumWallLoads(
+                decodedWallCycleState, endpoint, limitedWallLoadFixture,
+                {}, wallLoadLimits));
+        },
+        "regional opening wall-load application: node-load limit rejects before mutation");
+    check(samePublicCheckpoint(
+              beforeLimitedWallLoad,
+              limitedWallLoadFixture.structure.checkpoint()),
+          "regional opening wall-load application: limit rejection retains Structure checkpoint");
+
+    const auto beforeForeignWallLoad =
+        foreignWallCycleFixture.structure.checkpoint();
+    expectRejected(
+        [&] {
+            static_cast<void>(applyOpeningMomentumWallLoads(
+                decodedWallCycleState, endpoint,
+                foreignWallCycleFixture));
+        },
+        "regional opening wall-load application: foreign scene quadrature rejects before mutation");
+    check(samePublicCheckpoint(
+              beforeForeignWallLoad,
+              foreignWallCycleFixture.structure.checkpoint()),
+          "regional opening wall-load application: foreign-source rejection retains Structure checkpoint");
 
     const auto rejectingLayers = translatePlanarPressureJumpLayers(
         endpoint.geometry, endpoint.layers, 0.1).layers;

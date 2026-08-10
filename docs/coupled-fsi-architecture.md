@@ -441,6 +441,7 @@ src/fsi/
     scene_fluid_regional_opening_momentum_wall_cycle_state.* compact accepted staggered endpoint
     scene_fluid_regional_opening_momentum_wall_cycle_state_persistence.* opt-in SWRW restart codec
     scene_fluid_regional_opening_momentum_wall_cycle_owner.* transactional in-memory owner
+    scene_fluid_regional_opening_momentum_wall_load_application.* conservative Structure wall-load receipt
     scene_fluid_region_link_flow.* current-link region predictor
     scene_fluid_pressure_coupling.* strong pressure/shear feedback
     scene_pressure_cell_geometry.* shared visible/refinement tetrahedra
@@ -2972,6 +2973,19 @@ or quadrature sources, checksum and semantic corruption, truncation, trailing
 data, and record/byte limits retain the destination transactionally. The codec
 does not apply traction or step Structure and is not selected by the production
 worker.
+`scene_fluid_regional_opening_momentum_wall_load_application.*` is the first
+Structure-facing consumer of the restored wall-cycle endpoint. It fully
+revalidates the compact state against live fluid and scene sources, evaluates
+the retained traction through the exact quadrature transfer, and requires its
+integrated Structure impulse over the adjustment step to close
+equal-and-opposite to the retained fluid momentum adjustment before mutation.
+One Structure checkpoint surrounds the conservative nodal addition and every
+prior, applied, and resulting pending force is retained for deterministic replay
+validation. A rebuilt target fed by `SWRW` produces the identical receipt;
+corrupt node loads, foreign settings or quadrature, and count limits reject
+without changing Structure. This intentionally applies wall shear only: the
+accepted pressure half is not yet applied in the same transaction, pending
+loads are not consumed, XPBD is not stepped, and no worker selects the path.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
