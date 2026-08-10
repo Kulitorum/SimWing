@@ -600,6 +600,8 @@ add_library(simwing_fluid STATIC
     src/fsi/fluid/planar_region_fragment_opening_momentum_prediction.h
     src/fsi/fluid/planar_region_fragment_opening_momentum_cycle.cpp
     src/fsi/fluid/planar_region_fragment_opening_momentum_cycle.h
+    src/fsi/fluid/planar_region_fragment_opening_momentum_cycle_owner.cpp
+    src/fsi/fluid/planar_region_fragment_opening_momentum_cycle_owner.h
     src/fsi/fluid/planar_region_fragment_opening_momentum_cycle_state.cpp
     src/fsi/fluid/planar_region_fragment_opening_momentum_cycle_state.h
     src/fsi/fluid/planar_region_fragment_opening_momentum_cycle_state_persistence.cpp

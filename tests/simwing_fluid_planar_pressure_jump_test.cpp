@@ -14,6 +14,7 @@
 #include "fluid/planar_region_fragment_opening_momentum_transport.h"
 #include "fluid/planar_region_fragment_opening_momentum_prediction.h"
 #include "fluid/planar_region_fragment_opening_momentum_cycle.h"
+#include "fluid/planar_region_fragment_opening_momentum_cycle_owner.h"
 #include "fluid/planar_region_fragment_opening_momentum_cycle_state.h"
 #include "fluid/planar_region_fragment_opening_momentum_cycle_state_persistence.h"
 #include "fluid/planar_region_fragment_opening_momentum_pressure_epoch.h"
@@ -9851,6 +9852,29 @@ void testPlanarRegionalOpeningMomentumTransport() {
                   && restoredCycleStateBytes == cycleStateBytes,
               "opening momentum-cycle restart round trips bit-exactly");
 
+        PlanarPressureRegionFragmentOpeningMomentumCycleOwner cycleOwner;
+        check(!cycleOwner.hasState(),
+              "opening momentum-cycle owner starts without an accepted pair");
+        expectRejected(
+            [&] { static_cast<void>(cycleOwner.checkpoint()); },
+            "opening momentum-cycle owner rejects an empty checkpoint");
+        check(cycleOwner.tryCommit(
+                  bootstrapMomentumCycle, predictionMetric, warmMetric)
+                  && cycleOwner.hasState()
+                  && cycleOwner.checkpoint() == bootstrapCycleState,
+              "opening momentum-cycle owner atomically commits bootstrap");
+        PlanarPressureRegionFragmentOpeningMomentumCycleOwner restoredOwner;
+        restoredOwner.restore(
+            restoredBootstrapCycleState, predictionVolumeRates,
+            predictionMetric, warmPressureOperator,
+            warmBasePressureOperator, geometry, warmSweep, warmFragments,
+            warmTopology, warmVolumeRates, definitions, warmOpenings,
+            zeroResistance, warmMetric);
+        check(restoredOwner.hasState()
+                  && restoredOwner.checkpoint()
+                      == restoredBootstrapCycleState,
+              "opening momentum-cycle owner transactionally restores SWRM state");
+
         const auto expectCycleStatePersistenceRejected =
             [&](const std::vector<std::uint8_t>& candidateBytes,
                 const PlanarPressureRegionFragmentOpeningMomentumCycleStatePersistenceErrorCode
@@ -10013,8 +10037,8 @@ void testPlanarRegionalOpeningMomentumTransport() {
                 fourthOpenings);
         const auto postBootstrapCycle =
             advancePlanarPressureRegionFragmentOpeningMomentumCycle(
-                restoredBootstrapCycleState.transport, predictionMetric,
-                restoredBootstrapCycleState.acceptedState,
+                restoredOwner.state().transport, predictionMetric,
+                restoredOwner.state().acceptedState,
                 warmPressureOperator, warmBasePressureOperator, geometry,
                 warmSweep, warmFragments, warmTopology, warmVolumeRates,
                 definitions, warmOpenings, zeroResistance, warmBaseMetric,
@@ -10044,8 +10068,8 @@ void testPlanarRegionalOpeningMomentumTransport() {
                       "post-bootstrap cycle preserves uniform Z velocity");
         }
         validatePlanarPressureRegionFragmentOpeningMomentumCycleResult(
-            postBootstrapCycle, restoredBootstrapCycleState.transport,
-            predictionMetric, restoredBootstrapCycleState.acceptedState,
+            postBootstrapCycle, restoredOwner.state().transport,
+            predictionMetric, restoredOwner.state().acceptedState,
             warmPressureOperator, warmBasePressureOperator, geometry,
             warmSweep, warmFragments, warmTopology, warmVolumeRates,
             definitions, warmOpenings, zeroResistance, warmBaseMetric,
@@ -10054,6 +10078,13 @@ void testPlanarRegionalOpeningMomentumTransport() {
             fourthTopology, fourthVolumeRates, definitions,
             fourthOpenings, zeroResistance, fourthBaseMetric,
             fourthMetric);
+        check(restoredOwner.tryCommit(
+                  postBootstrapCycle, warmMetric, fourthMetric)
+                  && restoredOwner.state().transport
+                      == postBootstrapCycle.transport
+                  && restoredOwner.state().acceptedState
+                      == postBootstrapCycle.acceptedState,
+              "opening momentum-cycle owner atomically replaces bootstrap with the repeated cycle");
         std::vector<double> nonuniformNormal(
             sourceMetric.dofs.size(), 0.0);
         std::vector<double> nonuniformMaterial(
@@ -11138,12 +11169,41 @@ void testPlanarRegionalOpeningMomentumTransport() {
         auto corruptMomentumCycle = momentumCycle;
         corruptMomentumCycle.transport.controls[0]
             .momentumKilogramMetersPerSecond.x += 0.1;
+        const auto ownerBeforeRejection = restoredOwner.checkpoint();
+        check(!restoredOwner.tryCommit(
+                  rejectedTransportMomentumCycle,
+                  predictionMetric, warmMetric)
+                  && restoredOwner.checkpoint() == ownerBeforeRejection,
+              "opening momentum-cycle owner retains its pair after numerical rejection");
         expectRejected(
             [&] {
                 validatePlanarPressureRegionFragmentOpeningMomentumCycleResultIntegrity(
                     corruptMomentumCycle);
             },
             "atomic transported cycle rejects nested endpoint corruption");
+        expectRejected(
+            [&] {
+                static_cast<void>(restoredOwner.tryCommit(
+                    corruptMomentumCycle, predictionMetric, warmMetric));
+            },
+            "opening momentum-cycle owner rejects corrupt commit input");
+        check(restoredOwner.checkpoint() == ownerBeforeRejection,
+              "opening momentum-cycle owner retains its pair after invalid commit");
+        auto corruptOwnedCycleState = ownerBeforeRejection;
+        corruptOwnedCycleState.acceptedState
+            .pressureCorrectionPascals[0] += 0.1;
+        expectRejected(
+            [&] {
+                restoredOwner.restore(
+                    corruptOwnedCycleState, warmVolumeRates, warmMetric,
+                    fourthPressureOperator, fourthBasePressureOperator,
+                    geometry, fourthSweep, fourthFragments,
+                    fourthTopology, fourthVolumeRates, definitions,
+                    fourthOpenings, zeroResistance, fourthMetric);
+            },
+            "opening momentum-cycle owner rejects corrupt restored state");
+        check(restoredOwner.checkpoint() == ownerBeforeRejection,
+              "opening momentum-cycle owner restore is transactional");
         auto ambiguousBootstrapMomentumCycle = bootstrapMomentumCycle;
         ambiguousBootstrapMomentumCycle.sourceTransportFingerprint =
             transport.fingerprint;

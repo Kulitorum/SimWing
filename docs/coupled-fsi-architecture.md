@@ -2608,6 +2608,19 @@ without replacing the destination. A restored bootstrap pair feeds the next
 re-entrant fourth geometry bit-exactly. This remains an isolated opt-in restart
 artifact, not a production case checkpoint, topology-rebase owner, or worker
 mode selector.
+`planar_region_fragment_opening_momentum_cycle_owner.*` adds the deliberately
+small mutable boundary needed before any higher-level harness can select that
+state. An empty owner has no checkpoint. Bootstrap and repeated accepted cycle
+results are captured and fully validated off to the side, then replace the
+owned pair through one no-throw optional-state swap. A well-formed numerical
+rejection returns false and retains the previous pair; corrupt input throws
+before mutation. Restore likewise copies and validates the complete live
+transport-volume/current-metric and next pressure/metric provenance before
+publication. The canonical sequence restores an `SWRM` bootstrap, advances to
+the fourth geometry, commits that repeated pair, and proves both failed-cycle
+commit and corrupt-state restore leave it bit-exact. The owner does not build
+geometry, choose solver settings or retry policy, perform persistence I/O,
+rebase topology, or opt the production worker into this path.
 `planar_region_fragment_opening_pressure_epoch.*` composes that warm product
 with the existing resistance-plus-augmented-projection transaction. It builds
 all four mutable fields privately, advances them together, and captures a new

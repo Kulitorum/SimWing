@@ -2043,6 +2043,13 @@ makes this a certified aerodynamic solver.
   decode rebuilds opening-flux rows from trusted next-geometry sources and
   transactionally publishes only after both endpoint epochs validate. This is
   an opt-in state codec, not a production checkpoint selector.
+- `src/fsi/fluid/planar_region_fragment_opening_momentum_cycle_owner.{h,cpp}`
+  is the opt-in mutable seam around that immutable pair. It captures bootstrap
+  or repeated accepted results into a complete candidate, retains the prior
+  pair on numerical rejection or invalid input, and restores a validated
+  `SWRM` state through one no-throw publication swap. It deliberately leaves
+  geometry construction, retry policy, persistence I/O, rebase, and production
+  worker selection to higher-level owners.
 - `src/fsi/fluid/planar_region_fragment_opening_pressure_epoch.{h,cpp}`
   privately composes that continuation with resistance, augmented projection,
   and accepted-state capture. Numerical rejection publishes a typed stage and
