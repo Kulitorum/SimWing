@@ -1884,6 +1884,11 @@ makes this a certified aerodynamic solver.
   area-weighted graph Laplacian for the minimum-norm compatible flow. Sealed
   breathing remains infeasible; the output is fingerprinted, source-bound,
   and never becomes a pressure, velocity, or scene-aperture state.
+- `src/fsi/fluid/planar_region_opening_power.{h,cpp}` binds only feasible
+  opening allocations to the previous/current static regional pressures. It
+  separates local uphill pressure-power deficits from net graph demand and
+  closes midpoint opening power against regional `p*dV/dt`. It does not invent
+  an aerodynamic energy source or opening constitutive law.
 - `src/fsi/fluid/porous_interface.{h,cpp}` applies a calibrated normal
   Darcy-Forchheimer resistance to resolved MAC velocity relative to an authored
   sheet. It emits canonical signed sharp jumps and retains per-tile area,
@@ -2193,6 +2198,17 @@ Reject foreign/same-region/duplicate/zero-area openings, corrupted immutable
 outputs, invalid settings, and interval/region/opening/owned-byte/dense-byte/
 factorization-work limit violations. Do not treat this analytic graph oracle as
 scene-v2 opening geometry or production fluid state.
+
+For `planar_region_opening_power.*`, require rigid zero power, `112 W` external
+pressure-power demand for canonical 70 Pa inflation, passive `112 W` release
+under reversed volume motion, and invariance to authored opening orientation.
+Parallel-link power must follow the area-weighted flow split. The serial graph
+must retain its `+40/-24 W` local links, `+16 W` net opening power, `-16 W`
+regional volume power, and zero net external demand while still flagging the
+uphill link. Reject infeasible allocation sources, mutated fingerprints/
+opening/region/aggregate ledgers, invalid tolerances, and opening/region/byte or
+nested source-limit violations. Never treat the audit as dynamic-pressure or
+momentum closure.
 
 The Windows reference fixture is `tests/fixtures/3.28/leparagliding.txt` with
 adjacent `gnuC2.txt`; expected reports are under `tests/reference/3.28`.

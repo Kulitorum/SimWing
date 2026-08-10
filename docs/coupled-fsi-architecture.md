@@ -493,6 +493,7 @@ src/fsi/
         planar_region_sweep.* bounded two-epoch regional geometry/GCL
         planar_region_flux.* minimum impermeability/relative-flux screen
         planar_region_opening_flow.* bounded opening-graph feasibility oracle
+        planar_region_opening_power.* midpoint pressure-power audit
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
         porous_topology.*   compatibility API over planar face topology
@@ -2181,6 +2182,17 @@ opening-ID ordering, dense-factorization work/storage bounds, semantic
 fingerprinting, and source-bound reconstruction are explicit. These analytic
 opening links are not yet scene-v2 aperture geometry, a subcell velocity basis,
 or permission to wire the result into production pressure arithmetic.
+`planar_region_opening_power.*` binds a feasible allocation back to the two
+endpoint regional pressure profiles. Each oriented opening retains midpoint
+pressure drop and `flow * pressure drop`; positive power follows a passive
+high-to-low pressure release, while negative power reports the exact local
+external-power deficit. The aggregate independently closes opening pressure
+power plus regional midpoint `p * dV/dt`. Canonical inflation is kinematically
+feasible through one opening but moves `1.6 m^3/s` up a 70 Pa rise, requiring
+`112 W`; deflation releases `112 W`. A serial graph can use `40 W` from one
+downhill link against a `24 W` uphill link, so local deficits and the zero net
+external deficit remain separate. The audit is immutable, source-bound, and
+bounded; it supplies neither dynamic pressure nor a constitutive opening law.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

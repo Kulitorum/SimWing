@@ -210,6 +210,13 @@ breathing pocket remains locally infeasible despite global cancellation; one
 openings split by area, and a serial three-region graph balances its
 intermediate region. This is an offline feasibility result, not an embedded
 opening discretization, pressure solve, or fluid-state update.
+A companion midpoint pressure-power audit prevents “feasible” from being read
+as “passively driven.” The inflating 70 Pa pocket closes continuity but moves
+`1.6 m³/s` uphill and therefore needs `112 W` from an external aerodynamic or
+kinetic source; deflation releases the same power. Opening pressure power plus
+regional `p*dV/dt` closes to roundoff. Local uphill deficits and the net graph
+deficit are reported separately, without inventing an opening constitutive law
+or energy source.
 The projected nonlinear SSPRK2 operator now applies one immutable jump field at
 both internal pressure stages, and the first-order, Strang, and retrying
 subcycled full-flow paths carry that same topology through every private step.

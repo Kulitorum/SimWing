@@ -1,6 +1,7 @@
 #include "fluid/planar_pressure_jump.h"
 #include "fluid/planar_region_flux.h"
 #include "fluid/planar_region_opening_flow.h"
+#include "fluid/planar_region_opening_power.h"
 #include "fluid/planar_region_sweep.h"
 #include "fluid/projection.h"
 
@@ -1326,6 +1327,247 @@ void testRegionalOpeningFlowAllAxesAndRejection() {
         "regional opening flow enforces its factorization work limit");
 }
 
+void testRegionalOpeningPressurePower() {
+    const auto geometry = grid();
+    const auto previous = pocketLayers();
+    const std::vector<PlanarPressureRegionOpeningDefinition> noOpenings;
+    const auto rigidLayers = translatePlanarPressureJumpLayers(
+        geometry, previous, 0.5).layers;
+    const auto rigidSweep = makePlanarPressureRegionSweepLedger(
+        geometry, previous, rigidLayers, 1.0);
+    const auto rigidAllocation = solvePlanarPressureRegionOpeningFlow(
+        rigidSweep, noOpenings);
+    const auto rigid = auditPlanarPressureRegionOpeningPower(
+        rigidSweep, noOpenings, rigidAllocation);
+    check(rigid.version == planarPressureRegionOpeningPowerVersion
+              && rigid.fingerprint != 0
+              && rigid.sourceOpeningFlowFingerprint
+                  == rigidAllocation.fingerprint
+              && rigid.openings.empty()
+              && rigid.regions.size() == 2
+              && rigid.failedPassiveOpeningCount == 0
+              && rigid.allOpeningsPassiveWithinTolerance
+              && rigid.pressurePowerClosesWithinTolerance,
+          "regional opening power accepts zero-power rigid translation");
+    checkNear(rigid.totalOpeningPressurePowerWatts, 0.0, 1.0e-15,
+              "rigid regional opening pressure power is zero");
+    checkNear(rigid.totalRegionPressureVolumePowerWatts, 0.0, 1.0e-15,
+              "rigid regional pressure-volume power is zero");
+
+    auto inflatedLayers = previous;
+    inflatedLayers[0].physicalPlaneCoordinateMeters -= 0.1;
+    inflatedLayers[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto inflationSweep = makePlanarPressureRegionSweepLedger(
+        geometry, previous, inflatedLayers, 0.5);
+    const std::vector<PlanarPressureRegionOpeningDefinition> opening{
+        {700, 1, 2, 0.5},
+    };
+    const auto inflationFlow = solvePlanarPressureRegionOpeningFlow(
+        inflationSweep, opening);
+    const auto inflation = auditPlanarPressureRegionOpeningPower(
+        inflationSweep, opening, inflationFlow);
+    check(inflation.openings.size() == 1
+              && inflation.failedPassiveOpeningCount == 1
+              && !inflation.allOpeningsPassiveWithinTolerance
+              && inflation.pressurePowerClosesWithinTolerance,
+          "regional opening power exposes uphill inflation flow");
+    checkNear(
+        inflation.openings[0]
+            .negativeToPositivePressureDropPascals,
+        -70.0, 1.0e-13,
+        "inflation opening retains the static regional pressure rise");
+    checkNear(inflation.totalOpeningPressurePowerWatts,
+              -112.0, 3.0e-13,
+              "inflation opening reports negative pressure power");
+    checkNear(inflation.maximumOpeningExternalPowerWatts,
+              112.0, 3.0e-13,
+              "inflation opening reports its external power requirement");
+    checkNear(inflation.minimumNetExternalPowerWatts,
+              112.0, 3.0e-13,
+              "inflation graph reports its net external power requirement");
+    checkNear(inflation.totalRegionPressureVolumePowerWatts,
+              112.0, 3.0e-13,
+              "inflation regional pressure-volume power is equal and opposite");
+    checkNear(inflation.pressurePowerClosureResidualWatts,
+              0.0, 6.0e-13,
+              "inflation pressure power closes against regional volume work");
+
+    const std::vector<PlanarPressureRegionOpeningDefinition> reverseOpening{
+        {700, 2, 1, 0.5},
+    };
+    const auto reverseFlow = solvePlanarPressureRegionOpeningFlow(
+        inflationSweep, reverseOpening);
+    const auto reverse = auditPlanarPressureRegionOpeningPower(
+        inflationSweep, reverseOpening, reverseFlow);
+    checkNear(reverse.totalOpeningPressurePowerWatts,
+              -112.0, 3.0e-13,
+              "opening pressure power is invariant to authored orientation");
+    checkNear(reverse.minimumNetExternalPowerWatts,
+              112.0, 3.0e-13,
+              "orientation reversal preserves external power demand");
+
+    auto deflatedLayers = previous;
+    deflatedLayers[0].physicalPlaneCoordinateMeters += 0.1;
+    deflatedLayers[1].physicalPlaneCoordinateMeters -= 0.1;
+    const auto deflationSweep = makePlanarPressureRegionSweepLedger(
+        geometry, previous, deflatedLayers, 0.5);
+    const auto deflationFlow = solvePlanarPressureRegionOpeningFlow(
+        deflationSweep, opening);
+    const auto deflation = auditPlanarPressureRegionOpeningPower(
+        deflationSweep, opening, deflationFlow);
+    check(deflation.allOpeningsPassiveWithinTolerance
+              && deflation.pressurePowerClosesWithinTolerance,
+          "regional opening power accepts passive high-to-low deflation");
+    checkNear(deflation.totalOpeningPressurePowerWatts,
+              112.0, 3.0e-13,
+              "deflation releases positive pressure power");
+    checkNear(deflation.minimumNetExternalPowerWatts,
+              0.0, 1.0e-15,
+              "passive deflation needs no external pressure power");
+    checkNear(deflation.totalRegionPressureVolumePowerWatts,
+              -112.0, 3.0e-13,
+              "deflation regional pressure-volume work absorbs released power");
+
+    const std::vector<PlanarPressureRegionOpeningDefinition> parallel{
+        {701, 1, 2, 0.375},
+        {700, 1, 2, 0.125},
+    };
+    const auto parallelFlow = solvePlanarPressureRegionOpeningFlow(
+        inflationSweep, parallel);
+    const auto parallelPower = auditPlanarPressureRegionOpeningPower(
+        inflationSweep, parallel, parallelFlow);
+    check(parallelPower.failedPassiveOpeningCount == 2
+              && parallelPower.openings[0].openingStableId == 700
+              && parallelPower.openings[1].openingStableId == 701,
+          "parallel regional opening power retains canonical split identities");
+    checkNear(parallelPower.openings[0].pressurePowerWatts,
+              -28.0, 1.0e-13,
+              "small parallel aperture carries its pressure-power share");
+    checkNear(parallelPower.openings[1].pressurePowerWatts,
+              -84.0, 3.0e-13,
+              "large parallel aperture carries its pressure-power share");
+    checkNear(parallelPower.summedOpeningExternalPowerDeficitWatts,
+              112.0, 3.0e-13,
+              "parallel aperture external deficits sum to the graph demand");
+
+    const std::vector<PlanarPressureJumpLayerDefinition> threeRegions{
+        {30, 1, 2,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 0, 0},
+         -1.8, 30.0},
+        {40, 2, 3,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 1, 0},
+         -0.8, 20.0},
+        {50, 3, 1,
+         {movingPlanarFaceTopologyVersion, GridFaceAxis::X, 2, 0},
+         0.2, -50.0},
+    };
+    auto movedThreeRegions = threeRegions;
+    movedThreeRegions[1].physicalPlaneCoordinateMeters += 0.1;
+    const auto serialSweep = makePlanarPressureRegionSweepLedger(
+        geometry, threeRegions, movedThreeRegions, 0.5);
+    const std::vector<PlanarPressureRegionOpeningDefinition> serialOpenings{
+        {800, 3, 1, 0.25},
+        {810, 1, 2, 0.5},
+    };
+    const auto serialFlow = solvePlanarPressureRegionOpeningFlow(
+        serialSweep, serialOpenings);
+    const auto serial = auditPlanarPressureRegionOpeningPower(
+        serialSweep, serialOpenings, serialFlow);
+    check(serial.failedPassiveOpeningCount == 1
+              && !serial.allOpeningsPassiveWithinTolerance
+              && serial.pressurePowerClosesWithinTolerance,
+          "serial opening power distinguishes local uphill and downhill links");
+    checkNear(serial.openings[0].pressurePowerWatts,
+              40.0, 2.0e-13,
+              "serial high-to-low link supplies pressure power");
+    checkNear(serial.openings[1].pressurePowerWatts,
+              -24.0, 2.0e-13,
+              "serial low-to-high link consumes pressure power");
+    checkNear(serial.totalOpeningPressurePowerWatts,
+              16.0, 3.0e-13,
+              "serial opening graph retains its net positive pressure power");
+    checkNear(serial.summedOpeningExternalPowerDeficitWatts,
+              24.0, 2.0e-13,
+              "serial opening graph reports its local uphill deficit");
+    checkNear(serial.minimumNetExternalPowerWatts,
+              0.0, 1.0e-15,
+              "serial opening graph has no net external pressure-power deficit");
+    checkNear(serial.totalRegionPressureVolumePowerWatts,
+              -16.0, 3.0e-13,
+              "serial regional volume work closes net opening power");
+
+    expectRejected(
+        [&] { static_cast<void>(
+            auditPlanarPressureRegionOpeningPower(
+                inflationSweep, noOpenings,
+                solvePlanarPressureRegionOpeningFlow(
+                    inflationSweep, noOpenings))); },
+        "regional opening power rejects kinematically infeasible sources");
+
+    auto corrupt = inflation;
+    corrupt.fingerprint = 0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionOpeningPower(
+            corrupt, inflationSweep, opening, inflationFlow); },
+        "regional opening-power validation rejects fingerprint corruption");
+    corrupt = inflation;
+    corrupt.openings[0].pressurePowerWatts += 1.0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionOpeningPower(
+            corrupt, inflationSweep, opening, inflationFlow); },
+        "regional opening-power validation rejects opening corruption");
+    corrupt = inflation;
+    corrupt.regions[0].pressureVolumePowerWatts += 1.0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionOpeningPower(
+            corrupt, inflationSweep, opening, inflationFlow); },
+        "regional opening-power validation rejects region corruption");
+    corrupt = inflation;
+    corrupt.minimumNetExternalPowerWatts += 1.0;
+    expectRejected(
+        [&] { validatePlanarPressureRegionOpeningPower(
+            corrupt, inflationSweep, opening, inflationFlow); },
+        "regional opening-power validation rejects aggregate corruption");
+
+    auto invalidSettings = PlanarPressureRegionOpeningPowerSettings{};
+    invalidSettings.absolutePowerToleranceWatts = 0.0;
+    invalidSettings.relativePowerTolerance = 0.0;
+    expectRejected(
+        [&] { static_cast<void>(
+            auditPlanarPressureRegionOpeningPower(
+                inflationSweep, opening, inflationFlow,
+                invalidSettings)); },
+        "regional opening power rejects a zero tolerance policy");
+    auto limits = PlanarPressureRegionOpeningPowerLimits{};
+    limits.maximumRegions = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            auditPlanarPressureRegionOpeningPower(
+                inflationSweep, opening, inflationFlow, {}, limits)); },
+        "regional opening power enforces its region limit");
+    limits = {};
+    limits.maximumOpenings = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            auditPlanarPressureRegionOpeningPower(
+                inflationSweep, parallel, parallelFlow, {}, limits)); },
+        "regional opening power enforces its opening limit");
+    limits = {};
+    limits.maximumOwnedBytes = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            auditPlanarPressureRegionOpeningPower(
+                inflationSweep, opening, inflationFlow, {}, limits)); },
+        "regional opening power enforces its owned byte limit");
+    limits = {};
+    limits.sourceLimits.maximumIntervals = 1;
+    expectRejected(
+        [&] { static_cast<void>(
+            auditPlanarPressureRegionOpeningPower(
+                inflationSweep, opening, inflationFlow, {}, limits)); },
+        "regional opening power enforces nested source limits");
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -1471,6 +1713,7 @@ int main() {
     testRegionalFluxAllAxesAndRejection();
     testRegionalOpeningFlowFeasibility();
     testRegionalOpeningFlowAllAxesAndRejection();
+    testRegionalOpeningPressurePower();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {
