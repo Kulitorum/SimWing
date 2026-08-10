@@ -114,8 +114,10 @@ struct SceneFluidFaceGraph {
 
 // Stitches triangle-local transverse segments using topological provenance:
 // stable scene vertices and edges are shared nodes, while endpoints clipped by
-// the rectangular MAC-face boundary remain triangle/grid-edge nodes. This does
-// not infer fluid regions or require closed chains; degree diagnostics expose
+// the rectangular MAC-face boundary remain triangle/grid-edge nodes, with
+// positions canonicalized from the authored triangle and exact grid planes.
+// This does not infer fluid regions or require closed chains; degree
+// diagnostics expose
 // mesh boundaries, openings, and unresolved junctions for the next stage.
 [[nodiscard]] SceneFluidFaceGraph buildSceneFluidFaceGraph(
     const SceneFluidSurfaceDefinition& surface,

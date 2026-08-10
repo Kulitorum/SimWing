@@ -1375,7 +1375,7 @@ gauge-aligned pressure, topology fingerprint, solve diagnostic, and aggregate
 is retained in one bounded immutable product. The face-aligned pressure-cell
 result is `0.0700820848335194 m`, only `3.6e-14 m` from the earlier shadow
 response driven by the graph-manufactured source; the embedded two-point
-fixture gives `0.0608388978079532 m`. These are deterministic compatibility
+fixture gives `0.0608388978079475 m`. These are deterministic compatibility
 oracles for the diagnostic, not Dirichlet data, a continuum truth claim, or a
 new live pressure/load owner.
 
@@ -1390,26 +1390,23 @@ region, residual, and tolerance.
 |---|---:|---:|---:|
 | `2^3` | `8 / 8` | `0.099348` - `0.101965` | `0.100660 / 0.01043` |
 | `4^3` | `8 / 8` | `0.129253` - `0.408781` | `0.240930 / 0.39050` |
-| `8^3` | `3 / 8` | `0.293734` - `0.519407` | `0.420468 / 0.22404` |
+| `8^3` | `8 / 8` | `0.293734` - `0.888671` | `0.521248 / 0.38828` |
 
 Thus the earlier `4/8` and `6/8` coarse graph yields really were censoring the
-shadow placement spectrum. The fine level has a different blocker: five
-region-2 local cells exceed the unchanged `1e-10` algebraic-consistency
-tolerance, with residuals between `7.79e-10` and `3.84e-9`. Their samples stay
-in the product as typed failures. Each failure also retains its geometry scale,
-face-area range, closure/moment residuals, condition estimates, and
-stabilization scale. All are four-face cells with volume `3.19e-8` to
-`1.09e-7 m^3`; their consistency-geometry condition estimate is essentially
-`1`, and their Gram estimate is only `14`-`43`. The approximately
-`1.5e-16`-`2.1e-16 m^3` absolute divergence-moment defect is therefore a
-`1.5e-9`-`6.6e-9` relative input error at the tiny-cell scale. This diagnoses
-geometric precision loss rather than an ill-conditioned factorization and
-does not justify relaxing the algebraic tolerance. The fine conditional mean
-is consequently still not an unbiased phase average, and the sequence is not a
-convergence result. Because one authored aperture can become several embedded
-traces, this audit's uniform area-weighted Neumann source also differs from the
-older graph-manufactured source on multi-opening placements. No production
-pressure or load arithmetic changes.
+shadow placement spectrum. The five former fine-grid rejections diagnosed a
+geometric precision defect rather than an ill-conditioned factorization:
+absolute-coordinate shoelace moments lost precision on tiny Cartesian
+subfaces, while grid-edge graph nodes depended on sequential clipping order.
+The face partitioners now integrate each polygon in a face-local chart and
+translate only the published centroid/first moment; the face graph
+canonicalizes a grid-edge node from the authored triangle plane and its two
+exact Cartesian planes. All `8/8` fine phases now satisfy the unchanged
+`1e-10` algebraic-consistency tolerance, without closure fitting. The sequence
+is still not a convergence result. Because one authored aperture can become
+several embedded traces, this audit's uniform area-weighted Neumann source
+also differs from the older graph-manufactured source on multi-opening
+placements. The live 600-step trace and audited checkpoint remain
+byte-identical, so no production pressure or load arithmetic changes.
 
 The experiment is exposed as `simwing-fsi --case pressure-cell
 --mimetic-pressure-audit` and reports control/trace counts plus iteration and

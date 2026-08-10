@@ -95,12 +95,28 @@ void setCoordinate(Vec3& value,
 }
 
 Vec3 interpolate(const Vec3& first,
-                 const Vec3& second,
-                 const double parameter) {
+    const Vec3& second,
+    const double parameter) {
     return {
-        (1.0 - parameter) * first.x + parameter * second.x,
-        (1.0 - parameter) * first.y + parameter * second.y,
-        (1.0 - parameter) * first.z + parameter * second.z,
+        std::lerp(first.x, second.x, parameter),
+        std::lerp(first.y, second.y, parameter),
+        std::lerp(first.z, second.z, parameter),
+    };
+}
+
+Vec3 subtract(const Vec3& first, const Vec3& second) {
+    return {
+        first.x - second.x,
+        first.y - second.y,
+        first.z - second.z,
+    };
+}
+
+Vec3 cross(const Vec3& first, const Vec3& second) {
+    return {
+        first.y * second.z - first.z * second.y,
+        first.z * second.x - first.x * second.z,
+        first.x * second.y - first.y * second.x,
     };
 }
 
@@ -186,6 +202,82 @@ std::uint8_t faceBoundaryMask(
     }
     if (near(v, rectangle.vUpper, tolerance)) {
         result |= FaceBoundaryVPlus;
+    }
+    return result;
+}
+
+Vec3 canonicalGridEdgePoint(
+    const SceneFluidSurfaceState& state,
+    const PeriodicCartesianGrid& grid,
+    const SceneFluidActiveFace& face,
+    const SceneFluidSurfaceTriangle& triangle,
+    const FaceRectangle& rectangle,
+    const std::uint8_t boundaryMask,
+    const Vec3& supplied,
+    const double tolerance) {
+    Vec3 result = supplied;
+    std::array<bool, 3> fixed{};
+    const std::size_t faceAxis = axisIndex(face.axis);
+    fixed[faceAxis] = true;
+    setCoordinate(result, faceAxis, facePlaneCoordinate(grid, face));
+    const auto fixBoundary = [&](const std::uint8_t bit,
+                                 const std::size_t axis,
+                                 const double value) {
+        if ((boundaryMask & bit) == 0) {
+            return;
+        }
+        if (fixed[axis]
+            && coordinate(result, axis) != value) {
+            throw std::invalid_argument(
+                "scene fluid face-graph grid-edge endpoint has conflicting planes");
+        }
+        fixed[axis] = true;
+        setCoordinate(result, axis, value);
+    };
+    fixBoundary(FaceBoundaryUMinus, rectangle.uAxis, rectangle.uLower);
+    fixBoundary(FaceBoundaryUPlus, rectangle.uAxis, rectangle.uUpper);
+    fixBoundary(FaceBoundaryVMinus, rectangle.vAxis, rectangle.vLower);
+    fixBoundary(FaceBoundaryVPlus, rectangle.vAxis, rectangle.vUpper);
+
+    const std::size_t fixedCount = std::ranges::count(fixed, true);
+    if (fixedCount == 2) {
+        const auto& first = state.vertices[
+            triangle.vertexIndices[0]].positionMeters;
+        const auto& second = state.vertices[
+            triangle.vertexIndices[1]].positionMeters;
+        const auto& third = state.vertices[
+            triangle.vertexIndices[2]].positionMeters;
+        const Vec3 normal = cross(
+            subtract(second, first), subtract(third, first));
+        const auto unknown = static_cast<std::size_t>(
+            std::ranges::find(fixed, false) - fixed.begin());
+        const double denominator = coordinate(normal, unknown);
+        if (!std::isfinite(denominator) || denominator == 0.0) {
+            throw std::invalid_argument(
+                "scene fluid face-graph triangle is parallel to its grid edge");
+        }
+        double numerator = 0.0;
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            if (!fixed[axis]) {
+                continue;
+            }
+            numerator = std::fma(
+                coordinate(normal, axis),
+                coordinate(result, axis) - coordinate(first, axis),
+                numerator);
+        }
+        setCoordinate(
+            result, unknown,
+            coordinate(first, unknown) - numerator / denominator);
+    } else if (fixedCount != 3) {
+        throw std::invalid_argument(
+            "scene fluid face-graph grid-edge endpoint has incomplete provenance");
+    }
+    if (!std::isfinite(result.x) || !std::isfinite(result.y)
+        || !std::isfinite(result.z)
+        || distance(result, supplied) > tolerance) {
+        throw std::invalid_argument(
+            "scene fluid face-graph canonical grid-edge endpoint is inconsistent");
     }
     return result;
 }
@@ -355,7 +447,10 @@ EndpointNode endpointNode(
                 "scene fluid face-graph endpoint has no surface or grid-edge provenance");
         }
         result.node.kind = SceneFluidFaceNodeKind::GridEdge;
-        result.node.positionMeters = endpoint.positionMeters;
+        result.node.positionMeters = canonicalGridEdgePoint(
+            state, grid, face, triangle, rectangle,
+            suppliedBoundary, endpoint.positionMeters,
+            settings.endpointToleranceMeters);
         result.node.sourceTriangleId = crossing.triangleId;
         result.node.faceBoundaryMask = suppliedBoundary;
         result.key = {static_cast<std::uint8_t>(result.node.kind),

@@ -142,33 +142,51 @@ struct FaceBounds {
 };
 
 struct AreaMoment2 {
+    // First moments use the owning Cartesian face's lower chart corner as
+    // origin. Public products are translated back to global coordinates.
     double areaSquareMeters = 0.0;
     double firstMomentUMeters3 = 0.0;
     double firstMomentVMeters3 = 0.0;
 };
 
-AreaMoment2 polygonAreaMoment(const std::vector<Point2>& polygon) {
+AreaMoment2 polygonAreaMoment(const std::vector<Point2>& polygon,
+                             const FaceBounds& bounds) {
     AreaMoment2 result;
+    const Point2 momentReference = polygon.front();
     for (std::size_t index = 0; index < polygon.size(); ++index) {
         const auto& first = polygon[index];
         const auto& second = polygon[(index + 1) % polygon.size()];
-        const double cross = first.u * second.v - second.u * first.v;
+        const Point2 localFirst{
+            first.u - momentReference.u,
+            first.v - momentReference.v,
+        };
+        const Point2 localSecond{
+            second.u - momentReference.u,
+            second.v - momentReference.v,
+        };
+        const double cross = localFirst.u * localSecond.v
+            - localSecond.u * localFirst.v;
         result.areaSquareMeters += 0.5 * cross;
         result.firstMomentUMeters3 +=
-            (first.u + second.u) * cross / 6.0;
+            (localFirst.u + localSecond.u) * cross / 6.0;
         result.firstMomentVMeters3 +=
-            (first.v + second.v) * cross / 6.0;
+            (localFirst.v + localSecond.v) * cross / 6.0;
     }
+    result.firstMomentUMeters3 += result.areaSquareMeters
+        * (momentReference.u - bounds.minimumU);
+    result.firstMomentVMeters3 += result.areaSquareMeters
+        * (momentReference.v - bounds.minimumV);
     return result;
 }
 
 AreaMoment2 rectangleAreaMoment(const FaceBounds& bounds) {
-    const double area = (bounds.maximumU - bounds.minimumU)
-        * (bounds.maximumV - bounds.minimumV);
+    const double width = bounds.maximumU - bounds.minimumU;
+    const double height = bounds.maximumV - bounds.minimumV;
+    const double area = width * height;
     return {
         area,
-        area * 0.5 * (bounds.minimumU + bounds.maximumU),
-        area * 0.5 * (bounds.minimumV + bounds.maximumV),
+        area * 0.5 * width,
+        area * 0.5 * height,
     };
 }
 
@@ -189,34 +207,30 @@ SceneFluidFaceRegionArea makeRegionArea(
     const StableId regionId,
     const GridFaceAxis axis,
     const double planeCoordinateMeters,
+    const FaceBounds& bounds,
     const AreaMoment2& moment) {
     SceneFluidFaceRegionArea result;
     result.regionId = regionId;
     result.areaSquareMeters = moment.areaSquareMeters;
-    if (axis == GridFaceAxis::X) {
-        result.firstMomentMeters3 = {
-            planeCoordinateMeters * moment.areaSquareMeters,
-            moment.firstMomentUMeters3,
-            moment.firstMomentVMeters3,
-        };
-    } else if (axis == GridFaceAxis::Y) {
-        result.firstMomentMeters3 = {
-            moment.firstMomentVMeters3,
-            planeCoordinateMeters * moment.areaSquareMeters,
-            moment.firstMomentUMeters3,
-        };
-    } else {
-        result.firstMomentMeters3 = {
-            moment.firstMomentUMeters3,
-            moment.firstMomentVMeters3,
-            planeCoordinateMeters * moment.areaSquareMeters,
-        };
-    }
     if (moment.areaSquareMeters > 0.0) {
-        result.centroidMeters = {
-            result.firstMomentMeters3.x / moment.areaSquareMeters,
-            result.firstMomentMeters3.y / moment.areaSquareMeters,
-            result.firstMomentMeters3.z / moment.areaSquareMeters,
+        const double centroidU = bounds.minimumU
+            + moment.firstMomentUMeters3 / moment.areaSquareMeters;
+        const double centroidV = bounds.minimumV
+            + moment.firstMomentVMeters3 / moment.areaSquareMeters;
+        if (axis == GridFaceAxis::X) {
+            result.centroidMeters = {
+                planeCoordinateMeters, centroidU, centroidV};
+        } else if (axis == GridFaceAxis::Y) {
+            result.centroidMeters = {
+                centroidV, planeCoordinateMeters, centroidU};
+        } else {
+            result.centroidMeters = {
+                centroidU, centroidV, planeCoordinateMeters};
+        }
+        result.firstMomentMeters3 = {
+            result.areaSquareMeters * result.centroidMeters.x,
+            result.areaSquareMeters * result.centroidMeters.y,
+            result.areaSquareMeters * result.centroidMeters.z,
         };
     }
     return result;
@@ -385,7 +399,7 @@ AreaMoment2 boundaryChainPositiveAreaMoment(
             }
         }
     }
-    const auto positiveMoment = polygonAreaMoment(polygon);
+    const auto positiveMoment = polygonAreaMoment(polygon, bounds);
     const double fullArea = width * height;
     if (!std::isfinite(positiveMoment.areaSquareMeters)
         || !std::isfinite(positiveMoment.firstMomentUMeters3)
@@ -781,18 +795,32 @@ std::map<StableId, AreaMoment2> boundaryChainArrangementAreaMoments(
             if (current == start) break;
         }
         AreaMoment2 cycleMoment;
+        const Point2 momentReference = nodes[
+            halfEdges[cycle.front()].fromNode].point;
         for (const std::size_t halfEdgeIndex : cycle) {
             const auto& halfEdge = halfEdges[halfEdgeIndex];
             const Point2& first = nodes[halfEdge.fromNode].point;
             const Point2& second = nodes[halfEdge.toNode].point;
-            const double cross =
-                first.u * second.v - second.u * first.v;
+            const Point2 localFirst{
+                first.u - momentReference.u,
+                first.v - momentReference.v,
+            };
+            const Point2 localSecond{
+                second.u - momentReference.u,
+                second.v - momentReference.v,
+            };
+            const double cross = localFirst.u * localSecond.v
+                - localSecond.u * localFirst.v;
             cycleMoment.areaSquareMeters += 0.5 * cross;
             cycleMoment.firstMomentUMeters3 +=
-                (first.u + second.u) * cross / 6.0;
+                (localFirst.u + localSecond.u) * cross / 6.0;
             cycleMoment.firstMomentVMeters3 +=
-                (first.v + second.v) * cross / 6.0;
+                (localFirst.v + localSecond.v) * cross / 6.0;
         }
+        cycleMoment.firstMomentUMeters3 += cycleMoment.areaSquareMeters
+            * (momentReference.u - bounds.minimumU);
+        cycleMoment.firstMomentVMeters3 += cycleMoment.areaSquareMeters
+            * (momentReference.v - bounds.minimumV);
         if (!std::isfinite(cycleMoment.areaSquareMeters)
             || !std::isfinite(cycleMoment.firstMomentUMeters3)
             || !std::isfinite(cycleMoment.firstMomentVMeters3)
@@ -1083,11 +1111,11 @@ SceneFluidFacePartitionSet buildPartitions(
             partition.openChainReferenceCount = 1;
             result.openChainReferences.push_back(chainIndex);
             partition.faceAreaSquareMeters = faceArea(grid, face.axis);
+            const FaceBounds bounds = faceBounds(grid, face);
             const auto positiveMoment = boundaryChainPositiveAreaMoment(
                 face, chain, chains, graph, grid, settings, limits,
                 result.segmentPairTestCount);
-            const auto fullMoment = rectangleAreaMoment(
-                faceBounds(grid, face));
+            const auto fullMoment = rectangleAreaMoment(bounds);
             const AreaMoment2 negativeMoment{
                 fullMoment.areaSquareMeters
                     - positiveMoment.areaSquareMeters,
@@ -1111,7 +1139,7 @@ SceneFluidFacePartitionSet buildPartitions(
                         "scene fluid boundary face region area is invalid");
                 }
                 result.regionAreas.push_back(makeRegionArea(
-                    region, face.axis, planeCoordinate, moment));
+                    region, face.axis, planeCoordinate, bounds, moment));
                 partition.assignedAreaSquareMeters +=
                     moment.areaSquareMeters;
             }
@@ -1156,12 +1184,13 @@ SceneFluidFacePartitionSet buildPartitions(
             const auto areas = boundaryChainArrangementAreaMoments(
                 faceIndex, face, faceOpenChains, chains, graph, graphRange,
                 grid, settings, limits, result.segmentPairTestCount);
+            const FaceBounds bounds = faceBounds(grid, face);
             const double planeCoordinate =
                 facePlaneCoordinate(grid, face);
             partition.firstRegionArea = result.regionAreas.size();
             for (const auto& [region, moment] : areas) {
                 result.regionAreas.push_back(makeRegionArea(
-                    region, face.axis, planeCoordinate, moment));
+                    region, face.axis, planeCoordinate, bounds, moment));
                 partition.assignedAreaSquareMeters +=
                     moment.areaSquareMeters;
             }
@@ -1237,9 +1266,10 @@ SceneFluidFacePartitionSet buildPartitions(
                 partition.faceAreaSquareMeters = faceArea(grid, face.axis);
                 partition.assignedAreaSquareMeters =
                     partition.faceAreaSquareMeters;
+                const FaceBounds bounds = faceBounds(grid, face);
                 result.regionAreas.push_back(makeRegionArea(
                     regionId, face.axis, facePlaneCoordinate(grid, face),
-                    rectangleAreaMoment(faceBounds(grid, face))));
+                    bounds, rectangleAreaMoment(bounds)));
                 result.partitions.push_back(partition);
                 continue;
             }
@@ -1274,14 +1304,15 @@ SceneFluidFacePartitionSet buildPartitions(
                                      faceLoops.begin(), faceLoops.end());
         std::map<StableId, AreaMoment2> areas;
         partition.faceAreaSquareMeters = faceArea(grid, face.axis);
-        areas[rootExterior] = rectangleAreaMoment(faceBounds(grid, face));
+        const FaceBounds bounds = faceBounds(grid, face);
+        areas[rootExterior] = rectangleAreaMoment(bounds);
         for (const std::size_t loopIndex : faceLoops) {
             const auto& loop = loops.loops[loopIndex];
             const auto point = facePoint(face.axis, loop.centroidMeters);
             const AreaMoment2 loopMoment{
                 loop.areaSquareMeters,
-                loop.areaSquareMeters * point.u,
-                loop.areaSquareMeters * point.v,
+                loop.areaSquareMeters * (point.u - bounds.minimumU),
+                loop.areaSquareMeters * (point.v - bounds.minimumV),
             };
             auto& exterior = areas[loop.exteriorRegionId];
             exterior.areaSquareMeters -= loopMoment.areaSquareMeters;
@@ -1307,7 +1338,7 @@ SceneFluidFacePartitionSet buildPartitions(
                 moment = {};
             }
             result.regionAreas.push_back(makeRegionArea(
-                region, face.axis, planeCoordinate, moment));
+                region, face.axis, planeCoordinate, bounds, moment));
             partition.assignedAreaSquareMeters += moment.areaSquareMeters;
         }
         partition.regionAreaCount = result.regionAreas.size()

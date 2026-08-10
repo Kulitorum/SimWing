@@ -142,18 +142,21 @@ struct FaceBounds {
 };
 
 struct AreaMoment2 {
+    // First moments use the owning Cartesian face's lower chart corner as
+    // origin. Public products are translated back to global coordinates.
     double areaSquareMeters = 0.0;
     double firstMomentUMeters3 = 0.0;
     double firstMomentVMeters3 = 0.0;
 };
 
 AreaMoment2 rectangleAreaMoment(const FaceBounds& bounds) {
-    const double area = (bounds.maximumU - bounds.minimumU)
-        * (bounds.maximumV - bounds.minimumV);
+    const double width = bounds.maximumU - bounds.minimumU;
+    const double height = bounds.maximumV - bounds.minimumV;
+    const double area = width * height;
     return {
         area,
-        area * 0.5 * (bounds.minimumU + bounds.maximumU),
-        area * 0.5 * (bounds.minimumV + bounds.maximumV),
+        area * 0.5 * width,
+        area * 0.5 * height,
     };
 }
 
@@ -177,33 +180,29 @@ fluid::SceneFluidFaceRegionArea makeRegionArea(
     const StableId regionId,
     const fluid::GridFaceAxis axis,
     const double planeCoordinateMeters,
+    const FaceBounds& bounds,
     const AreaMoment2& moment) {
     fluid::SceneFluidFaceRegionArea result;
     result.regionId = regionId;
     result.areaSquareMeters = moment.areaSquareMeters;
+    const double centroidU = bounds.minimumU
+        + moment.firstMomentUMeters3 / moment.areaSquareMeters;
+    const double centroidV = bounds.minimumV
+        + moment.firstMomentVMeters3 / moment.areaSquareMeters;
     if (axis == fluid::GridFaceAxis::X) {
-        result.firstMomentMeters3 = {
-            planeCoordinateMeters * moment.areaSquareMeters,
-            moment.firstMomentUMeters3,
-            moment.firstMomentVMeters3,
-        };
+        result.centroidMeters = {
+            planeCoordinateMeters, centroidU, centroidV};
     } else if (axis == fluid::GridFaceAxis::Y) {
-        result.firstMomentMeters3 = {
-            moment.firstMomentVMeters3,
-            planeCoordinateMeters * moment.areaSquareMeters,
-            moment.firstMomentUMeters3,
-        };
+        result.centroidMeters = {
+            centroidV, planeCoordinateMeters, centroidU};
     } else {
-        result.firstMomentMeters3 = {
-            moment.firstMomentUMeters3,
-            moment.firstMomentVMeters3,
-            planeCoordinateMeters * moment.areaSquareMeters,
-        };
+        result.centroidMeters = {
+            centroidU, centroidV, planeCoordinateMeters};
     }
-    result.centroidMeters = {
-        result.firstMomentMeters3.x / moment.areaSquareMeters,
-        result.firstMomentMeters3.y / moment.areaSquareMeters,
-        result.firstMomentMeters3.z / moment.areaSquareMeters,
+    result.firstMomentMeters3 = {
+        result.areaSquareMeters * result.centroidMeters.x,
+        result.areaSquareMeters * result.centroidMeters.y,
+        result.areaSquareMeters * result.centroidMeters.z,
     };
     return result;
 }
@@ -740,20 +739,35 @@ std::map<StableId, AreaMoment2> arrangementAreaMoments(
             if (current == start) break;
         }
         double twiceSignedArea = 0.0;
+        const Point2 momentReference = cycle.polygon.front();
         for (std::size_t index = 0;
              index < cycle.polygon.size(); ++index) {
             const auto& first = cycle.polygon[index];
             const auto& second = cycle.polygon[
                 (index + 1) % cycle.polygon.size()];
-            const double cross =
-                first.u * second.v - second.u * first.v;
+            const Point2 localFirst{
+                first.u - momentReference.u,
+                first.v - momentReference.v,
+            };
+            const Point2 localSecond{
+                second.u - momentReference.u,
+                second.v - momentReference.v,
+            };
+            const double cross = localFirst.u * localSecond.v
+                - localSecond.u * localFirst.v;
             twiceSignedArea += cross;
             cycle.signedFirstMomentUMeters3 +=
-                (first.u + second.u) * cross / 6.0;
+                (localFirst.u + localSecond.u) * cross / 6.0;
             cycle.signedFirstMomentVMeters3 +=
-                (first.v + second.v) * cross / 6.0;
+                (localFirst.v + localSecond.v) * cross / 6.0;
         }
         cycle.signedAreaSquareMeters = 0.5 * twiceSignedArea;
+        cycle.signedFirstMomentUMeters3 +=
+            cycle.signedAreaSquareMeters
+            * (momentReference.u - bounds.minimumU);
+        cycle.signedFirstMomentVMeters3 +=
+            cycle.signedAreaSquareMeters
+            * (momentReference.v - bounds.minimumV);
         if (!std::isfinite(cycle.signedAreaSquareMeters)
             || !std::isfinite(cycle.signedFirstMomentUMeters3)
             || !std::isfinite(cycle.signedFirstMomentVMeters3)
@@ -849,10 +863,7 @@ std::map<StableId, AreaMoment2> arrangementAreaMoments(
     double assignedArea = 0.0;
     const double firstMomentToleranceMeters3 =
         settings.areaClosureToleranceSquareMeters
-        * std::max({1.0, std::abs(bounds.minimumU),
-                    std::abs(bounds.maximumU),
-                    std::abs(bounds.minimumV),
-                    std::abs(bounds.maximumV)});
+        * std::max({1.0, width, height});
     for (auto iterator = areas.begin(); iterator != areas.end();) {
         if (!(iterator->second.areaSquareMeters > 0.0)
             || !std::isfinite(iterator->second.areaSquareMeters)
@@ -1338,7 +1349,7 @@ SceneFluidCappedFacePartitionSet buildPartitions(
             grid, axis, i, j, k);
         for (const auto& [regionId, moment] : areas) {
             result.regionAreas.push_back(makeRegionArea(
-                regionId, axis, planeCoordinate, moment));
+                regionId, axis, planeCoordinate, bounds, moment));
             partition.assignedAreaSquareMeters +=
                 moment.areaSquareMeters;
         }

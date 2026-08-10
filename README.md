@@ -865,25 +865,21 @@ excludes material walls, and distributes a balanced fixed transfer uniformly
 by aperture area. The direct condensed solve reports conductance from
 gauge-invariant source work. It gives `0.0700820848335194 m` on the
 face-aligned case, within `3.6e-14 m` of the earlier graph-manufactured shadow
-measurement, and `0.0608388978079532 m` on the embedded two-point fixture.
-The resulting graph-independent matrix now retains all 24 requested
-phase/refinement attempts. At `2^3` and `4^3`, all `8/8` shadow phases solve;
-their normalized mean/CV values are `0.100660/0.01043` and
-`0.240930/0.39050`. The `8^3` level accepts only `3/8`, with conditional
-mean/CV `0.420468/0.22404`: five region-2 local cells fail the declared
-linear-consistency test with residuals from `7.79e-10` to `3.84e-9` against
-the unchanged `1e-10` tolerance. Those failures are typed, fingerprinted
-records, not dropped samples. They are tiny four-face cells (`3.19e-8` to
-`1.09e-7 m^3`) whose consistency geometry is essentially condition `1` and
-whose Gram condition estimate is only `14`-`43`. Absolute divergence-moment
-defects near double roundoff (`1.5e-16` to `2.1e-16 m^3`) therefore become
-`1.5e-9`-`6.6e-9` relative defects at the cell scale. The blocker is geometric
-precision, not an ill-conditioned inverse, and the algebraic tolerance has not
-been relaxed. The experiment therefore removes graph
-censoring at the coarse levels but reveals a separate fine-grid mixed-hybrid
-factorization blocker. It still does not establish shadow convergence or
-authorize a live solver switch; the uniform area-weighted multi-opening source
-also differs intentionally from the earlier graph-manufactured source.
+measurement, and `0.0608388978079475 m` on the embedded two-point fixture.
+The resulting graph-independent matrix now retains and solves all 24 requested
+phase/refinement attempts. The normalized mean/CV values at `2^3`, `4^3`, and
+`8^3` are `0.100660/0.01043`, `0.240930/0.39050`, and
+`0.521248/0.38828`; the fine range is `0.293734`-`0.888671`. The five former
+fine-grid failures were not ill-conditioned inversions. Tiny Cartesian
+subfaces were measured with absolute-coordinate shoelace moments, and
+triangle/grid-edge vertices inherited whichever sequential clipping path
+created them. Face-local moment charts plus canonical authored-triangle/two-
+grid-plane nodes remove that precision loss without fitting closure or
+relaxing the unchanged `1e-10` algebraic tolerance. The live 600-step trace
+and audited checkpoint remain byte-identical. The complete phase matrix still
+does not establish shadow convergence or authorize a live solver switch; the
+uniform area-weighted multi-opening source also differs intentionally from the
+earlier graph-manufactured source.
 Its checkpoint also stores the trusted Structure state, complete
 accepted sparse pressure projection, accepted wall-traction endpoint, and
 accepted region momentum. Initial and

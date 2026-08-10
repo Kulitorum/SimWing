@@ -446,11 +446,11 @@ void testRejectedTwoPointOpeningStillBuildsHybridTrace() {
               && audit.componentIntegratedSourcePascalsMeters == 0.0
               && std::abs(
                      audit.sourcePressureWorkPascalsSquaredMeters
-                     - 16.4368526720626)
+                     - 16.436852672064145)
                   < 1.0e-12
               && std::abs(
                      audit.conductanceMeters
-                     - 0.0608388978079532)
+                     - 0.060838897807947545)
                   < 1.0e-14,
           "graph-independent terminal audit accepts the embedded authored-opening trace");
 }
