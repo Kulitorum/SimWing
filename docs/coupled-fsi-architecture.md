@@ -2428,6 +2428,20 @@ flow endpoint only. The following pressure state composes total authored-plus-
 correction pressure on that opening-connected gauge, so the open-area load
 partition can later bind without falsely mixing it with the sealed pressure
 certificate. Structure traction, rebases, and worker selection remain outside.
+`planar_region_fragment_opening_continuation.*` now provides a strict handoff
+from that endpoint into one consecutive topology-stable geometric epoch. It
+fully revalidates the previous accepted state and both source epochs, requires
+the previous current profile to equal the current previous profile exactly,
+and maps every Cartesian-link velocity, aperture velocity, and correction
+pressure through one-to-one stable identity. Fragment/link metric geometry may
+change while those identities remain fixed; no appeared or retired identity,
+changed aperture semantics, or topology rebase is repaired. The mapped
+correction is shifted to the current opening-connected volume gauge and the
+current immutable opening-flux ledger is rebuilt before publication. The
+artifact is deterministic, fingerprinted, and independently bounded. Direct
+velocity retention is only a warm-state policy: it deliberately claims no
+momentum-conservative advection across the changed face metric, does not yet
+accept the next pressure transaction, persist a restart, or select a worker.
 `planar_region_fragment_opening_pressure_state.*` now performs that first
 pressure composition. It consumes only the validated accepted aperture state,
 uses the augmented operator's connected-component mapping, and publishes each

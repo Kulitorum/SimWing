@@ -5,6 +5,7 @@
 #include "fluid/planar_region_fragment.h"
 #include "fluid/planar_region_fragment_accepted_state.h"
 #include "fluid/planar_region_fragment_opening_accepted_state.h"
+#include "fluid/planar_region_fragment_opening_continuation.h"
 #include "fluid/planar_region_fragment_opening_load_state.h"
 #include "fluid/planar_region_fragment_opening_pressure_state.h"
 #include "fluid/planar_region_fragment_opening.h"
@@ -9297,6 +9298,173 @@ void testPlanarRegionalResistedOpeningPressureStep() {
                 resistance, acceptedLimits);
         },
         "opening accepted state enforces its aggregate owned-byte limit");
+
+    auto nextLayers = current;
+    nextLayers[0].physicalPlaneCoordinateMeters -= 0.05;
+    nextLayers[1].physicalPlaneCoordinateMeters += 0.05;
+    const auto nextSweep = makePlanarPressureRegionSweepLedger(
+        geometry, current, nextLayers, 0.5);
+    const auto nextFragments = buildPlanarPressureRegionFragments(
+        geometry, nextSweep);
+    const auto nextTopology =
+        buildPlanarPressureRegionFragmentTopology(
+            geometry, nextSweep, nextFragments);
+    const auto nextBase =
+        buildPlanarPressureRegionFragmentPressureOperator(
+            geometry, nextSweep, nextFragments, nextTopology);
+    const auto nextVolumeRates =
+        buildPlanarPressureRegionFragmentVolumeRates(
+            geometry, nextSweep, nextFragments, nextTopology);
+    const auto nextOpenings =
+        buildPlanarPressureRegionFragmentOpenings(
+            geometry, nextSweep, nextFragments, nextTopology,
+            definitions);
+    const auto nextPressureOperator =
+        buildPlanarPressureRegionFragmentOpeningPressureOperator(
+            nextBase, geometry, nextSweep, nextFragments, nextTopology,
+            definitions, nextOpenings);
+    const auto continuation =
+        buildPlanarPressureRegionFragmentOpeningContinuation(
+            acceptedState, pressureOperator, base, geometry, sweep,
+            fragments, topology, volumeRates, definitions, openings,
+            resistance, nextPressureOperator, nextBase, nextSweep,
+            nextFragments, nextTopology, nextVolumeRates, definitions,
+            nextOpenings);
+    const auto repeatedContinuation =
+        buildPlanarPressureRegionFragmentOpeningContinuation(
+            acceptedState, pressureOperator, base, geometry, sweep,
+            fragments, topology, volumeRates, definitions, openings,
+            resistance, nextPressureOperator, nextBase, nextSweep,
+            nextFragments, nextTopology, nextVolumeRates, definitions,
+            nextOpenings);
+    check(continuation == repeatedContinuation
+              && continuation.version
+                  == planarPressureRegionFragmentOpeningContinuationVersion
+              && continuation.fingerprint != 0
+              && continuation.sourceAcceptedStateFingerprint
+                  == acceptedState.fingerprint
+              && continuation.previousPressureOperatorFingerprint
+                  == pressureOperator.fingerprint
+              && continuation.currentPressureOperatorFingerprint
+                  == nextPressureOperator.fingerprint
+              && continuation.currentTopologyFingerprint
+                  == nextTopology.fingerprint
+              && continuation.currentVolumeRateFingerprint
+                  == nextVolumeRates.fingerprint
+              && continuation.currentOpeningFluxFingerprint
+                  == continuation.openingFlux.fingerprint
+              && continuation.topologyLinkCount
+                  == nextTopology.links.size()
+              && continuation.openingPatchCount
+                  == nextOpenings.patches.size()
+              && continuation.pressureCorrectionCount
+                  == nextFragments.fragments.size()
+              && continuation.connectedComponentCount
+                  == nextPressureOperator.components.size(),
+          "opening continuation maps one consecutive stable epoch deterministically");
+    for (const auto& nextLink : nextTopology.links) {
+        const auto previousLink = std::ranges::find(
+            topology.links, nextLink.stableId,
+            &PlanarPressureRegionFragmentFaceLink::stableId);
+        check(previousLink != topology.links.end()
+                  && continuation
+                         .orientedTopologyLinkVelocityMetersPerSecond[
+                             nextLink.linkIndex]
+                      == acceptedState
+                             .orientedTopologyLinkVelocityMetersPerSecond[
+                                 previousLink->linkIndex],
+              "opening continuation preserves every stable link velocity");
+    }
+    check(continuation.openingVelocitySamples
+                  == acceptedState.openingVelocitySamples
+              && continuation.openingFlux.sourceOpeningFingerprint
+                  == nextOpenings.fingerprint,
+          "opening continuation preserves aperture velocity and rebuilds current flux");
+    for (const auto& component : nextPressureOperator.components) {
+        checkNear(
+            fragmentCorrectionVolumeMean(
+                nextPressureOperator, nextFragments, component,
+                continuation.pressureCorrectionPascals),
+            0.0, 2.0e-12,
+            "opening continuation applies the current connected-volume gauge");
+    }
+    validatePlanarPressureRegionFragmentOpeningContinuationIntegrity(
+        continuation);
+    validatePlanarPressureRegionFragmentOpeningContinuation(
+        continuation, acceptedState, pressureOperator, base, geometry,
+        sweep, fragments, topology, volumeRates, definitions, openings,
+        resistance, nextPressureOperator, nextBase, nextSweep,
+        nextFragments, nextTopology, nextVolumeRates, definitions,
+        nextOpenings);
+
+    auto corruptContinuation = continuation;
+    corruptContinuation.pressureCorrectionPascals[0] += 0.1;
+    expectRejected(
+        [&] {
+            validatePlanarPressureRegionFragmentOpeningContinuationIntegrity(
+                corruptContinuation);
+        },
+        "opening continuation rejects pressure corruption");
+    auto continuationLimits =
+        PlanarPressureRegionFragmentOpeningContinuationLimits{};
+    continuationLimits.maximumWorkingBytes =
+        continuation.workingStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                buildPlanarPressureRegionFragmentOpeningContinuation(
+                    acceptedState, pressureOperator, base, geometry, sweep,
+                    fragments, topology, volumeRates, definitions, openings,
+                    resistance, nextPressureOperator, nextBase, nextSweep,
+                    nextFragments, nextTopology, nextVolumeRates,
+                    definitions, nextOpenings, continuationLimits));
+        },
+        "opening continuation enforces its working-storage limit");
+    continuationLimits = {};
+    continuationLimits.maximumOwnedBytes =
+        continuation.ownedStorageBytes - 1;
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                buildPlanarPressureRegionFragmentOpeningContinuation(
+                    acceptedState, pressureOperator, base, geometry, sweep,
+                    fragments, topology, volumeRates, definitions, openings,
+                    resistance, nextPressureOperator, nextBase, nextSweep,
+                    nextFragments, nextTopology, nextVolumeRates,
+                    definitions, nextOpenings, continuationLimits));
+        },
+        "opening continuation enforces its owned-storage limit");
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                buildPlanarPressureRegionFragmentOpeningContinuation(
+                    acceptedState, pressureOperator, base, geometry, sweep,
+                    fragments, topology, volumeRates, definitions, openings,
+                    resistance, nextPressureOperator, nextBase, sweep,
+                    fragments, topology, volumeRates, definitions, openings));
+        },
+        "opening continuation rejects nonconsecutive endpoint profiles");
+    auto renamedDefinitions = definitions;
+    renamedDefinitions[0].patchStableId += 1;
+    const auto renamedOpenings =
+        buildPlanarPressureRegionFragmentOpenings(
+            geometry, nextSweep, nextFragments, nextTopology,
+            renamedDefinitions);
+    const auto renamedPressureOperator =
+        buildPlanarPressureRegionFragmentOpeningPressureOperator(
+            nextBase, geometry, nextSweep, nextFragments, nextTopology,
+            renamedDefinitions, renamedOpenings);
+    expectRejected(
+        [&] {
+            static_cast<void>(
+                buildPlanarPressureRegionFragmentOpeningContinuation(
+                    acceptedState, pressureOperator, base, geometry, sweep,
+                    fragments, topology, volumeRates, definitions, openings,
+                    resistance, renamedPressureOperator, nextBase,
+                    nextSweep, nextFragments, nextTopology, nextVolumeRates,
+                    renamedDefinitions, renamedOpenings));
+        },
+        "opening continuation rejects aperture appearance and retirement");
 
     const auto openingPressureState =
         composePlanarPressureRegionFragmentOpeningPressureState(
