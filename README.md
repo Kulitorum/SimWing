@@ -342,6 +342,18 @@ pressure warm start commit together; incompatibility, truncation, or failed
 energy closure publishes none of them. This remains an opt-in inviscid
 projection with no intake resistance/loss law, authored static-pressure
 relaxation, open-area traction correction, rebase, or worker integration.
+An adjacent opt-in opening-resistance step now supplies that loss term without
+changing the projection. Stable patch IDs bind calibrated linear/quadratic
+Darcy–Forchheimer coefficients; each exact aperture uses its fragment-center
+distance and area as a diagonal fluid slug and reuses the implicit-midpoint
+porous-flow oracle with zero driving pressure. Forward and reverse flow decay
+symmetrically, pressure impulse closes momentum, and midpoint resistance work
+equals the loss of aperture kinetic energy per patch and in aggregate. A
+zero/zero coefficient is an explicit bit-exact inviscid identity, so no loss
+is invented when material/intake data is absent. Samples and their rebuilt
+immutable flux state commit together after the passive-energy check. This is
+still an isolated split operator: it is not yet composed around projection,
+authored by scene-v2, applied to fabric traction, or selected by the worker.
 A first diagonal face-inertia metric now closes the missing geometric mass
 ownership without yet creating a velocity state. Each same-region Cartesian
 link has one shared normal-velocity degree of freedom with dual volume `area *

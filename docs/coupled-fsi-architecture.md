@@ -501,6 +501,7 @@ src/fsi/
         planar_region_fragment_pressure_operator.* regional graph Laplacian
         planar_region_fragment_opening_pressure_operator.* aperture graph Laplacian
         planar_region_fragment_opening_pressure_projection.* active aperture projection
+        planar_region_fragment_opening_resistance.* passive aperture loss
         planar_region_fragment_pressure_solve.* correction-only CG oracle
         porous_interface.* calibrated flux-driven porous jump and ledger
         porous_flow.*       midpoint pressure-driven plug and ledgers
@@ -2367,6 +2368,20 @@ pressure warm start publish in one transaction only after continuity and
 energy acceptance. This is inviscid projection inertia, not a resistance/loss
 law, evolution of authored static pressure, solid-wall traction subtraction,
 topology-transition handling, or production ownership.
+`planar_region_fragment_opening_resistance.*` provides the separate passive
+split step needed around that inviscid projection. One stable-ID-keyed
+Darcy–Forchheimer pair is required per exact patch. Active pairs advance a
+zero-driving-pressure fluid slug with mass
+`rho*openArea*fragmentCenterDistance` through the established implicit-
+midpoint porous-flow oracle; zero/zero is an explicit bit-exact identity.
+Forward/reverse velocity decays symmetrically, each patch closes resistance
+pressure impulse to momentum and midpoint loss work to kinetic-energy change,
+and the aggregate kinetic energy is non-increasing. Caller sample order and
+authored definition order do not change the canonical result. Samples and the
+rebuilt immutable opening-flux state commit together, with bounded storage and
+source fingerprints. The coefficients must be supplied by authoritative
+intake/material data; this step does not invent them, add driving pressure,
+compose the projection split, modify traction, or enter production.
 `planar_region_fragment_velocity_metric.*` adds the corresponding immutable
 diagonal face geometry for a future velocity state. A same-region Cartesian
 link owns one shared normal degree of freedom with dual volume equal to face

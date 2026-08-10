@@ -8,6 +8,7 @@
 #include "fluid/planar_region_fragment_opening_flux.h"
 #include "fluid/planar_region_fragment_opening_pressure_operator.h"
 #include "fluid/planar_region_fragment_opening_pressure_projection.h"
+#include "fluid/planar_region_fragment_opening_resistance.h"
 #include "fluid/planar_region_fragment_pressure_operator.h"
 #include "fluid/planar_region_fragment_pressure_jump_energy.h"
 #include "fluid/planar_region_fragment_pressure_projection.h"
@@ -8038,6 +8039,251 @@ void testPlanarRegionalPressureDrivenOpeningProjection() {
     }
 }
 
+void testPlanarRegionalOpeningResistance() {
+    const auto geometry = grid();
+    const auto layers = pocketLayers();
+    const auto sweep = makePlanarPressureRegionSweepLedger(
+        geometry, layers, layers, 0.02);
+    const auto fragments = buildPlanarPressureRegionFragments(
+        geometry, sweep);
+    const auto topology = buildPlanarPressureRegionFragmentTopology(
+        geometry, sweep, fragments);
+    const std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition>
+        definitions{{100, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.5}};
+    const auto openings = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, definitions);
+    const std::vector<
+        PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        resistance{{100, {8.0, 3.0}}};
+    PlanarPressureRegionFragmentOpeningResistanceSettings settings;
+    settings.densityKgPerCubicMeter = 1.2;
+    settings.timeStepSeconds = 0.02;
+
+    std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+        samples{{100, 3.2}};
+    auto openingFlux = buildPlanarPressureRegionFragmentOpeningFluxState(
+        geometry, sweep, fragments, topology, definitions, openings, samples);
+    const auto sourceFlux = openingFlux;
+    auto repeatedSamples = samples;
+    auto repeatedFlux = openingFlux;
+    const auto diagnostics =
+        advancePlanarPressureRegionFragmentOpeningResistance(
+            geometry, sweep, fragments, topology, definitions, openings,
+            resistance, samples, openingFlux, settings);
+    const auto repeated =
+        advancePlanarPressureRegionFragmentOpeningResistance(
+            geometry, sweep, fragments, topology, definitions, openings,
+            resistance, repeatedSamples, repeatedFlux, settings);
+    check(diagnostics == repeated && samples == repeatedSamples
+              && openingFlux == repeatedFlux
+              && diagnostics.accepted && diagnostics.finite
+              && diagnostics.nonIncreasingKineticEnergy
+              && diagnostics.sourceOpeningFingerprint == openings.fingerprint
+              && diagnostics.sourceOpeningFluxFingerprint
+                  == sourceFlux.fingerprint
+              && diagnostics.resultOpeningFluxFingerprint
+                  == openingFlux.fingerprint
+              && diagnostics.resistanceDefinitionFingerprint != 0
+              && diagnostics.patches.size() == 1
+              && diagnostics.zeroResistancePatchCount == 0,
+          "opening resistance advances deterministically with source provenance");
+    check(samples[0].relativeNormalVelocityMetersPerSecond > 0.0
+              && samples[0].relativeNormalVelocityMetersPerSecond < 3.2
+              && openingFlux.patches[0]
+                     .relativeVolumeFlowRateCubicMetersPerSecond
+                  > 0.0
+              && openingFlux.patches[0]
+                     .relativeVolumeFlowRateCubicMetersPerSecond
+                  < sourceFlux.patches[0]
+                        .relativeVolumeFlowRateCubicMetersPerSecond,
+          "opening resistance passively reduces positive aperture flow");
+    check(diagnostics.patches[0].plugFlow.midpointPressureDropPascals > 0.0
+              && diagnostics.patches[0].plugFlow.endpointPressureDropPascals
+                  > 0.0
+              && diagnostics.dissipatedEnergyJoules > 0.0
+              && diagnostics.kineticEnergyChangeJoules < 0.0
+              && std::abs(diagnostics.energyResidualJoules)
+                  <= diagnostics.energyToleranceJoules
+              && diagnostics
+                     .maximumAbsoluteMomentumResidualKilogramMetersPerSecond
+                  < 1.0e-14,
+          "opening resistance closes pressure impulse and passive energy loss");
+
+    std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+        reverseSamples{{100, -3.2}};
+    auto reverseFlux = buildPlanarPressureRegionFragmentOpeningFluxState(
+        geometry, sweep, fragments, topology, definitions, openings,
+        reverseSamples);
+    const auto reverse =
+        advancePlanarPressureRegionFragmentOpeningResistance(
+            geometry, sweep, fragments, topology, definitions, openings,
+            resistance, reverseSamples, reverseFlux, settings);
+    check(reverse.accepted
+              && reverseSamples[0].relativeNormalVelocityMetersPerSecond < 0.0,
+          "opening resistance preserves reverse-flow orientation");
+    checkNear(
+        reverseSamples[0].relativeNormalVelocityMetersPerSecond,
+        -samples[0].relativeNormalVelocityMetersPerSecond, 2.0e-15,
+        "opening resistance is odd in aperture velocity");
+    checkNear(reverse.dissipatedEnergyJoules,
+              diagnostics.dissipatedEnergyJoules, 2.0e-15,
+              "opening resistance dissipates equally in either orientation");
+    check(reverse.patches[0].plugFlow.midpointPressureDropPascals < 0.0,
+          "opening resistance pressure drop follows reverse flow");
+
+    const std::vector<
+        PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        zeroResistance{{100, {0.0, 0.0}}};
+    std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+        identitySamples{{100, 3.2}};
+    auto identityFlux = buildPlanarPressureRegionFragmentOpeningFluxState(
+        geometry, sweep, fragments, topology, definitions, openings,
+        identitySamples);
+    const auto originalIdentitySamples = identitySamples;
+    const auto originalIdentityFlux = identityFlux;
+    const auto identity =
+        advancePlanarPressureRegionFragmentOpeningResistance(
+            geometry, sweep, fragments, topology, definitions, openings,
+            zeroResistance, identitySamples, identityFlux, settings);
+    check(identity.accepted && identity.zeroResistancePatchCount == 1
+              && identity.patches[0].zeroResistanceIdentity
+              && identitySamples == originalIdentitySamples
+              && identityFlux == originalIdentityFlux
+              && identity.dissipatedEnergyJoules == 0.0
+              && identity.energyResidualJoules == 0.0,
+          "zero opening resistance is a bit-exact inviscid identity");
+
+    const std::vector<PlanarPressureRegionFragmentOpeningPatchDefinition>
+        parallelDefinitions{
+            {102, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.2},
+            {101, 1000, 10, GridFaceAxis::X, 1, 0, 0, 1, 2, 0.3},
+        };
+    const auto parallelOpenings = buildPlanarPressureRegionFragmentOpenings(
+        geometry, sweep, fragments, topology, parallelDefinitions);
+    std::vector<PlanarPressureRegionFragmentOpeningVelocitySample>
+        parallelSamples{{102, 3.2}, {101, 3.2}};
+    auto parallelFlux = buildPlanarPressureRegionFragmentOpeningFluxState(
+        geometry, sweep, fragments, topology, parallelDefinitions,
+        parallelOpenings, parallelSamples);
+    std::vector<PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        parallelResistance{{102, {8.0, 3.0}}, {101, {8.0, 3.0}}};
+    auto reversedResistance = parallelResistance;
+    std::ranges::reverse(reversedResistance);
+    auto reorderedSamples = parallelSamples;
+    auto reorderedFlux = parallelFlux;
+    const auto parallel =
+        advancePlanarPressureRegionFragmentOpeningResistance(
+            geometry, sweep, fragments, topology, parallelDefinitions,
+            parallelOpenings, parallelResistance, parallelSamples,
+            parallelFlux, settings);
+    const auto reordered =
+        advancePlanarPressureRegionFragmentOpeningResistance(
+            geometry, sweep, fragments, topology, parallelDefinitions,
+            parallelOpenings, reversedResistance, reorderedSamples,
+            reorderedFlux, settings);
+    check(parallel == reordered && parallelSamples == reorderedSamples
+              && parallelFlux == reorderedFlux
+              && parallel.patches.size() == 2,
+          "opening resistance canonicalizes multi-patch coefficient order");
+    checkNear(parallelSamples[0].relativeNormalVelocityMetersPerSecond,
+              parallelSamples[1].relativeNormalVelocityMetersPerSecond,
+              2.0e-15,
+              "parallel aperture patches retain one resistance decay speed");
+    checkNear(
+        parallelFlux.patches[0]
+                .relativeVolumeFlowRateCubicMetersPerSecond
+            / parallelFlux.patches[0].areaSquareMeters,
+        parallelFlux.patches[1]
+                .relativeVolumeFlowRateCubicMetersPerSecond
+            / parallelFlux.patches[1].areaSquareMeters,
+        2.0e-15,
+        "parallel aperture resistance remains area-consistent");
+
+    const auto originalRejectedSamples = originalIdentitySamples;
+    const auto originalRejectedFlux = originalIdentityFlux;
+    expectRejected([&] {
+        auto candidateSamples = originalRejectedSamples;
+        auto candidateFlux = originalRejectedFlux;
+        static_cast<void>(
+            advancePlanarPressureRegionFragmentOpeningResistance(
+                geometry, sweep, fragments, topology, definitions, openings,
+                {}, candidateSamples, candidateFlux, settings));
+    }, "opening resistance rejects a missing patch coefficient");
+    auto invalidResistance = resistance;
+    invalidResistance[0].resistance.linearPascalSecondsPerMeter = -1.0;
+    expectRejected([&] {
+        auto candidateSamples = originalRejectedSamples;
+        auto candidateFlux = originalRejectedFlux;
+        static_cast<void>(
+            advancePlanarPressureRegionFragmentOpeningResistance(
+                geometry, sweep, fragments, topology, definitions, openings,
+                invalidResistance, candidateSamples, candidateFlux,
+                settings));
+    }, "opening resistance rejects a negative coefficient");
+    std::vector<PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        foreignResistance{{999, {8.0, 3.0}}};
+    expectRejected([&] {
+        auto candidateSamples = originalRejectedSamples;
+        auto candidateFlux = originalRejectedFlux;
+        static_cast<void>(
+            advancePlanarPressureRegionFragmentOpeningResistance(
+                geometry, sweep, fragments, topology, definitions, openings,
+                foreignResistance, candidateSamples, candidateFlux,
+                settings));
+    }, "opening resistance rejects a foreign patch identity");
+    const std::vector<
+        PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        duplicateResistance{{101, {8.0, 3.0}}, {101, {8.0, 3.0}}};
+    expectRejected([&] {
+        auto candidateSamples = std::vector<
+            PlanarPressureRegionFragmentOpeningVelocitySample>{
+            {101, 3.2}, {102, 3.2}};
+        auto candidateFlux =
+            buildPlanarPressureRegionFragmentOpeningFluxState(
+                geometry, sweep, fragments, topology, parallelDefinitions,
+                parallelOpenings, candidateSamples);
+        static_cast<void>(
+            advancePlanarPressureRegionFragmentOpeningResistance(
+                geometry, sweep, fragments, topology, parallelDefinitions,
+                parallelOpenings, duplicateResistance, candidateSamples,
+                candidateFlux, settings));
+    }, "opening resistance rejects a duplicate patch identity");
+    auto corruptFlux = originalRejectedFlux;
+    corruptFlux.patches[0].relativeVolumeFlowRateCubicMetersPerSecond += 0.1;
+    expectRejected([&] {
+        auto candidateSamples = originalRejectedSamples;
+        static_cast<void>(
+            advancePlanarPressureRegionFragmentOpeningResistance(
+                geometry, sweep, fragments, topology, definitions, openings,
+                resistance, candidateSamples, corruptFlux, settings));
+    }, "opening resistance rejects a corrupted flux source");
+    auto limits = PlanarPressureRegionFragmentOpeningResistanceLimits{};
+    limits.maximumWorkingBytes = 1;
+    expectRejected([&] {
+        auto candidateSamples = originalRejectedSamples;
+        auto candidateFlux = originalRejectedFlux;
+        static_cast<void>(
+            advancePlanarPressureRegionFragmentOpeningResistance(
+                geometry, sweep, fragments, topology, definitions, openings,
+                resistance, candidateSamples, candidateFlux, settings,
+                limits));
+    }, "opening resistance enforces its working-storage limit");
+    auto invalidSettings = settings;
+    invalidSettings.timeStepSeconds = 0.0;
+    auto retainedSamples = originalRejectedSamples;
+    auto retainedFlux = originalRejectedFlux;
+    expectRejected([&] {
+        static_cast<void>(
+            advancePlanarPressureRegionFragmentOpeningResistance(
+                geometry, sweep, fragments, topology, definitions, openings,
+                resistance, retainedSamples, retainedFlux,
+                invalidSettings));
+    }, "opening resistance rejects a zero time step");
+    check(retainedSamples == originalRejectedSamples
+              && retainedFlux == originalRejectedFlux,
+          "opening resistance rejection preserves samples and flux");
+}
+
 void testAllAxisAssembly() {
     const auto geometry = grid();
     for (const GridFaceAxis axis
@@ -8212,6 +8458,7 @@ int main() {
     testPlanarRegionalMovingFragmentPressureProjectionAllAxes();
     testPlanarRegionalOpeningFluxPressureProjection();
     testPlanarRegionalPressureDrivenOpeningProjection();
+    testPlanarRegionalOpeningResistance();
     testAllAxisAssembly();
     testTransactionalRejection();
     if (failures != 0) {

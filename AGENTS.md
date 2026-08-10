@@ -1941,6 +1941,12 @@ makes this a certified aerodynamic solver.
   closure, then commits link velocity, samples, rebuilt flux, and warm pressure
   together. It supplies no aperture resistance/loss, static-jump evolution,
   traction correction, rebase, or production path.
+- `src/fsi/fluid/planar_region_fragment_opening_resistance.{h,cpp}` applies
+  stable-ID-keyed calibrated Darcy–Forchheimer loss to exact aperture samples.
+  It reuses the implicit-midpoint porous plug with patch area/center distance,
+  permits an explicit zero-loss identity, closes passive momentum/energy, and
+  commits samples plus rebuilt flux together. It does not invent coefficients,
+  driving pressure, projection composition, traction, or production state.
 - `src/fsi/fluid/planar_region_fragment_volume_rate.{h,cpp}` reconstructs
   topology-stable previous volume and constant geometry `dV/dt` for every
   current regional fragment from its layer-boundary displacements. It closes
@@ -2469,6 +2475,21 @@ sources, nonzero wall velocity, invalid settings, duration mismatch, and
 working/nested limits. Do not infer aperture resistance/loss, authored static-
 pressure evolution, open-area traction subtraction, rebase, or production
 ownership.
+
+For `planar_region_fragment_opening_resistance.*`, require exactly one finite
+nonnegative stable-ID-keyed Darcy–Forchheimer definition per exact aperture
+patch; zero/zero must be a bit-exact inviscid identity rather than an invented
+loss. Active patches use fluid mass `rho*area*centerDistance` and the canonical
+zero-driving-pressure implicit-midpoint porous oracle. Require odd forward/
+reverse velocity response, non-increasing aperture kinetic energy, per-patch
+pressure-impulse/momentum and midpoint-work/dissipation closure, aggregate
+energy closure, deterministic multi-patch definition ordering, and exact
+source/result flux fingerprints. Samples and rebuilt immutable flux commit as
+one transaction. Reject missing/duplicate/foreign IDs, negative/non-finite
+coefficients, corrupt flux, invalid density/time, and patch/owned/working/
+nested-flux limits. Do not infer resistance values without authoritative
+intake/material data, driving pressure, projection splitting, traction,
+rebase, or production ownership.
 
 For `planar_region_fragment_volume_rate.*`, require canonical breathing to
 publish `+1.6/-1.6 m3/s` pocket/exterior component rates while every fixed
