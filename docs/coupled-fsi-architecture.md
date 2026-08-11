@@ -551,7 +551,7 @@ src/viewer/
     fluid_frame.*           owning accepted MAC-to-cell diagnostic adapter
     pressure_jump_frame.*   owning cell and layered-interface diagnostics
     vector_glyphs.*         bounded deterministic vertex-vector arrows
-    viewer_window.*         standalone Qt/OpenGL diagnostics
+    viewer_window.*         standalone Qt/OpenGL diagnostics + XYZ triad
     viewer_layers.*         structure, interface, grid, field, and HUD layers
 
 tools/

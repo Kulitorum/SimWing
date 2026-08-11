@@ -30,4 +30,25 @@ ViewerDepthRange viewerDepthRange(double cameraDistanceMetres,
     return {nearPlane, farPlane};
 }
 
+ViewerOrientationTriad viewerOrientationTriad(const double yawDegrees,
+                                              const double pitchDegrees) {
+    if (!std::isfinite(yawDegrees) || !std::isfinite(pitchDegrees)) {
+        throw std::invalid_argument(
+            "Viewer orientation requires finite orbit angles");
+    }
+    constexpr double radiansPerDegree =
+        3.141592653589793238462643383279502884 / 180.0;
+    const double yaw = yawDegrees * radiansPerDegree;
+    const double pitch = pitchDegrees * radiansPerDegree;
+    const double cy = std::cos(yaw);
+    const double sy = std::sin(yaw);
+    const double cp = std::cos(pitch);
+    const double sp = std::sin(pitch);
+    return {
+        {cy, cp * sy, sp * sy},
+        {-sy, cp * cy, sp * cy},
+        {0.0, -sp, cp},
+    };
+}
+
 } // namespace simwing::viewer

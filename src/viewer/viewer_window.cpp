@@ -8,8 +8,10 @@
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QFont>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLineF>
 #include <QMatrix4x4>
 #include <QMessageBox>
 #include <QMouseEvent>
@@ -19,6 +21,7 @@
 #include <QOpenGLVertexArrayObject>
 #include <QOpenGLWidget>
 #include <QPainter>
+#include <QPolygonF>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolBar>
@@ -26,6 +29,7 @@
 #include <QWheelEvent>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -38,6 +42,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <ranges>
 #include <string>
 #include <thread>
 #include <utility>
@@ -840,6 +845,8 @@ private:
         painter.drawText(22, 116, QStringLiteral(
             "Left drag: orbit   Middle/right drag: pan   Wheel: zoom   Double-click: fit"));
 
+        drawOrientationTriad(painter);
+
         const QString error = !glError_.isEmpty() ? glError_ : message_;
         if (!error.isEmpty()) {
             const QRect errorRect(12, height() - 62, width() - 24, 48);
@@ -849,6 +856,73 @@ private:
                              Qt::AlignLeft | Qt::AlignVCenter | Qt::TextWordWrap,
                              error);
         }
+    }
+
+    void drawOrientationTriad(QPainter& painter) const {
+        struct AxisStyle {
+            ViewerProjectedAxis projection;
+            QColor colour;
+            QChar label;
+        };
+        const ViewerOrientationTriad projection = viewerOrientationTriad(
+            static_cast<double>(yaw_), static_cast<double>(pitch_));
+        std::array<AxisStyle, 3> axes{{
+            {projection.x, QColor(235, 64, 64), QChar('X')},
+            {projection.y, QColor(64, 220, 96), QChar('Y')},
+            {projection.z, QColor(64, 128, 255), QChar('Z')},
+        }};
+        std::ranges::sort(
+            axes, {}, [](const AxisStyle& axis) {
+                return axis.projection.cameraDepth;
+            });
+
+        const QRectF panel(12.0, std::max(12.0, height() - 130.0),
+                           120.0, 118.0);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(8, 12, 20, 190));
+        painter.drawRoundedRect(panel, 7.0, 7.0);
+
+        const QPointF origin(panel.center().x(), panel.bottom() - 50.0);
+        constexpr double axisLength = 42.0;
+        constexpr double arrowLength = 8.0;
+        constexpr double arrowHalfWidth = 4.0;
+        painter.setFont(QFont(painter.font().family(), 10, QFont::Bold));
+        for (const AxisStyle& axis : axes) {
+            const QPointF direction(
+                axisLength * axis.projection.horizontal,
+                -axisLength * axis.projection.vertical);
+            const QPointF end = origin + direction;
+            QPen pen(axis.colour, 3.0, Qt::SolidLine, Qt::RoundCap,
+                     Qt::RoundJoin);
+            painter.setPen(pen);
+            painter.setBrush(axis.colour);
+            if (QLineF(origin, end).length() >= 4.0) {
+                painter.drawLine(origin, end);
+                const QPointF unit = direction
+                    / QLineF(QPointF{}, direction).length();
+                const QPointF normal(-unit.y(), unit.x());
+                painter.drawPolygon(QPolygonF{
+                    end,
+                    end - arrowLength * unit
+                        + arrowHalfWidth * normal,
+                    end - arrowLength * unit
+                        - arrowHalfWidth * normal,
+                });
+            } else {
+                painter.drawEllipse(origin, 4.0, 4.0);
+            }
+            const QPointF labelDirection = direction.isNull()
+                ? QPointF(0.0, -1.0)
+                : direction / std::max(QLineF(origin, end).length(), 1.0);
+            painter.drawText(
+                QRectF(end + 5.0 * labelDirection - QPointF(8.0, 8.0),
+                       QSizeF(16.0, 16.0)),
+                Qt::AlignCenter, QString(axis.label));
+        }
+        painter.setPen(QColor(205, 214, 228));
+        painter.drawText(
+            QRectF(panel.left(), panel.top() + 5.0, panel.width(), 16.0),
+            Qt::AlignCenter, QStringLiteral("World axes"));
     }
 
     std::shared_ptr<const DiagnosticFrame> frame_;

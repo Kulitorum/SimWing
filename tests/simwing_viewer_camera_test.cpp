@@ -79,12 +79,44 @@ void testInvalidInputsAreRejected() {
         "depth range: non-finite camera geometry is rejected");
 }
 
+void testOrientationTriadUsesWorldAxes() {
+    const auto front = viewerOrientationTriad(0.0, 0.0);
+    check(front.x == ViewerProjectedAxis{1.0, 0.0, 0.0}
+              && front.y == ViewerProjectedAxis{0.0, 1.0, 0.0}
+              && front.z == ViewerProjectedAxis{0.0, 0.0, 1.0},
+          "orientation triad: unrotated world axes retain X/Y/Z identity");
+
+    const auto yawed = viewerOrientationTriad(90.0, 0.0);
+    checkNear(yawed.x.horizontal, 0.0, 1.0e-15,
+              "orientation triad: yawed X has no horizontal component");
+    checkNear(yawed.x.vertical, 1.0, 1.0e-15,
+              "orientation triad: positive yaw maps X upward");
+    checkNear(yawed.y.horizontal, -1.0, 1.0e-15,
+              "orientation triad: positive yaw maps Y left");
+    checkNear(yawed.z.cameraDepth, 1.0, 1.0e-15,
+              "orientation triad: yaw leaves Z depth unchanged");
+
+    const auto pitched = viewerOrientationTriad(0.0, 90.0);
+    checkNear(pitched.y.cameraDepth, 1.0, 1.0e-15,
+              "orientation triad: positive pitch maps Y toward camera");
+    checkNear(pitched.z.vertical, -1.0, 1.0e-15,
+              "orientation triad: positive pitch maps Z downward");
+
+    expectRejected(
+        [] {
+            static_cast<void>(viewerOrientationTriad(
+                std::numeric_limits<double>::infinity(), 0.0));
+        },
+        "orientation triad: non-finite orbit angles are rejected");
+}
+
 } // namespace
 
 int main() {
     testFittedSceneRange();
     testSmallAndCloseScenesRemainVisible();
     testInvalidInputsAreRejected();
+    testOrientationTriadUsesWorldAxes();
     if (failures != 0) {
         std::fprintf(stderr,
                      "%d viewer camera check(s) failed\n",

@@ -1751,12 +1751,15 @@ makes this a certified aerodynamic solver.
   bounded and asynchronous. Unreferenced diagnostic vertices render as
   scalar-coloured points without changing the trace protocol. Vertex vector
   fields have an independent selector and render through bounded arrow glyphs,
-  so scalar colouring and vector direction can be inspected together.
+  so scalar colouring and vector direction can be inspected together. An
+  always-visible camera-relative world-axis triad uses X red, Y green, and Z
+  blue; pan and zoom do not alter its orientation.
 - `src/viewer/vector_glyphs.{h,cpp}` builds those arrows outside Qt/OpenGL.
   It normalizes length by the field maximum, derives automatic scale from the
   dimensional point spacing, and caps large fields with a deterministic stride.
 - `src/viewer/viewer_camera.{h,cpp}` owns the tight scene-relative perspective
-  depth range. The OpenGL widget requests and verifies a 24-bit depth buffer,
+  depth range and the tested yaw/pitch projection for that world-axis triad.
+  The OpenGL widget requests and verifies a 24-bit depth buffer,
   restores depth state after every HUD paint, and offsets filled triangles so
   coplanar diagnostic lines do not z-fight.
 - `src/fsi/canonical_case.{h,cpp}` and `tools/simwing_fsi_main.cpp` are the
