@@ -3052,8 +3052,15 @@ rebuilds a replacement Structure from the retained post-step encoding before
 either owner changes. A deliberately late aggregate-owner failure restores the
 pre-pressure Structure while retaining the prior fluid owner; a restored pair
 reproduces both byte-identical Structure state and the exact next ALE transport.
-This owner is in-memory only and still performs no topology rebase, repeated
-coupled stepping, persistence, or production selection.
+The owner's fixed-metric consecutive advance now closes the first bounded
+multi-step form of this path. It reconstructs the prior accepted pressure flow,
+replays the supplied transport from the owner's exact adjusted momentum, and
+requires the new wall cycle to descend from that transport before Structure can
+mutate. A fixed-Structure oracle advances two complete fluid/XPBD transactions
+bit-identically from both the live and restored first endpoint; foreign
+transport lineage leaves both owners unchanged. This deliberately requires one
+unchanged regional fluid metric. It does not classify a moved surface, rebase
+topology, persist a sequence, or select a production worker.
 Its `..._persistence.*` companion adds the distinct checksummed `SWRC` restart
 envelope without copying the large derived receipt onto the wire. The payload
 nests the existing `SWRW` fluid endpoint and both canonical `SWST` Structure

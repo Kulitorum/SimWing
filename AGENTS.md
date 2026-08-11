@@ -3413,9 +3413,14 @@ decode and restore a replacement Structure from the retained post-step bytes,
 then publish Structure and fluid state only through no-throw operations. Cover
 atomic first publication, exact restored Structure and next-fluid-transport
 replay, corrupt-state restore with both prior owners unchanged, and a late
-owner-limit failure with no fluid publication and exact Structure rollback. Do
-not add persistence, topology rebase, repeated coupled stepping, or a worker
-selection.
+owner-limit failure with no fluid publication and exact Structure rollback.
+For a repeated fixed-metric advance, rebuild the prior accepted velocity state
+from the retained pressure endpoint, fully replay the intervening transport
+from the retained adjusted momentum, and require the new compact cycle's
+adjustment to name that exact transport before invoking the existing atomic
+advance. Cover two deterministic fluid/XPBD steps from both live and restored
+first endpoints plus foreign-lineage rollback. Do not generalize this boundary
+to changed metrics/topology, add sequence persistence, or select a worker.
 
 For its `..._persistence.*` companion, use distinct `SWRC` magic and keep the
 wire payload compact: nested `SWRW` plus the already canonical pre/post `SWST`

@@ -13,6 +13,10 @@ inline constexpr std::uint32_t
     sceneFluidRegionalOpeningMomentumWallCoupledStateVersion = 1;
 
 struct SceneFluidRegionalOpeningMomentumWallCoupledStateLimits {
+    fluid::PlanarPressureRegionFragmentOpeningVelocityStateLimits
+        consecutiveFlow;
+    fluid::PlanarPressureRegionFragmentOpeningMomentumTransportLimits
+        consecutiveTransport;
     SceneFluidRegionalOpeningMomentumWallStructureStepEpochLimits
         structureStep;
     std::size_t maximumOwnedBytes = 16ULL * 1024ULL * 1024ULL * 1024ULL;
@@ -73,9 +77,11 @@ void validateSceneFluidRegionalOpeningMomentumWallCoupledState(
         {});
 
 // Owns Structure and its matching accepted regional wall-cycle endpoint as one
-// transaction. Advance leaves the prior owner state untouched until the new
-// structural step has fully replay-validated. Restore validates and allocates
-// a complete replacement Structure and state before publishing either.
+// transaction. Bootstrap advance requires an empty owner; consecutive
+// replacement requires explicit fixed-metric fluid lineage. Both leave the
+// prior owner state untouched until the structural step has fully
+// replay-validated. Restore validates and allocates a complete replacement
+// Structure and state before publishing either.
 class SceneFluidRegionalOpeningMomentumWallCoupledStateOwner final {
 public:
     explicit SceneFluidRegionalOpeningMomentumWallCoupledStateOwner(
@@ -103,6 +109,48 @@ public:
 
     void advance(
         const SceneFluidRegionalOpeningMomentumWallCycleState& cycleState,
+        const fluid::PlanarPressureRegionFragmentOpeningVelocityMetric&
+            transportMetric,
+        const fluid::PlanarPressureRegionFragmentOpeningPressureOperator&
+            acceptedPressureOperator,
+        const fluid::PlanarPressureRegionFragmentPressureOperator&
+            acceptedBasePressureOperator,
+        const fluid::PeriodicCartesianGrid& grid,
+        const fluid::PlanarPressureRegionSweepLedger& acceptedSweep,
+        const fluid::PlanarPressureRegionFragmentSet& acceptedFragments,
+        const fluid::PlanarPressureRegionFragmentTopology& acceptedTopology,
+        const fluid::PlanarPressureRegionFragmentVolumeRateSet&
+            acceptedVolumeRates,
+        std::span<
+            const fluid::PlanarPressureRegionFragmentOpeningPatchDefinition>
+            acceptedOpeningDefinitions,
+        const fluid::PlanarPressureRegionFragmentOpeningSet& acceptedOpenings,
+        std::span<
+            const fluid::PlanarPressureRegionFragmentOpeningResistanceDefinition>
+            acceptedResistanceDefinitions,
+        const fluid::PlanarPressureRegionFragmentVelocityMetric&
+            acceptedBaseMetric,
+        const fluid::PlanarPressureRegionFragmentOpeningVelocityMetric&
+            acceptedMetric,
+        const SceneFluidSurfaceDefinition& surface,
+        const SceneFluidSurfaceState& surfaceState,
+        const SceneFluidSurfaceTransfer& transfer,
+        const SceneFluidQuadratureDefinition& quadrature,
+        const SceneFluidRegionalOpeningMomentumWallStructureStepEpochSettings&
+            settings,
+        const SceneFluidRegionalOpeningMomentumWallCoupledStateLimits& limits =
+            {});
+
+    // Repeats the opt-in coupled transaction while the regional CFD metric
+    // remains fixed. The supplied transport must replay exactly from this
+    // owner's accepted adjusted momentum into its accepted pressure flow;
+    // the new cycle must in turn descend from that transport. This is the
+    // first explicit multi-step ownership boundary, not a moving-topology
+    // rebase or a production-worker selection.
+    void advanceFixedMetricConsecutive(
+        const SceneFluidRegionalOpeningMomentumWallCycleState& cycleState,
+        const fluid::PlanarPressureRegionFragmentOpeningMomentumTransport&
+            consecutiveTransport,
         const fluid::PlanarPressureRegionFragmentOpeningVelocityMetric&
             transportMetric,
         const fluid::PlanarPressureRegionFragmentOpeningPressureOperator&

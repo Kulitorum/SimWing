@@ -83,6 +83,75 @@ StructureCheckpoint decodePostStepCheckpoint(
     return result;
 }
 
+std::optional<SceneFluidRegionalOpeningMomentumWallCoupledState>
+advanceCandidate(
+    Structure& structure,
+    const SceneFluidRegionalOpeningMomentumWallCycleState& cycleState,
+    const fluid::PlanarPressureRegionFragmentOpeningVelocityMetric&
+        transportMetric,
+    const fluid::PlanarPressureRegionFragmentOpeningPressureOperator&
+        acceptedPressureOperator,
+    const fluid::PlanarPressureRegionFragmentPressureOperator&
+        acceptedBasePressureOperator,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::PlanarPressureRegionSweepLedger& acceptedSweep,
+    const fluid::PlanarPressureRegionFragmentSet& acceptedFragments,
+    const fluid::PlanarPressureRegionFragmentTopology& acceptedTopology,
+    const fluid::PlanarPressureRegionFragmentVolumeRateSet&
+        acceptedVolumeRates,
+    const std::span<
+        const fluid::PlanarPressureRegionFragmentOpeningPatchDefinition>
+        acceptedOpeningDefinitions,
+    const fluid::PlanarPressureRegionFragmentOpeningSet& acceptedOpenings,
+    const std::span<
+        const fluid::PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        acceptedResistanceDefinitions,
+    const fluid::PlanarPressureRegionFragmentVelocityMetric&
+        acceptedBaseMetric,
+    const fluid::PlanarPressureRegionFragmentOpeningVelocityMetric&
+        acceptedMetric,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& surfaceState,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidRegionalOpeningMomentumWallStructureStepEpochSettings&
+        settings,
+    const SceneFluidRegionalOpeningMomentumWallCoupledStateLimits& limits) {
+    validateLimits(limits);
+    std::optional<SceneFluidRegionalOpeningMomentumWallCoupledState> candidate;
+    candidate.emplace();
+    candidate->cycleState = cycleState;
+
+    const StructureCheckpoint before = structure.checkpoint();
+    try {
+        candidate->structureStep =
+            advanceSceneFluidRegionalOpeningMomentumWallStructureStepEpoch(
+                candidate->cycleState, transportMetric,
+                acceptedPressureOperator, acceptedBasePressureOperator,
+                grid, acceptedSweep, acceptedFragments, acceptedTopology,
+                acceptedVolumeRates, acceptedOpeningDefinitions,
+                acceptedOpenings, acceptedResistanceDefinitions,
+                acceptedBaseMetric, acceptedMetric, surface, surfaceState,
+                transfer, quadrature, structure, settings,
+                limits.structureStep);
+        candidate->ownedStorageBytes = ownedStorageBytes(*candidate);
+        validateOwnedLimit(*candidate, limits);
+        candidate->fingerprint = fingerprint(*candidate);
+        validateSceneFluidRegionalOpeningMomentumWallCoupledState(
+            *candidate, transportMetric, acceptedPressureOperator,
+            acceptedBasePressureOperator, grid, acceptedSweep,
+            acceptedFragments, acceptedTopology, acceptedVolumeRates,
+            acceptedOpeningDefinitions, acceptedOpenings,
+            acceptedResistanceDefinitions, acceptedBaseMetric,
+            acceptedMetric, surface, surfaceState, transfer, quadrature,
+            structure, settings, limits);
+        return candidate;
+    } catch (...) {
+        structure.restore(before);
+        throw;
+    }
+}
+
 } // namespace
 
 void validateSceneFluidRegionalOpeningMomentumWallCoupledStateIntegrity(
@@ -213,42 +282,108 @@ void SceneFluidRegionalOpeningMomentumWallCoupledStateOwner::advance(
     const SceneFluidRegionalOpeningMomentumWallStructureStepEpochSettings&
         settings,
     const SceneFluidRegionalOpeningMomentumWallCoupledStateLimits& limits) {
-    validateLimits(limits);
-    std::optional<SceneFluidRegionalOpeningMomentumWallCoupledState> candidate;
-    candidate.emplace();
-    candidate->cycleState = cycleState;
+    if (state_) {
+        throw std::logic_error(
+            "regional opening wall coupled-state bootstrap requires an empty owner");
+    }
+    auto candidate = advanceCandidate(
+        structure_, cycleState, transportMetric, acceptedPressureOperator,
+        acceptedBasePressureOperator, grid, acceptedSweep,
+        acceptedFragments, acceptedTopology, acceptedVolumeRates,
+        acceptedOpeningDefinitions, acceptedOpenings,
+        acceptedResistanceDefinitions, acceptedBaseMetric, acceptedMetric,
+        surface, surfaceState, transfer, quadrature, settings, limits);
+    static_assert(std::is_nothrow_swappable_v<
+        SceneFluidRegionalOpeningMomentumWallCoupledState>);
+    state_.swap(candidate);
+}
 
-    const StructureCheckpoint before = structure_.checkpoint();
-    try {
-        candidate->structureStep =
-            advanceSceneFluidRegionalOpeningMomentumWallStructureStepEpoch(
-                candidate->cycleState, transportMetric,
-                acceptedPressureOperator, acceptedBasePressureOperator,
-                grid, acceptedSweep, acceptedFragments, acceptedTopology,
-                acceptedVolumeRates, acceptedOpeningDefinitions,
-                acceptedOpenings, acceptedResistanceDefinitions,
-                acceptedBaseMetric, acceptedMetric, surface, surfaceState,
-                transfer, quadrature, structure_, settings,
-                limits.structureStep);
-        candidate->ownedStorageBytes = ownedStorageBytes(*candidate);
-        validateOwnedLimit(*candidate, limits);
-        candidate->fingerprint = fingerprint(*candidate);
-        validateSceneFluidRegionalOpeningMomentumWallCoupledState(
-            *candidate, transportMetric, acceptedPressureOperator,
+void SceneFluidRegionalOpeningMomentumWallCoupledStateOwner::
+advanceFixedMetricConsecutive(
+    const SceneFluidRegionalOpeningMomentumWallCycleState& cycleState,
+    const fluid::PlanarPressureRegionFragmentOpeningMomentumTransport&
+        consecutiveTransport,
+    const fluid::PlanarPressureRegionFragmentOpeningVelocityMetric&
+        transportMetric,
+    const fluid::PlanarPressureRegionFragmentOpeningPressureOperator&
+        acceptedPressureOperator,
+    const fluid::PlanarPressureRegionFragmentPressureOperator&
+        acceptedBasePressureOperator,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::PlanarPressureRegionSweepLedger& acceptedSweep,
+    const fluid::PlanarPressureRegionFragmentSet& acceptedFragments,
+    const fluid::PlanarPressureRegionFragmentTopology& acceptedTopology,
+    const fluid::PlanarPressureRegionFragmentVolumeRateSet&
+        acceptedVolumeRates,
+    const std::span<
+        const fluid::PlanarPressureRegionFragmentOpeningPatchDefinition>
+        acceptedOpeningDefinitions,
+    const fluid::PlanarPressureRegionFragmentOpeningSet& acceptedOpenings,
+    const std::span<
+        const fluid::PlanarPressureRegionFragmentOpeningResistanceDefinition>
+        acceptedResistanceDefinitions,
+    const fluid::PlanarPressureRegionFragmentVelocityMetric&
+        acceptedBaseMetric,
+    const fluid::PlanarPressureRegionFragmentOpeningVelocityMetric&
+        acceptedMetric,
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& surfaceState,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidRegionalOpeningMomentumWallStructureStepEpochSettings&
+        settings,
+    const SceneFluidRegionalOpeningMomentumWallCoupledStateLimits& limits) {
+    validateLimits(limits);
+    const auto& prior = state();
+    validateSceneFluidRegionalOpeningMomentumWallCoupledStateIntegrity(
+        prior);
+    fluid::validatePlanarPressureRegionFragmentOpeningMomentumTransportIntegrity(
+        consecutiveTransport);
+    if (prior.cycleState.transportMetricFingerprint
+            != transportMetric.fingerprint
+        || prior.cycleState.acceptedMetricFingerprint
+            != transportMetric.fingerprint
+        || acceptedMetric.fingerprint != transportMetric.fingerprint) {
+        throw std::invalid_argument(
+            "consecutive regional opening wall advance requires one fixed fluid metric");
+    }
+
+    const auto priorAcceptedFlow =
+        fluid::capturePlanarPressureRegionFragmentOpeningVelocityState(
+            prior.cycleState.acceptedPressure, acceptedPressureOperator,
             acceptedBasePressureOperator, grid, acceptedSweep,
             acceptedFragments, acceptedTopology, acceptedVolumeRates,
             acceptedOpeningDefinitions, acceptedOpenings,
             acceptedResistanceDefinitions, acceptedBaseMetric,
-            acceptedMetric, surface, surfaceState, transfer, quadrature,
-            structure_, settings, limits);
-
-        static_assert(std::is_nothrow_swappable_v<
-            SceneFluidRegionalOpeningMomentumWallCoupledState>);
-        state_.swap(candidate);
-    } catch (...) {
-        structure_.restore(before);
-        throw;
+            acceptedMetric, limits.consecutiveFlow);
+    fluid::validatePlanarPressureRegionFragmentOpeningMomentumTransport(
+        consecutiveTransport, prior.cycleState.adjustedMomentum,
+        transportMetric, priorAcceptedFlow, transportMetric, grid,
+        acceptedSweep, acceptedFragments, acceptedTopology,
+        acceptedVolumeRates, limits.consecutiveTransport);
+    if (!consecutiveTransport.diagnostics.accepted
+        || consecutiveTransport.sourceAdjustmentStateFingerprint
+            != prior.cycleState.adjustedMomentum.fingerprint
+        || consecutiveTransport.targetFlowStateFingerprint
+            != priorAcceptedFlow.fingerprint
+        || cycleState.adjustedMomentum.sourceTransportFingerprint
+            != consecutiveTransport.fingerprint
+        || cycleState.transportMetricFingerprint
+            != consecutiveTransport.targetMetricFingerprint) {
+        throw std::invalid_argument(
+            "consecutive regional opening wall cycle lineage is invalid");
     }
+
+    auto candidate = advanceCandidate(
+        structure_, cycleState, transportMetric, acceptedPressureOperator,
+        acceptedBasePressureOperator, grid, acceptedSweep,
+        acceptedFragments, acceptedTopology, acceptedVolumeRates,
+        acceptedOpeningDefinitions, acceptedOpenings,
+        acceptedResistanceDefinitions, acceptedBaseMetric, acceptedMetric,
+        surface, surfaceState, transfer, quadrature, settings, limits);
+    static_assert(std::is_nothrow_swappable_v<
+        SceneFluidRegionalOpeningMomentumWallCoupledState>);
+    state_.swap(candidate);
 }
 
 void SceneFluidRegionalOpeningMomentumWallCoupledStateOwner::restore(

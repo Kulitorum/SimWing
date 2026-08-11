@@ -3358,6 +3358,121 @@ void testOpeningMomentumWallExchange() {
         },
         "regional opening wall post-step geometry: late aggregate limit rejects complete candidate");
 
+    const auto fixedAcceptedFlow =
+        capturePlanarPressureRegionFragmentOpeningVelocityState(
+            fixedWallCycleState.acceptedPressure,
+            endpoint.pressureOperator, endpoint.basePressureOperator,
+            endpoint.geometry, endpoint.sweep, endpoint.fragments,
+            endpoint.topology, endpoint.volumeRates,
+            endpoint.openingDefinitions, endpoint.openings,
+            endpoint.resistanceDefinitions, endpoint.baseMetric,
+            endpoint.openingMetric);
+    const auto fixedConsecutiveTransport =
+        advancePlanarPressureRegionFragmentOpeningMomentum(
+            fixedWallCycleState.adjustedMomentum,
+            endpoint.openingMetric, fixedAcceptedFlow,
+            endpoint.openingMetric, endpoint.geometry, endpoint.sweep,
+            endpoint.fragments, endpoint.topology, endpoint.volumeRates,
+            endpoint.momentumCycle.transportSettings);
+    const auto fixedConsecutiveWallInput =
+        captureSceneFluidRegionalOpeningMomentumWallInput(
+            fixedConsecutiveTransport,
+            fixedWallCycleState.acceptedPressure,
+            endpoint.pressureOperator, endpoint.basePressureOperator,
+            endpoint.geometry, endpoint.sweep, endpoint.fragments,
+            endpoint.topology, endpoint.volumeRates,
+            endpoint.openingDefinitions, endpoint.openings,
+            endpoint.resistanceDefinitions, endpoint.baseMetric,
+            endpoint.openingMetric,
+            coupledOwnerSources.surface.definition,
+            postStepGeometry.surfaceState,
+            postStepGeometry.gridEpoch.quadrature);
+    const auto fixedConsecutiveWallExchange =
+        exchangeSceneFluidRegionalOpeningMomentumWall(
+            fixedConsecutiveWallInput, settings);
+    const auto fixedConsecutivePressureEpoch =
+        acceptSceneFluidRegionalOpeningMomentumWallPressureEpoch(
+            fixedConsecutiveWallExchange, fixedConsecutiveTransport,
+            endpoint.openingMetric, endpoint.pressureOperator,
+            endpoint.basePressureOperator, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.resistanceDefinitions,
+            endpoint.baseMetric, endpoint.openingMetric, {},
+            endpoint.momentumCycle.pressureSettings);
+    const auto fixedConsecutiveCycleState =
+        captureSceneFluidRegionalOpeningMomentumWallCycleState(
+            fixedConsecutivePressureEpoch,
+            fixedConsecutiveWallExchange, endpoint.openingMetric,
+            endpoint.openingMetric,
+            postStepGeometry.gridEpoch.quadrature);
+    const auto beforeRejectedConsecutiveState =
+        fixedCoupledOwner.checkpoint();
+    const auto beforeRejectedConsecutiveStructure =
+        fixedCoupledOwner.structure().checkpoint();
+    expectRejected(
+        [&] {
+            fixedCoupledOwner.advanceFixedMetricConsecutive(
+                fixedConsecutiveCycleState, adjustedNextTransport,
+                endpoint.openingMetric, endpoint.pressureOperator,
+                endpoint.basePressureOperator, endpoint.geometry,
+                endpoint.sweep, endpoint.fragments, endpoint.topology,
+                endpoint.volumeRates, endpoint.openingDefinitions,
+                endpoint.openings, endpoint.resistanceDefinitions,
+                endpoint.baseMetric, endpoint.openingMetric,
+                coupledOwnerSources.surface.definition,
+                postStepGeometry.surfaceState, fixedTransfer,
+                postStepGeometry.gridEpoch.quadrature,
+                structureStepSettings);
+        },
+        "regional opening wall consecutive owner: foreign transport lineage rejects");
+    check(fixedCoupledOwner.state().fingerprint
+                  == beforeRejectedConsecutiveState.fingerprint
+              && samePublicCheckpoint(
+                  beforeRejectedConsecutiveStructure,
+                  fixedCoupledOwner.structure().checkpoint()),
+          "regional opening wall consecutive owner: rejected lineage preserves both accepted owners");
+
+    const auto advanceFixedConsecutive = [&](
+        SceneFluidRegionalOpeningMomentumWallCoupledStateOwner& owner) {
+        owner.advanceFixedMetricConsecutive(
+            fixedConsecutiveCycleState, fixedConsecutiveTransport,
+            endpoint.openingMetric, endpoint.pressureOperator,
+            endpoint.basePressureOperator, endpoint.geometry,
+            endpoint.sweep, endpoint.fragments, endpoint.topology,
+            endpoint.volumeRates, endpoint.openingDefinitions,
+            endpoint.openings, endpoint.resistanceDefinitions,
+            endpoint.baseMetric, endpoint.openingMetric,
+            coupledOwnerSources.surface.definition,
+            postStepGeometry.surfaceState, fixedTransfer,
+            postStepGeometry.gridEpoch.quadrature,
+            structureStepSettings);
+    };
+    advanceFixedConsecutive(fixedCoupledOwner);
+    advanceFixedConsecutive(restoredFixedCoupledOwner);
+    const auto fixedConsecutiveCheckpoint =
+        fixedCoupledOwner.checkpoint();
+    const auto restoredFixedConsecutiveCheckpoint =
+        restoredFixedCoupledOwner.checkpoint();
+    const auto secondPostStepGeometry =
+        buildSceneFluidRegionalOpeningMomentumWallPostStepGeometry(
+            fixedConsecutiveCheckpoint,
+            coupledOwnerSources.surface.definition,
+            coupledOwnerSources.structureAssembly.mappings, grid(),
+            fixedTransfer, fixedCoupledOwner.structure());
+    check(fixedConsecutiveCheckpoint.fingerprint
+                  == restoredFixedConsecutiveCheckpoint.fingerprint
+              && fixedConsecutiveCheckpoint.cycleState
+                  == fixedConsecutiveCycleState
+              && fixedConsecutiveCheckpoint.structureStep
+                     .beforeAcceptedStepCount == 1
+              && fixedConsecutiveCheckpoint.structureStep
+                     .afterAcceptedStepCount == 2
+              && secondPostStepGeometry.previousAcceptedStepCount == 1
+              && secondPostStepGeometry.currentAcceptedStepCount == 2
+              && secondPostStepGeometry.surfaceState.acceptedStepCount == 2,
+          "regional opening wall consecutive owner: fixed-metric fluid lineage and XPBD advance repeat deterministically");
+
     const auto rejectingLayers = translatePlanarPressureJumpLayers(
         endpoint.geometry, endpoint.layers, 0.1).layers;
     const auto rejectingSweep = makePlanarPressureRegionSweepLedger(
