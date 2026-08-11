@@ -3439,11 +3439,17 @@ MAC field; cell-owned intake traces remain explicit because they have no unique
 Cartesian face. The real gnuC2 developer export completes this path through 138
 pressure controls and 42,927 shared traces with sub-nanonewton force-transfer
 closure.
-This is an integration result only: repeated frames reuse the same projection,
-the collapsed velocity is not retained or advected between frames, and the large
-absolute pressure/load magnitudes are not a wing polar, lift result, wake, or
-aerodynamic validation. It therefore does not close the Phase 2 gate or begin
-the Phase 3 validation gate.
+After the initial frame, the worker retains the collapsed bulk velocity,
+projects away its small area-collapse divergence, advances one subcycled
+periodic viscous/advection interval with an explicit streamwise mean-flow pump,
+resamples opening flux, and re-solves the fixed-topology mimetic pressure and
+load transactionally. A two-frame real-wing run changes both pressure and load
+while retaining exact frozen geometry. This is an integration result only: the
+grid is the deliberately coarse periodic geometry audit domain, pressure starts
+from a zero warm field each frame, and the large absolute pressure/load
+magnitudes are not a wing polar, lift result, external wake, or aerodynamic
+validation. It therefore does not close the Phase 2 gate or begin the Phase 3
+validation gate.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

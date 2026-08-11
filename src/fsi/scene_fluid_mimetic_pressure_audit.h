@@ -141,6 +141,23 @@ buildSceneFluidMimeticPressureAuditEndpoint(
     const SceneFluidMimeticPressureAuditSettings& settings = {},
     const SceneFluidMimeticPressureAuditLimits& limits = {});
 
+// Reuses one already accepted fixed-geometry mixed-hybrid topology with a new
+// complete MAC predictor/opening-flux ledger. Only predicted trace flow,
+// physical sources, and the atomic pressure epoch are rebuilt. This is a
+// zero-warm-start fixed-topology continuation; moving geometry and topology
+// transitions must use the consecutive-epoch overloads below.
+[[nodiscard]] SceneFluidMimeticPressureAuditEndpoint
+advanceSceneFluidMimeticPressureAuditFixedTopology(
+    const SceneFluidMimeticPressureAuditEndpoint& acceptedTopology,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& pressureFaceLinks,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidMimeticPressureAuditSettings& settings = {},
+    const SceneFluidMimeticPressureAuditLimits& limits = {});
+
 [[nodiscard]] SceneFluidMimeticPressureAuditEndpoint
 buildSceneFluidMimeticPressureAuditEndpoint(
     const SceneFluidSurfaceDefinition& surface,

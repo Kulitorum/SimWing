@@ -1,5 +1,6 @@
 #include "frozen_scene_pressure_case.h"
 
+#include "fluid/evolution.h"
 #include "scene_fluid_capped_face_partition.h"
 #include "scene_fluid_cell_volume.h"
 #include "scene_fluid_mimetic_pressure_audit.h"
@@ -21,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -136,6 +138,14 @@ fluid::MacVelocityField makePredictor(
     return result;
 }
 
+double meanXVelocity(const fluid::MacVelocityField& velocity) {
+    double sum = 0.0;
+    for (const double value : velocity.xFaces()) {
+        sum += value;
+    }
+    return sum / static_cast<double>(velocity.xFaces().size());
+}
+
 struct BuiltCase {
     Scene scene;
     SceneFluidSurfaceAssembly surface;
@@ -145,11 +155,22 @@ struct BuiltCase {
     SceneFluidSurfaceTransfer transfer;
     fluid::PeriodicCartesianGrid grid;
     SceneFluidGridEpoch gridEpoch;
+    SceneFluidOpeningCapSet openingCaps;
+    SceneFluidOpeningQuadratureSet openingQuadrature;
+    SceneFluidOpeningGridPatchSet openingPatches;
+    SceneFluidPressureControlVolumeSet pressureVolumes;
+    SceneFluidPressureFaceLinkSet pressureFaceLinks;
+    SceneFluidMimeticPressureAuditSettings pressureSettings;
     SceneFluidMimeticPressureAuditEndpoint pressure;
     SceneFluidMimeticCorrectedTraceFlow correctedFlow;
     SceneFluidMimeticMacVelocityCollapse correctedMac;
     ConservativeTransferResult pressureTransfer;
     viewer::StructureFrameMapping frameMapping;
+    std::optional<fluid::PeriodicFlowStrangSubcyclingDiagnostics> bulkFlow;
+    std::optional<fluid::ProjectionDiagnostics> bulkProjection;
+    double meanStreamwiseVelocityBeforePumpMetersPerSecond = 0.0;
+    double streamwisePumpIncrementMetersPerSecond = 0.0;
+    std::size_t flowAdvanceCount = 0;
 };
 
 BuiltCase buildCase(
@@ -181,11 +202,11 @@ BuiltCase buildCase(
     auto grid = makeGrid(state, settings);
     auto gridEpoch = buildSceneFluidGridEpoch(
         surface.definition, state, grid, transfer);
-    const auto openingCaps = buildSceneFluidOpeningCaps(
+    auto openingCaps = buildSceneFluidOpeningCaps(
         surface.definition, state);
-    const auto openingQuadrature = buildSceneFluidOpeningQuadrature(
+    auto openingQuadrature = buildSceneFluidOpeningQuadrature(
         surface.definition, state, openingCaps);
-    const auto openingPatches = buildSceneFluidOpeningGridPatches(
+    auto openingPatches = buildSceneFluidOpeningGridPatches(
         surface.definition, state, openingCaps, openingQuadrature, grid);
     const auto openingFaceCrossings =
         buildSceneFluidOpeningFaceCrossings(
@@ -200,9 +221,9 @@ BuiltCase buildCase(
         surface.definition, state, grid, transfer, gridEpoch);
     const auto connectivity = buildSceneFluidRegionConnectivity(
         surface.definition);
-    const auto pressureVolumes = buildSceneFluidPressureControlVolumes(
+    auto pressureVolumes = buildSceneFluidPressureControlVolumes(
         surface.definition, cellVolumes, connectivity);
-    const auto pressureFaceLinks = buildSceneFluidPressureFaceLinks(
+    auto pressureFaceLinks = buildSceneFluidPressureFaceLinks(
         surface.definition, state, grid, transfer, gridEpoch,
         openingCaps, openingQuadrature, openingPatches,
         openingFaceCrossings, cappedFacePartitions, cellVolumes,
@@ -244,10 +265,102 @@ BuiltCase buildCase(
     return {
         std::move(scene), std::move(surface), std::move(assembly),
         std::move(structure), std::move(state), std::move(transfer),
-        std::move(grid), std::move(gridEpoch), std::move(pressure),
+        std::move(grid), std::move(gridEpoch), std::move(openingCaps),
+        std::move(openingQuadrature), std::move(openingPatches),
+        std::move(pressureVolumes), std::move(pressureFaceLinks),
+        std::move(pressureSettings), std::move(pressure),
         std::move(correctedFlow), std::move(correctedMac),
         std::move(pressureTransfer), std::move(frameMapping),
     };
+}
+
+void advanceFixedGeometryFlow(
+    BuiltCase& built,
+    const FrozenScenePressureCaseSettings& settings) {
+    auto candidateVelocity = built.correctedMac.velocityMetersPerSecond;
+    const double meanBeforePump = meanXVelocity(candidateVelocity);
+    const double pumpIncrement =
+        settings.backgroundWindMetersPerSecond.x - meanBeforePump;
+    for (double& value : candidateVelocity.xFaces()) {
+        value += pumpIncrement;
+    }
+    fluid::CellScalarField candidateBulkPressure(built.grid);
+    fluid::ProjectionSettings projectionSettings;
+    projectionSettings.densityKgPerCubicMeter =
+        settings.densityKgPerCubicMeter;
+    projectionSettings.timeStepSeconds = settings.timeStepSeconds;
+    const auto candidateBulkProjection = fluid::projectVelocity(
+        built.grid, candidateVelocity, candidateBulkPressure,
+        projectionSettings);
+    if (!candidateBulkProjection.converged) {
+        throw std::runtime_error(
+            "frozen scene bulk continuation projection did not converge");
+    }
+    fluid::PeriodicFlowStrangSubcyclingSettings bulkSettings;
+    bulkSettings.flow.densityKgPerCubicMeter =
+        settings.densityKgPerCubicMeter;
+    bulkSettings.flow.timeStepSeconds = settings.timeStepSeconds;
+    bulkSettings.flow.advectionReconstruction =
+        fluid::VariableMacReconstruction::DonorCell;
+    bulkSettings.maximumSubsteps = 1024;
+    auto candidateBulkFlow =
+        fluid::advancePeriodicFlowStrangSspRk2Subcycled(
+            built.grid, candidateVelocity, candidateBulkPressure,
+            bulkSettings);
+    if (!candidateBulkFlow.accepted) {
+        throw std::runtime_error(
+            "frozen scene bulk flow rejected its requested interval at stage "
+            + std::to_string(static_cast<unsigned>(
+                candidateBulkFlow.failureStage))
+            + " (initial divergence "
+            + std::to_string(candidateBulkFlow.initialDivergenceL2PerSecond)
+            + ", final divergence "
+            + std::to_string(candidateBulkFlow.finalDivergenceL2PerSecond)
+            + ")");
+    }
+    const auto candidateOpeningFlux = evaluateSceneFluidOpeningFlux(
+        built.surface.definition, built.surfaceState,
+        built.openingCaps, built.openingQuadrature,
+        built.openingPatches, built.grid, candidateVelocity);
+    auto candidatePressure =
+        advanceSceneFluidMimeticPressureAuditFixedTopology(
+            built.pressure, built.gridEpoch.quadrature,
+            built.pressureVolumes, built.pressureFaceLinks,
+            candidateOpeningFlux, built.grid, candidateVelocity,
+            built.pressureSettings);
+    if (!candidatePressure.pressureEpoch.diagnostics.accepted) {
+        throw std::runtime_error(
+            "frozen scene continued pressure solve was not accepted");
+    }
+    auto candidateCorrectedFlow =
+        correctSceneFluidMimeticTraceFlows(candidatePressure);
+    if (!candidateCorrectedFlow.accepted) {
+        throw std::runtime_error(
+            "frozen scene continued pressure correction was not accepted");
+    }
+    auto candidateCorrectedMac =
+        collapseSceneFluidMimeticCorrectedMacVelocity(
+            candidateCorrectedFlow, built.pressureFaceLinks,
+            built.openingPatches, built.grid);
+    auto candidatePressureTransfer =
+        evaluateSceneFluidMimeticPressureQuadrature(
+            built.surface.definition, built.surfaceState, built.transfer,
+            built.gridEpoch.quadrature,
+            candidatePressure.pressureEpoch.acceptedPressureSamples);
+    if (!candidatePressureTransfer.diagnostics().finite) {
+        throw std::runtime_error(
+            "frozen scene continued pressure transfer was not accepted");
+    }
+
+    built.pressure = std::move(candidatePressure);
+    built.correctedFlow = std::move(candidateCorrectedFlow);
+    built.correctedMac = std::move(candidateCorrectedMac);
+    built.pressureTransfer = std::move(candidatePressureTransfer);
+    built.bulkFlow = std::move(candidateBulkFlow);
+    built.bulkProjection = candidateBulkProjection;
+    built.meanStreamwiseVelocityBeforePumpMetersPerSecond = meanBeforePump;
+    built.streamwisePumpIncrementMetersPerSecond = pumpIncrement;
+    ++built.flowAdvanceCount;
 }
 
 FrozenScenePressureCaseDiagnostics makeDiagnostics(
@@ -279,6 +392,23 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
             .maximumSubfaceVelocityDeviationMetersPerSecond;
     result.embeddedOpeningTraceCount =
         built.correctedMac.diagnostics.embeddedOpeningTraceCount;
+    result.flowAdvanceCount = built.flowAdvanceCount;
+    result.meanStreamwiseVelocityBeforePumpMetersPerSecond =
+        built.meanStreamwiseVelocityBeforePumpMetersPerSecond;
+    result.streamwisePumpIncrementMetersPerSecond =
+        built.streamwisePumpIncrementMetersPerSecond;
+    if (built.bulkFlow) {
+        result.bulkFlowSubstepCount =
+            built.bulkFlow->completedSubstepCount;
+        result.bulkFlowMaximumVelocityChangeMetersPerSecond =
+            built.bulkFlow->maximumVelocityChangeMetersPerSecond;
+    }
+    if (built.bulkProjection) {
+        result.bulkProjectionDivergenceBeforePerSecond =
+            built.bulkProjection->divergenceL2BeforePerSecond;
+        result.bulkProjectionDivergenceAfterPerSecond =
+            built.bulkProjection->divergenceL2AfterPerSecond;
+    }
     const auto& transfer = built.pressureTransfer.diagnostics();
     result.pressureForceNewtons = transfer.transferredNodalForceNewtons;
     result.pressureMomentNewtonMeters =
@@ -300,6 +430,13 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         && std::isfinite(result.maximumCollapsedMacVelocityMetersPerSecond)
         && std::isfinite(
             result.maximumCollapsedSubfaceVelocityDeviationMetersPerSecond)
+        && std::isfinite(
+            result.bulkFlowMaximumVelocityChangeMetersPerSecond)
+        && std::isfinite(
+            result.meanStreamwiseVelocityBeforePumpMetersPerSecond)
+        && std::isfinite(result.streamwisePumpIncrementMetersPerSecond)
+        && std::isfinite(result.bulkProjectionDivergenceBeforePerSecond)
+        && std::isfinite(result.bulkProjectionDivergenceAfterPerSecond)
         && std::isfinite(result.transferForceResidualNewtons)
         && std::isfinite(result.transferMomentResidualNewtonMeters);
     return result;
@@ -350,6 +487,10 @@ viewer::TraceHeader FrozenScenePressureCase::traceHeader() const {
 
 viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
     auto& state = *implementation_;
+    if (state.acceptedStepCount > 0) {
+        advanceFixedGeometryFlow(state.built, state.settings);
+        state.diagnostics = makeDiagnostics(state.built);
+    }
     const std::uint64_t nextStep = state.acceptedStepCount + 1;
     const double nextTime = state.simulationTimeSeconds
         + state.settings.timeStepSeconds;
@@ -472,6 +613,36 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
         "frozen_scene.embedded_opening_traces", "1",
         viewer::FieldAssociation::Global,
         {static_cast<double>(state.diagnostics.embeddedOpeningTraceCount)},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.flow_advances", "1",
+        viewer::FieldAssociation::Global,
+        {static_cast<double>(state.diagnostics.flowAdvanceCount)},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.bulk_substeps", "1",
+        viewer::FieldAssociation::Global,
+        {static_cast<double>(state.diagnostics.bulkFlowSubstepCount)},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.bulk_velocity_change", "m/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.bulkFlowMaximumVelocityChangeMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.streamwise_pump_increment", "m/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.streamwisePumpIncrementMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.bulk_projection_divergence_before", "1/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.bulkProjectionDivergenceBeforePerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.bulk_projection_divergence_after", "1/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.bulkProjectionDivergenceAfterPerSecond},
     });
 
     std::vector<viewer::Vec3d> nodalPressureForces(

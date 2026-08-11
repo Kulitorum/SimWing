@@ -39,6 +39,13 @@ struct FrozenScenePressureCaseDiagnostics {
     double maximumCollapsedMacVelocityMetersPerSecond = 0.0;
     double maximumCollapsedSubfaceVelocityDeviationMetersPerSecond = 0.0;
     std::size_t embeddedOpeningTraceCount = 0;
+    std::size_t flowAdvanceCount = 0;
+    std::size_t bulkFlowSubstepCount = 0;
+    double bulkFlowMaximumVelocityChangeMetersPerSecond = 0.0;
+    double meanStreamwiseVelocityBeforePumpMetersPerSecond = 0.0;
+    double streamwisePumpIncrementMetersPerSecond = 0.0;
+    double bulkProjectionDivergenceBeforePerSecond = 0.0;
+    double bulkProjectionDivergenceAfterPerSecond = 0.0;
     StructureVector3 pressureForceNewtons;
     StructureVector3 pressureMomentNewtonMeters;
     double transferForceResidualNewtons = 0.0;
@@ -49,12 +56,13 @@ struct FrozenScenePressureCaseDiagnostics {
         const FrozenScenePressureCaseDiagnostics&) const = default;
 };
 
-// Loads one already authoritative scene-v2 payload, freezes its Structure
-// geometry, and evaluates one deterministic mixed-hybrid pressure projection
-// from a prescribed periodic MAC predictor. Repeated advance calls publish the
-// same immutable physics at increasing diagnostic-frame times. This is a
-// geometry/pressure integration probe, not time-resolved external flow, a wake,
-// a lift polar, or a two-way FSI step.
+// Loads one already authoritative scene-v2 payload and freezes its Structure
+// geometry. The first frame evaluates a deterministic mixed-hybrid pressure
+// projection from a prescribed periodic MAC predictor. Later frames project
+// the collapsed continuation field, advance periodic bulk transport, reapply
+// the fixed-geometry mimetic pressure boundary, and commit only after pressure,
+// continuity, and conservative load transfer accept. This is an integration
+// probe, not a validated external-flow wake, lift polar, or two-way FSI step.
 class FrozenScenePressureCase final {
 public:
     explicit FrozenScenePressureCase(

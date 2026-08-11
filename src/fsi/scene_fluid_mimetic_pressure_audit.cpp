@@ -636,6 +636,96 @@ buildSceneFluidMimeticPressureAuditEndpoint(
 }
 
 SceneFluidMimeticPressureAuditEndpoint
+advanceSceneFluidMimeticPressureAuditFixedTopology(
+    const SceneFluidMimeticPressureAuditEndpoint& acceptedTopology,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& pressureFaceLinks,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidMimeticPressureAuditSettings& settings,
+    const SceneFluidMimeticPressureAuditLimits& limits) {
+    validateSettings(settings);
+    validateSceneFluidMimeticPressureAuditEndpointIntegrity(
+        acceptedTopology);
+    validateSceneFluidQuadratureDefinition(quadrature);
+    validateSceneFluidPressureControlVolumeIntegrity(pressureVolumes);
+    validateSceneFluidPressureFaceLinkIntegrity(pressureFaceLinks);
+    validateSceneFluidOpeningFluxIntegrity(openingFlux);
+    if (!acceptedTopology.pressureEpoch.diagnostics.accepted
+        || acceptedTopology.controlCells.settings != settings.controlCells
+        || acceptedTopology.fullTraceSystem.settings != settings.traceSystem
+        || acceptedTopology.pressureSources.settings.densityKgPerCubicMeter
+            != settings.densityKgPerCubicMeter
+        || acceptedTopology.pressureSources.settings.timeStepSeconds
+            != settings.timeStepSeconds
+        || acceptedTopology.controlCells.pressureControlVolumeFingerprint
+            != pressureVolumes.fingerprint
+        || acceptedTopology.controlCells.pressureFaceLinkFingerprint
+            != pressureFaceLinks.fingerprint
+        || acceptedTopology.controlCells.gridEpochFingerprint
+            != pressureFaceLinks.gridEpochFingerprint
+        || acceptedTopology.pressureEpoch.quadratureFingerprint
+            != quadrature.fingerprint
+        || acceptedTopology.structureDefinitionFingerprint
+            != pressureVolumes.structureDefinitionFingerprint
+        || acceptedTopology.structureDefinitionFingerprint
+            != pressureFaceLinks.structureDefinitionFingerprint
+        || acceptedTopology.acceptedStepCount
+            != pressureVolumes.acceptedStepCount
+        || acceptedTopology.simulationTimeSeconds
+            != pressureVolumes.simulationTimeSeconds
+        || openingFlux.surfaceDefinitionFingerprint
+            != pressureVolumes.surfaceDefinitionFingerprint
+        || openingFlux.openingPatchFingerprint
+            != pressureFaceLinks.openingPatchFingerprint
+        || openingFlux.structureDefinitionFingerprint
+            != acceptedTopology.structureDefinitionFingerprint
+        || openingFlux.acceptedStepCount
+            != acceptedTopology.acceptedStepCount
+        || openingFlux.simulationTimeSeconds
+            != acceptedTopology.simulationTimeSeconds
+        || pressureFaceLinks.cellCounts != grid.cellCounts()
+        || pressureFaceLinks.lowerMeters != grid.lowerMeters()
+        || pressureFaceLinks.upperMeters != grid.upperMeters()
+        || !predictedVelocityMetersPerSecond.matches(grid)
+        || !fluid::isFinite(predictedVelocityMetersPerSecond)) {
+        throw std::invalid_argument(
+            "scene fluid mimetic fixed-topology continuation is foreign");
+    }
+
+    SceneFluidMimeticPressureAuditEndpoint result;
+    result.scenePressureEpochFingerprint =
+        acceptedTopology.scenePressureEpochFingerprint;
+    result.structureDefinitionFingerprint =
+        acceptedTopology.structureDefinitionFingerprint;
+    result.acceptedStepCount = acceptedTopology.acceptedStepCount;
+    result.simulationTimeSeconds = acceptedTopology.simulationTimeSeconds;
+    result.controlCells = acceptedTopology.controlCells;
+    result.fullTraceSystem = acceptedTopology.fullTraceSystem;
+    result.condensedTraceSystem = acceptedTopology.condensedTraceSystem;
+    result.predictedTraceFlows = sampleSceneFluidMimeticTraceFlows(
+        result.controlCells, result.fullTraceSystem, pressureFaceLinks,
+        openingFlux, grid, predictedVelocityMetersPerSecond,
+        limits.traceFlow);
+    SceneFluidMimeticPressureSourceSettings sourceSettings;
+    sourceSettings.densityKgPerCubicMeter =
+        settings.densityKgPerCubicMeter;
+    sourceSettings.timeStepSeconds = settings.timeStepSeconds;
+    result.pressureSources = buildSceneFluidMimeticPressureSources(
+        result.controlCells, result.fullTraceSystem,
+        result.predictedTraceFlows, sourceSettings,
+        limits.pressureSource);
+    result.pressureEpoch = acceptSceneFluidMimeticPressureEpoch(
+        quadrature, pressureVolumes, result.controlCells,
+        result.fullTraceSystem, result.condensedTraceSystem,
+        result.pressureSources, settings.pressureSolve,
+        limits.pressureEpoch);
+    return finishEndpoint(std::move(result), limits);
+}
+
+SceneFluidMimeticPressureAuditEndpoint
 buildSceneFluidMimeticPressureAuditEndpoint(
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& state,

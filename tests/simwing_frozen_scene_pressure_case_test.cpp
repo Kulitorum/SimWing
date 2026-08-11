@@ -91,17 +91,25 @@ void testFrozenScenePressureCase() {
     simwing::fsi::FrozenScenePressureCase second(scene, settings);
     const auto firstFrame = first.advance();
     const auto repeatedFrame = second.advance();
+    const auto firstDiagnostics = first.diagnostics();
     const auto secondFrame = first.advance();
     const auto* pressure = scalarField(
         firstFrame, "frozen_scene.pressure_jump");
     const auto* nodalForce = vectorField(
         firstFrame, "frozen_scene.nodal_pressure_force");
+    const auto* secondPressure = scalarField(
+        secondFrame, "frozen_scene.pressure_jump");
     const auto& diagnostics = first.diagnostics();
     check(serialized(firstFrame) == serialized(repeatedFrame)
               && firstFrame.step == 1
               && secondFrame.step == 2
-              && sameGeometry(firstFrame, secondFrame),
-          "frozen scene pressure publication is deterministic and leaves geometry unchanged");
+              && sameGeometry(firstFrame, secondFrame)
+              && secondPressure != nullptr
+              && pressure != nullptr
+              && secondPressure->values != pressure->values
+              && firstDiagnostics.flowAdvanceCount == 0
+              && diagnostics.flowAdvanceCount == 1,
+          "frozen scene flow evolves deterministically while leaving geometry unchanged");
     check(pressure != nullptr
               && pressure->association
                   == simwing::viewer::FieldAssociation::Triangle
@@ -120,6 +128,9 @@ void testFrozenScenePressureCase() {
                      .maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond
                   <= diagnostics.correctedContinuityToleranceCubicMetersPerSecond
               && diagnostics.maximumCollapsedMacVelocityMetersPerSecond > 0.0
+              && diagnostics.bulkFlowSubstepCount > 0
+              && diagnostics.bulkProjectionDivergenceAfterPerSecond
+                  < diagnostics.bulkProjectionDivergenceBeforePerSecond
               && diagnostics.transferForceResidualNewtons < 1.0e-8
               && diagnostics.transferMomentResidualNewtonMeters < 1.0e-8,
           "frozen scene pressure solve and conservative transfer are accepted");

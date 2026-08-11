@@ -274,9 +274,12 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   one prescribed-flow mixed-hybrid mimetic pressure projection, conservatively
   transfers pressure loads, reconstructs conservative pressure-corrected
   shared-trace flow, area-collapses only Cartesian traces to a continuation
-  MAC field, and publishes immutable pressure/load/continuity fields. Embedded
-  opening traces remain explicit rather than being smeared onto the grid. It
-  is not a time-resolved external-flow, wake, polar, or two-way FSI solver.
+  MAC field, and publishes immutable pressure/load/continuity fields. After the
+  first frame it projects the small collapse divergence, advances periodic
+  bulk viscosity/advection with a mean-flow pump, and reapplies the fixed-
+  topology mimetic pressure solve transactionally. Embedded opening traces
+  remain explicit rather than being smeared onto the grid. This coarse periodic
+  diagnostic is not a validated external-flow wake, polar, or two-way solver.
 - `simwing_scene_fluid_surface`: deterministic compact ownership of the
   authoritative scene-v2 fluid regions, porous fabric, oriented surface
   triangles, and openings, plus immutable capture of accepted Structure
@@ -1425,8 +1428,13 @@ makes this a certified aerodynamic solver.
    trace flows in physical volume-rate units. Per-control continuity is checked
    against the accepted full-system residual; Cartesian subfaces area-collapse
    to one bounded continuation MAC velocity, while cell-owned opening traces
-   remain explicit diagnostics. The frozen-scene worker exercises this result,
-   but does not yet advance or retain that velocity between frames.
+   remain explicit diagnostics. The frozen-scene worker now retains this bulk
+   velocity, projects its small area-collapse divergence, advances one
+   subcycled periodic viscous/advection interval with an explicit streamwise
+   pump, and re-solves pressure on the unchanged topology. The fixed topology
+   is reused but each pressure solve currently starts from zero; this remains
+   an offline coarse diagnostic rather than an interactive or validated wing
+   flow.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
   loads/state, trusted constraint/membrane/bending assembly, explicit optional
   fabric self-contact, rigid-pilot suspension, diagnostics, and composite
@@ -1635,11 +1643,13 @@ makes this a certified aerodynamic solver.
   not aerodynamic truth; it writes only accepted steps and launches the
   sibling viewer by default. `--no-viewer` must remain Qt-free and unthrottled.
 - `src/fsi/frozen_scene_pressure_case.{h,cpp}` is the first input-driven
-  whole-scene pressure/load publication path. `--case frozen-scene --scene
-  <scene-v2.bin>` freezes Structure geometry and repeats one immutable
-  prescribed-flow pressure projection as diagnostic frames. Its pressure
-  magnitude is not aerodynamic validation; no advection, wake, polar,
-  refinement study, or structural feedback is present.
+  whole-scene evolving pressure/load publication path. `--case frozen-scene
+  --scene <scene-v2.bin>` freezes Structure geometry, retains a projected bulk
+  continuation velocity, advances periodic viscosity/advection, re-solves the
+  mimetic pressure boundary, and publishes accepted diagnostic frames. Its
+  coarse periodic domain, pump, and pressure magnitude are not aerodynamic
+  validation; no external-domain wake, polar/refinement study, or structural
+  feedback is present.
 - `tools/simwing_mimetic_conductance_audit_main.cpp` is the opt-in Qt-free
   high-resolution evidence runner. It consumes the canonical offline profile
   and grid phases owned by the mimetic conductance phase-audit boundary. An

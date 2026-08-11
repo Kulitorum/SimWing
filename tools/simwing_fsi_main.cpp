@@ -115,8 +115,8 @@ void printUsage(FILE* stream) {
         "trace. 'structural' is the original analytic XPBD harness; 'hemisphere'\n"
         "runs a soft three-point fabric dome under an alternating pressure mode;\n"
         "'frozen-scene' loads --scene, holds its geometry fixed, and publishes\n"
-        "one prescribed-flow mixed-hybrid pressure projection and conservative\n"
-        "load field; it is not a time-resolved wake or aerodynamic polar;\n"
+        "an evolving bulk-flow/mixed-hybrid pressure projection and conservative\n"
+        "load field; it is not a validated external wake or aerodynamic polar;\n"
         "'flag' maps the complete reaction from a fixed-reference projected gust\n"
         "onto a one-edge-clamped XPBD fabric panel;\n"
         "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"
@@ -1827,6 +1827,7 @@ int main(int argc, char* argv[]) {
                     "max-pressure-jump=%.6g Pa, pressure-force="
                     "[%.6g %.6g %.6g] N, corrected-continuity=%.3g m^3/s, "
                     "collapsed-speed=%.6g m/s, embedded-openings=%zu, "
+                    "flow-advances=%zu, bulk-substeps=%zu, bulk-dv=%.3g m/s, "
                     "transfer-residual=%.3g N, "
                     "trace=%s\n",
                     static_cast<unsigned long long>(
@@ -1843,6 +1844,9 @@ int main(int argc, char* argv[]) {
                         .maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond,
                     diagnostics.maximumCollapsedMacVelocityMetersPerSecond,
                     diagnostics.embeddedOpeningTraceCount,
+                    diagnostics.flowAdvanceCount,
+                    diagnostics.bulkFlowSubstepCount,
+                    diagnostics.bulkFlowMaximumVelocityChangeMetersPerSecond,
                     diagnostics.transferForceResidualNewtons,
                     options.tracePath.string().c_str());
             } else if constexpr (std::is_same_v<
