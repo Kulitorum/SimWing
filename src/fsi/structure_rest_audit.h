@@ -28,6 +28,10 @@ struct StructureRestAuditDiagnostics {
     double maximumHarnessDisplacementMeters = 0.0;
     double maximumPayloadOrHarnessSpeedMetersPerSecond = 0.0;
     double payloadAngularSpeedRadiansPerSecond = 0.0;
+    std::size_t maximumInitialMembraneEdgeMismatchIndex = 0;
+    double maximumInitialMembraneEdgeMismatchMeters = 0.0;
+    std::uint64_t maximumInitialSuspensionExtensionSegmentStableId = 0;
+    double maximumInitialSuspensionExtensionMeters = 0.0;
     double maximumSuspensionResidualMeters = 0.0;
 };
 

@@ -30,6 +30,27 @@ Structure makePair(const double initialLength) {
     return Structure(std::move(definition));
 }
 
+Structure makeExtendedSuspension() {
+    StructureDefinition definition;
+    definition.nodes.push_back({{0.0, 0.0, 1.0}, 0.0, true});
+    simwing::fsi::StructureSuspensionDefinition suspension;
+    suspension.pilotStableId = 100;
+    suspension.pilotMassKg = 2.0;
+    suspension.pilotPrincipalInertiaKgSquareMeters = {0.2, 0.3, 0.4};
+    suspension.solverIterations = 16;
+    suspension.attachments.push_back({200, 0});
+    suspension.harnessPoints.push_back({300, {}});
+    suspension.segments.push_back({
+        400,
+        {simwing::fsi::StructureSuspensionEndpointKind::SurfaceAttachment,
+         200},
+        {simwing::fsi::StructureSuspensionEndpointKind::PilotHarness, 300},
+        0.75, 10000.0, 0.0, 1,
+    });
+    definition.suspension = std::move(suspension);
+    return Structure(std::move(definition));
+}
+
 StructureStepSettings auditStepSettings() {
     StructureStepSettings settings;
     settings.timeStepSeconds = 1.0 / 60.0;
@@ -113,12 +134,26 @@ void testInvalidProbeInputsAreRejected() {
           "rest audit rejects a nonzero gravity probe");
 }
 
+void testInitialSuspensionExtensionIsIdentified() {
+    auto structure = makeExtendedSuspension();
+    const auto before = structure.checkpoint();
+    const auto audit = simwing::fsi::auditStructureRestState(
+        structure, auditStepSettings());
+    check(!audit.stationary
+              && audit.maximumInitialSuspensionExtensionSegmentStableId
+                  == 400
+              && audit.maximumInitialSuspensionExtensionMeters == 0.25
+              && structure.checkpoint().nodes == before.nodes,
+          "rest audit identifies the initially extended suspension segment transactionally");
+}
+
 } // namespace
 
 int main() {
     try {
         testStationaryAndPrestrainedStates();
         testInvalidProbeInputsAreRejected();
+        testInitialSuspensionExtensionIsIdentified();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "FAIL: %s\n", exception.what());
         ++failures;

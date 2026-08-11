@@ -22,6 +22,7 @@
 #include "scene_fluid_surface.h"
 #include "scene_structure.h"
 #include "structure_frame.h"
+#include "structure_rest_audit.h"
 #include "viewer_protocol.h"
 
 #include <algorithm>
@@ -1265,6 +1266,11 @@ void testRealDesignCapture(const std::filesystem::path &input,
     step.velocityDampingPerSecond = 0.0;
     step.constraintIterations =
         assembly.settings.suspensionSolverIterations;
+    const auto restAudit = simwing::fsi::auditStructureRestState(
+        structure, step);
+    check(restAudit.stationary
+              && restAudit.maximumInitialSuspensionExtensionMeters == 0.0,
+          "real structural export is stationary under a transactional zero-load probe");
     const simwing::fsi::StructureCheckpoint saved = structure.checkpoint();
     const simwing::fsi::StructureDiagnostics firstDiagnostics =
         structure.step(step);

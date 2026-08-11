@@ -3500,22 +3500,35 @@ triangle/cell publication additionally requires a nonempty exact convex clip,
 and coordinate-ULP face traces remain point contacts rather than graph
 self-edges.
 
-Real-wing moving acceptance is still not claimed. Moving mode now runs one
+Real-wing moving acceptance is still not claimed. Moving mode runs one
 transactional zero-load Structure step before it builds the CFD grid or any
 fluid geometry epoch, using the same production time step, eight substeps, 16
 coupled structural/line iterations, and default `0.2 mm` line certification
 bound as the later moving step. It requires zero pending loads and stationary
-node/payload/harness state, measures displacement and retained velocity, and
-restores the complete Structure checkpoint whether the probe accepts, rejects,
-or throws. The zero-wind gnuC2 fixture now fails this gate in about four seconds
-with `0.0103960 m` maximum node drift, `0.000342478 m` RMS drift,
-`0.406833 m/s` maximum node speed, and a `7.76e-8 m` final line residual. An
-earlier 32-substep diagnostic applied exactly zero resultant fluid force, moved
-the imported surface by `0.0298204 m`, and then correctly rejected an authored
-intake cap that was no longer planar. The real-export fixture supplies synthetic
-physical properties and permits vertex-snapped terminal attachments, so its
-rest-state/material/attachment initialization must become authoritative before
-it is a moving-physics oracle.
+node/payload/harness state, measures displacement and retained velocity, audits
+initial membrane edge isometry and unilateral line extension, and restores the
+complete Structure checkpoint whether the probe accepts, rejects, or throws.
+
+That audit exposed two exporter discretization errors rather than material
+physics. Rib-boundary aliasing could leave an existing triangle chart tied to
+the retired point, while internal diagonal triangles added later could reuse
+the canonical vertex ID but flatten the pre-alias point. Every exported chart
+is now constructed or reconstructed from its final authoritative vertices
+while preserving the selected warp direction. Captured suspension length was
+also derived from the unsnapped endpoints even when the scene's vertex-only
+attachment contract mapped an endpoint elsewhere. Discrete line rest length is
+now derived from the actual mapped endpoints, and the exporter reports the
+maximum rebase as an explicit approximation warning. The gnuC2 fixture passes
+the zero-load audit with zero initial line extension.
+
+The next real-wing gate is fluid-load scale. With zero diagnostic perturbation
+and only `-0.0001 m/s` X wind, the first accepted pressure field produces a
+`16.6527 N` fluid resultant. Its loaded Structure step moves by `0.407190 m`
+and correctly rejects an authored intake cap whose orientation has folded.
+This isolates the next investigation to the coarse periodic pressure/bootstrap
+path rather than imported rest geometry. The real-export fixture still supplies
+synthetic physical properties and permits vertex-snapped terminal attachments,
+so it is not a moving-physics oracle.
 Cartesian subfaces are conservatively area-collapsed into a bulk continuation
 MAC field; cell-owned intake traces remain explicit because they have no unique
 Cartesian face. The real gnuC2 developer export completes this path through 138

@@ -313,9 +313,10 @@ BuiltCase buildCase(
     }
     Structure structure(assembly.definition);
     if (settings.useMovingGeometryFsi) {
+        const auto restStepSettings = makeStructureStepSettings(
+            assembly.definition, settings);
         const auto restAudit = auditStructureRestState(
-            structure,
-            makeStructureStepSettings(assembly.definition, settings));
+            structure, restStepSettings);
         if (!restAudit.stationary) {
             std::ostringstream message;
             message.precision(17);
@@ -339,7 +340,35 @@ BuiltCase buildCase(
                 << restAudit.payloadRotationRadians
                 << " rad harness-dx="
                 << restAudit.maximumHarnessDisplacementMeters
-                << " m line-residual="
+                << " m initial-membrane-edge-mismatch="
+                << restAudit.maximumInitialMembraneEdgeMismatchMeters
+                << " m membrane-index="
+                << restAudit.maximumInitialMembraneEdgeMismatchIndex;
+            if (restAudit.maximumInitialMembraneEdgeMismatchIndex
+                < assembly.mappings.membraneTriangleIds.size()) {
+                const auto triangleId =
+                    assembly.mappings.membraneTriangleIds[
+                        restAudit.maximumInitialMembraneEdgeMismatchIndex];
+                message << " triangle-id="
+                        << triangleId;
+                const auto triangle = std::ranges::find(
+                    scene.triangles, triangleId, &Triangle::id);
+                if (triangle != scene.triangles.end()) {
+                    message
+                        << " sheet-id=" << triangle->sheetId
+                        << " role=" << static_cast<unsigned>(triangle->role)
+                        << " vertices=" << triangle->vertexIds[0] << ','
+                        << triangle->vertexIds[1] << ','
+                        << triangle->vertexIds[2];
+                }
+            }
+            message
+                << " initial-line-extension="
+                << restAudit.maximumInitialSuspensionExtensionMeters
+                << " m line-id="
+                << restAudit
+                       .maximumInitialSuspensionExtensionSegmentStableId
+                << " line-residual="
                 << restAudit.maximumSuspensionResidualMeters << " m";
             throw std::runtime_error(message.str());
         }

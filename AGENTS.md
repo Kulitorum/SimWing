@@ -303,20 +303,23 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   zero-tolerance clipping also screens SAT-only false positives, and
   coordinate-ULP face traces remain point contacts instead of graph
   self-edges. Real-wing moving acceptance is still not claimed. Before any
-  CFD grid or geometry epoch is built, moving mode now transactionally probes
-  one zero-load Structure step with its production settings and rejects a
-  nonstationary import. The gnuC2 fixture fails this early gate in about four
-  seconds: maximum node drift is `0.0103960 m`, RMS drift is `0.000342478 m`,
-  maximum node speed is `0.406833 m/s`, and final line residual is
-  `7.76e-8 m`. An earlier 32-substep diagnostic moved `0.0298204 m` and then
-  correctly rejected a no-longer-planar authored intake cap. The real-export
-  fixture deliberately uses synthetic physical properties and vertex-snapped
-  terminal attachments; its imported XPBD rest-state/material/attachment
-  initialization must be made authoritative before it can be a moving-physics
-  oracle. The production opt-in probe keeps eight structural substeps, 16
-  coupled structural/line iterations, and the default `0.2 mm` suspension
-  certification bound. Both the preflight and the moving step restore their
-  complete Structure checkpoint on rejection.
+  CFD grid or geometry epoch is built, moving mode transactionally probes one
+  zero-load Structure step with its production settings and rejects a
+  nonstationary import. Scene export now constructs every material chart from
+  the final canonical vertex positions, including internal sheets added after
+  rib-boundary aliases, and derives discrete line rest lengths from the mapped
+  attachment endpoints. The gnuC2 fixture is consequently stationary in the
+  zero-load audit with zero initial line extension. The exporter reports the
+  maximum line-length rebase caused by its acknowledged coarse vertex-only
+  attachment approximation. The next real-wing gate is fluid-load scale: a
+  `-0.0001 m/s` zero-perturbation probe produces a `16.6527 N` initial fluid
+  resultant, moves Structure by `0.407190 m`, and correctly rejects a folded
+  authored intake cap. The real-export fixture still uses synthetic physical
+  properties and vertex-snapped terminal attachments; this is not a moving-
+  physics oracle. The production opt-in probe keeps eight structural
+  substeps, 16 coupled structural/line iterations, and the default `0.2 mm`
+  suspension certification bound. Both the preflight and moving step restore
+  their complete Structure checkpoint on rejection.
 - `simwing_scene_fluid_surface`: deterministic compact ownership of the
   authoritative scene-v2 fluid regions, porous fabric, oriented surface
   triangles, and openings, plus immutable capture of accepted Structure
@@ -1479,12 +1482,14 @@ makes this a certified aerodynamic solver.
    Imported tiny-chart membrane systems now use a diagonally equilibrated,
    residual-certified Cholesky fallback only after the historical explicit
    inverse rejects an otherwise SPD matrix. The exact old arithmetic remains
-   the first path. Moving mode now runs a transactional, zero-load Structure
-   rest audit before building the CFD grid or geometry epoch. The synthetic
-   gnuC2 real-export fixture fails that early gate with `0.0103960 m` maximum
-   node drift in the production eight-substep probe. This is an explicit
-   imported-rest-state gate, not real-wing moving acceptance; the complete
-   Structure checkpoint is restored.
+   the first path. Moving mode runs a transactional, zero-load Structure rest
+   audit before building the CFD grid or geometry epoch. Canonical material
+   charts and endpoint-derived discrete line rest lengths now make the
+   synthetic gnuC2 export stationary at that gate. Its first tiny-wind loaded
+   step instead exposes the next explicit gate: a `16.6527 N` fluid resultant
+   at `-0.0001 m/s` drives `0.407190 m` of motion and folds an authored intake
+   cap. This is not real-wing moving acceptance; the complete Structure
+   checkpoint is restored.
    The coarse real-wing system has 191,579 trace unknowns and 13,132,336 bytes
    of compact local factors. Its component-constant action is roundoff-null.
    The bounded gauge-fixed Jacobi-PCG solve now recovers manufactured fields

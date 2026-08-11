@@ -4,6 +4,7 @@
 #include <cmath>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 namespace simwing::fsi {
 namespace {
@@ -107,6 +108,89 @@ void validateInitialState(
     }
 }
 
+std::pair<std::uint64_t, double> maximumInitialSuspensionExtension(
+    const StructureDefinition& definition,
+    const StructureCheckpoint& checkpoint,
+    const std::optional<StructureSuspensionState>& state) {
+    if (!definition.suspension || !state) {
+        return {};
+    }
+    const auto& suspension = *definition.suspension;
+    const auto endpointPosition = [&](const auto& endpoint) {
+        if (endpoint.kind
+            == StructureSuspensionEndpointKind::SurfaceAttachment) {
+            const auto found = std::ranges::find(
+                suspension.attachments, endpoint.stableId,
+                &StructureSuspensionAttachmentDefinition::stableId);
+            if (found == suspension.attachments.end()) {
+                throw std::logic_error(
+                    "Structure rest audit lost a suspension attachment");
+            }
+            return checkpoint.nodes.at(found->node).positionMeters;
+        }
+        if (endpoint.kind
+            == StructureSuspensionEndpointKind::Junction) {
+            const auto found = std::ranges::find(
+                suspension.junctions, endpoint.stableId,
+                &StructureSuspensionJunctionDefinition::stableId);
+            if (found == suspension.junctions.end()) {
+                throw std::logic_error(
+                    "Structure rest audit lost a suspension junction");
+            }
+            return checkpoint.nodes.at(found->node).positionMeters;
+        }
+        const auto found = std::ranges::find(
+            suspension.harnessPoints, endpoint.stableId,
+            &StructurePilotHarnessDefinition::stableId);
+        if (found == suspension.harnessPoints.end()) {
+            throw std::logic_error(
+                "Structure rest audit lost a pilot harness point");
+        }
+        const auto index = static_cast<std::size_t>(
+            found - suspension.harnessPoints.begin());
+        return state->harnessPositionsMeters.at(index);
+    };
+
+    std::pair<std::uint64_t, double> result;
+    for (const auto& segment : suspension.segments) {
+        const double currentLength = length(difference(
+            endpointPosition(segment.to), endpointPosition(segment.from)));
+        const double extension = std::max(
+            0.0, currentLength - segment.restLengthMeters);
+        if (extension > result.second) {
+            result = {segment.stableId, extension};
+        }
+    }
+    return result;
+}
+
+std::pair<std::size_t, double> maximumInitialMembraneEdgeMismatch(
+    const StructureDefinition& definition,
+    const StructureCheckpoint& checkpoint) {
+    std::pair<std::size_t, double> result;
+    for (std::size_t membraneIndex = 0;
+         membraneIndex < definition.membranes.size(); ++membraneIndex) {
+        const auto& membrane = definition.membranes[membraneIndex];
+        const auto& triangle = definition.triangles.at(membrane.triangle);
+        for (std::size_t first = 0; first < 3; ++first) {
+            const std::size_t second = (first + 1) % 3;
+            const double spatialLength = length(difference(
+                checkpoint.nodes.at(triangle.nodes[second]).positionMeters,
+                checkpoint.nodes.at(triangle.nodes[first]).positionMeters));
+            const auto& firstChart = membrane.materialCoordinates[first];
+            const auto& secondChart = membrane.materialCoordinates[second];
+            const double chartLength = std::hypot(
+                secondChart.x - firstChart.x,
+                secondChart.y - firstChart.y);
+            const double mismatch = std::abs(spatialLength - chartLength);
+            if (mismatch > result.second) {
+                result = {membraneIndex, mismatch};
+            }
+        }
+    }
+    return result;
+}
+
 } // namespace
 
 StructureRestAuditDiagnostics auditStructureRestState(
@@ -117,6 +201,12 @@ StructureRestAuditDiagnostics auditStructureRestState(
     const auto before = structure.checkpoint();
     const auto suspensionBefore = structure.suspensionState();
     validateInitialState(before, suspensionBefore);
+    const auto initialSuspensionExtension =
+        maximumInitialSuspensionExtension(
+            structure.definition(), before, suspensionBefore);
+    const auto initialMembraneEdgeMismatch =
+        maximumInitialMembraneEdgeMismatch(
+            structure.definition(), before);
 
     try {
         const auto stepDiagnostics = structure.step(stepSettings);
@@ -189,6 +279,14 @@ StructureRestAuditDiagnostics auditStructureRestState(
         }
         result.maximumSuspensionResidualMeters =
             stepDiagnostics.maximumSuspensionResidualMeters;
+        result.maximumInitialMembraneEdgeMismatchIndex =
+            initialMembraneEdgeMismatch.first;
+        result.maximumInitialMembraneEdgeMismatchMeters =
+            initialMembraneEdgeMismatch.second;
+        result.maximumInitialSuspensionExtensionSegmentStableId =
+            initialSuspensionExtension.first;
+        result.maximumInitialSuspensionExtensionMeters =
+            initialSuspensionExtension.second;
         result.stationary =
             result.maximumNodeDisplacementMeters
                 <= limits.maximumLinearDisplacementMeters

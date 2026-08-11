@@ -3917,6 +3917,21 @@ public:
             return id;
         };
 
+        const auto pointForVertexId = [&scene](const StableId id) {
+            const auto vertex = std::lower_bound(
+                scene.vertices.begin(), scene.vertices.end(), id,
+                [](const Vertex &candidate, const StableId value) {
+                    return candidate.id < value;
+                });
+            if (vertex == scene.vertices.end() || vertex->id != id) {
+                throw std::logic_error(
+                    "Scene triangle references a missing vertex");
+            }
+            return gp_Pnt(vertex->positionMeters.x * 1000.0,
+                          vertex->positionMeters.y * 1000.0,
+                          vertex->positionMeters.z * 1000.0);
+        };
+
         const auto chartFor = [](const std::array<gp_Pnt, 3> &points,
                                  gp_Vec preferredWarp) {
             std::array<Vec2, 3> chart{};
@@ -3983,6 +3998,15 @@ public:
                 vertexId(points[0]),
                 vertexId(points[1]),
                 vertexId(points[2])};
+            for (std::size_t corner = 0; corner < 3; ++corner) {
+                points[corner] = pointForVertexId(ids[corner]);
+            }
+            normal = gp_Vec(points[0], points[1]);
+            normal.Cross(gp_Vec(points[0], points[2]));
+            if (normal.Magnitude() <= Precision::Confusion()) {
+                addError("Captured surface collapsed after canonical vertex mapping");
+                return;
+            }
             std::optional<bool> reverseWinding;
             for (std::size_t corner = 0; corner < 3; ++corner) {
                 const StableId from = ids[corner];
@@ -4611,6 +4635,36 @@ public:
         std::map<StableId, StableId> ribBoundaryAliases;
         std::set<StableId> retiredVertexIds;
         double maximumRibMeshSnapDeviationMillimetres = 0.0;
+        const auto trianglePoints = [&](const Triangle &triangle) {
+            return std::array<gp_Pnt, 3>{
+                pointForVertexId(triangle.vertexIds[0]),
+                pointForVertexId(triangle.vertexIds[1]),
+                pointForVertexId(triangle.vertexIds[2]),
+            };
+        };
+        const auto trianglePreferredWarp = [&trianglePoints](
+                                               const Triangle &triangle) {
+            const auto points = trianglePoints(triangle);
+            const Vec2 firstChart{
+                triangle.materialCoordinates[1].x
+                    - triangle.materialCoordinates[0].x,
+                triangle.materialCoordinates[1].y
+                    - triangle.materialCoordinates[0].y};
+            const Vec2 secondChart{
+                triangle.materialCoordinates[2].x
+                    - triangle.materialCoordinates[0].x,
+                triangle.materialCoordinates[2].y
+                    - triangle.materialCoordinates[0].y};
+            const double determinant = firstChart.x * secondChart.y
+                - secondChart.x * firstChart.y;
+            const gp_Vec first(points[0], points[1]);
+            const gp_Vec second(points[0], points[2]);
+            if (!std::isfinite(determinant) || determinant == 0.0) {
+                return first;
+            }
+            return first.Multiplied(secondChart.y / determinant)
+                - second.Multiplied(firstChart.y / determinant);
+        };
         const auto canonicalRibBoundaryVertex =
             [&](StableId id, int ribIndex) -> std::optional<StableId> {
             const auto alias = ribBoundaryAliases.find(id);
@@ -4677,8 +4731,12 @@ public:
                     == triangle.vertexIds.end()) {
                     continue;
                 }
+                const gp_Vec preferredWarp =
+                    trianglePreferredWarp(triangle);
                 std::replace(triangle.vertexIds.begin(),
                              triangle.vertexIds.end(), id, replacement);
+                triangle.materialCoordinates = chartFor(
+                    trianglePoints(triangle), preferredWarp);
             }
             for (Opening &opening : scene.openings) {
                 std::replace(opening.orderedVertexIds.begin(),
@@ -5050,6 +5108,7 @@ public:
             junctionIds(&pointLess);
         std::map<std::tuple<int, StableId, std::size_t>, StableId>
             attachmentIds;
+        std::map<StableId, Vec3> attachmentWorldPositions;
         const auto endpointAttachment = [&](const gp_Pnt &point) {
             const Vec3 metres{point.X() * 0.001,
                               point.Y() * 0.001,
@@ -5088,6 +5147,8 @@ public:
                      harness.pilotLocalPositionMeters,
                      invalidStableId});
                 attachmentIds.emplace(key, id);
+                attachmentWorldPositions.emplace(
+                    id, harness.worldPositionMeters);
                 return id;
             }
 
@@ -5122,6 +5183,13 @@ public:
                      {},
                      invalidStableId});
                 attachmentIds.emplace(key, id);
+                const auto vertex = std::lower_bound(
+                    scene.vertices.begin(), scene.vertices.end(), surfaceId,
+                    [](const Vertex &candidate, const StableId value) {
+                        return candidate.id < value;
+                    });
+                attachmentWorldPositions.emplace(
+                    id, vertex->positionMeters);
                 return id;
             }
 
@@ -5154,12 +5222,14 @@ public:
                  {},
                  junctionId});
             attachmentIds.emplace(attachmentKey, id);
+            attachmentWorldPositions.emplace(id, metres);
             return id;
         };
 
         std::set<std::tuple<QuantizedPoint, QuantizedPoint, int, bool,
                             std::string>> emittedLines;
         std::size_t lineOrdinal = 0;
+        double maximumLineRestLengthRebaseMeters = 0.0;
         for (const CapturedLine &line : capturedLines_) {
             const QuantizedSegment segment =
                 quantizeSegment(line.start, line.end);
@@ -5176,14 +5246,35 @@ public:
                          + line.label);
                 continue;
             }
+            const Vec3 &firstPosition =
+                attachmentWorldPositions.at(firstAttachment);
+            const Vec3 &secondPosition =
+                attachmentWorldPositions.at(secondAttachment);
+            const double restLengthMeters = std::hypot(
+                secondPosition.x - firstPosition.x,
+                secondPosition.y - firstPosition.y,
+                secondPosition.z - firstPosition.z);
+            maximumLineRestLengthRebaseMeters = std::max(
+                maximumLineRestLengthRebaseMeters,
+                std::abs(restLengthMeters
+                         - line.start.Distance(line.end) * 0.001));
             scene.suspensionLines.push_back(
                 {stableId(10, lineOrdinal++),
                  firstAttachment,
                  secondAttachment,
                  lineMaterialIds.at(line.typeName),
-                 line.start.Distance(line.end) * 0.001,
+                 restLengthMeters,
                  line.brake ? SuspensionLineRole::Brake
                             : SuspensionLineRole::Suspension});
+        }
+        if (maximumLineRestLengthRebaseMeters > 1.0e-9) {
+            std::ostringstream message;
+            message.precision(6);
+            message
+                << "Discrete suspension endpoint matching rebased line rest"
+                << " lengths by at most "
+                << maximumLineRestLengthRebaseMeters * 1000.0 << " mm";
+            result.warnings.push_back(message.str());
         }
 
         if (!retiredVertexIds.empty()) {
