@@ -293,11 +293,12 @@ void validateTopologyInputIdentity(
     }
 }
 
+template<typename GeometryEpoch>
 void validateCommonInputIdentity(
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& state,
     const fluid::PeriodicCartesianGrid& grid,
-    const SceneFluidPressureEpoch& pressureEpoch,
+    const GeometryEpoch& pressureEpoch,
     const SceneFluidOpeningFluxSet& openingFlux) {
     validateSceneFluidSurfaceState(surface, state);
     validateSceneFluidOpeningFluxIntegrity(openingFlux);
@@ -323,11 +324,12 @@ void validateCommonInputIdentity(
     }
 }
 
+template<typename GeometryEpoch>
 void validateInputIdentity(
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& state,
     const fluid::PeriodicCartesianGrid& grid,
-    const SceneFluidPressureEpoch& pressureEpoch,
+    const GeometryEpoch& pressureEpoch,
     const SceneFluidOpeningFluxSet& openingFlux,
     const SceneFluidPressureVolumeRateSet& geometryVolumeRates,
     const SceneFluidPressureTopologyTransition& topologyTransition) {
@@ -389,11 +391,12 @@ SceneFluidMimeticPressureAuditEndpoint finishEndpoint(
     return result;
 }
 
+template<typename GeometryEpoch>
 SceneFluidMimeticPressureAuditEndpoint buildEndpoint(
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& state,
     const fluid::PeriodicCartesianGrid& grid,
-    const SceneFluidPressureEpoch& graphPressureEpoch,
+    const GeometryEpoch& graphPressureEpoch,
     const SceneFluidOpeningFluxSet& openingFlux,
     const fluid::MacVelocityField* predictedVelocityMetersPerSecond,
     const SceneFluidRegionWallExchange* wallExchange,
@@ -1096,6 +1099,26 @@ buildSceneFluidMimeticPressureAuditEndpoint(
         surface, state, grid, pressureEpoch, openingFlux, nullptr,
         &wallExchange, geometryVolumeRates, topologyTransition, nullptr,
         &previousWarmState, settings, limits);
+}
+
+SceneFluidMimeticPressureAuditEndpoint
+buildSceneFluidMimeticPressureAuditEndpoint(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidMimeticGeometryEpoch& geometryEpoch,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidRegionWallExchange& wallExchange,
+    const SceneFluidPressureVolumeRateSet& geometryVolumeRates,
+    const SceneFluidPressureTopologyTransition& topologyTransition,
+    const SceneFluidMimeticPressureAuditEndpoint& previousEndpoint,
+    const SceneFluidMimeticPressureAuditSettings& settings,
+    const SceneFluidMimeticPressureAuditLimits& limits) {
+    validateSceneFluidMimeticGeometryEpochIntegrity(geometryEpoch);
+    return buildEndpoint(
+        surface, state, grid, geometryEpoch, openingFlux, nullptr,
+        &wallExchange, geometryVolumeRates, topologyTransition,
+        &previousEndpoint, nullptr, settings, limits);
 }
 
 void validateSceneFluidMimeticPressureAuditTopologyIntegrity(

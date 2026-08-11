@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scene_fluid_mimetic_pressure_epoch.h"
+#include "scene_fluid_mimetic_geometry_epoch.h"
 #include "scene_fluid_mimetic_trace_flow.h"
 #include "scene_fluid_pressure_epoch.h"
 
@@ -81,6 +82,9 @@ struct SceneFluidMimeticPressureAuditWarmState {
 struct SceneFluidMimeticPressureAuditEndpoint {
     std::uint32_t version = sceneFluidMimeticPressureAuditVersion;
     std::uint64_t fingerprint = 0;
+    // Names the complete source geometry epoch. Legacy/live shadow paths use
+    // SceneFluidPressureEpoch; the graph-free whole-scene path uses
+    // SceneFluidMimeticGeometryEpoch without changing pressure arithmetic.
     std::uint64_t scenePressureEpochFingerprint = 0;
     std::uint64_t pressureTopologyTransitionFingerprint = 0;
     std::uint64_t traceFlowContinuationFingerprint = 0;
@@ -141,6 +145,25 @@ buildSceneFluidMimeticPressureAuditEndpoint(
     const SceneFluidPressureFaceLinkSet& pressureFaceLinks,
     const SceneFluidOpeningFluxSet& openingFlux,
     const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidMimeticPressureAuditSettings& settings = {},
+    const SceneFluidMimeticPressureAuditLimits& limits = {});
+
+// Consecutive graph-free whole-scene path. The current mixed-hybrid geometry
+// epoch supplies the same trusted control/link products without requiring the
+// reference graph Laplacian to exist. Wall-adjusted regional flow drives the
+// new pressure endpoint and the previous endpoint supplies only its bounded
+// consecutive warm state.
+[[nodiscard]] SceneFluidMimeticPressureAuditEndpoint
+buildSceneFluidMimeticPressureAuditEndpoint(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidMimeticGeometryEpoch& geometryEpoch,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidRegionWallExchange& wallExchange,
+    const SceneFluidPressureVolumeRateSet& geometryVolumeRates,
+    const SceneFluidPressureTopologyTransition& topologyTransition,
+    const SceneFluidMimeticPressureAuditEndpoint& previousEndpoint,
     const SceneFluidMimeticPressureAuditSettings& settings = {},
     const SceneFluidMimeticPressureAuditLimits& limits = {});
 

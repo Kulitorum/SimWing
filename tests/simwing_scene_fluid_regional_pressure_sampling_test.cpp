@@ -14,6 +14,14 @@
 #include "fluid/planar_region_fragment_opening_velocity_state.h"
 #include "scene_fluid_regional_pressure_sampling.h"
 #include "scene_fluid_mimetic_geometry_epoch_transition.h"
+#include "scene_fluid_mimetic_pressure_audit.h"
+#include "scene_fluid_mimetic_pressure_flow.h"
+#include "scene_fluid_opening_flux.h"
+#include "scene_fluid_pressure_volume_rate.h"
+#include "scene_fluid_region_momentum.h"
+#include "scene_fluid_region_rebase.h"
+#include "scene_fluid_region_transport.h"
+#include "scene_fluid_region_wall.h"
 #include "scene_fluid_regional_opening_load_epoch.h"
 #include "scene_fluid_regional_opening_momentum_load_epoch.h"
 #include "scene_fluid_regional_opening_momentum_wall_exchange.h"
@@ -918,6 +926,46 @@ void testMimeticGeometryEpochTransition() {
     const auto previousEpoch = buildSceneFluidMimeticGeometryEpoch(
         surface.definition, previousState, geometryGrid, transfer,
         connectivity);
+    MacVelocityField predictedVelocity(geometryGrid);
+    std::ranges::fill(predictedVelocity.xFaces(), 0.1);
+    const auto previousOpeningFlux = evaluateSceneFluidOpeningFlux(
+        surface.definition, previousState, previousEpoch.openingCaps,
+        previousEpoch.openingQuadrature, previousEpoch.openingPatches,
+        geometryGrid, predictedVelocity);
+    SceneFluidMimeticPressureAuditSettings pressureSettings;
+    pressureSettings.timeStepSeconds = 0.01;
+    pressureSettings.pressureSolve.maximumIterations = 4000;
+    pressureSettings.pressureSolve.relativeResidualTolerance = 1.0e-5;
+    pressureSettings.pressureSolve
+        .absoluteResidualTolerancePascalsMeters = 1.0e-10;
+    pressureSettings.pressureSolve
+        .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-8;
+    const auto previousPressure =
+        buildSceneFluidMimeticPressureAuditEndpoint(
+            surface.definition, previousState, geometryGrid,
+            previousEpoch.gridEpoch, previousEpoch.openingCaps,
+            previousEpoch.openingQuadrature,
+            previousEpoch.openingPatches,
+            previousEpoch.pressureControlVolumes,
+            previousEpoch.pressureFaceLinks, previousOpeningFlux,
+            predictedVelocity, pressureSettings);
+    const auto previousCorrectedFlow =
+        correctSceneFluidMimeticTraceFlows(previousPressure);
+    const auto previousCollapsedVelocity =
+        collapseSceneFluidMimeticCorrectedMacVelocity(
+            previousCorrectedFlow, previousEpoch.pressureFaceLinks,
+            previousEpoch.openingPatches, geometryGrid);
+    const auto previousMomentum = reconstructSceneFluidRegionMomentumState(
+        geometryGrid, previousEpoch.pressureControlVolumes,
+        previousEpoch.pressureFaceLinks, previousEpoch.openingPatches,
+        previousPressure.controlCells, previousCorrectedFlow,
+        previousCollapsedVelocity.velocityMetersPerSecond);
+    SceneFluidRegionTransportSettings transportSettings;
+    transportSettings.timeStepSeconds = 0.01;
+    const auto transportedMomentum = advanceSceneFluidRegionMomentum(
+        previousMomentum, previousEpoch.pressureFaceLinks,
+        previousPressure.controlCells, previousCorrectedFlow,
+        transportSettings);
 
     StructureStepSettings stepSettings;
     stepSettings.timeStepSeconds = 0.01;
@@ -935,6 +983,35 @@ void testMimeticGeometryEpochTransition() {
             previousEpoch, surface.definition, previousState,
             currentState, geometryGrid, transfer, connectivity,
             acceptedGridEpoch);
+    const auto volumeRates = buildSceneFluidPressureVolumeRates(
+        previousEpoch.cellVolumes,
+        transition.currentGeometryEpoch.cellVolumes,
+        transition.currentGeometryEpoch.pressureControlVolumes,
+        transition.topologyTransition);
+    const auto regionalRebase = rebaseSceneFluidRegionTransport(
+        transportedMomentum, previousEpoch.pressureControlVolumes,
+        transition.currentGeometryEpoch.pressureControlVolumes,
+        transition.topologyTransition);
+    const auto currentOpeningFlux = evaluateSceneFluidOpeningFlux(
+        surface.definition, currentState,
+        transition.currentGeometryEpoch.openingCaps,
+        transition.currentGeometryEpoch.openingQuadrature,
+        transition.currentGeometryEpoch.openingPatches, geometryGrid,
+        predictedVelocity);
+    SceneFluidRegionWallSettings wallSettings;
+    wallSettings.timeStepSeconds = volumeRates.durationSeconds;
+    const auto wallExchange = exchangeSceneFluidRegionWallMomentum(
+        regionalRebase, geometryGrid,
+        transition.currentGeometryEpoch.pressureControlVolumes,
+        surface.definition, currentState,
+        transition.currentGeometryEpoch.gridEpoch.quadrature,
+        wallSettings);
+    const auto currentPressure =
+        buildSceneFluidMimeticPressureAuditEndpoint(
+            surface.definition, currentState, geometryGrid,
+            transition.currentGeometryEpoch, currentOpeningFlux,
+            wallExchange, volumeRates, transition.topologyTransition,
+            previousPressure, pressureSettings);
     validateSceneFluidMimeticGeometryEpochTransition(
         transition, previousEpoch, surface.definition, previousState,
         currentState, geometryGrid, transfer, connectivity,
@@ -954,6 +1031,19 @@ void testMimeticGeometryEpochTransition() {
               && transition.topologyTransition
                      .disappearedControlVolumeCount == 0,
           "mimetic geometry transition: moving authored intake retains a consecutive graph-free topology");
+    check(previousPressure.pressureEpoch.diagnostics.accepted
+              && previousCorrectedFlow.accepted
+              && transportedMomentum.diagnostics.accepted
+              && regionalRebase.diagnostics.finite
+              && wallExchange.diagnostics.accepted
+              && currentPressure.pressureEpoch.diagnostics.accepted
+              && currentPressure.usesRegionWallPrediction
+              && currentPressure.usesConsecutiveWarmStart
+              && currentPressure.scenePressureEpochFingerprint
+                  == transition.currentGeometryEpoch.fingerprint
+              && currentPressure.pressureTopologyTransitionFingerprint
+                  == transition.topologyTransition.fingerprint,
+          "mimetic geometry transition: regional rebase and wall-adjusted flow accept the next moving pressure endpoint");
 }
 
 void testStaticSamplingAndTransfer() {

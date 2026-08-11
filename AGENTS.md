@@ -1433,6 +1433,14 @@ makes this a certified aerodynamic solver.
    correctly inadmissible as a whole-scene volume because its material edges do
    not form a closed region cycle; do not weaken that check or pretend the two
    geometry representations are interchangeable.
+   The moving overload of `scene_fluid_mimetic_pressure_audit.*` now consumes
+   this graph-free current epoch after the shared volume-rate and topology
+   transition. Existing regional transport rebases to the new controls,
+   material-wall exchange adjusts it on the current quadrature, and the
+   resulting link predictor plus the prior accepted mimetic endpoint produces
+   one consecutive warm pressure solve. The moving authored-intake cell accepts
+   this complete chain. The endpoint still applies no Structure load and no
+   production worker selects it.
    The coarse real-wing system has 191,579 trace unknowns and 13,132,336 bytes
    of compact local factors. Its component-constant action is roundoff-null.
    The bounded gauge-fixed Jacobi-PCG solve now recovers manufactured fields

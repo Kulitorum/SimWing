@@ -3094,6 +3094,17 @@ wall harness deliberately cannot feed this whole-scene product: its exposed
 material edges do not close a three-dimensional region cycle. A future adapter
 must start from an authoritative closed scene rather than relaxing that
 invariant. The transition still rebases no momentum and solves no pressure.
+The graph-free moving overload of `scene_fluid_mimetic_pressure_audit.*` now
+continues from that transition through the existing conservative operators. It
+builds current volume rates, rebases accepted regional transport onto the new
+controls, exchanges tangential momentum at current material quadrature, and
+uses the adjusted link predictor plus the prior accepted mimetic endpoint for
+one consecutive warm solve. The moving authored-intake cell accepts the whole
+chain with stable controls and a bound current geometry fingerprint. This is
+the first general-scene moving mixed-hybrid pressure endpoint that does not
+construct the rejected graph Laplacian. It remains an isolated transaction:
+the pressure/wall loads are not yet fed back to Structure and no worker selects
+the path.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
