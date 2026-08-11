@@ -1520,7 +1520,7 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --ramp-seconds 0.1 --continue-corrected-trace-flow --steps 6 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --ramp-seconds 0.1 --transport-corrected-region-flow --steps 6 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --grid 4 --padding 1.0 --wind-y 0.85 --ramp-seconds 0 --perturbation 0.25 --steps 2 --no-viewer
-.\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --grid 4 --wind-y 0.85 --ramp-seconds 2 --continue-corrected-trace-flow --steps 1000 --trace-every 30
+.\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --grid 64x24x24 --wind-y 0.85 --ramp-seconds 2 --continue-corrected-trace-flow --steps 2
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --wind-y 0.0001 --moving-fsi --load-ramp-seconds 1 --moving-pressure-reconstruction-tolerance 2e-6 --wall-trace-pressure-load --preflow-steps 2 --aggregate-opening-traces --steps 3
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --wind-y 0.0001 --moving-fsi --hold-preflow-load-preview --load-ramp-seconds 600 --wall-trace-pressure-load --preflow-steps 2 --aggregate-opening-traces --steps 62
 .\build\bin\Release\simwing-fsi.exe --case hemisphere --steps 600
@@ -1593,14 +1593,20 @@ The preview keeps the authored iteration and line-residual contracts while
 using six deterministic cable sweep pairs and `60 s^-1` velocity damping to
 approach a quasi-static response instead of exposing unresolved suspension
 oscillation.
-The frozen-scene-only controls accept an isotropic grid from 2 through 16,
-positive padding up to 1000 m, signed single-axis wind within 100 m/s, and a nonnegative
+The frozen-scene-only controls retain `--grid N` for isotropic plumbing probes
+and accept `--grid NXxNYxNZ` for explicit X/Y/Z counts. Each axis is bounded to
+2 through 16384 and the current one-diagnostic-vertex-per-cell frame path is
+bounded to 500000 total cells until solver resolution is separated from viewer
+sampling. The viewer reports the selected counts and physical cell spacing, so
+an accepted run cannot disguise metre-scale cells as a meaningful wing solve.
+The remaining controls accept positive padding up to 1000 m, signed single-axis wind within 100 m/s, and a nonnegative
 initial perturbation up to 100 m/s. Wind reaches its target through a bounded
 `0.5 s` ramp by default; `--ramp-seconds 0` explicitly restores the impulsive
 diagnostic. The current ramp advances once per accepted solver step, so a
-one-frame run is intentionally only the first startup sample. The 2-cell default is the fast geometry
-integration probe; larger grids are offline experiments whose runtime and
-memory rise sharply and do not by themselves make the periodic setup physical.
+one-frame run is intentionally only the first startup sample. The 2-cell
+default is only a fast geometry integration probe; larger grids are offline
+experiments whose runtime and memory rise sharply and do not by themselves make
+the periodic setup physical.
 The perturbation defaults to zero. A nonzero value is deterministic diagnostic
 forcing only; it does not represent turbulence or an aerodynamic inflow model.
 The standalone viewer reconstructs the explicitly described X-fast CFD grid

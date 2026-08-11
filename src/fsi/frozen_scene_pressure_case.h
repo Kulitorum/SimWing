@@ -37,6 +37,14 @@ inline constexpr const char*
 inline constexpr const char* heldPreflowLoadStructurePreviewSolverId =
     "held-preflow-load-structure-preview-v1";
 inline constexpr double maximumMovingLoadRampSeconds = 3600.0;
+inline constexpr std::size_t maximumFrozenSceneGridCellsPerAxis = 16'384;
+inline constexpr std::size_t maximumFrozenSceneDiagnosticCellCount = 500'000;
+
+// The whole-wing worker currently publishes one immutable diagnostic sample
+// per CFD cell. Keep that explicit frame boundary bounded until solver-state
+// resolution and viewer sampling are separated.
+[[nodiscard]] bool frozenSceneGridCellCountsAreSupported(
+    fluid::GridCellCounts counts) noexcept;
 
 struct FrozenScenePressureCaseSettings {
     fluid::GridCellCounts cellCounts{2, 2, 2};

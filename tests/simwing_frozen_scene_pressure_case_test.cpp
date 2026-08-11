@@ -83,6 +83,12 @@ bool sameGeometry(const simwing::viewer::DiagnosticFrame& first,
 }
 
 void testFrozenScenePressureCase() {
+    check(simwing::fsi::frozenSceneGridCellCountsAreSupported({64, 24, 24})
+              && !simwing::fsi::frozenSceneGridCellCountsAreSupported(
+                  {1, 24, 24})
+              && !simwing::fsi::frozenSceneGridCellCountsAreSupported(
+                  {128, 64, 64}),
+          "frozen scene bounds anisotropic diagnostic grids before allocation");
     const auto scene = simwing::fsi::makeScenePressureCellGeometry();
     simwing::fsi::FrozenScenePressureCaseSettings settings;
     settings.cellCounts = {4, 4, 4};

@@ -1203,7 +1203,7 @@ public:
         sliceToolbar->addWidget(sliceSlider_);
         slicePositionLabel_ = new QLabel(
             QStringLiteral(" no structured CFD grid "), sliceToolbar);
-        slicePositionLabel_->setMinimumWidth(220);
+        slicePositionLabel_->setMinimumWidth(520);
         sliceToolbar->addWidget(slicePositionLabel_);
 
         QObject::connect(playAction_, &QAction::triggered, owner_, [this] {
@@ -1585,7 +1585,14 @@ private:
         const double coordinate =
             grid->cellCentreCoordinatesMetres[axis][requested];
         slicePositionLabel_->setText(
-            QStringLiteral(" %1 plane %2/%3   %1=%4 m ")
+            QStringLiteral(
+                " grid %1x%2x%3  delta=[%4 %5 %6] mm   |   %7 plane %8/%9  %7=%10 m ")
+                .arg(grid->cellCounts[0])
+                .arg(grid->cellCounts[1])
+                .arg(grid->cellCounts[2])
+                .arg(1000.0 * grid->cellSpacingMetres[0], 0, 'g', 5)
+                .arg(1000.0 * grid->cellSpacingMetres[1], 0, 'g', 5)
+                .arg(1000.0 * grid->cellSpacingMetres[2], 0, 'g', 5)
                 .arg(axisName)
                 .arg(requested + 1)
                 .arg(count)

@@ -42,11 +42,27 @@
 #include <vector>
 
 namespace simwing::fsi {
+
+bool frozenSceneGridCellCountsAreSupported(
+    const fluid::GridCellCounts counts) noexcept {
+    if (counts.x < 2 || counts.y < 2 || counts.z < 2
+        || counts.x > maximumFrozenSceneGridCellsPerAxis
+        || counts.y > maximumFrozenSceneGridCellsPerAxis
+        || counts.z > maximumFrozenSceneGridCellsPerAxis) {
+        return false;
+    }
+    if (counts.x > maximumFrozenSceneDiagnosticCellCount / counts.y) {
+        return false;
+    }
+    const std::size_t xy = counts.x * counts.y;
+    return xy <= maximumFrozenSceneDiagnosticCellCount / counts.z;
+}
+
 namespace {
 
 void validateSettings(const FrozenScenePressureCaseSettings& settings) {
     const auto counts = settings.cellCounts;
-    if (counts.x < 2 || counts.y < 2 || counts.z < 2
+    if (!frozenSceneGridCellCountsAreSupported(counts)
         || !std::isfinite(settings.domainPaddingMeters)
         || !(settings.domainPaddingMeters > 0.0)
         || (settings.useExplicitDomain

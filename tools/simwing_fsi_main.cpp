@@ -90,7 +90,8 @@ struct Options {
     std::filesystem::path checkpointInputPath;
     std::filesystem::path checkpointOutputPath;
     std::filesystem::path scenePath;
-    std::optional<std::size_t> frozenGridCellsPerAxis;
+    std::optional<simwing::fsi::fluid::GridCellCounts>
+        frozenGridCellCounts;
     std::optional<double> frozenDomainPaddingMeters;
     std::optional<simwing::fsi::fluid::Vector3>
         frozenWindMetersPerSecond;
@@ -120,7 +121,7 @@ void printUsage(FILE* stream) {
         stream,
         "Usage: simwing-fsi [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--scene PATH]\n"
-        "                   [--grid N] [--padding METERS]\n"
+        "                   [--grid N|NXxNYxNZ] [--padding METERS]\n"
         "                   [--wind-y MPS|--wind-x MPS] [--ramp-seconds SECONDS]\n"
         "                   [--continue-corrected-trace-flow]\n"
         "                   [--transport-corrected-region-flow]\n"
@@ -152,8 +153,11 @@ void printUsage(FILE* stream) {
         "an evolving bulk-flow/mixed-hybrid pressure projection and conservative\n"
         "load field; it is not a validated external wake or aerodynamic polar;\n"
         "frozen-scene defaults to a 2^3 grid, 0.5 m padding, +0.85 m/s Y wind,\n"
-        "a 0.5 s startup ramp, and zero deterministic perturbation; N is bounded\n"
-        "to 2..16; a zero ramp explicitly restores impulsive startup;\n"
+        "a 0.5 s startup ramp, and zero deterministic perturbation; --grid N\n"
+        "selects an isotropic plumbing probe while --grid NXxNYxNZ selects\n"
+        "explicit X/Y/Z counts. Each axis is 2..16384 and the current immutable\n"
+        "diagnostic-frame path is bounded to 500000 total cells; a zero ramp\n"
+        "explicitly restores impulsive startup;\n"
         "+Y is the imported wing's chordwise inflow direction; --wind-x is an\n"
         "explicit spanwise diagnostic, and the two axis selectors are exclusive;\n"
         "--continue-corrected-trace-flow enables the fixed-topology exact-trace\n"
@@ -306,6 +310,44 @@ bool parseFiniteDouble(const std::string_view text, double& value) {
     return error == std::errc{} && position == end && std::isfinite(value);
 }
 
+bool parseFrozenGridCellCounts(
+    const std::string_view text,
+    simwing::fsi::fluid::GridCellCounts& counts) {
+    const auto parseCount = [](const std::string_view component,
+                               std::size_t& result) {
+        std::uint64_t value = 0;
+        if (!parseUnsigned(component, value)
+            || value > std::numeric_limits<std::size_t>::max()) {
+            return false;
+        }
+        result = static_cast<std::size_t>(value);
+        return true;
+    };
+    const auto separator = text.find_first_of("xX");
+    if (separator == std::string_view::npos) {
+        std::size_t value = 0;
+        if (!parseCount(text, value)) {
+            return false;
+        }
+        counts = {value, value, value};
+    } else {
+        const auto secondSeparator = text.find_first_of(
+            "xX", separator + 1);
+        if (secondSeparator == std::string_view::npos
+            || text.find_first_of("xX", secondSeparator + 1)
+                != std::string_view::npos
+            || !parseCount(text.substr(0, separator), counts.x)
+            || !parseCount(
+                text.substr(separator + 1,
+                            secondSeparator - separator - 1),
+                counts.y)
+            || !parseCount(text.substr(secondSeparator + 1), counts.z)) {
+            return false;
+        }
+    }
+    return simwing::fsi::frozenSceneGridCellCountsAreSupported(counts);
+}
+
 bool parseOptions(int argc,
                   char* argv[],
                   Options& options,
@@ -398,23 +440,20 @@ bool parseOptions(int argc,
             options.scenePath =
                 std::filesystem::path(argument.substr(8));
         } else if (argument == "--grid") {
-            std::uint64_t value = 0;
-            if (++index >= argc || !parseUnsigned(argv[index], value)
-                || value < 2 || value > 16) {
-                error = "--grid requires an integer from 2 through 16";
+            simwing::fsi::fluid::GridCellCounts counts;
+            if (++index >= argc
+                || !parseFrozenGridCellCounts(argv[index], counts)) {
+                error = "--grid requires N or NXxNYxNZ with each axis from 2 through 16384 and at most 500000 total cells";
                 return false;
             }
-            options.frozenGridCellsPerAxis =
-                static_cast<std::size_t>(value);
+            options.frozenGridCellCounts = counts;
         } else if (argument.starts_with("--grid=")) {
-            std::uint64_t value = 0;
-            if (!parseUnsigned(argument.substr(7), value)
-                || value < 2 || value > 16) {
-                error = "--grid requires an integer from 2 through 16";
+            simwing::fsi::fluid::GridCellCounts counts;
+            if (!parseFrozenGridCellCounts(argument.substr(7), counts)) {
+                error = "--grid requires N or NXxNYxNZ with each axis from 2 through 16384 and at most 500000 total cells";
                 return false;
             }
-            options.frozenGridCellsPerAxis =
-                static_cast<std::size_t>(value);
+            options.frozenGridCellCounts = counts;
         } else if (argument == "--padding") {
             double value = 0.0;
             if (++index >= argc || !parseFiniteDouble(argv[index], value)
@@ -679,7 +718,7 @@ bool parseOptions(int argc,
         return false;
     }
     const bool frozenControlRequested =
-        options.frozenGridCellsPerAxis.has_value()
+        options.frozenGridCellCounts.has_value()
         || options.frozenDomainPaddingMeters.has_value()
         || options.frozenWindMetersPerSecond.has_value()
         || options.frozenWindRampSeconds.has_value()
@@ -2212,9 +2251,22 @@ int main(int argc, char* argv[]) {
                                      Simulation,
                                      simwing::fsi::FrozenScenePressureCase>) {
                 const auto& diagnostics = simulation.diagnostics();
+                const simwing::fsi::fluid::Vector3 spacing{
+                    (diagnostics.gridUpperMeters.x
+                     - diagnostics.gridLowerMeters.x)
+                        / static_cast<double>(diagnostics.gridCellCounts.x),
+                    (diagnostics.gridUpperMeters.y
+                     - diagnostics.gridLowerMeters.y)
+                        / static_cast<double>(diagnostics.gridCellCounts.y),
+                    (diagnostics.gridUpperMeters.z
+                     - diagnostics.gridLowerMeters.z)
+                        / static_cast<double>(diagnostics.gridCellCounts.z),
+                };
                 std::printf(
                     "simwing-fsi completed %llu frozen-scene sample(s), "
-                    "t=%.9g s, grid=%zux%zux%zu, controls=%zu, traces=%zu, iterations=%zu, ramp=%.6g, "
+                    "t=%.9g s, grid=%zux%zux%zu, cell=[%.6g %.6g %.6g] m, "
+                    "domain=[%.6g %.6g %.6g]-[%.6g %.6g %.6g] m, "
+                    "controls=%zu, traces=%zu, iterations=%zu, ramp=%.6g, "
                     "extrapolated-sides=%zu, max-extrapolation=%.6g m, "
                     "max-pressure-jump=%.6g Pa, pressure-force="
                     "[%.6g %.6g %.6g] N, wall-trace-sides=%zu+%zu, "
@@ -2240,6 +2292,15 @@ int main(int argc, char* argv[]) {
                     diagnostics.gridCellCounts.x,
                     diagnostics.gridCellCounts.y,
                     diagnostics.gridCellCounts.z,
+                    spacing.x,
+                    spacing.y,
+                    spacing.z,
+                    diagnostics.gridLowerMeters.x,
+                    diagnostics.gridLowerMeters.y,
+                    diagnostics.gridLowerMeters.z,
+                    diagnostics.gridUpperMeters.x,
+                    diagnostics.gridUpperMeters.y,
+                    diagnostics.gridUpperMeters.z,
                     diagnostics.pressureControlCount,
                     diagnostics.sharedTraceCount,
                     diagnostics.pressureIterationCount,
@@ -2384,10 +2445,8 @@ int main(int argc, char* argv[]) {
                     "frozen scene input disappeared before construction");
             }
             simwing::fsi::FrozenScenePressureCaseSettings settings;
-            if (options.frozenGridCellsPerAxis) {
-                const std::size_t count =
-                    *options.frozenGridCellsPerAxis;
-                settings.cellCounts = {count, count, count};
+            if (options.frozenGridCellCounts) {
+                settings.cellCounts = *options.frozenGridCellCounts;
             }
             if (options.frozenDomainPaddingMeters) {
                 settings.domainPaddingMeters =
