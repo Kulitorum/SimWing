@@ -97,7 +97,7 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
-.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
+.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--moving-fsi] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
 .\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
@@ -269,8 +269,9 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   and immutable viewer frames.
 - `simwing_scene_structure`: deterministic scene-v2 membrane, per-sheet
   bending, junction, and cable assembly into `simwing_structure`.
-- `simwing_frozen_scene_pressure_case`: input-driven fixed-geometry integration
-  probe. It loads scene-v2, assembles the exact Structure/fluid surface, runs
+- `simwing_frozen_scene_pressure_case`: input-driven whole-scene integration
+  probe. Its unchanged default loads scene-v2, assembles the exact
+  Structure/fluid surface, freezes geometry, runs
   one prescribed-flow mixed-hybrid mimetic pressure projection, conservatively
   transfers pressure loads, reconstructs conservative pressure-corrected
   shared-trace flow, area-collapses only Cartesian traces to a continuation
@@ -281,8 +282,13 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   remain explicit rather than being smeared onto the grid. This coarse periodic
   diagnostic appends unreferenced cell-centre points and velocity/vorticity
   fields to the immutable Structure frame for viewer inspection. Those samples
-  never enter solver state. It is not a validated external-flow wake, polar,
-  or two-way solver. Frozen-scene-only CLI controls select an isotropic `2..16`
+  never enter solver state. Opt-in `--moving-fsi` instead applies the accepted
+  pressure-plus-wall transfer, advances XPBD once, rebuilds the graph-free
+  geometry epoch, rebases transported regional momentum, exchanges current
+  material-wall momentum, and accepts one consecutive warm mimetic-pressure
+  endpoint. It is a staggered two-way integration probe, not a validated
+  external-flow wake, polar, or aerodynamic solver. Frozen-scene-only CLI
+  controls select an isotropic `2..16`
   grid, positive domain padding, signed X wind, a bounded startup-ramp duration,
   and nonnegative deterministic perturbation; defaults remain `2`, `0.5 m`,
   `-0.85 m/s`, `0.5 s`, and `0 m/s`.
@@ -291,6 +297,12 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   may omit zero-volume material sides from the local operator; their retained
   quadrature centroids drive a bounded nearest same-region adjacent-cell
   pressure extrapolation, reported separately in diagnostics.
+  The first low-load real gnuC2 `--moving-fsi` probe currently rejects in the
+  XPBD step because imported membrane triangle 18459 produces an
+  ill-conditioned 3-by-3 orthotropic solve; the outer worker restores the
+  pre-step Structure checkpoint. Do not claim real-wing moving acceptance
+  until that mesh/material conditioning gate is resolved in the structural
+  boundary.
 - `simwing_scene_fluid_surface`: deterministic compact ownership of the
   authoritative scene-v2 fluid regions, porous fabric, oriented surface
   triangles, and openings, plus immutable capture of accepted Structure
@@ -1439,8 +1451,12 @@ makes this a certified aerodynamic solver.
    material-wall exchange adjusts it on the current quadrature, and the
    resulting link predictor plus the prior accepted mimetic endpoint produces
    one consecutive warm pressure solve. The moving authored-intake cell accepts
-   this complete chain. The endpoint still applies no Structure load and no
-   production worker selects it.
+   this complete chain. `simwing_frozen_scene_pressure_case --moving-fsi` now
+   selects it explicitly: the previous accepted pressure-plus-wall transfer is
+   consumed by one XPBD step, all post-step products are built privately, and
+   the next pressure, wall traction, geometry, regional state, and viewer loads
+   publish together. The default fixed-geometry path and solver identity remain
+   unchanged.
    The coarse real-wing system has 191,579 trace unknowns and 13,132,336 bytes
    of compact local factors. Its component-constant action is roundoff-null.
    The bounded gauge-fixed Jacobi-PCG solve now recovers manufactured fields

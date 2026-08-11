@@ -92,6 +92,8 @@ void testFrozenScenePressureCase() {
           "corrected trace-flow continuation remains opt-in");
     check(!settings.useRegionalTransportFlowPrediction,
           "regional transport flow prediction remains opt-in");
+    check(!settings.useMovingGeometryFsi,
+          "moving geometry FSI remains opt-in");
     settings.useRegionalTransportFlowPrediction = true;
     simwing::fsi::FrozenScenePressureCase first(scene, settings);
     simwing::fsi::FrozenScenePressureCase second(scene, settings);
@@ -197,6 +199,53 @@ void testFrozenScenePressureCase() {
     static_cast<void>(impulsive.advance());
     check(impulsive.diagnostics().windRampFraction == 1.0,
           "zero ramp duration explicitly restores full-wind startup");
+
+    simwing::fsi::FrozenScenePressureCaseSettings movingSettings;
+    movingSettings.cellCounts = {4, 4, 4};
+    movingSettings.useExplicitDomain = true;
+    movingSettings.lowerMeters = {};
+    movingSettings.upperMeters = {4.0, 4.0, 4.0};
+    movingSettings.backgroundWindMetersPerSecond = {0.1, 0.0, 0.0};
+    movingSettings.windRampSeconds = 0.0;
+    movingSettings.timeStepSeconds = 0.01;
+    simwing::fsi::FrozenScenePressureCase frozenReference(
+        scene, movingSettings);
+    const auto frozenReferenceFrame = frozenReference.advance();
+    movingSettings.useMovingGeometryFsi = true;
+    simwing::fsi::FrozenScenePressureCase movingFirst(
+        scene, movingSettings);
+    simwing::fsi::FrozenScenePressureCase movingSecond(
+        scene, movingSettings);
+    const auto movingFrame = movingFirst.advance();
+    const auto repeatedMovingFrame = movingSecond.advance();
+    const auto& movingDiagnostics = movingFirst.diagnostics();
+    check(serialized(movingFrame) == serialized(repeatedMovingFrame)
+              && movingFirst.traceHeader().solverCommit
+                  == simwing::fsi::movingScenePressureSolverId
+              && movingFrame.step == 1
+              && movingFirst.acceptedStepCount() == 1
+              && !sameGeometry(frozenReferenceFrame, movingFrame),
+          "moving scene FSI deterministically publishes its first deformed Structure frame");
+    check(movingDiagnostics.finite
+              && movingDiagnostics.usesMovingGeometryFsi
+              && movingDiagnostics.geometryAdvanceCount == 1
+              && movingDiagnostics.maximumGeometryDisplacementMeters > 0.0,
+          "moving scene FSI accepts one finite XPBD geometry advance");
+    check(movingDiagnostics.usesConsecutivePressureWarmStart
+              && movingDiagnostics.usesRegionWallPrediction,
+          "moving scene FSI accepts the rebased consecutive pressure endpoint");
+    check(movingDiagnostics.wallMomentumResidualKilogramMetersPerSecond
+                  < 1.0e-12
+              && movingDiagnostics.totalFluidTransferForceResidualNewtons
+                  < 1.0e-8,
+          "moving scene FSI closes wall momentum and total conservative transfer");
+    check(vectorField(movingFrame, "moving_scene.nodal_wall_force")
+                  != nullptr
+              && vectorField(
+                     movingFrame,
+                     "moving_scene.nodal_total_fluid_force")
+                  != nullptr,
+          "moving scene FSI publishes wall and total nodal load fields");
 }
 
 } // namespace

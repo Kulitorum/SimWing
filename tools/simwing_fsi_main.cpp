@@ -96,6 +96,7 @@ struct Options {
     std::optional<double> frozenPerturbationMetersPerSecond;
     bool frozenCorrectedTraceFlowContinuation = false;
     bool frozenRegionalTransportFlowPrediction = false;
+    bool frozenMovingGeometryFsi = false;
     std::uint64_t checkpointEvery = 0;
     bool viewer = true;
     bool controlStdio = false;
@@ -113,6 +114,7 @@ void printUsage(FILE* stream) {
         "                   [--wind-x MPS] [--ramp-seconds SECONDS]\n"
         "                   [--continue-corrected-trace-flow]\n"
         "                   [--transport-corrected-region-flow]\n"
+        "                   [--moving-fsi]\n"
         "                   [--perturbation MPS]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
@@ -126,7 +128,7 @@ void printUsage(FILE* stream) {
         "Runs a canonical Qt-free numerical case and writes a completed diagnostic\n"
         "trace. 'structural' is the original analytic XPBD harness; 'hemisphere'\n"
         "runs a soft three-point fabric dome under an alternating pressure mode;\n"
-        "'frozen-scene' loads --scene, holds its geometry fixed, and publishes\n"
+        "'frozen-scene' loads --scene, holds its geometry fixed by default, and publishes\n"
         "an evolving bulk-flow/mixed-hybrid pressure projection and conservative\n"
         "load field; it is not a validated external wake or aerodynamic polar;\n"
         "frozen-scene defaults to a 2^3 grid, 0.5 m padding, -0.85 m/s X wind,\n"
@@ -136,6 +138,8 @@ void printUsage(FILE* stream) {
         "continuation experiment without changing the default worker path;\n"
         "--transport-corrected-region-flow instead projects conservative\n"
         "regional transport onto the next fixed-topology pressure predictor;\n"
+        "--moving-fsi instead enables the staggered pressure/wall -> XPBD ->\n"
+        "moving-geometry/rebase/mimetic-pressure integration path;\n"
         "'flag' maps the complete reaction from a fixed-reference projected gust\n"
         "onto a one-edge-clamped XPBD fabric panel;\n"
         "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"
@@ -408,6 +412,8 @@ bool parseOptions(int argc,
             options.frozenCorrectedTraceFlowContinuation = true;
         } else if (argument == "--transport-corrected-region-flow") {
             options.frozenRegionalTransportFlowPrediction = true;
+        } else if (argument == "--moving-fsi") {
+            options.frozenMovingGeometryFsi = true;
         } else if (argument == "--perturbation") {
             double value = 0.0;
             if (++index >= argc || !parseFiniteDouble(argv[index], value)
@@ -490,7 +496,8 @@ bool parseOptions(int argc,
         || options.frozenWindRampSeconds.has_value()
         || options.frozenPerturbationMetersPerSecond.has_value()
         || options.frozenCorrectedTraceFlowContinuation
-        || options.frozenRegionalTransportFlowPrediction;
+        || options.frozenRegionalTransportFlowPrediction
+        || options.frozenMovingGeometryFsi;
     if (frozenControlRequested
         && options.workerCase != WorkerCase::FrozenScene) {
         error = "frozen-scene flow controls require --case frozen-scene";
@@ -499,6 +506,12 @@ bool parseOptions(int argc,
     if (options.frozenCorrectedTraceFlowContinuation
         && options.frozenRegionalTransportFlowPrediction) {
         error = "--continue-corrected-trace-flow and --transport-corrected-region-flow are mutually exclusive";
+        return false;
+    }
+    if (options.frozenMovingGeometryFsi
+        && (options.frozenCorrectedTraceFlowContinuation
+            || options.frozenRegionalTransportFlowPrediction)) {
+        error = "--moving-fsi is mutually exclusive with the fixed-geometry continuation controls";
         return false;
     }
     if (options.workerCase == WorkerCase::FrozenScene && !stepsRequested) {
@@ -1965,6 +1978,7 @@ int main(int argc, char* argv[]) {
                     "regional-transport-substeps=%zu, regional-transport-residual=%.3g kg*m/s, "
                     "flow-advances=%zu, trace-continuation=%u, trace-carry=%.3g m^3/s, trace-delta=%.3g m^3/s, "
                     "regional-predictor=%u, regional-flow-delta=%.3g m^3/s, "
+                    "moving-fsi=%u, geometry-advances=%zu, geometry-dx=%.3g m, wall-residual=%.3g kg*m/s, "
                     "bulk-substeps=%zu, bulk-dv=%.3g m/s, "
                     "transfer-residual=%.3g N, "
                     "trace=%s\n",
@@ -2003,6 +2017,10 @@ int main(int argc, char* argv[]) {
                         ? 1U : 0U,
                     diagnostics
                         .maximumRegionalTransportFlowDifferenceFromBulkBaselineCubicMetersPerSecond,
+                    diagnostics.usesMovingGeometryFsi ? 1U : 0U,
+                    diagnostics.geometryAdvanceCount,
+                    diagnostics.maximumGeometryDisplacementMeters,
+                    diagnostics.wallMomentumResidualKilogramMetersPerSecond,
                     diagnostics.bulkFlowSubstepCount,
                     diagnostics.bulkFlowMaximumVelocityChangeMetersPerSecond,
                     diagnostics.transferForceResidualNewtons,
@@ -2113,6 +2131,8 @@ int main(int argc, char* argv[]) {
                 options.frozenCorrectedTraceFlowContinuation;
             settings.useRegionalTransportFlowPrediction =
                 options.frozenRegionalTransportFlowPrediction;
+            settings.useMovingGeometryFsi =
+                options.frozenMovingGeometryFsi;
             if (options.frozenPerturbationMetersPerSecond) {
                 settings.diagnosticPerturbationSpeedMetersPerSecond =
                     *options.frozenPerturbationMetersPerSecond;

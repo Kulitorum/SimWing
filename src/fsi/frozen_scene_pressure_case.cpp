@@ -5,6 +5,7 @@
 #include "scene_fluid_capped_face_partition.h"
 #include "scene_fluid_cell_volume.h"
 #include "scene_fluid_mimetic_geometry_epoch.h"
+#include "scene_fluid_mimetic_geometry_epoch_transition.h"
 #include "scene_fluid_mimetic_pressure_audit.h"
 #include "scene_fluid_mimetic_pressure_flow.h"
 #include "scene_fluid_mimetic_pressure_sampling.h"
@@ -15,9 +16,13 @@
 #include "scene_fluid_opening_quadrature.h"
 #include "scene_fluid_pressure_control_volume.h"
 #include "scene_fluid_pressure_face_link.h"
+#include "scene_fluid_pressure_traction.h"
+#include "scene_fluid_pressure_volume_rate.h"
 #include "scene_fluid_region_connectivity.h"
 #include "scene_fluid_region_momentum.h"
+#include "scene_fluid_region_rebase.h"
 #include "scene_fluid_region_transport.h"
+#include "scene_fluid_region_wall.h"
 #include "scene_fluid_surface.h"
 #include "scene_fluid_surface_transfer.h"
 #include "scene_structure.h"
@@ -59,6 +64,9 @@ void validateSettings(const FrozenScenePressureCaseSettings& settings) {
         || settings.windRampSeconds > 60.0
         || (settings.useCorrectedTraceFlowContinuation
             && settings.useRegionalTransportFlowPrediction)
+        || (settings.useMovingGeometryFsi
+            && (settings.useCorrectedTraceFlowContinuation
+                || settings.useRegionalTransportFlowPrediction))
         || !std::isfinite(
             settings.diagnosticPerturbationSpeedMetersPerSecond)
         || settings.diagnosticPerturbationSpeedMetersPerSecond < 0.0
@@ -181,6 +189,7 @@ struct BuiltCase {
     SceneFluidSurfaceState surfaceState;
     SceneFluidSurfaceTransfer transfer;
     fluid::PeriodicCartesianGrid grid;
+    SceneFluidRegionConnectivity connectivity;
     SceneFluidMimeticGeometryEpoch geometryEpoch;
     SceneFluidMimeticPressureAuditSettings pressureSettings;
     SceneFluidMimeticPressureAuditEndpoint pressure;
@@ -188,19 +197,71 @@ struct BuiltCase {
     SceneFluidMimeticMacVelocityCollapse correctedMac;
     SceneFluidRegionMomentumState regionalMomentum;
     ConservativeTransferResult pressureTransfer;
+    ConservativeTransferResult totalFluidTransfer;
     viewer::StructureFrameMapping frameMapping;
     std::optional<SceneFluidMimeticTraceFlowContinuation>
         traceFlowContinuation;
     std::optional<SceneFluidMimeticRegionTransportFlowPrediction>
         regionalTransportFlowPrediction;
     std::optional<SceneFluidRegionTransport> regionalTransport;
+    std::optional<SceneFluidRegionWallExchange> regionWall;
+    std::optional<ConservativeTransferResult> wallTransfer;
+    std::optional<StructureDiagnostics> structureStep;
     std::optional<fluid::PeriodicFlowStrangSubcyclingDiagnostics> bulkFlow;
     std::optional<fluid::ProjectionDiagnostics> bulkProjection;
     double meanStreamwiseVelocityBeforePumpMetersPerSecond = 0.0;
     double streamwisePumpIncrementMetersPerSecond = 0.0;
     double windRampFraction = 0.0;
+    double maximumGeometryDisplacementMeters = 0.0;
+    bool pressureControlTopologyStable = false;
     std::size_t flowAdvanceCount = 0;
+    std::size_t geometryAdvanceCount = 0;
 };
+
+struct FluidLoadTransfers {
+    ConservativeTransferResult pressure;
+    std::optional<ConservativeTransferResult> wall;
+    ConservativeTransferResult total;
+};
+
+FluidLoadTransfers evaluateFluidLoads(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidMimeticPressureSampleSet& pressureSamples,
+    const SceneFluidAcceptedWallTractionSet* wallTractions = nullptr) {
+    auto pressure = evaluateSceneFluidMimeticPressureQuadrature(
+        surface, state, transfer, quadrature, pressureSamples);
+    if (wallTractions == nullptr) {
+        return {pressure, std::nullopt, std::move(pressure)};
+    }
+    validateSceneFluidAcceptedWallTractions(
+        *wallTractions, quadrature,
+        wallTractions->wallExchangeFingerprint);
+    auto pressureTractions = buildSceneFluidPressureTractions(
+        surface, state, quadrature, pressureSamples.pressures);
+    if (pressureTractions.size() != wallTractions->tractions.size()) {
+        throw std::invalid_argument(
+            "moving scene wall traction size is invalid");
+    }
+    for (std::size_t index = 0; index < pressureTractions.size(); ++index) {
+        const auto& wall = wallTractions->tractions[index];
+        auto& combined = pressureTractions[index];
+        if (combined.stableId != wall.stableId) {
+            throw std::invalid_argument(
+                "moving scene wall traction binding is invalid");
+        }
+        combined.tractionPascals.x += wall.tractionPascals.x;
+        combined.tractionPascals.y += wall.tractionPascals.y;
+        combined.tractionPascals.z += wall.tractionPascals.z;
+    }
+    auto wall = evaluateSceneFluidQuadrature(
+        transfer, state, quadrature, wallTractions->tractions);
+    auto total = evaluateSceneFluidQuadrature(
+        transfer, state, quadrature, pressureTractions);
+    return {std::move(pressure), std::move(wall), std::move(total)};
+}
 
 BuiltCase buildCase(
     Scene scene,
@@ -229,7 +290,7 @@ BuiltCase buildCase(
     SceneFluidSurfaceTransfer transfer(
         surface.definition, assembly.mappings, structure);
     auto grid = makeGrid(state, settings);
-    const auto connectivity = buildSceneFluidRegionConnectivity(
+    auto connectivity = buildSceneFluidRegionConnectivity(
         surface.definition);
     auto geometryEpoch = buildSceneFluidMimeticGeometryEpoch(
         surface.definition, state, grid, transfer, connectivity);
@@ -274,7 +335,7 @@ BuiltCase buildCase(
         geometryEpoch.pressureFaceLinks, geometryEpoch.openingPatches,
         pressure.controlCells, correctedFlow,
         correctedMac.velocityMetersPerSecond);
-    auto pressureTransfer = evaluateSceneFluidMimeticPressureQuadrature(
+    auto fluidLoads = evaluateFluidLoads(
         surface.definition, state, transfer,
         geometryEpoch.gridEpoch.quadrature,
         pressure.pressureEpoch.acceptedPressureSamples);
@@ -283,11 +344,13 @@ BuiltCase buildCase(
     BuiltCase result{
         std::move(scene), std::move(surface), std::move(assembly),
         std::move(structure), std::move(state), std::move(transfer),
-        std::move(grid), std::move(geometryEpoch),
+        std::move(grid), std::move(connectivity),
+        std::move(geometryEpoch),
         std::move(pressureSettings), std::move(pressure),
         std::move(correctedFlow), std::move(correctedMac),
         std::move(regionalMomentum),
-        std::move(pressureTransfer), std::move(frameMapping),
+        std::move(fluidLoads.pressure),
+        std::move(fluidLoads.total), std::move(frameMapping),
     };
     result.windRampFraction = initialRampFraction;
     return result;
@@ -471,6 +534,212 @@ void advanceFixedGeometryFlow(
     ++built.flowAdvanceCount;
 }
 
+void advanceMovingGeometryFsi(
+    BuiltCase& built,
+    const FrozenScenePressureCaseSettings& settings,
+    const StructureStepSettings& structureSettings) {
+    auto candidateVelocity = built.correctedMac.velocityMetersPerSecond;
+    const double meanBeforePump = meanXVelocity(candidateVelocity);
+    const double candidateRampFraction = windRampFraction(
+        settings, built.flowAdvanceCount + 2);
+    const double pumpIncrement =
+        candidateRampFraction
+            * settings.backgroundWindMetersPerSecond.x
+        - meanBeforePump;
+    for (double& value : candidateVelocity.xFaces()) {
+        value += pumpIncrement;
+    }
+    fluid::CellScalarField candidateBulkPressure(built.grid);
+    fluid::ProjectionSettings projectionSettings;
+    projectionSettings.densityKgPerCubicMeter =
+        settings.densityKgPerCubicMeter;
+    projectionSettings.timeStepSeconds = settings.timeStepSeconds;
+    const auto candidateBulkProjection = fluid::projectVelocity(
+        built.grid, candidateVelocity, candidateBulkPressure,
+        projectionSettings);
+    if (!candidateBulkProjection.converged) {
+        throw std::runtime_error(
+            "moving scene bulk continuation projection did not converge");
+    }
+    fluid::PeriodicFlowStrangSubcyclingSettings bulkSettings;
+    bulkSettings.flow.densityKgPerCubicMeter =
+        settings.densityKgPerCubicMeter;
+    bulkSettings.flow.timeStepSeconds = settings.timeStepSeconds;
+    bulkSettings.flow.advectionReconstruction =
+        fluid::VariableMacReconstruction::DonorCell;
+    bulkSettings.maximumSubsteps = 1024;
+    auto candidateBulkFlow =
+        fluid::advancePeriodicFlowStrangSspRk2Subcycled(
+            built.grid, candidateVelocity, candidateBulkPressure,
+            bulkSettings);
+    if (!candidateBulkFlow.accepted) {
+        throw std::runtime_error(
+            "moving scene bulk flow rejected its requested interval");
+    }
+    SceneFluidRegionTransportSettings regionalTransportSettings;
+    regionalTransportSettings.timeStepSeconds = settings.timeStepSeconds;
+    regionalTransportSettings.maximumSubsteps = 1024;
+    auto candidateRegionalTransport = advanceSceneFluidRegionMomentum(
+        built.regionalMomentum,
+        built.geometryEpoch.pressureFaceLinks,
+        built.pressure.controlCells, built.correctedFlow, built.grid,
+        built.correctedMac.velocityMetersPerSecond, candidateVelocity,
+        regionalTransportSettings);
+    if (!candidateRegionalTransport.diagnostics.accepted) {
+        throw std::runtime_error(
+            "moving scene regional momentum transport was not accepted");
+    }
+
+    const auto structureCheckpoint = built.structure.checkpoint();
+    try {
+        built.transfer.addLoadsTo(
+            built.structure, built.totalFluidTransfer);
+        auto structureStep = built.structure.step(structureSettings);
+        if (!structureStep.finite) {
+            throw std::runtime_error(
+                "moving scene Structure step was not accepted");
+        }
+        auto currentSurfaceState = captureSceneFluidSurfaceState(
+            built.surface.definition, built.assembly.mappings,
+            built.structure);
+        if (currentSurfaceState.vertices.size()
+            != built.surfaceState.vertices.size()) {
+            throw std::logic_error(
+                "moving scene surface topology changed during Structure step");
+        }
+        double maximumDisplacement = 0.0;
+        for (std::size_t index = 0;
+             index < currentSurfaceState.vertices.size(); ++index) {
+            const auto& previous = built.surfaceState.vertices[index];
+            const auto& current = currentSurfaceState.vertices[index];
+            if (previous.id != current.id) {
+                throw std::logic_error(
+                    "moving scene surface identity changed during Structure step");
+            }
+            const double dx = current.positionMeters.x
+                - previous.positionMeters.x;
+            const double dy = current.positionMeters.y
+                - previous.positionMeters.y;
+            const double dz = current.positionMeters.z
+                - previous.positionMeters.z;
+            maximumDisplacement = std::max(
+                maximumDisplacement,
+                std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        const auto acceptedGridEpoch = buildSceneFluidGridEpoch(
+            built.surface.definition, currentSurfaceState, built.grid,
+            built.transfer);
+        auto geometryTransition =
+            buildSceneFluidMimeticGeometryEpochTransition(
+                built.geometryEpoch, built.surface.definition,
+                built.surfaceState, currentSurfaceState, built.grid,
+                built.transfer, built.connectivity, acceptedGridEpoch);
+        auto volumeRates = buildSceneFluidPressureVolumeRates(
+            built.geometryEpoch.cellVolumes,
+            geometryTransition.currentGeometryEpoch.cellVolumes,
+            geometryTransition.currentGeometryEpoch.pressureControlVolumes,
+            geometryTransition.topologyTransition);
+        auto regionalRebase = rebaseSceneFluidRegionTransport(
+            candidateRegionalTransport,
+            built.geometryEpoch.pressureControlVolumes,
+            geometryTransition.currentGeometryEpoch.pressureControlVolumes,
+            geometryTransition.topologyTransition);
+        const auto openingFlux = evaluateSceneFluidOpeningFlux(
+            built.surface.definition, currentSurfaceState,
+            geometryTransition.currentGeometryEpoch.openingCaps,
+            geometryTransition.currentGeometryEpoch.openingQuadrature,
+            geometryTransition.currentGeometryEpoch.openingPatches,
+            built.grid, candidateVelocity);
+        SceneFluidRegionWallSettings wallSettings;
+        wallSettings.timeStepSeconds = volumeRates.durationSeconds;
+        auto regionWall = exchangeSceneFluidRegionWallMomentum(
+            regionalRebase, built.grid,
+            geometryTransition.currentGeometryEpoch.pressureControlVolumes,
+            built.surface.definition, currentSurfaceState,
+            geometryTransition.currentGeometryEpoch.gridEpoch.quadrature,
+            wallSettings);
+        if (!regionWall.diagnostics.accepted) {
+            throw std::runtime_error(
+                "moving scene material-wall exchange was not accepted");
+        }
+        auto candidatePressure =
+            buildSceneFluidMimeticPressureAuditEndpoint(
+                built.surface.definition, currentSurfaceState, built.grid,
+                geometryTransition.currentGeometryEpoch, openingFlux,
+                regionWall, volumeRates,
+                geometryTransition.topologyTransition, built.pressure,
+                built.pressureSettings);
+        if (!candidatePressure.pressureEpoch.diagnostics.accepted) {
+            throw std::runtime_error(
+                "moving scene continued pressure solve was not accepted");
+        }
+        auto candidateCorrectedFlow =
+            correctSceneFluidMimeticTraceFlows(candidatePressure);
+        if (!candidateCorrectedFlow.accepted) {
+            throw std::runtime_error(
+                "moving scene pressure correction was not accepted");
+        }
+        auto candidateCorrectedMac =
+            collapseSceneFluidMimeticCorrectedMacVelocity(
+                candidateCorrectedFlow,
+                geometryTransition.currentGeometryEpoch.pressureFaceLinks,
+                geometryTransition.currentGeometryEpoch.openingPatches,
+                built.grid);
+        auto candidateRegionalMomentum =
+            reconstructSceneFluidRegionMomentumState(
+                built.grid,
+                geometryTransition.currentGeometryEpoch
+                    .pressureControlVolumes,
+                geometryTransition.currentGeometryEpoch.pressureFaceLinks,
+                geometryTransition.currentGeometryEpoch.openingPatches,
+                candidatePressure.controlCells, candidateCorrectedFlow,
+                candidateCorrectedMac.velocityMetersPerSecond);
+        auto acceptedWall = captureSceneFluidAcceptedWallTractions(
+            regionWall);
+        auto candidateFluidLoads = evaluateFluidLoads(
+            built.surface.definition, currentSurfaceState, built.transfer,
+            geometryTransition.currentGeometryEpoch.gridEpoch.quadrature,
+            candidatePressure.pressureEpoch.acceptedPressureSamples,
+            &acceptedWall);
+        if (!candidateFluidLoads.pressure.diagnostics().finite
+            || !candidateFluidLoads.wall
+            || !candidateFluidLoads.wall->diagnostics().finite
+            || !candidateFluidLoads.total.diagnostics().finite) {
+            throw std::runtime_error(
+                "moving scene fluid load transfer was not accepted");
+        }
+
+        built.surfaceState = std::move(currentSurfaceState);
+        built.pressureControlTopologyStable =
+            geometryTransition.controlVolumeTopologyStable;
+        built.geometryEpoch =
+            std::move(geometryTransition.currentGeometryEpoch);
+        built.pressure = std::move(candidatePressure);
+        built.correctedFlow = std::move(candidateCorrectedFlow);
+        built.correctedMac = std::move(candidateCorrectedMac);
+        built.regionalMomentum = std::move(candidateRegionalMomentum);
+        built.pressureTransfer =
+            std::move(candidateFluidLoads.pressure);
+        built.wallTransfer = std::move(candidateFluidLoads.wall);
+        built.totalFluidTransfer = std::move(candidateFluidLoads.total);
+        built.regionalTransport = std::move(candidateRegionalTransport);
+        built.regionWall = std::move(regionWall);
+        built.structureStep = structureStep;
+        built.bulkFlow = std::move(candidateBulkFlow);
+        built.bulkProjection = candidateBulkProjection;
+        built.meanStreamwiseVelocityBeforePumpMetersPerSecond =
+            meanBeforePump;
+        built.streamwisePumpIncrementMetersPerSecond = pumpIncrement;
+        built.windRampFraction = candidateRampFraction;
+        built.maximumGeometryDisplacementMeters = maximumDisplacement;
+        ++built.flowAdvanceCount;
+        ++built.geometryAdvanceCount;
+    } catch (...) {
+        built.structure.restore(structureCheckpoint);
+        throw;
+    }
+}
+
 FrozenScenePressureCaseDiagnostics makeDiagnostics(
     const BuiltCase& built) {
     FrozenScenePressureCaseDiagnostics result;
@@ -482,6 +751,16 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         built.traceFlowContinuation.has_value();
     result.usesRegionalTransportFlowPrediction =
         built.regionalTransportFlowPrediction.has_value();
+    result.usesMovingGeometryFsi = built.geometryAdvanceCount > 0;
+    result.usesConsecutivePressureWarmStart =
+        built.pressure.usesConsecutiveWarmStart;
+    result.usesRegionWallPrediction =
+        built.pressure.usesRegionWallPrediction;
+    result.pressureControlTopologyStable =
+        built.pressureControlTopologyStable;
+    result.geometryAdvanceCount = built.geometryAdvanceCount;
+    result.maximumGeometryDisplacementMeters =
+        built.maximumGeometryDisplacementMeters;
     if (built.traceFlowContinuation) {
         result.maximumCarriedTraceCorrectionCubicMetersPerSecond =
             built.traceFlowContinuation
@@ -575,6 +854,22 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.transferForceResidualNewtons = transfer.forceResidualNormNewtons;
     result.transferMomentResidualNewtonMeters =
         transfer.momentResidualNormNewtonMeters;
+    const auto& totalTransfer = built.totalFluidTransfer.diagnostics();
+    result.totalFluidForceNewtons =
+        totalTransfer.transferredNodalForceNewtons;
+    result.totalFluidTransferForceResidualNewtons =
+        totalTransfer.forceResidualNormNewtons;
+    result.totalFluidTransferMomentResidualNewtonMeters =
+        totalTransfer.momentResidualNormNewtonMeters;
+    if (built.wallTransfer) {
+        result.wallForceNewtons = built.wallTransfer->diagnostics()
+            .transferredNodalForceNewtons;
+    }
+    if (built.regionWall) {
+        result.wallMomentumResidualKilogramMetersPerSecond =
+            built.regionWall->diagnostics
+                .momentumResidualNormKilogramMetersPerSecond;
+    }
     result.finite = built.pressure.pressureEpoch.diagnostics.accepted
         && built.correctedFlow.accepted
         && built.correctedMac.diagnostics.finite
@@ -595,6 +890,12 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         && std::isfinite(
             result.maximumCollapsedSubfaceVelocityDeviationMetersPerSecond)
         && built.regionalMomentum.diagnostics.finite
+        && totalTransfer.finite
+        && (!built.wallTransfer
+            || built.wallTransfer->diagnostics().finite)
+        && (!built.regionWall
+            || built.regionWall->diagnostics.accepted)
+        && (!built.structureStep || built.structureStep->finite)
         && std::isfinite(result.maximumRegionalVelocityMetersPerSecond)
         && std::isfinite(
             result.maximumRegionalLinkVelocityResidualMetersPerSecond)
@@ -624,7 +925,14 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         && std::isfinite(result.bulkProjectionDivergenceBeforePerSecond)
         && std::isfinite(result.bulkProjectionDivergenceAfterPerSecond)
         && std::isfinite(result.transferForceResidualNewtons)
-        && std::isfinite(result.transferMomentResidualNewtonMeters);
+        && std::isfinite(result.transferMomentResidualNewtonMeters)
+        && std::isfinite(result.maximumGeometryDisplacementMeters)
+        && std::isfinite(
+            result.wallMomentumResidualKilogramMetersPerSecond)
+        && std::isfinite(
+            result.totalFluidTransferForceResidualNewtons)
+        && std::isfinite(
+            result.totalFluidTransferMomentResidualNewtonMeters);
     return result;
 }
 
@@ -747,6 +1055,8 @@ struct FrozenScenePressureCase::Implementation {
         diagnostics.windRampSeconds = settings.windRampSeconds;
         diagnostics.diagnosticPerturbationSpeedMetersPerSecond =
             settings.diagnosticPerturbationSpeedMetersPerSecond;
+        diagnostics.usesMovingGeometryFsi =
+            settings.useMovingGeometryFsi;
         if (!diagnostics.finite) {
             throw std::runtime_error(
                 "frozen scene pressure diagnostics are non-finite");
@@ -776,13 +1086,26 @@ FrozenScenePressureCase& FrozenScenePressureCase::operator=(
 viewer::TraceHeader FrozenScenePressureCase::traceHeader() const {
     return {
         implementation_->built.scene.metadata.designChecksum,
-        frozenScenePressureSolverId,
+        implementation_->settings.useMovingGeometryFsi
+            ? movingScenePressureSolverId
+            : frozenScenePressureSolverId,
     };
 }
 
 viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
     auto& state = *implementation_;
-    if (state.acceptedStepCount > 0) {
+    if (state.settings.useMovingGeometryFsi) {
+        advanceMovingGeometryFsi(
+            state.built, state.settings, state.stepSettings);
+        state.diagnostics = makeDiagnostics(state.built);
+        state.diagnostics.usesMovingGeometryFsi = true;
+        state.diagnostics.backgroundWindMetersPerSecond =
+            state.settings.backgroundWindMetersPerSecond;
+        state.diagnostics.windRampSeconds =
+            state.settings.windRampSeconds;
+        state.diagnostics.diagnosticPerturbationSpeedMetersPerSecond =
+            state.settings.diagnosticPerturbationSpeedMetersPerSecond;
+    } else if (state.acceptedStepCount > 0) {
         advanceFixedGeometryFlow(state.built, state.settings);
         state.diagnostics = makeDiagnostics(state.built);
         state.diagnostics.backgroundWindMetersPerSecond =
@@ -798,23 +1121,30 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
     viewer::StructureFrameContext context;
     context.sceneChecksum =
         state.built.scene.metadata.designChecksum;
-    context.solverCommit = frozenScenePressureSolverId;
+    context.solverCommit = state.settings.useMovingGeometryFsi
+        ? movingScenePressureSolverId
+        : frozenScenePressureSolverId;
     context.timeStepSeconds = state.settings.timeStepSeconds;
     context.couplingResiduals.fluid = state.diagnostics
         .maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond;
     context.couplingResiduals.tractionNewtons =
-        state.diagnostics.transferForceResidualNewtons;
+        state.settings.useMovingGeometryFsi
+        ? state.diagnostics.totalFluidTransferForceResidualNewtons
+        : state.diagnostics.transferForceResidualNewtons;
+    const auto& acceptedTransfer = state.settings.useMovingGeometryFsi
+        ? state.built.totalFluidTransfer
+        : state.built.pressureTransfer;
     context.conservation.interfaceForceResidualNewtons = {
-        state.built.pressureTransfer.diagnostics().forceResidualNewtons.x,
-        state.built.pressureTransfer.diagnostics().forceResidualNewtons.y,
-        state.built.pressureTransfer.diagnostics().forceResidualNewtons.z,
+        acceptedTransfer.diagnostics().forceResidualNewtons.x,
+        acceptedTransfer.diagnostics().forceResidualNewtons.y,
+        acceptedTransfer.diagnostics().forceResidualNewtons.z,
     };
     context.conservation.interfaceMomentResidualNewtonMetres = {
-        state.built.pressureTransfer.diagnostics()
+        acceptedTransfer.diagnostics()
             .momentResidualNewtonMeters.x,
-        state.built.pressureTransfer.diagnostics()
+        acceptedTransfer.diagnostics()
             .momentResidualNewtonMeters.y,
-        state.built.pressureTransfer.diagnostics()
+        acceptedTransfer.diagnostics()
             .momentResidualNewtonMeters.z,
     };
     auto frame = viewer::buildStructureFrame(
@@ -1089,6 +1419,67 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
           state.diagnostics.windRampFraction
               * state.settings.backgroundWindMetersPerSecond.z}},
     });
+    if (state.settings.useMovingGeometryFsi) {
+        frame.scalarFields.push_back({
+            "moving_scene.geometry_advances", "1",
+            viewer::FieldAssociation::Global,
+            {static_cast<double>(state.diagnostics.geometryAdvanceCount)},
+        });
+        frame.scalarFields.push_back({
+            "moving_scene.maximum_geometry_displacement", "m",
+            viewer::FieldAssociation::Global,
+            {state.diagnostics.maximumGeometryDisplacementMeters},
+        });
+        frame.scalarFields.push_back({
+            "moving_scene.consecutive_pressure_warm_start", "1",
+            viewer::FieldAssociation::Global,
+            {state.diagnostics.usesConsecutivePressureWarmStart
+                 ? 1.0 : 0.0},
+        });
+        frame.scalarFields.push_back({
+            "moving_scene.wall_momentum_residual", "kg*m/s",
+            viewer::FieldAssociation::Global,
+            {state.diagnostics
+                 .wallMomentumResidualKilogramMetersPerSecond},
+        });
+        std::vector<viewer::Vec3d> nodalWallForces(
+            frame.vertices.size());
+        if (state.built.wallTransfer) {
+            for (const auto& load :
+                 state.built.wallTransfer->nodeLoads()) {
+                nodalWallForces[load.structureNode] = {
+                    load.forceNewtons.x, load.forceNewtons.y,
+                    load.forceNewtons.z,
+                };
+            }
+        }
+        frame.vectorFields.push_back({
+            "moving_scene.nodal_wall_force", "N",
+            viewer::FieldAssociation::Vertex,
+            std::move(nodalWallForces),
+        });
+        std::vector<viewer::Vec3d> nodalTotalFluidForces(
+            frame.vertices.size());
+        for (const auto& load :
+             state.built.totalFluidTransfer.nodeLoads()) {
+            nodalTotalFluidForces[load.structureNode] = {
+                load.forceNewtons.x, load.forceNewtons.y,
+                load.forceNewtons.z,
+            };
+        }
+        frame.vectorFields.push_back({
+            "moving_scene.nodal_total_fluid_force", "N",
+            viewer::FieldAssociation::Vertex,
+            std::move(nodalTotalFluidForces),
+        });
+        frame.vectorFields.push_back({
+            "moving_scene.total_fluid_force", "N",
+            viewer::FieldAssociation::Global,
+            {{state.diagnostics.totalFluidForceNewtons.x,
+              state.diagnostics.totalFluidForceNewtons.y,
+              state.diagnostics.totalFluidForceNewtons.z}},
+        });
+    }
 
     viewer::ProtocolError error;
     if (!viewer::validateFrame(frame, &error)) {

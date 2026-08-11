@@ -13,6 +13,8 @@ namespace simwing::fsi {
 
 inline constexpr const char* frozenScenePressureSolverId =
     "frozen-scene-mimetic-pressure-v5";
+inline constexpr const char* movingScenePressureSolverId =
+    "moving-scene-mimetic-pressure-v1";
 
 struct FrozenScenePressureCaseSettings {
     fluid::GridCellCounts cellCounts{2, 2, 2};
@@ -24,6 +26,7 @@ struct FrozenScenePressureCaseSettings {
     double windRampSeconds = 0.5;
     bool useCorrectedTraceFlowContinuation = false;
     bool useRegionalTransportFlowPrediction = false;
+    bool useMovingGeometryFsi = false;
     double diagnosticPerturbationSpeedMetersPerSecond = 0.0;
     double timeStepSeconds = 1.0 / 60.0;
     double densityKgPerCubicMeter = 1.225;
@@ -38,6 +41,12 @@ struct FrozenScenePressureCaseDiagnostics {
     double windRampFraction = 0.0;
     bool usesCorrectedTraceFlowContinuation = false;
     bool usesRegionalTransportFlowPrediction = false;
+    bool usesMovingGeometryFsi = false;
+    bool usesConsecutivePressureWarmStart = false;
+    bool usesRegionWallPrediction = false;
+    bool pressureControlTopologyStable = false;
+    std::size_t geometryAdvanceCount = 0;
+    double maximumGeometryDisplacementMeters = 0.0;
     double maximumCarriedTraceCorrectionCubicMetersPerSecond = 0.0;
     double maximumTraceBulkIncrementCubicMetersPerSecond = 0.0;
     double maximumRegionalTransportFlowDifferenceFromBulkBaselineCubicMetersPerSecond =
@@ -74,6 +83,11 @@ struct FrozenScenePressureCaseDiagnostics {
     double bulkProjectionDivergenceAfterPerSecond = 0.0;
     StructureVector3 pressureForceNewtons;
     StructureVector3 pressureMomentNewtonMeters;
+    StructureVector3 wallForceNewtons;
+    StructureVector3 totalFluidForceNewtons;
+    double wallMomentumResidualKilogramMetersPerSecond = 0.0;
+    double totalFluidTransferForceResidualNewtons = 0.0;
+    double totalFluidTransferMomentResidualNewtonMeters = 0.0;
     double transferForceResidualNewtons = 0.0;
     double transferMomentResidualNewtonMeters = 0.0;
     bool finite = false;
@@ -90,9 +104,12 @@ struct FrozenScenePressureCaseDiagnostics {
 // boundary. One opt-in continuation retains the exact last corrected trace
 // flow and applies only the bulk predictor delta. A mutually exclusive opt-in
 // instead projects the accepted conservative regional transport state onto the
-// next pressure predictor. Every path commits only after pressure, continuity,
-// and conservative load transfer accept. This is an integration probe, not a
-// validated external-flow wake, lift polar, or two-way FSI step.
+// next pressure predictor. A separate opt-in moving mode applies the accepted
+// pressure-plus-wall load, advances XPBD once, rebuilds the graph-free geometry,
+// rebases regional momentum, and accepts the next consecutive pressure endpoint
+// atomically. Every path commits only after pressure, continuity, and
+// conservative load transfer accept. This is an integration probe, not a
+// validated external-flow wake, lift polar, or aerodynamic model.
 class FrozenScenePressureCase final {
 public:
     explicit FrozenScenePressureCase(

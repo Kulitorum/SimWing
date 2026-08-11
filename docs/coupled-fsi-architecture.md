@@ -3094,7 +3094,7 @@ wall harness deliberately cannot feed this whole-scene product: its exposed
 material edges do not close a three-dimensional region cycle. A future adapter
 must start from an authoritative closed scene rather than relaxing that
 invariant. The transition still rebases no momentum and solves no pressure.
-The graph-free moving overload of `scene_fluid_mimetic_pressure_audit.*` now
+The graph-free moving overload of `scene_fluid_mimetic_pressure_audit.*`
 continues from that transition through the existing conservative operators. It
 builds current volume rates, rebases accepted regional transport onto the new
 controls, exchanges tangential momentum at current material quadrature, and
@@ -3102,9 +3102,10 @@ uses the adjusted link predictor plus the prior accepted mimetic endpoint for
 one consecutive warm solve. The moving authored-intake cell accepts the whole
 chain with stable controls and a bound current geometry fingerprint. This is
 the first general-scene moving mixed-hybrid pressure endpoint that does not
-construct the rejected graph Laplacian. It remains an isolated transaction:
-the pressure/wall loads are not yet fed back to Structure and no worker selects
-the path.
+construct the rejected graph Laplacian. The opt-in input-driven worker now
+selects this transaction after consuming the prior accepted
+pressure-plus-wall load in one XPBD step. Default frozen-worker arithmetic
+remains unchanged.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure
@@ -3463,9 +3464,10 @@ hemisphere` path is a
 visual and structural regression only; it must not be cited as curved-interface
 fluid coupling or aerodynamic validation.
 
-The first input-driven whole-scene integration probe is now available as
+The first input-driven whole-scene integration probe is available as
 `--case frozen-scene --scene <scene-v2.bin>`. It validates and assembles the
-scene's exact Structure and two-sided fluid surface, freezes that geometry,
+scene's exact Structure and two-sided fluid surface, freezes that geometry by
+default,
 builds the capped-region mixed-hybrid system, solves one prescribed-flow
 mimetic pressure projection, conservatively transfers its pressure quadrature
 to Structure nodes, reconstructs pressure-corrected shared-trace volume flow,
@@ -3476,9 +3478,26 @@ the worker. This bounded fingerprinted aggregate deliberately omits the older
 graph Laplacian, so the real authored intake traces remain admissible without
 weakening the graph operator's closed-stencil requirements. A one-frame gnuC2
 run retains all 138 controls and 42,927 shared traces through this owner with
-the same accepted pressure/load arithmetic. The aggregate is the next moving
-mimetic geometry boundary; it does not yet classify a post-XPBD transition,
-rebase regional momentum, or change worker selection.
+the same accepted pressure/load arithmetic. With `--moving-fsi`, the same
+worker instead uses that aggregate as its consecutive geometry boundary. Each
+accepted staggered step applies the prior pressure-plus-wall quadrature to
+Structure, advances XPBD once, rebuilds and classifies the graph-free epoch,
+rebases transported regional momentum, exchanges current tangential wall
+momentum, and accepts a warm mixed-hybrid pressure solve plus conservative
+pressure/wall/total load fields for the next step. Rejection restores the
+pre-step Structure checkpoint; the mode has a distinct trace solver identity
+and is mutually exclusive with the fixed-geometry continuation experiments.
+The focused authored-intake case deterministically deforms on its first frame
+and accepts a real pressure-control topology change. This closes the first
+input-driven two-way plumbing loop, not aerodynamic validity: the coarse
+periodic predictor, first-step pressure-only bootstrap, explicit staggering,
+and absent external-wake boundary treatment remain diagnostic limitations.
+The first low-load gnuC2 moving probe reaches the XPBD handoff but rejects
+transactionally on imported membrane triangle 18459: its tiny chart produces
+an ill-conditioned orthotropic 3-by-3 constraint solve. The worker restores
+the pre-step Structure checkpoint, so this is now an explicit structural
+conditioning gate rather than a partial FSI commit. Real-wing moving
+acceptance is not yet claimed.
 Cartesian subfaces are conservatively area-collapsed into a bulk continuation
 MAC field; cell-owned intake traces remain explicit because they have no unique
 Cartesian face. The real gnuC2 developer export completes this path through 138
