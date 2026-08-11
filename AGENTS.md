@@ -97,7 +97,7 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
-.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--moving-fsi] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
+.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--moving-fsi] [--wall-trace-pressure-load] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
 .\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
@@ -1747,7 +1747,9 @@ makes this a certified aerodynamic solver.
   one-incidence material-wall trace pressure on every available quadrature
   side, falls back to the existing control sample only for an explicitly
   omitted zero-volume side, and reports wall-trace versus control-sample jump
-  and force. This shadow ledger never supplies Structure loads. Its
+  and force. It remains diagnostic unless the moving-only
+  `--wall-trace-pressure-load` experiment explicitly selects that conservative
+  transfer; the default still supplies the control-cell load. Its
   `--continue-corrected-trace-flow` experiment preserves exact fixed-topology
   trace corrections across frames without changing default arithmetic. The
   mutually exclusive `--transport-corrected-region-flow` experiment projects
@@ -1776,9 +1778,13 @@ makes this a certified aerodynamic solver.
   On the stationary exported gnuC2 `2^3` scene at `-0.0001 m/s`, the current
   control-cell sample produces `16.6527 N`, while exact reconstructed wall
   traces produce a `0.0152279 N` resultant from the same accepted solve. The
-  wall field also has a `3.85721e7 Pa` local jump on tiny cut patches, so this
-  large aggregate improvement is evidence for the load-location hypothesis,
-  not yet permission to switch production sampling.
+  wall field also has a `3.85721e7 Pa` local jump on tiny cut patches. The
+  absolute quadrature loads are `1485.91 N` for control sampling and
+  `1507.23 N` for wall traces; wall patches/nodes peak at `0.254673 N` and
+  `0.498042 N`. Selecting wall loads still moves the structure `0.435609 m`
+  and folds an intake. The small wall resultant is therefore cancellation,
+  not a safe load-scale fix. The explicit moving load experiment retains its
+  own solver identity but must not become the default.
   The coarse periodic domain, pump, and
   pressure magnitude are not aerodynamic validation; no external-domain wake,
   polar/refinement study, or structural feedback is present.

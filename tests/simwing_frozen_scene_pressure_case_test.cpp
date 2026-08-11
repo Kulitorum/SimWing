@@ -95,6 +95,8 @@ void testFrozenScenePressureCase() {
           "regional transport flow prediction remains opt-in");
     check(!settings.useMovingGeometryFsi,
           "moving geometry FSI remains opt-in");
+    check(!settings.useMaterialWallTracePressureLoads,
+          "material-wall trace pressure loads remain opt-in");
     settings.useRegionalTransportFlowPrediction = true;
     simwing::fsi::FrozenScenePressureCase first(scene, settings);
     simwing::fsi::FrozenScenePressureCase second(scene, settings);
@@ -182,6 +184,18 @@ void testFrozenScenePressureCase() {
               && diagnostics
                      .materialWallTracePressureTransferMomentResidualNewtonMeters
                   < 1.0e-8
+              && diagnostics
+                     .controlSampleIntegratedAbsolutePressureForceNewtons
+                  > 0.0
+              && diagnostics
+                     .materialWallTraceIntegratedAbsolutePressureForceNewtons
+                  > 0.0
+              && diagnostics
+                     .materialWallTraceMaximumQuadraturePressureForceNewtons
+                  > 0.0
+              && diagnostics
+                     .materialWallTraceMaximumNodalPressureForceNewtons
+                  > 0.0
               && diagnostics
                      .maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond
                   <= diagnostics.correctedContinuityToleranceCubicMetersPerSecond
@@ -279,6 +293,21 @@ void testFrozenScenePressureCase() {
                      "moving_scene.nodal_total_fluid_force")
                   != nullptr,
           "moving scene FSI publishes wall and total nodal load fields");
+
+    movingSettings.useMaterialWallTracePressureLoads = true;
+    simwing::fsi::FrozenScenePressureCase wallTraceMoving(
+        scene, movingSettings);
+    const auto wallTraceMovingFrame = wallTraceMoving.advance();
+    const auto& wallTraceMovingDiagnostics = wallTraceMoving.diagnostics();
+    check(wallTraceMoving.traceHeader().solverCommit
+                  == simwing::fsi::movingSceneWallTracePressureSolverId
+              && wallTraceMovingFrame.step == 1
+              && wallTraceMovingDiagnostics.finite
+              && wallTraceMovingDiagnostics.usesMovingGeometryFsi
+              && wallTraceMovingDiagnostics
+                     .usesMaterialWallTracePressureLoads
+              && !sameGeometry(movingFrame, wallTraceMovingFrame),
+          "moving scene wall-trace pressure load remains an explicit distinct solver path");
 }
 
 } // namespace

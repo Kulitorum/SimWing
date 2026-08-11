@@ -15,6 +15,8 @@ inline constexpr const char* frozenScenePressureSolverId =
     "frozen-scene-mimetic-pressure-v5";
 inline constexpr const char* movingScenePressureSolverId =
     "moving-scene-mimetic-pressure-v1";
+inline constexpr const char* movingSceneWallTracePressureSolverId =
+    "moving-scene-wall-trace-pressure-v1";
 
 struct FrozenScenePressureCaseSettings {
     fluid::GridCellCounts cellCounts{2, 2, 2};
@@ -27,6 +29,7 @@ struct FrozenScenePressureCaseSettings {
     bool useCorrectedTraceFlowContinuation = false;
     bool useRegionalTransportFlowPrediction = false;
     bool useMovingGeometryFsi = false;
+    bool useMaterialWallTracePressureLoads = false;
     double diagnosticPerturbationSpeedMetersPerSecond = 0.0;
     double timeStepSeconds = 1.0 / 60.0;
     double densityKgPerCubicMeter = 1.225;
@@ -42,6 +45,7 @@ struct FrozenScenePressureCaseDiagnostics {
     bool usesCorrectedTraceFlowContinuation = false;
     bool usesRegionalTransportFlowPrediction = false;
     bool usesMovingGeometryFsi = false;
+    bool usesMaterialWallTracePressureLoads = false;
     bool usesConsecutivePressureWarmStart = false;
     bool usesRegionWallPrediction = false;
     bool pressureControlTopologyStable = false;
@@ -64,6 +68,11 @@ struct FrozenScenePressureCaseDiagnostics {
     double maximumAbsoluteMaterialWallTracePressureDifferencePascals = 0.0;
     double maximumAbsoluteMaterialWallTraceDifferenceFromControlSamplePascals =
         0.0;
+    double controlSampleIntegratedAbsolutePressureForceNewtons = 0.0;
+    double controlSampleMaximumQuadraturePressureForceNewtons = 0.0;
+    double materialWallTraceIntegratedAbsolutePressureForceNewtons = 0.0;
+    double materialWallTraceMaximumQuadraturePressureForceNewtons = 0.0;
+    double materialWallTraceMaximumNodalPressureForceNewtons = 0.0;
     double maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond =
         0.0;
     double maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond =
@@ -116,7 +125,10 @@ struct FrozenScenePressureCaseDiagnostics {
 // next pressure predictor. A separate opt-in moving mode applies the accepted
 // pressure-plus-wall load, advances XPBD once, rebuilds the graph-free geometry,
 // rebases regional momentum, and accepts the next consecutive pressure endpoint
-// atomically. Every path commits only after pressure, continuity, and
+// atomically. A further moving-only opt-in substitutes reconstructed material
+// wall trace pressures for cell-constant pressure samples through the same
+// conservative transfer while retaining both ledgers. Every path commits only
+// after pressure, continuity, and
 // conservative load transfer accept. This is an integration probe, not a
 // validated external-flow wake, lift polar, or aerodynamic model.
 class FrozenScenePressureCase final {

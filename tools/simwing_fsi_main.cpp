@@ -97,6 +97,7 @@ struct Options {
     bool frozenCorrectedTraceFlowContinuation = false;
     bool frozenRegionalTransportFlowPrediction = false;
     bool frozenMovingGeometryFsi = false;
+    bool frozenMaterialWallTracePressureLoads = false;
     std::uint64_t checkpointEvery = 0;
     bool viewer = true;
     bool controlStdio = false;
@@ -115,6 +116,7 @@ void printUsage(FILE* stream) {
         "                   [--continue-corrected-trace-flow]\n"
         "                   [--transport-corrected-region-flow]\n"
         "                   [--moving-fsi]\n"
+        "                   [--wall-trace-pressure-load]\n"
         "                   [--perturbation MPS]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
@@ -140,6 +142,9 @@ void printUsage(FILE* stream) {
         "regional transport onto the next fixed-topology pressure predictor;\n"
         "--moving-fsi instead enables the staggered pressure/wall -> XPBD ->\n"
         "moving-geometry/rebase/mimetic-pressure integration path;\n"
+        "--wall-trace-pressure-load is a moving-FSI-only experiment that uses\n"
+        "reconstructed material-wall trace pressure for Structure loads while\n"
+        "retaining the default control-cell load as a diagnostic;\n"
         "'flag' maps the complete reaction from a fixed-reference projected gust\n"
         "onto a one-edge-clamped XPBD fabric panel;\n"
         "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"
@@ -414,6 +419,8 @@ bool parseOptions(int argc,
             options.frozenRegionalTransportFlowPrediction = true;
         } else if (argument == "--moving-fsi") {
             options.frozenMovingGeometryFsi = true;
+        } else if (argument == "--wall-trace-pressure-load") {
+            options.frozenMaterialWallTracePressureLoads = true;
         } else if (argument == "--perturbation") {
             double value = 0.0;
             if (++index >= argc || !parseFiniteDouble(argv[index], value)
@@ -497,7 +504,8 @@ bool parseOptions(int argc,
         || options.frozenPerturbationMetersPerSecond.has_value()
         || options.frozenCorrectedTraceFlowContinuation
         || options.frozenRegionalTransportFlowPrediction
-        || options.frozenMovingGeometryFsi;
+        || options.frozenMovingGeometryFsi
+        || options.frozenMaterialWallTracePressureLoads;
     if (frozenControlRequested
         && options.workerCase != WorkerCase::FrozenScene) {
         error = "frozen-scene flow controls require --case frozen-scene";
@@ -512,6 +520,11 @@ bool parseOptions(int argc,
         && (options.frozenCorrectedTraceFlowContinuation
             || options.frozenRegionalTransportFlowPrediction)) {
         error = "--moving-fsi is mutually exclusive with the fixed-geometry continuation controls";
+        return false;
+    }
+    if (options.frozenMaterialWallTracePressureLoads
+        && !options.frozenMovingGeometryFsi) {
+        error = "--wall-trace-pressure-load requires --moving-fsi";
         return false;
     }
     if (options.workerCase == WorkerCase::FrozenScene && !stepsRequested) {
@@ -1975,6 +1988,9 @@ int main(int argc, char* argv[]) {
                     "[%.6g %.6g %.6g] N, wall-trace-sides=%zu+%zu, "
                     "wall-trace-jump=%.6g Pa, wall-trace-delta=%.6g Pa, "
                     "wall-trace-force=[%.6g %.6g %.6g] N, "
+                    "wall-trace-load=%u, control-abs-load=%.6g N, "
+                    "wall-abs-load=%.6g N, wall-max-patch=%.6g N, "
+                    "wall-max-node=%.6g N, "
                     "corrected-continuity=%.3g m^3/s, "
                     "collapsed-speed=%.6g m/s, embedded-openings=%zu, "
                     "regional-speed=%.6g m/s, regional-link-residual=%.3g m/s, "
@@ -2010,6 +2026,15 @@ int main(int argc, char* argv[]) {
                     diagnostics.materialWallTracePressureForceNewtons.x,
                     diagnostics.materialWallTracePressureForceNewtons.y,
                     diagnostics.materialWallTracePressureForceNewtons.z,
+                    diagnostics.usesMaterialWallTracePressureLoads ? 1U : 0U,
+                    diagnostics
+                        .controlSampleIntegratedAbsolutePressureForceNewtons,
+                    diagnostics
+                        .materialWallTraceIntegratedAbsolutePressureForceNewtons,
+                    diagnostics
+                        .materialWallTraceMaximumQuadraturePressureForceNewtons,
+                    diagnostics
+                        .materialWallTraceMaximumNodalPressureForceNewtons,
                     diagnostics
                         .maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond,
                     diagnostics.maximumCollapsedMacVelocityMetersPerSecond,
@@ -2146,6 +2171,8 @@ int main(int argc, char* argv[]) {
                 options.frozenRegionalTransportFlowPrediction;
             settings.useMovingGeometryFsi =
                 options.frozenMovingGeometryFsi;
+            settings.useMaterialWallTracePressureLoads =
+                options.frozenMaterialWallTracePressureLoads;
             if (options.frozenPerturbationMetersPerSecond) {
                 settings.diagnosticPerturbationSpeedMetersPerSecond =
                     *options.frozenPerturbationMetersPerSecond;
