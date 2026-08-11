@@ -3497,6 +3497,12 @@ pressure samples or alter the default load applied to Structure. The separate
 moving-only `--wall-trace-pressure-load` experiment selects its conservative
 transfer for the structural step, retains both diagnostic ledgers, and uses a
 distinct solver identity.
+The separate `--preflow-bootstrap` experiment addresses startup ownership
+rather than sample location. Its first moving epoch transfers an exact zero
+pressure field to Structure while the initial projection is retained solely to
+correct and seed fluid flow. Subsequent epochs use the selected accepted
+pressure ledger normally. Preflow and preflow-plus-wall-trace combinations
+carry separate solver identities; neither changes the default path.
 The focused authored-intake case deterministically deforms on its first frame
 and accepts a real pressure-control topology change. This closes the first
 input-driven two-way plumbing loop, not aerodynamic validity: the coarse

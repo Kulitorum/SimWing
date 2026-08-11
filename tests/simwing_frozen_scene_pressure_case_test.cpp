@@ -97,6 +97,8 @@ void testFrozenScenePressureCase() {
           "moving geometry FSI remains opt-in");
     check(!settings.useMaterialWallTracePressureLoads,
           "material-wall trace pressure loads remain opt-in");
+    check(!settings.usePreflowBootstrap,
+          "moving preflow bootstrap remains opt-in");
     settings.useRegionalTransportFlowPrediction = true;
     simwing::fsi::FrozenScenePressureCase first(scene, settings);
     simwing::fsi::FrozenScenePressureCase second(scene, settings);
@@ -308,6 +310,23 @@ void testFrozenScenePressureCase() {
                      .usesMaterialWallTracePressureLoads
               && !sameGeometry(movingFrame, wallTraceMovingFrame),
           "moving scene wall-trace pressure load remains an explicit distinct solver path");
+
+    movingSettings.useMaterialWallTracePressureLoads = false;
+    movingSettings.usePreflowBootstrap = true;
+    simwing::fsi::FrozenScenePressureCase preflowMoving(
+        scene, movingSettings);
+    const auto preflowFrame = preflowMoving.advance();
+    const auto& preflowDiagnostics = preflowMoving.diagnostics();
+    check(preflowMoving.traceHeader().solverCommit
+                  == simwing::fsi::movingScenePreflowBootstrapSolverId
+              && preflowFrame.step == 1
+              && preflowDiagnostics.finite
+              && preflowDiagnostics.usesMovingGeometryFsi
+              && preflowDiagnostics.usesPreflowBootstrap
+              && !preflowDiagnostics.usesMaterialWallTracePressureLoads
+              && preflowDiagnostics.maximumGeometryDisplacementMeters
+                  <= 1.0e-8,
+          "moving scene preflow accepts corrected flow before exposing Structure to pressure load");
 }
 
 } // namespace

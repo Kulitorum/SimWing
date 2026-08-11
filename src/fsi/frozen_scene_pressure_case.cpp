@@ -71,6 +71,8 @@ void validateSettings(const FrozenScenePressureCaseSettings& settings) {
                 || settings.useRegionalTransportFlowPrediction))
         || (settings.useMaterialWallTracePressureLoads
             && !settings.useMovingGeometryFsi)
+        || (settings.usePreflowBootstrap
+            && !settings.useMovingGeometryFsi)
         || !std::isfinite(
             settings.diagnosticPerturbationSpeedMetersPerSecond)
         || settings.diagnosticPerturbationSpeedMetersPerSecond < 0.0
@@ -81,6 +83,21 @@ void validateSettings(const FrozenScenePressureCaseSettings& settings) {
         throw std::invalid_argument(
             "frozen scene pressure settings are invalid");
     }
+}
+
+const char* solverId(
+    const FrozenScenePressureCaseSettings& settings) noexcept {
+    if (settings.usePreflowBootstrap) {
+        return settings.useMaterialWallTracePressureLoads
+            ? movingScenePreflowWallTraceSolverId
+            : movingScenePreflowBootstrapSolverId;
+    }
+    if (settings.useMaterialWallTracePressureLoads) {
+        return movingSceneWallTracePressureSolverId;
+    }
+    return settings.useMovingGeometryFsi
+        ? movingScenePressureSolverId
+        : frozenScenePressureSolverId;
 }
 
 std::string assemblyError(const SceneStructureAssembly& assembly) {
@@ -219,6 +236,7 @@ struct BuiltCase {
     double maximumGeometryDisplacementMeters = 0.0;
     bool pressureControlTopologyStable = false;
     bool usesMaterialWallTracePressureLoads = false;
+    bool usesPreflowBootstrap = false;
     std::size_t flowAdvanceCount = 0;
     std::size_t geometryAdvanceCount = 0;
     struct MaterialWallTracePressureTransfer {
@@ -334,6 +352,29 @@ ConservativeTransferResult evaluatePressureAndWallLoads(
     }
     return evaluateSceneFluidQuadrature(
         transfer, state, quadrature, combined);
+}
+
+ConservativeTransferResult evaluateZeroPressureLoad(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidQuadratureDefinition& quadrature) {
+    std::vector<SceneFluidQuadraturePressure> zeroPressure;
+    zeroPressure.reserve(quadrature.points.size());
+    for (const auto& point : quadrature.points) {
+        zeroPressure.push_back({point.stableId, 0.0, 0.0});
+    }
+    auto result = evaluateSceneFluidPressureQuadrature(
+        surface, state, transfer, quadrature, zeroPressure);
+    if (!result.diagnostics().finite
+        || result.diagnostics().transferredNodalForceNewtons
+            != StructureVector3{}
+        || result.diagnostics().transferredNodalMomentNewtonMeters
+            != StructureVector3{}) {
+        throw std::runtime_error(
+            "moving scene zero-load preflow transfer was not accepted");
+    }
+    return result;
 }
 
 BuiltCase::MaterialWallTracePressureTransfer
@@ -694,9 +735,15 @@ BuiltCase buildCase(
     result.windRampFraction = initialRampFraction;
     result.usesMaterialWallTracePressureLoads =
         settings.useMaterialWallTracePressureLoads;
+    result.usesPreflowBootstrap = settings.usePreflowBootstrap;
     result.materialWallTracePressure =
         std::move(materialWallTracePressure);
-    if (settings.useMaterialWallTracePressureLoads) {
+    if (settings.usePreflowBootstrap) {
+        result.totalFluidTransfer = evaluateZeroPressureLoad(
+            result.surface.definition, result.surfaceState,
+            result.transfer,
+            result.geometryEpoch.gridEpoch.quadrature);
+    } else if (settings.useMaterialWallTracePressureLoads) {
         result.totalFluidTransfer =
             result.materialWallTracePressure->transfer;
     }
@@ -1174,6 +1221,7 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.usesMovingGeometryFsi = built.geometryAdvanceCount > 0;
     result.usesMaterialWallTracePressureLoads =
         built.usesMaterialWallTracePressureLoads;
+    result.usesPreflowBootstrap = built.usesPreflowBootstrap;
     result.usesConsecutivePressureWarmStart =
         built.pressure.usesConsecutiveWarmStart;
     result.usesRegionWallPrediction =
@@ -1571,11 +1619,7 @@ FrozenScenePressureCase& FrozenScenePressureCase::operator=(
 viewer::TraceHeader FrozenScenePressureCase::traceHeader() const {
     return {
         implementation_->built.scene.metadata.designChecksum,
-        implementation_->settings.useMaterialWallTracePressureLoads
-            ? movingSceneWallTracePressureSolverId
-            : (implementation_->settings.useMovingGeometryFsi
-                   ? movingScenePressureSolverId
-                   : frozenScenePressureSolverId),
+        solverId(implementation_->settings),
     };
 }
 
@@ -1608,11 +1652,7 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
     viewer::StructureFrameContext context;
     context.sceneChecksum =
         state.built.scene.metadata.designChecksum;
-    context.solverCommit = state.settings.useMaterialWallTracePressureLoads
-        ? movingSceneWallTracePressureSolverId
-        : (state.settings.useMovingGeometryFsi
-               ? movingScenePressureSolverId
-               : frozenScenePressureSolverId);
+    context.solverCommit = solverId(state.settings);
     context.timeStepSeconds = state.settings.timeStepSeconds;
     context.couplingResiduals.fluid = state.diagnostics
         .maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond;

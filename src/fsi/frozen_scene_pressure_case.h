@@ -17,6 +17,10 @@ inline constexpr const char* movingScenePressureSolverId =
     "moving-scene-mimetic-pressure-v1";
 inline constexpr const char* movingSceneWallTracePressureSolverId =
     "moving-scene-wall-trace-pressure-v1";
+inline constexpr const char* movingScenePreflowBootstrapSolverId =
+    "moving-scene-preflow-bootstrap-v1";
+inline constexpr const char* movingScenePreflowWallTraceSolverId =
+    "moving-scene-preflow-wall-trace-v1";
 
 struct FrozenScenePressureCaseSettings {
     fluid::GridCellCounts cellCounts{2, 2, 2};
@@ -30,6 +34,7 @@ struct FrozenScenePressureCaseSettings {
     bool useRegionalTransportFlowPrediction = false;
     bool useMovingGeometryFsi = false;
     bool useMaterialWallTracePressureLoads = false;
+    bool usePreflowBootstrap = false;
     double diagnosticPerturbationSpeedMetersPerSecond = 0.0;
     double timeStepSeconds = 1.0 / 60.0;
     double densityKgPerCubicMeter = 1.225;
@@ -46,6 +51,7 @@ struct FrozenScenePressureCaseDiagnostics {
     bool usesRegionalTransportFlowPrediction = false;
     bool usesMovingGeometryFsi = false;
     bool usesMaterialWallTracePressureLoads = false;
+    bool usesPreflowBootstrap = false;
     bool usesConsecutivePressureWarmStart = false;
     bool usesRegionWallPrediction = false;
     bool pressureControlTopologyStable = false;
