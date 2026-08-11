@@ -207,12 +207,57 @@ double windRampFraction(
         1.0);
 }
 
-double meanXVelocity(const fluid::MacVelocityField& velocity) {
-    double sum = 0.0;
-    for (const double value : velocity.xFaces()) {
-        sum += value;
+fluid::Vector3 meanVelocity(
+    const fluid::MacVelocityField& velocity) {
+    const auto mean = [](const std::span<const double> values) {
+        double sum = 0.0;
+        for (const double value : values) {
+            sum += value;
+        }
+        return sum / static_cast<double>(values.size());
+    };
+    return {
+        mean(velocity.xFaces()),
+        mean(velocity.yFaces()),
+        mean(velocity.zFaces()),
+    };
+}
+
+struct WindPumpResult {
+    fluid::Vector3 meanVelocityBeforeMetersPerSecond;
+    fluid::Vector3 incrementMetersPerSecond;
+};
+
+WindPumpResult pumpMeanVelocityTo(
+    fluid::MacVelocityField& velocity,
+    const fluid::Vector3 targetMetersPerSecond) {
+    const auto meanBefore = meanVelocity(velocity);
+    const fluid::Vector3 increment{
+        targetMetersPerSecond.x - meanBefore.x,
+        targetMetersPerSecond.y - meanBefore.y,
+        targetMetersPerSecond.z - meanBefore.z,
+    };
+    for (double& value : velocity.xFaces()) {
+        value += increment.x;
     }
-    return sum / static_cast<double>(velocity.xFaces().size());
+    for (double& value : velocity.yFaces()) {
+        value += increment.y;
+    }
+    for (double& value : velocity.zFaces()) {
+        value += increment.z;
+    }
+    return {meanBefore, increment};
+}
+
+double componentAlongWind(
+    const fluid::Vector3 value,
+    const fluid::Vector3 wind) {
+    const double magnitude = std::hypot(wind.x, wind.y, wind.z);
+    if (magnitude == 0.0) {
+        return 0.0;
+    }
+    return (value.x * wind.x + value.y * wind.y + value.z * wind.z)
+        / magnitude;
 }
 
 struct BuiltCase {
@@ -243,6 +288,8 @@ struct BuiltCase {
     std::optional<StructureDiagnostics> structureStep;
     std::optional<fluid::PeriodicFlowStrangSubcyclingDiagnostics> bulkFlow;
     std::optional<fluid::ProjectionDiagnostics> bulkProjection;
+    fluid::Vector3 meanVelocityBeforePumpMetersPerSecond;
+    fluid::Vector3 windPumpIncrementMetersPerSecond;
     double meanStreamwiseVelocityBeforePumpMetersPerSecond = 0.0;
     double streamwisePumpIncrementMetersPerSecond = 0.0;
     double windRampFraction = 0.0;
@@ -804,16 +851,15 @@ void advanceFixedGeometryFlow(
             geometry.pressureFaceLinks, previousOpeningFlux, built.grid,
             built.correctedMac.velocityMetersPerSecond);
     }
-    const double meanBeforePump = meanXVelocity(candidateVelocity);
     const double candidateRampFraction = windRampFraction(
         settings, built.flowAdvanceCount + 2);
-    const double pumpIncrement =
-        candidateRampFraction
-            * settings.backgroundWindMetersPerSecond.x
-        - meanBeforePump;
-    for (double& value : candidateVelocity.xFaces()) {
-        value += pumpIncrement;
-    }
+    const fluid::Vector3 targetWind{
+        candidateRampFraction * settings.backgroundWindMetersPerSecond.x,
+        candidateRampFraction * settings.backgroundWindMetersPerSecond.y,
+        candidateRampFraction * settings.backgroundWindMetersPerSecond.z,
+    };
+    const auto windPump = pumpMeanVelocityTo(
+        candidateVelocity, targetWind);
     fluid::CellScalarField candidateBulkPressure(built.grid);
     fluid::ProjectionSettings projectionSettings;
     projectionSettings.densityKgPerCubicMeter =
@@ -972,8 +1018,17 @@ void advanceFixedGeometryFlow(
     built.regionalTransport = std::move(candidateRegionalTransport);
     built.bulkFlow = std::move(candidateBulkFlow);
     built.bulkProjection = candidateBulkProjection;
-    built.meanStreamwiseVelocityBeforePumpMetersPerSecond = meanBeforePump;
-    built.streamwisePumpIncrementMetersPerSecond = pumpIncrement;
+    built.meanVelocityBeforePumpMetersPerSecond =
+        windPump.meanVelocityBeforeMetersPerSecond;
+    built.windPumpIncrementMetersPerSecond =
+        windPump.incrementMetersPerSecond;
+    built.meanStreamwiseVelocityBeforePumpMetersPerSecond =
+        componentAlongWind(
+            windPump.meanVelocityBeforeMetersPerSecond,
+            settings.backgroundWindMetersPerSecond);
+    built.streamwisePumpIncrementMetersPerSecond = componentAlongWind(
+        windPump.incrementMetersPerSecond,
+        settings.backgroundWindMetersPerSecond);
     built.windRampFraction = candidateRampFraction;
     built.totalFluidTransfer =
         built.usesMaterialWallTracePressureLoads
@@ -988,16 +1043,15 @@ void advanceMovingGeometryFsi(
     const FrozenScenePressureCaseSettings& settings,
     const StructureStepSettings& structureSettings) {
     auto candidateVelocity = built.correctedMac.velocityMetersPerSecond;
-    const double meanBeforePump = meanXVelocity(candidateVelocity);
     const double candidateRampFraction = windRampFraction(
         settings, built.flowAdvanceCount + 2);
-    const double pumpIncrement =
-        candidateRampFraction
-            * settings.backgroundWindMetersPerSecond.x
-        - meanBeforePump;
-    for (double& value : candidateVelocity.xFaces()) {
-        value += pumpIncrement;
-    }
+    const fluid::Vector3 targetWind{
+        candidateRampFraction * settings.backgroundWindMetersPerSecond.x,
+        candidateRampFraction * settings.backgroundWindMetersPerSecond.y,
+        candidateRampFraction * settings.backgroundWindMetersPerSecond.z,
+    };
+    const auto windPump = pumpMeanVelocityTo(
+        candidateVelocity, targetWind);
     fluid::CellScalarField candidateBulkPressure(built.grid);
     fluid::ProjectionSettings projectionSettings;
     projectionSettings.densityKgPerCubicMeter =
@@ -1263,9 +1317,17 @@ void advanceMovingGeometryFsi(
         built.structureStep = structureStep;
         built.bulkFlow = std::move(candidateBulkFlow);
         built.bulkProjection = candidateBulkProjection;
+        built.meanVelocityBeforePumpMetersPerSecond =
+            windPump.meanVelocityBeforeMetersPerSecond;
+        built.windPumpIncrementMetersPerSecond =
+            windPump.incrementMetersPerSecond;
         built.meanStreamwiseVelocityBeforePumpMetersPerSecond =
-            meanBeforePump;
-        built.streamwisePumpIncrementMetersPerSecond = pumpIncrement;
+            componentAlongWind(
+                windPump.meanVelocityBeforeMetersPerSecond,
+                settings.backgroundWindMetersPerSecond);
+        built.streamwisePumpIncrementMetersPerSecond = componentAlongWind(
+            windPump.incrementMetersPerSecond,
+            settings.backgroundWindMetersPerSecond);
         built.windRampFraction = candidateRampFraction;
         built.maximumGeometryDisplacementMeters = maximumDisplacement;
         ++built.flowAdvanceCount;
@@ -1412,6 +1474,10 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         built.meanStreamwiseVelocityBeforePumpMetersPerSecond;
     result.streamwisePumpIncrementMetersPerSecond =
         built.streamwisePumpIncrementMetersPerSecond;
+    result.meanVelocityBeforePumpMetersPerSecond =
+        built.meanVelocityBeforePumpMetersPerSecond;
+    result.windPumpIncrementMetersPerSecond =
+        built.windPumpIncrementMetersPerSecond;
     if (built.bulkFlow) {
         result.bulkFlowSubstepCount =
             built.bulkFlow->completedSubstepCount;
@@ -1525,6 +1591,12 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         && std::isfinite(
             result.meanStreamwiseVelocityBeforePumpMetersPerSecond)
         && std::isfinite(result.streamwisePumpIncrementMetersPerSecond)
+        && std::isfinite(result.meanVelocityBeforePumpMetersPerSecond.x)
+        && std::isfinite(result.meanVelocityBeforePumpMetersPerSecond.y)
+        && std::isfinite(result.meanVelocityBeforePumpMetersPerSecond.z)
+        && std::isfinite(result.windPumpIncrementMetersPerSecond.x)
+        && std::isfinite(result.windPumpIncrementMetersPerSecond.y)
+        && std::isfinite(result.windPumpIncrementMetersPerSecond.z)
         && std::isfinite(result.bulkProjectionDivergenceBeforePerSecond)
         && std::isfinite(result.bulkProjectionDivergenceAfterPerSecond)
         && std::isfinite(result.transferForceResidualNewtons)
@@ -2037,6 +2109,20 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
               * state.settings.backgroundWindMetersPerSecond.y,
           state.diagnostics.windRampFraction
               * state.settings.backgroundWindMetersPerSecond.z}},
+    });
+    frame.vectorFields.push_back({
+        "frozen_scene.mean_velocity_before_pump", "m/s",
+        viewer::FieldAssociation::Global,
+        {{state.diagnostics.meanVelocityBeforePumpMetersPerSecond.x,
+          state.diagnostics.meanVelocityBeforePumpMetersPerSecond.y,
+          state.diagnostics.meanVelocityBeforePumpMetersPerSecond.z}},
+    });
+    frame.vectorFields.push_back({
+        "frozen_scene.wind_pump_increment", "m/s",
+        viewer::FieldAssociation::Global,
+        {{state.diagnostics.windPumpIncrementMetersPerSecond.x,
+          state.diagnostics.windPumpIncrementMetersPerSecond.y,
+          state.diagnostics.windPumpIncrementMetersPerSecond.z}},
     });
     if (state.settings.useMovingGeometryFsi) {
         frame.scalarFields.push_back({

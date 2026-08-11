@@ -91,7 +91,8 @@ struct Options {
     std::filesystem::path scenePath;
     std::optional<std::size_t> frozenGridCellsPerAxis;
     std::optional<double> frozenDomainPaddingMeters;
-    std::optional<double> frozenWindXMetersPerSecond;
+    std::optional<simwing::fsi::fluid::Vector3>
+        frozenWindMetersPerSecond;
     std::optional<double> frozenWindRampSeconds;
     std::optional<double> frozenPerturbationMetersPerSecond;
     bool frozenCorrectedTraceFlowContinuation = false;
@@ -114,7 +115,7 @@ void printUsage(FILE* stream) {
         "Usage: simwing-fsi [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--scene PATH]\n"
         "                   [--grid N] [--padding METERS]\n"
-        "                   [--wind-x MPS] [--ramp-seconds SECONDS]\n"
+        "                   [--wind-y MPS|--wind-x MPS] [--ramp-seconds SECONDS]\n"
         "                   [--continue-corrected-trace-flow]\n"
         "                   [--transport-corrected-region-flow]\n"
         "                   [--moving-fsi]\n"
@@ -138,9 +139,11 @@ void printUsage(FILE* stream) {
         "'frozen-scene' loads --scene, holds its geometry fixed by default, and publishes\n"
         "an evolving bulk-flow/mixed-hybrid pressure projection and conservative\n"
         "load field; it is not a validated external wake or aerodynamic polar;\n"
-        "frozen-scene defaults to a 2^3 grid, 0.5 m padding, -0.85 m/s X wind,\n"
+        "frozen-scene defaults to a 2^3 grid, 0.5 m padding, +0.85 m/s Y wind,\n"
         "a 0.5 s startup ramp, and zero deterministic perturbation; N is bounded\n"
         "to 2..16; a zero ramp explicitly restores impulsive startup;\n"
+        "+Y is the imported wing's chordwise inflow direction; --wind-x is an\n"
+        "explicit spanwise diagnostic, and the two axis selectors are exclusive;\n"
         "--continue-corrected-trace-flow enables the fixed-topology exact-trace\n"
         "continuation experiment without changing the default worker path;\n"
         "--transport-corrected-region-flow instead projects conservative\n"
@@ -398,7 +401,12 @@ bool parseOptions(int argc,
                 error = "--wind-x requires a signed value within +/-100 m/s";
                 return false;
             }
-            options.frozenWindXMetersPerSecond = value;
+            if (options.frozenWindMetersPerSecond) {
+                error = "only one frozen-scene wind axis may be selected";
+                return false;
+            }
+            options.frozenWindMetersPerSecond =
+                simwing::fsi::fluid::Vector3{value, 0.0, 0.0};
         } else if (argument.starts_with("--wind-x=")) {
             double value = 0.0;
             if (!parseFiniteDouble(argument.substr(9), value)
@@ -406,7 +414,38 @@ bool parseOptions(int argc,
                 error = "--wind-x requires a signed value within +/-100 m/s";
                 return false;
             }
-            options.frozenWindXMetersPerSecond = value;
+            if (options.frozenWindMetersPerSecond) {
+                error = "only one frozen-scene wind axis may be selected";
+                return false;
+            }
+            options.frozenWindMetersPerSecond =
+                simwing::fsi::fluid::Vector3{value, 0.0, 0.0};
+        } else if (argument == "--wind-y") {
+            double value = 0.0;
+            if (++index >= argc || !parseFiniteDouble(argv[index], value)
+                || std::abs(value) > 100.0) {
+                error = "--wind-y requires a signed value within +/-100 m/s";
+                return false;
+            }
+            if (options.frozenWindMetersPerSecond) {
+                error = "only one frozen-scene wind axis may be selected";
+                return false;
+            }
+            options.frozenWindMetersPerSecond =
+                simwing::fsi::fluid::Vector3{0.0, value, 0.0};
+        } else if (argument.starts_with("--wind-y=")) {
+            double value = 0.0;
+            if (!parseFiniteDouble(argument.substr(9), value)
+                || std::abs(value) > 100.0) {
+                error = "--wind-y requires a signed value within +/-100 m/s";
+                return false;
+            }
+            if (options.frozenWindMetersPerSecond) {
+                error = "only one frozen-scene wind axis may be selected";
+                return false;
+            }
+            options.frozenWindMetersPerSecond =
+                simwing::fsi::fluid::Vector3{0.0, value, 0.0};
         } else if (argument == "--ramp-seconds") {
             double value = 0.0;
             if (++index >= argc || !parseFiniteDouble(argv[index], value)
@@ -532,7 +571,7 @@ bool parseOptions(int argc,
     const bool frozenControlRequested =
         options.frozenGridCellsPerAxis.has_value()
         || options.frozenDomainPaddingMeters.has_value()
-        || options.frozenWindXMetersPerSecond.has_value()
+        || options.frozenWindMetersPerSecond.has_value()
         || options.frozenWindRampSeconds.has_value()
         || options.frozenPerturbationMetersPerSecond.has_value()
         || options.frozenCorrectedTraceFlowContinuation
@@ -2201,9 +2240,9 @@ int main(int argc, char* argv[]) {
                 settings.domainPaddingMeters =
                     *options.frozenDomainPaddingMeters;
             }
-            if (options.frozenWindXMetersPerSecond) {
-                settings.backgroundWindMetersPerSecond.x =
-                    *options.frozenWindXMetersPerSecond;
+            if (options.frozenWindMetersPerSecond) {
+                settings.backgroundWindMetersPerSecond =
+                    *options.frozenWindMetersPerSecond;
             }
             if (options.frozenWindRampSeconds) {
                 settings.windRampSeconds =

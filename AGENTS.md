@@ -97,7 +97,7 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
-.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--moving-fsi] [--wall-trace-pressure-load] [--aggregate-opening-traces] [--preflow-bootstrap|--preflow-steps N] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
+.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-y MPS|--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--moving-fsi] [--wall-trace-pressure-load] [--aggregate-opening-traces] [--preflow-bootstrap|--preflow-steps N] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
 .\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
@@ -289,10 +289,12 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   material-wall momentum, and accepts one consecutive warm mimetic-pressure
   endpoint. It is a staggered two-way integration probe, not a validated
   external-flow wake, polar, or aerodynamic solver. Frozen-scene-only CLI
-  controls select an isotropic `2..16`
-  grid, positive domain padding, signed X wind, a bounded startup-ramp duration,
-  and nonnegative deterministic perturbation; defaults remain `2`, `0.5 m`,
-  `-0.85 m/s`, `0.5 s`, and `0 m/s`.
+  controls select an isotropic `2..16` grid, positive domain padding, one
+  signed wind axis, a bounded startup-ramp duration, and nonnegative
+  deterministic perturbation. Imported-wing coordinates are X spanwise, Y
+  chordwise/fore-aft, and Z up, so the defaults are `2`, `0.5 m`, `+0.85 m/s`
+  Y, `0.5 s`, and `0 m/s`; `--wind-x` is an explicit spanwise diagnostic.
+  Continuation restores the complete target wind vector, not an X-only mean.
   The perturbation default is zero; nonzero values are explicit diagnostic
   forcing, not turbulence or an aerodynamic boundary condition. Refined grids
   may omit zero-volume material sides from the local operator; their retained
@@ -315,8 +317,8 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   attachment endpoints. The gnuC2 fixture is consequently stationary in the
   zero-load audit with zero initial line extension. The exporter reports the
   maximum line-length rebase caused by its acknowledged coarse vertex-only
-  attachment approximation. The next real-wing gate is fluid-load scale: a
-  `-0.0001 m/s` zero-perturbation probe produces a `16.6527 N` initial fluid
+  attachment approximation. A historical wrong-axis `-0.0001 m/s` X
+  (spanwise) zero-perturbation probe produces a `16.6527 N` initial fluid
   resultant, moves Structure by `0.407190 m`, and correctly rejects a folded
   authored intake cap. The real-export fixture still uses synthetic physical
   properties and vertex-snapped terminal attachments; this is not a moving-
@@ -324,14 +326,16 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   substeps, 16 coupled structural/line iterations, and the default `0.2 mm`
   suspension certification bound. Both the preflight and moving step restore
   their complete Structure checkpoint on rejection.
-  The first accepted real-wing moving transaction uses `2^3`, `-0.0001 m/s`,
+  The first accepted real-wing moving transaction is likewise a historical
+  wrong-axis spanwise diagnostic using `2^3`, `-0.0001 m/s` X,
   two frozen preflow epochs, wall-trace pressure loading, and coplanar opening
   aggregation. It resolves 318 current zero-volume material sides, advances
   Structure by `0.00261949 m`, closes wall momentum to `4.44e-17 kg*m/s` and
   load transfer to `8.66e-9 N`, and publishes the third trace frame. Its
   `306926 N` streamwise pressure force, `397.175 m/s` regional speed, and
   `4.00706e16 Pa` reconstructed wall-trace jump remain explicitly nonphysical;
-  this gate proves coupled topology/provenance/publication only.
+  this gate proves coupled topology/provenance/publication only and is not an
+  aerodynamic-direction result.
 - `simwing_scene_fluid_surface`: deterministic compact ownership of the
   authoritative scene-v2 fluid regions, porous fabric, oriented surface
   triangles, and openings, plus immutable capture of accepted Structure

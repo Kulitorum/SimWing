@@ -89,6 +89,12 @@ void testFrozenScenePressureCase() {
     settings.useExplicitDomain = true;
     settings.lowerMeters = {};
     settings.upperMeters = {4.0, 4.0, 4.0};
+    check(settings.backgroundWindMetersPerSecond
+              == simwing::fsi::fluid::Vector3{0.0, 0.85, 0.0},
+          "frozen scene default wind follows the wing's positive-Y chord");
+    // Preserve the established pressure-cell fixture's X-normal load oracle;
+    // the imported-wing default and vector pump are checked separately.
+    settings.backgroundWindMetersPerSecond = {-0.85, 0.0, 0.0};
     check(!settings.useCorrectedTraceFlowContinuation,
           "corrected trace-flow continuation remains opt-in");
     check(!settings.useRegionalTransportFlowPrediction,
@@ -115,6 +121,10 @@ void testFrozenScenePressureCase() {
         firstFrame, "frozen_scene.fluid_velocity");
     const auto* secondPressure = scalarField(
         secondFrame, "frozen_scene.pressure_jump");
+    const auto* meanBeforePump = vectorField(
+        secondFrame, "frozen_scene.mean_velocity_before_pump");
+    const auto* windPumpIncrement = vectorField(
+        secondFrame, "frozen_scene.wind_pump_increment");
     const auto& diagnostics = first.diagnostics();
     check(serialized(firstFrame) == serialized(repeatedFrame)
               && serialized(secondFrame) == serialized(repeatedSecondFrame)
@@ -222,8 +232,60 @@ void testFrozenScenePressureCase() {
               && diagnostics.bulkProjectionDivergenceAfterPerSecond
                   < diagnostics.bulkProjectionDivergenceBeforePerSecond
               && diagnostics.transferForceResidualNewtons < 1.0e-8
-              && diagnostics.transferMomentResidualNewtonMeters < 1.0e-8,
+              && diagnostics.transferMomentResidualNewtonMeters < 1.0e-8
+              && meanBeforePump != nullptr
+              && meanBeforePump->values.size() == 1
+              && windPumpIncrement != nullptr
+              && windPumpIncrement->values.size() == 1
+              && std::abs(
+                     meanBeforePump->values.front().x
+                     + windPumpIncrement->values.front().x
+                     - diagnostics.windRampFraction
+                         * settings.backgroundWindMetersPerSecond.x)
+                  < 1.0e-12
+              && std::abs(
+                     meanBeforePump->values.front().y
+                     + windPumpIncrement->values.front().y
+                     - diagnostics.windRampFraction
+                         * settings.backgroundWindMetersPerSecond.y)
+                  < 1.0e-12
+              && std::abs(
+                     meanBeforePump->values.front().z
+                     + windPumpIncrement->values.front().z
+                     - diagnostics.windRampFraction
+                         * settings.backgroundWindMetersPerSecond.z)
+                  < 1.0e-12,
           "frozen scene pressure solve and conservative transfer are accepted");
+
+    auto chordwiseSettings = settings;
+    chordwiseSettings.backgroundWindMetersPerSecond = {0.0, 0.85, 0.0};
+    simwing::fsi::FrozenScenePressureCase chordwise(scene, chordwiseSettings);
+    static_cast<void>(chordwise.advance());
+    const auto chordwiseSecondFrame = chordwise.advance();
+    const auto* chordwiseMean = vectorField(
+        chordwiseSecondFrame, "frozen_scene.mean_velocity_before_pump");
+    const auto* chordwiseIncrement = vectorField(
+        chordwiseSecondFrame, "frozen_scene.wind_pump_increment");
+    const auto& chordwiseDiagnostics = chordwise.diagnostics();
+    check(chordwiseMean != nullptr && chordwiseMean->values.size() == 1
+              && chordwiseIncrement != nullptr
+              && chordwiseIncrement->values.size() == 1
+              && std::abs(
+                     chordwiseMean->values.front().x
+                     + chordwiseIncrement->values.front().x)
+                  < 1.0e-12
+              && std::abs(
+                     chordwiseMean->values.front().y
+                     + chordwiseIncrement->values.front().y
+                     - chordwiseDiagnostics.windRampFraction
+                         * chordwiseSettings
+                               .backgroundWindMetersPerSecond.y)
+                  < 1.0e-12
+              && std::abs(
+                     chordwiseMean->values.front().z
+                     + chordwiseIncrement->values.front().z)
+                  < 1.0e-12,
+          "frozen scene continuation pumps the complete positive-Y wind vector");
 
     settings.windRampSeconds = 0.0;
     simwing::fsi::FrozenScenePressureCase impulsive(scene, settings);

@@ -3614,8 +3614,15 @@ now derived from the actual mapped endpoints, and the exporter reports the
 maximum rebase as an explicit approximation warning. The gnuC2 fixture passes
 the zero-load audit with zero initial line extension.
 
-The next real-wing gate is fluid-load scale. With zero diagnostic perturbation
-and only `-0.0001 m/s` X wind, the first accepted pressure field produces a
+The imported model coordinate contract is X spanwise, Y chordwise/fore-aft,
+and Z up. Frozen-scene wing runs therefore default to `+0.85 m/s` Y wind;
+`--wind-x` is retained only as an explicit spanwise diagnostic. The mean-flow
+pump restores all three components of the selected target vector. Results
+below using negative X predate this coordinate audit and are wrong-axis
+spanwise integration records, not aerodynamic-direction results.
+
+The historical fluid-load-scale gate used zero diagnostic perturbation and
+only `-0.0001 m/s` X spanwise wind. Its first accepted pressure field produces a
 `16.6527 N` fluid resultant. Its loaded Structure step moves by `0.407190 m`
 and correctly rejects an authored intake cap whose orientation has folded.
 This isolates the next investigation to the coarse periodic pressure/bootstrap
@@ -3643,7 +3650,7 @@ pressure controls and 42,927 shared traces with sub-nanonewton force-transfer
 closure.
 After the initial frame, the worker retains the collapsed bulk velocity,
 projects away its small area-collapse divergence, advances one subcycled
-periodic viscous/advection interval with an explicit streamwise mean-flow pump,
+periodic viscous/advection interval with an explicit vector mean-flow pump,
 resamples opening flux, and re-solves the fixed-topology mimetic pressure and
 load transactionally. A two-frame real-wing run changes both pressure and load
 while retaining exact frozen geometry. Each frame also appends bounded,
@@ -3718,8 +3725,9 @@ converged trend. A separate six-frame `0.1 s` ramp reaches full target wind at
 `397123 Pa` maximum jump and `130287 N` streamwise pressure load. The modest
 reduction from impulsive startup shows that ramping is useful conditioning for
 future structural activation, not a remedy for the periodic pressure scale.
-The first accepted moving real-wing transaction combines the `2^3`,
-`-0.0001 m/s` load-scale probe with two frozen preflow epochs, coplanar opening
+The first accepted moving real-wing transaction is a historical spanwise
+integration gate combining the `2^3`, `-0.0001 m/s` X load-scale probe with
+two frozen preflow epochs, coplanar opening
 aggregation, wall-trace pressure loading, final seam-stitch projection, and
 the bounded zero-volume wall-owner continuation. The third frame advances the
 Structure by `0.00261949 m`, resolves 318 current omitted pressure sides,

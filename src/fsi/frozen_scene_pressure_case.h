@@ -41,7 +41,7 @@ struct FrozenScenePressureCaseSettings {
     bool useExplicitDomain = false;
     fluid::Vector3 lowerMeters;
     fluid::Vector3 upperMeters;
-    fluid::Vector3 backgroundWindMetersPerSecond{-0.85, 0.0, 0.0};
+    fluid::Vector3 backgroundWindMetersPerSecond{0.0, 0.85, 0.0};
     double windRampSeconds = 0.5;
     bool useCorrectedTraceFlowContinuation = false;
     bool useRegionalTransportFlowPrediction = false;
@@ -115,6 +115,8 @@ struct FrozenScenePressureCaseDiagnostics {
     std::size_t flowAdvanceCount = 0;
     std::size_t bulkFlowSubstepCount = 0;
     double bulkFlowMaximumVelocityChangeMetersPerSecond = 0.0;
+    fluid::Vector3 meanVelocityBeforePumpMetersPerSecond;
+    fluid::Vector3 windPumpIncrementMetersPerSecond;
     double meanStreamwiseVelocityBeforePumpMetersPerSecond = 0.0;
     double streamwisePumpIncrementMetersPerSecond = 0.0;
     double bulkProjectionDivergenceBeforePerSecond = 0.0;

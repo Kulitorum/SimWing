@@ -1519,7 +1519,7 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --steps 2
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --ramp-seconds 0.1 --continue-corrected-trace-flow --steps 6 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --ramp-seconds 0.1 --transport-corrected-region-flow --steps 6 --no-viewer
-.\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --grid 4 --padding 1.0 --wind-x -0.85 --ramp-seconds 0 --perturbation 0.25 --steps 2 --no-viewer
+.\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --grid 4 --padding 1.0 --wind-y 0.85 --ramp-seconds 0 --perturbation 0.25 --steps 2 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case hemisphere --steps 600
 .\build\bin\Release\simwing-fsi.exe --case flag --steps 600
 .\build\bin\Release\simwing-fsi.exe --case ram-cell --steps 600
@@ -1565,7 +1565,7 @@ centre fluid points with selectable speed, divergence, vorticity, velocity-
 arrow, and vorticity-arrow fields; these points do not alter wing topology or
 solver state. Later samples retain the pressure-
 corrected bulk velocity, remove its small area-collapse divergence, advance one
-periodic viscous/advection step with a streamwise mean-flow pump, and reapply
+periodic viscous/advection step with a complete-vector mean-flow pump, and reapply
 the fixed-geometry mimetic pressure boundary transactionally. This proves the
 real geometry-to-evolving-flow-to-pressure-to-viewer path; its present coarse
 periodic domain, prescribed pump, absolute pressure, force, wake, lift, and
@@ -1573,8 +1573,11 @@ polar are not physical validation results. The current reusable gnuC2
 payload is emitted by `simwing-model-scene-real-export-test` into its requested
 output directory; that developer fixture supplies explicit test material and
 pilot properties because the design format does not yet author them.
+The imported wing is X spanwise, Y chordwise/fore-aft, and Z up. The
+frozen-scene default is therefore `+0.85 m/s` Y wind; `--wind-x` remains an
+explicit spanwise diagnostic, and the two CLI axis selectors are exclusive.
 The frozen-scene-only controls accept an isotropic grid from 2 through 16,
-positive padding up to 1000 m, signed X wind within 100 m/s, and a nonnegative
+positive padding up to 1000 m, signed single-axis wind within 100 m/s, and a nonnegative
 initial perturbation up to 100 m/s. Wind reaches its target through a bounded
 `0.5 s` ramp by default; `--ramp-seconds 0` explicitly restores the impulsive
 diagnostic. The current ramp advances once per accepted output frame, so a
