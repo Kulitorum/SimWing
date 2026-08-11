@@ -10,7 +10,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidMimeticControlCellVersion = 2;
+inline constexpr std::uint32_t sceneFluidMimeticControlCellVersion = 3;
 inline constexpr std::size_t invalidSceneFluidMimeticControlVolumeIndex =
     std::numeric_limits<std::size_t>::max();
 
@@ -30,9 +30,34 @@ struct SceneFluidMimeticControlCellSettings {
     double absoluteDivergenceTheoremToleranceCubicMeters = 1.0e-12;
     double relativeGeometryTolerance = 1.0e-10;
     double unitNormalTolerance = 1.0e-10;
+    double openingCoplanarityToleranceMeters = 1.0e-10;
+    // Opt-in partition-invariance experiment. Cell-owned fragments from one
+    // authored opening are represented by one trace only when they are
+    // coplanar within these existing geometry tolerances. The default keeps
+    // the established patch-per-triangle arithmetic exactly.
+    bool aggregateCoplanarOpeningPatches = false;
 
     bool operator==(
         const SceneFluidMimeticControlCellSettings&) const = default;
+};
+
+struct SceneFluidMimeticOpeningTraceGroup {
+    std::size_t groupIndex = 0;
+    std::uint64_t stableId = 0;
+    std::size_t cellIndex = 0;
+    StableId openingId = invalidStableId;
+    StableId negativeSideRegionId = invalidStableId;
+    StableId positiveSideRegionId = invalidStableId;
+    OpeningRole role = OpeningRole::Intake;
+    std::size_t firstPatchIndex = 0;
+    std::size_t patchCount = 0;
+    double areaSquareMeters = 0.0;
+    fluid::Vector3 centroidMeters;
+    fluid::Vector3 unitNormalNegativeToPositive;
+    double surfaceSweepRateCubicMetersPerSecond = 0.0;
+
+    bool operator==(
+        const SceneFluidMimeticOpeningTraceGroup&) const = default;
 };
 
 struct SceneFluidMimeticControlCellLimits {
@@ -147,6 +172,9 @@ struct SceneFluidMimeticControlCellSet {
     double maximumDivergenceTheoremErrorCubicMeters = 0.0;
     std::vector<SceneFluidMimeticControlCell> controlCells;
     std::vector<SceneFluidMimeticHalfFace> halfFaces;
+    std::vector<SceneFluidMimeticOpeningTraceGroup> openingTraceGroups;
+    std::vector<std::size_t> openingTracePatchIndices;
+    std::vector<std::uint64_t> openingTracePatchStableIds;
     std::vector<SceneFluidMimeticOmittedMaterialSample>
         omittedMaterialSamples;
 

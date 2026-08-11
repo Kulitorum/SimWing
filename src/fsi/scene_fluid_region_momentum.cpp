@@ -872,97 +872,144 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
     }
     std::vector<const SceneFluidMimeticCorrectedTrace*> traceByLink(
         faceLinks.links.size(), nullptr);
+    std::vector<double> relativeFlowScaleByLink(
+        faceLinks.links.size(), 1.0);
     std::vector<AdditionalRegionMomentumNormalSample>
         additionalNormalSamples;
     for (const auto& trace : correctedFlow.traces) {
-        std::size_t linkIndex = 0;
         if (trace.kind
             == SceneFluidMimeticHalfFaceKind::CartesianTrace) {
-            linkIndex = trace.sourceIndex;
-        } else if (trace.kind
-                   == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace) {
-            const auto found = embeddedLinkByPatchId.find(
-                trace.sourceStableId);
-            if (found == embeddedLinkByPatchId.end()) {
-                const auto halfFaceFound =
-                    negativeOpeningHalfFaceByTraceId.find(
-                        trace.stableId);
-                const auto patchFound = patchById.find(
-                    trace.sourceStableId);
-                if (halfFaceFound
-                        == negativeOpeningHalfFaceByTraceId.end()
-                    || patchFound == patchById.end()) {
-                    throw std::invalid_argument(
-                        "scene fluid mimetic region momentum unresolved opening trace is missing");
-                }
-                const auto& halfFace = *halfFaceFound->second;
-                const auto& patch = *patchFound->second;
-                if (halfFace.sourceStableId != trace.sourceStableId
-                    || halfFace.controlVolumeIndex
-                        != trace.minusControlCellIndex
-                    || halfFace.otherControlVolumeIndex
-                        != trace.plusControlCellIndex
-                    || halfFace.areaSquareMeters
-                        != patch.areaSquareMeters
-                    || mimeticControlCells.controlCells[
-                            trace.minusControlCellIndex].regionId
-                        != patch.negativeSideRegionId
-                    || mimeticControlCells.controlCells[
-                            trace.plusControlCellIndex].regionId
-                        != patch.positiveSideRegionId
-                    || (halfFace.outwardUnitNormal.x
-                            * patch.unitNormalNegativeToPositive.x
-                        + halfFace.outwardUnitNormal.y
-                            * patch.unitNormalNegativeToPositive.y
-                        + halfFace.outwardUnitNormal.z
-                            * patch.unitNormalNegativeToPositive.z)
-                        < 1.0 - 1.0e-10) {
-                    throw std::invalid_argument(
-                        "scene fluid mimetic region momentum unresolved opening binding is invalid");
-                }
-                AdditionalRegionMomentumNormalSample sample;
-                sample.minusControlVolumeIndex =
-                    trace.minusControlCellIndex;
-                sample.plusControlVolumeIndex =
-                    trace.plusControlCellIndex;
-                sample.areaSquareMeters = halfFace.areaSquareMeters;
-                sample.unitNormalMinusToPlus =
-                    halfFace.outwardUnitNormal;
-                sample.absoluteNormalVelocityMetersPerSecond =
-                    (trace
-                         .correctedRelativeVolumeFlowRateCubicMetersPerSecond
-                     + patch.surfaceSweepRateCubicMetersPerSecond)
-                    / halfFace.areaSquareMeters;
-                additionalNormalSamples.push_back(sample);
-                continue;
+            const std::size_t linkIndex = trace.sourceIndex;
+            if (linkIndex >= traceByLink.size()
+                || traceByLink[linkIndex] != nullptr
+                || faceLinks.links[linkIndex].linkIndex != linkIndex
+                || faceLinks.links[linkIndex].geometryKind
+                    != SceneFluidPressureLinkGeometryKind::CartesianFace
+                || trace.sourceStableId
+                    != faceLinks.links[linkIndex].stableId) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region momentum trace binding is invalid");
             }
-            linkIndex = found->second;
-        } else {
+            traceByLink[linkIndex] = &trace;
+            continue;
+        }
+        if (trace.kind
+                != SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace
+            || trace.sourceIndex
+                >= mimeticControlCells.openingTraceGroups.size()) {
             throw std::invalid_argument(
                 "scene fluid mimetic region momentum trace kind is invalid");
         }
-        if (linkIndex >= traceByLink.size()
-            || traceByLink[linkIndex] != nullptr) {
+        const auto& group =
+            mimeticControlCells.openingTraceGroups[trace.sourceIndex];
+        if (group.groupIndex != trace.sourceIndex
+            || group.stableId != trace.sourceStableId
+            || group.firstPatchIndex
+                    > mimeticControlCells.openingTracePatchIndices.size()
+            || group.patchCount
+                    > mimeticControlCells.openingTracePatchIndices.size()
+                        - group.firstPatchIndex) {
             throw std::invalid_argument(
-                "scene fluid mimetic region momentum trace ownership is invalid");
+                "scene fluid mimetic region momentum opening group is invalid");
         }
-        const auto& link = faceLinks.links[linkIndex];
-        if (link.linkIndex != linkIndex
-            || (trace.kind
-                    == SceneFluidMimeticHalfFaceKind::CartesianTrace
-                && (link.geometryKind
-                        != SceneFluidPressureLinkGeometryKind::CartesianFace
-                    || trace.sourceStableId != link.stableId))
-            || (trace.kind
-                    == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace
-                && (link.geometryKind
-                        != SceneFluidPressureLinkGeometryKind::EmbeddedOpening
-                    || trace.sourceStableId
-                        != link.openingPatchStableId))) {
+        std::vector<std::pair<std::size_t, std::size_t>> linkedMembers;
+        std::vector<std::size_t> unlinkedMembers;
+        for (std::size_t offset = 0; offset < group.patchCount; ++offset) {
+            const std::size_t patchIndex =
+                mimeticControlCells.openingTracePatchIndices[
+                    group.firstPatchIndex + offset];
+            if (patchIndex >= openingPatches.patches.size()) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region momentum opening member is invalid");
+            }
+            const auto found = embeddedLinkByPatchId.find(
+                openingPatches.patches[patchIndex].stableId);
+            if (found != embeddedLinkByPatchId.end()) {
+                linkedMembers.emplace_back(found->second, patchIndex);
+            } else {
+                unlinkedMembers.push_back(patchIndex);
+            }
+        }
+        const auto halfFaceFound =
+            negativeOpeningHalfFaceByTraceId.find(trace.stableId);
+        if (halfFaceFound
+            == negativeOpeningHalfFaceByTraceId.end()) {
             throw std::invalid_argument(
-                "scene fluid mimetic region momentum trace binding is invalid");
+                "scene fluid mimetic region momentum unresolved opening trace is missing");
         }
-        traceByLink[linkIndex] = &trace;
+        const auto& halfFace = *halfFaceFound->second;
+        if (halfFace.sourceIndex != trace.sourceIndex
+            || halfFace.sourceStableId != trace.sourceStableId
+            || halfFace.controlVolumeIndex
+                != trace.minusControlCellIndex
+            || halfFace.otherControlVolumeIndex
+                != trace.plusControlCellIndex
+            || halfFace.areaSquareMeters != group.areaSquareMeters
+            || mimeticControlCells.controlCells[
+                    trace.minusControlCellIndex].regionId
+                != group.negativeSideRegionId
+            || mimeticControlCells.controlCells[
+                    trace.plusControlCellIndex].regionId
+                != group.positiveSideRegionId
+            || (halfFace.outwardUnitNormal.x
+                    * group.unitNormalNegativeToPositive.x
+                + halfFace.outwardUnitNormal.y
+                    * group.unitNormalNegativeToPositive.y
+                + halfFace.outwardUnitNormal.z
+                    * group.unitNormalNegativeToPositive.z)
+                < 1.0 - 1.0e-10) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region momentum unresolved opening binding is invalid");
+        }
+        for (const auto& [linkIndex, patchIndex] : linkedMembers) {
+            const auto& link = faceLinks.links[linkIndex];
+            const auto& patch = openingPatches.patches[patchIndex];
+            if (linkIndex >= traceByLink.size()
+                || traceByLink[linkIndex] != nullptr
+                || link.linkIndex != linkIndex
+                || link.geometryKind
+                    != SceneFluidPressureLinkGeometryKind::EmbeddedOpening
+                || link.openingPatchStableId != patch.stableId
+                || !(group.areaSquareMeters > 0.0)) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region momentum trace ownership is invalid");
+            }
+            traceByLink[linkIndex] = &trace;
+            relativeFlowScaleByLink[linkIndex] =
+                patch.areaSquareMeters / group.areaSquareMeters;
+        }
+        if (!unlinkedMembers.empty()) {
+            double areaX = 0.0;
+            double areaY = 0.0;
+            double areaZ = 0.0;
+            double sweepRate = 0.0;
+            for (const std::size_t patchIndex : unlinkedMembers) {
+                const auto& patch = openingPatches.patches[patchIndex];
+                areaX += patch.areaSquareMeters
+                    * patch.unitNormalNegativeToPositive.x;
+                areaY += patch.areaSquareMeters
+                    * patch.unitNormalNegativeToPositive.y;
+                areaZ += patch.areaSquareMeters
+                    * patch.unitNormalNegativeToPositive.z;
+                sweepRate += patch.surfaceSweepRateCubicMetersPerSecond;
+            }
+            const double area = std::sqrt(
+                areaX * areaX + areaY * areaY + areaZ * areaZ);
+            if (!(area > 0.0)) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region momentum unresolved opening area is invalid");
+            }
+            const double relativeFlow =
+                trace.correctedRelativeVolumeFlowRateCubicMetersPerSecond
+                * area / group.areaSquareMeters;
+            additionalNormalSamples.push_back({
+                trace.minusControlCellIndex,
+                trace.plusControlCellIndex,
+                area,
+                {areaX / area, areaY / area, areaZ / area},
+                (relativeFlow + sweepRate) / area,
+            });
+        }
     }
 
     std::vector<double> absoluteVelocities(faceLinks.links.size(), 0.0);
@@ -974,7 +1021,8 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
         SceneFluidPressureProjectedLink projected;
         projected.correctedRelativeVolumeFlowRateCubicMetersPerSecond =
             traceByLink[index]
-                ->correctedRelativeVolumeFlowRateCubicMetersPerSecond;
+                ->correctedRelativeVolumeFlowRateCubicMetersPerSecond
+            * relativeFlowScaleByLink[index];
         absoluteVelocities[index] = absoluteLinkFlow(
             faceLinks.links[index], projected, patchById)
             / faceLinks.links[index].areaSquareMeters;
@@ -1236,13 +1284,13 @@ void validateSceneFluidRegionMomentumState(
         || momentum.controlVolumes.size()
             != pressureVolumes.controlVolumes.size()
         || momentum.controlVolumes.size()
-            != mimeticControlCells.controlCells.size()
-        || momentum.diagnostics.linkCount != correctedFlow.traces.size()) {
+            != mimeticControlCells.controlCells.size()) {
         throw std::invalid_argument(
             "scene fluid mimetic region momentum binding is invalid");
     }
     std::size_t openingLinkCount = 0;
     std::size_t embeddedOpeningLinkCount = 0;
+    std::size_t additionalOpeningTraceCount = 0;
     std::vector<bool> normalEquationControls(
         pressureVolumes.controlVolumes.size(), false);
     std::map<std::uint64_t, std::size_t> embeddedLinkByPatchId;
@@ -1274,8 +1322,32 @@ void validateSceneFluidRegionMomentumState(
     }
     for (const auto& trace : correctedFlow.traces) {
         if (trace.kind
-                == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace
-            && !embeddedLinkByPatchId.contains(trace.sourceStableId)) {
+            == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace) {
+            if (trace.sourceIndex
+                >= mimeticControlCells.openingTraceGroups.size()) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region momentum opening group changed");
+            }
+            const auto& group =
+                mimeticControlCells.openingTraceGroups[trace.sourceIndex];
+            bool hasUnlinkedMember = false;
+            for (std::size_t offset = 0;
+                 offset < group.patchCount; ++offset) {
+                const std::size_t patchIndex =
+                    mimeticControlCells.openingTracePatchIndices[
+                        group.firstPatchIndex + offset];
+                if (patchIndex >= openingPatches.patches.size()) {
+                    throw std::invalid_argument(
+                        "scene fluid mimetic region momentum opening member changed");
+                }
+                if (!embeddedLinkByPatchId.contains(
+                        openingPatches.patches[patchIndex].stableId)) {
+                    hasUnlinkedMember = true;
+                }
+            }
+            if (!hasUnlinkedMember) {
+                continue;
+            }
             if (trace.minusControlCellIndex
                     >= normalEquationControls.size()
                 || trace.plusControlCellIndex
@@ -1285,11 +1357,14 @@ void validateSceneFluidRegionMomentumState(
             }
             ++openingLinkCount;
             ++embeddedOpeningLinkCount;
+            ++additionalOpeningTraceCount;
             normalEquationControls[trace.minusControlCellIndex] = true;
             normalEquationControls[trace.plusControlCellIndex] = true;
         }
     }
-    if (momentum.diagnostics.openingLinkCount != openingLinkCount
+    if (momentum.diagnostics.linkCount
+            != faceLinks.links.size() + additionalOpeningTraceCount
+        || momentum.diagnostics.openingLinkCount != openingLinkCount
         || momentum.diagnostics.embeddedOpeningLinkCount
             != embeddedOpeningLinkCount
         || momentum.diagnostics.normalEquationControlCount

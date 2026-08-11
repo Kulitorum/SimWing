@@ -482,16 +482,22 @@ void validateSceneFluidMimeticCorrectedTraceFlowIntegrity(
 SceneFluidMimeticMacVelocityCollapse
 collapseSceneFluidMimeticCorrectedMacVelocity(
     const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
+    const SceneFluidMimeticControlCellSet& controlCells,
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidOpeningGridPatchSet& openingPatches,
     const fluid::PeriodicCartesianGrid& grid) {
     validateSceneFluidMimeticCorrectedTraceFlowIntegrity(correctedFlow);
+    validateSceneFluidMimeticControlCellIntegrity(controlCells);
     validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
     validateSceneFluidOpeningGridPatchIntegrity(openingPatches);
     if (!correctedFlow.accepted
+        || correctedFlow.mimeticControlCellFingerprint
+            != controlCells.fingerprint
         || correctedFlow.pressureFaceLinkFingerprint != faceLinks.fingerprint
         || correctedFlow.openingPatchFingerprint != openingPatches.fingerprint
         || faceLinks.openingPatchFingerprint != openingPatches.fingerprint
+        || controlCells.pressureFaceLinkFingerprint != faceLinks.fingerprint
+        || controlCells.openingPatchFingerprint != openingPatches.fingerprint
         || correctedFlow.structureDefinitionFingerprint
             != faceLinks.structureDefinitionFingerprint
         || correctedFlow.acceptedStepCount != faceLinks.acceptedStepCount
@@ -547,20 +553,37 @@ collapseSceneFluidMimeticCorrectedMacVelocity(
             }
             linkTraces[trace.sourceIndex] = &trace;
         } else {
-            if (trace.sourceIndex >= openingPatches.patches.size()) {
+            if (trace.sourceIndex
+                >= controlCells.openingTraceGroups.size()) {
                 throw std::invalid_argument(
                     "scene fluid mimetic MAC-collapse embedded trace is invalid");
             }
-            const auto& patch = openingPatches.patches[trace.sourceIndex];
-            if (patch.stableId != trace.sourceStableId
-                || patch.ownerKind != SceneFluidOpeningPatchOwnerKind::Cell
-                || !embeddedTracesByPatchId
-                        .emplace(patch.stableId, &trace).second
+            const auto& group = controlCells.openingTraceGroups[
+                trace.sourceIndex];
+            if (group.stableId != trace.sourceStableId
                 || !finite(
                     trace.correctedRelativeVolumeFlowRateCubicMetersPerSecond
-                    + patch.surfaceSweepRateCubicMetersPerSecond)) {
+                    + group.surfaceSweepRateCubicMetersPerSecond)) {
                 throw std::invalid_argument(
                     "scene fluid mimetic MAC-collapse embedded opening is foreign");
+            }
+            for (std::size_t offset = 0;
+                 offset < group.patchCount; ++offset) {
+                const std::size_t patchIndex =
+                    controlCells.openingTracePatchIndices[
+                        group.firstPatchIndex + offset];
+                if (patchIndex >= openingPatches.patches.size()) {
+                    throw std::invalid_argument(
+                        "scene fluid mimetic MAC-collapse embedded opening member is invalid");
+                }
+                const auto& patch = openingPatches.patches[patchIndex];
+                if (patch.ownerKind
+                        != SceneFluidOpeningPatchOwnerKind::Cell
+                    || !embeddedTracesByPatchId
+                            .emplace(patch.stableId, &trace).second) {
+                    throw std::invalid_argument(
+                        "scene fluid mimetic MAC-collapse embedded opening member is foreign");
+                }
             }
             ++diagnostics.embeddedOpeningTraceCount;
         }
@@ -664,8 +687,7 @@ collapseSceneFluidMimeticCorrectedMacVelocity(
                 != SceneFluidPressureLinkGeometryKind::EmbeddedOpening
             || link.kind != SceneFluidPressureFaceLinkKind::AuthoredOpening
             || link.faceIndex != invalidSceneFluidPressureFaceIndex
-            || found == embeddedTracesByPatchId.end()
-            || found->second->sourceStableId != link.openingPatchStableId) {
+            || found == embeddedTracesByPatchId.end()) {
             throw std::invalid_argument(
                 "scene fluid mimetic MAC-collapse embedded link is invalid");
         }

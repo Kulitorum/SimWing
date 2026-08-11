@@ -484,50 +484,121 @@ RegionTransportFlowSource regionTransportFlowSource(
     }
     std::vector<const SceneFluidMimeticCorrectedTrace*> traceByLink(
         faceLinks.links.size(), nullptr);
-    std::vector<const SceneFluidMimeticCorrectedTrace*>
-        additionalOpeningTraces;
+    std::vector<double> relativeFlowScaleByLink(
+        faceLinks.links.size(), 1.0);
+    struct AdditionalOpeningTrace {
+        const SceneFluidMimeticCorrectedTrace* trace = nullptr;
+        double areaSquareMeters = 0.0;
+        double relativeFlowScale = 0.0;
+    };
+    std::vector<AdditionalOpeningTrace> additionalOpeningTraces;
     for (const auto& trace : correctedFlow.traces) {
-        std::size_t linkIndex = trace.sourceIndex;
+        if (trace.kind
+            == SceneFluidMimeticHalfFaceKind::CartesianTrace) {
+            const std::size_t linkIndex = trace.sourceIndex;
+            if (linkIndex >= traceByLink.size()
+                || traceByLink[linkIndex] != nullptr
+                || faceLinks.links[linkIndex].linkIndex != linkIndex
+                || faceLinks.links[linkIndex].geometryKind
+                    != SceneFluidPressureLinkGeometryKind::CartesianFace
+                || trace.sourceStableId
+                    != faceLinks.links[linkIndex].stableId) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region transport trace binding is invalid");
+            }
+            traceByLink[linkIndex] = &trace;
+            continue;
+        }
         if (trace.kind
             == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace) {
+            if (mimeticControlCells != nullptr) {
+                if (trace.sourceIndex
+                    >= mimeticControlCells->openingTraceGroups.size()) {
+                    throw std::invalid_argument(
+                        "scene fluid mimetic region transport opening group is missing");
+                }
+                const auto& group =
+                    mimeticControlCells->openingTraceGroups[
+                        trace.sourceIndex];
+                if (group.groupIndex != trace.sourceIndex
+                    || group.stableId != trace.sourceStableId
+                    || !(group.areaSquareMeters > 0.0)) {
+                    throw std::invalid_argument(
+                        "scene fluid mimetic region transport opening group is invalid");
+                }
+                std::vector<std::size_t> matchingLinks;
+                double matchingArea = 0.0;
+                if (group.firstPatchIndex
+                        > mimeticControlCells
+                            ->openingTracePatchStableIds.size()
+                    || group.patchCount
+                        > mimeticControlCells
+                              ->openingTracePatchStableIds.size()
+                            - group.firstPatchIndex) {
+                    throw std::invalid_argument(
+                        "scene fluid mimetic region transport opening membership is invalid");
+                }
+                for (std::size_t offset = 0;
+                     offset < group.patchCount; ++offset) {
+                    const auto found = embeddedLinkByPatchId.find(
+                        mimeticControlCells->openingTracePatchStableIds[
+                            group.firstPatchIndex + offset]);
+                    if (found != embeddedLinkByPatchId.end()) {
+                        const auto& link = faceLinks.links[found->second];
+                        matchingLinks.push_back(link.linkIndex);
+                        matchingArea += link.areaSquareMeters;
+                    }
+                }
+                const double areaTolerance = std::max(
+                    1.0e-12, 1.0e-10 * group.areaSquareMeters);
+                if (matchingArea
+                    > group.areaSquareMeters + areaTolerance) {
+                    throw std::invalid_argument(
+                        "scene fluid mimetic region transport opening group area is invalid");
+                }
+                for (const std::size_t linkIndex : matchingLinks) {
+                    if (linkIndex >= traceByLink.size()
+                        || traceByLink[linkIndex] != nullptr) {
+                        throw std::invalid_argument(
+                            "scene fluid mimetic region transport trace ownership is invalid");
+                    }
+                    traceByLink[linkIndex] = &trace;
+                    relativeFlowScaleByLink[linkIndex] =
+                        faceLinks.links[linkIndex].areaSquareMeters
+                        / group.areaSquareMeters;
+                }
+                const double remainingArea =
+                    group.areaSquareMeters - matchingArea;
+                if (remainingArea > areaTolerance) {
+                    additionalOpeningTraces.push_back({
+                        &trace,
+                        remainingArea,
+                        remainingArea / group.areaSquareMeters,
+                    });
+                }
+                continue;
+            }
             const auto found = embeddedLinkByPatchId.find(
                 trace.sourceStableId);
             if (found == embeddedLinkByPatchId.end()) {
-                if (mimeticControlCells == nullptr) {
-                    throw std::invalid_argument(
-                        "scene fluid mimetic region transport requires control geometry for an unresolved opening trace");
-                }
-                additionalOpeningTraces.push_back(&trace);
-                continue;
+                throw std::invalid_argument(
+                    "scene fluid mimetic region transport requires control geometry for an unresolved opening trace");
             }
-            linkIndex = found->second;
-        } else if (trace.kind
-                   != SceneFluidMimeticHalfFaceKind::CartesianTrace) {
-            throw std::invalid_argument(
-                "scene fluid mimetic region transport trace kind is invalid");
+            const std::size_t linkIndex = found->second;
+            if (linkIndex >= traceByLink.size()
+                || traceByLink[linkIndex] != nullptr
+                || faceLinks.links[linkIndex].geometryKind
+                    != SceneFluidPressureLinkGeometryKind::EmbeddedOpening
+                || trace.sourceStableId
+                    != faceLinks.links[linkIndex].openingPatchStableId) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region transport trace binding is invalid");
+            }
+            traceByLink[linkIndex] = &trace;
+            continue;
         }
-        if (linkIndex >= traceByLink.size()
-            || traceByLink[linkIndex] != nullptr) {
-            throw std::invalid_argument(
-                "scene fluid mimetic region transport trace ownership is invalid");
-        }
-        const auto& link = faceLinks.links[linkIndex];
-        if (link.linkIndex != linkIndex
-            || (trace.kind
-                    == SceneFluidMimeticHalfFaceKind::CartesianTrace
-                && (link.geometryKind
-                        != SceneFluidPressureLinkGeometryKind::CartesianFace
-                    || trace.sourceStableId != link.stableId))
-            || (trace.kind
-                    == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace
-                && (link.geometryKind
-                        != SceneFluidPressureLinkGeometryKind::EmbeddedOpening
-                    || trace.sourceStableId
-                        != link.openingPatchStableId))) {
-            throw std::invalid_argument(
-                "scene fluid mimetic region transport trace binding is invalid");
-        }
-        traceByLink[linkIndex] = &trace;
+        throw std::invalid_argument(
+            "scene fluid mimetic region transport trace kind is invalid");
     }
 
     RegionTransportFlowSource result;
@@ -561,7 +632,8 @@ RegionTransportFlowSource regionTransportFlowSource(
             source.kind,
             source.minusControlVolumeIndex,
             source.plusControlVolumeIndex,
-            trace->correctedRelativeVolumeFlowRateCubicMetersPerSecond,
+            trace->correctedRelativeVolumeFlowRateCubicMetersPerSecond
+                * relativeFlowScaleByLink[index],
             source.areaSquareMeters,
             source.geometryWeightMeters,
         });
@@ -581,7 +653,8 @@ RegionTransportFlowSource regionTransportFlowSource(
                     "scene fluid mimetic region transport opening half-face identity is invalid");
             }
         }
-        for (const auto* const trace : additionalOpeningTraces) {
+        for (const auto& additional : additionalOpeningTraces) {
+            const auto* const trace = additional.trace;
             const auto found = negativeOpeningHalfFaceByTraceId.find(
                 trace->stableId);
             if (found == negativeOpeningHalfFaceByTraceId.end()
@@ -593,19 +666,33 @@ RegionTransportFlowSource regionTransportFlowSource(
                     "scene fluid mimetic region transport unresolved opening geometry is missing");
             }
             const auto& halfFace = *found->second;
+            if (trace->sourceIndex
+                >= mimeticControlCells->openingTraceGroups.size()) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region transport unresolved opening group is missing");
+            }
+            const auto& group =
+                mimeticControlCells->openingTraceGroups[
+                    trace->sourceIndex];
             const auto& minus = mimeticControlCells->controlCells[
                 trace->minusControlCellIndex];
             const auto& plus = mimeticControlCells->controlCells[
                 trace->plusControlCellIndex];
             const double centerDistance = norm(subtract(
                 plus.centroidMeters, minus.centroidMeters));
-            if (halfFace.sourceStableId != trace->sourceStableId
+            if (group.groupIndex != trace->sourceIndex
+                || group.stableId != trace->sourceStableId
+                || group.areaSquareMeters != halfFace.areaSquareMeters
+                || halfFace.sourceIndex != trace->sourceIndex
+                || halfFace.sourceStableId != trace->sourceStableId
                 || halfFace.controlVolumeIndex
                     != trace->minusControlCellIndex
                 || halfFace.otherControlVolumeIndex
                     != trace->plusControlCellIndex
                 || minus.componentIndex != trace->componentIndex
                 || plus.componentIndex != trace->componentIndex
+                || minus.regionId != group.negativeSideRegionId
+                || plus.regionId != group.positiveSideRegionId
                 || !(halfFace.areaSquareMeters > 0.0)
                 || !(centerDistance > 0.0)) {
                 throw std::invalid_argument(
@@ -618,13 +705,14 @@ RegionTransportFlowSource regionTransportFlowSource(
                 trace->minusControlCellIndex,
                 trace->plusControlCellIndex,
                 trace
-                    ->correctedRelativeVolumeFlowRateCubicMetersPerSecond,
-                halfFace.areaSquareMeters,
-                halfFace.areaSquareMeters / centerDistance,
+                    ->correctedRelativeVolumeFlowRateCubicMetersPerSecond
+                    * additional.relativeFlowScale,
+                additional.areaSquareMeters,
+                additional.areaSquareMeters / centerDistance,
             });
         }
     }
-    if (result.links.size() != correctedFlow.traces.size()) {
+    if (result.links.size() != sourceMomentum.diagnostics.linkCount) {
         throw std::invalid_argument(
             "scene fluid mimetic region transport did not consume every trace");
     }
@@ -1342,7 +1430,7 @@ void validateSceneFluidRegionTransport(
         || transport.densityKgPerCubicMeter
             != sourceMomentum.densityKgPerCubicMeter
         || transport.diagnostics.linkCount
-            != correctedFlow.traces.size()) {
+            != sourceMomentum.diagnostics.linkCount) {
         throw std::invalid_argument(
             "scene fluid mimetic region transport binding is invalid");
     }

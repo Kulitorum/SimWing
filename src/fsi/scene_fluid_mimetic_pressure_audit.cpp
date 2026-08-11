@@ -55,6 +55,10 @@ std::uint64_t settingsFingerprint(
         .absoluteDivergenceTheoremToleranceCubicMeters);
     fingerprint.real(settings.controlCells.relativeGeometryTolerance);
     fingerprint.real(settings.controlCells.unitNormalTolerance);
+    fingerprint.real(
+        settings.controlCells.openingCoplanarityToleranceMeters);
+    fingerprint.integer(
+        settings.controlCells.aggregateCoplanarOpeningPatches ? 1U : 0U);
     const auto& local = settings.traceSystem.localCell;
     fingerprint.real(local.absoluteAreaClosureToleranceSquareMeters);
     fingerprint.real(

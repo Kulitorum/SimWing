@@ -147,6 +147,42 @@ Scene openScene(const bool tilted) {
     return scene;
 }
 
+Scene quadrilateralOpenScene() {
+    Scene scene;
+    scene.metadata.designChecksum =
+        "sha256:scene-fluid-mimetic-quadrilateral-open";
+    scene.metadata.exporterVersion =
+        "scene-fluid-mimetic-control-cell-test/1";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "cell"},
+    };
+    scene.fabricMaterials = {
+        {100, "fabric", 900.0, 650.0, 220.0, 0.015,
+         0.041, 0.02, 0.0125, 2.5e-12},
+    };
+    scene.vertices = {
+        {10, {1.2, 1.5, 1.5}},
+        {11, {2.7, 1.3, 1.3}},
+        {12, {2.7, 1.7, 1.3}},
+        {13, {2.7, 1.7, 1.7}},
+        {14, {2.7, 1.3, 1.7}},
+    };
+    const std::array<Vec2, 3> chart{{
+        {0.0, 0.0}, {1.0, 0.0}, {0.0, 1.0},
+    }};
+    scene.triangles = {
+        {500, {10, 12, 11}, chart, 2, 1, 100, 900, SurfaceRole::Skin},
+        {501, {10, 13, 12}, chart, 2, 1, 100, 900, SurfaceRole::Skin},
+        {502, {10, 14, 13}, chart, 2, 1, 100, 900, SurfaceRole::Skin},
+        {503, {10, 11, 14}, chart, 2, 1, 100, 900, SurfaceRole::Skin},
+    };
+    scene.openings.push_back({
+        700, {11, 12, 13, 14}, 2, 1, OpeningRole::Intake,
+    });
+    return scene;
+}
+
 fluid::PeriodicCartesianGrid grid() {
     return {{4, 4, 4}, {}, {4.0, 4.0, 4.0}};
 }
@@ -401,6 +437,50 @@ void testFaceAndEmbeddedOpeningShells() {
         embeddedSet, "embedded opening shells build local SPD kernels");
 }
 
+void testCoplanarOpeningAggregation() {
+    Fixture fixture(quadrilateralOpenScene());
+    auto rejectionSettings = SceneFluidPressureFaceLinkSettings{};
+    rejectionSettings.minimumCenterDistanceMeters = 10.0;
+    const auto rejectedLinks = buildSceneFluidPressureFaceLinks(
+        fixture.surface.definition, fixture.state, grid(), fixture.transfer,
+        fixture.epoch, fixture.caps, fixture.openingQuadrature,
+        fixture.openingPatches, fixture.openingFaceCrossings,
+        fixture.cappedFacePartitions, fixture.volumes, fixture.connectivity,
+        fixture.pressureVolumes, rejectionSettings);
+
+    const auto established = fixture.mimetic(rejectedLinks);
+    auto aggregateSettings = SceneFluidMimeticControlCellSettings{};
+    aggregateSettings.aggregateCoplanarOpeningPatches = true;
+    const auto aggregate = fixture.mimetic(rejectedLinks, aggregateSettings);
+    check(fixture.openingPatches.patches.size() == 2
+              && established.openingTraceGroups.size() == 2
+              && established.openingTracePatchIndices.size() == 2
+              && established.openingTracePatchStableIds.size() == 2
+              && established.openingHalfFaceCount == 4,
+          "default opening arithmetic keeps one trace per cap triangle");
+    check(aggregate.openingTraceGroups.size() == 1
+              && aggregate.openingTracePatchIndices.size() == 2
+              && aggregate.openingTracePatchStableIds.size() == 2
+              && aggregate.openingTraceGroups.front().patchCount == 2
+              && aggregate.openingHalfFaceCount == 2
+              && aggregate.readyControlCellCount
+                  == aggregate.controlCells.size(),
+          "opt-in opening arithmetic merges one coplanar authored cap");
+    checkNear(aggregate.openingTraceGroups.front().areaSquareMeters,
+              established.openingTraceGroups[0].areaSquareMeters
+                  + established.openingTraceGroups[1].areaSquareMeters,
+              1.0e-15,
+              "aggregated opening trace retains total cap area");
+    validateSceneFluidMimeticControlCells(
+        aggregate, fixture.surface.definition, fixture.state, grid(),
+        fixture.epoch, fixture.caps, fixture.openingQuadrature,
+        fixture.openingPatches, fixture.pressureVolumes, rejectedLinks);
+    checkPairedHalfFaces(
+        aggregate, "aggregated opening trace retains exact paired ownership");
+    checkLocalOperators(
+        aggregate, "aggregated opening shells build local SPD kernels");
+}
+
 void testLimitsAndCorruption() {
     Fixture fixture(nestedScene());
     const auto accepted = fixture.mimetic();
@@ -444,6 +524,7 @@ int main() {
     try {
         testNestedClosedShells();
         testFaceAndEmbeddedOpeningShells();
+        testCoplanarOpeningAggregation();
         testLimitsAndCorruption();
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());

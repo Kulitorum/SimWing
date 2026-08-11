@@ -123,6 +123,7 @@ struct SceneFluidMimeticMacVelocityCollapse {
 [[nodiscard]] SceneFluidMimeticMacVelocityCollapse
 collapseSceneFluidMimeticCorrectedMacVelocity(
     const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
+    const SceneFluidMimeticControlCellSet& controlCells,
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidOpeningGridPatchSet& openingPatches,
     const fluid::PeriodicCartesianGrid& grid);

@@ -953,7 +953,8 @@ void testMimeticGeometryEpochTransition() {
         correctSceneFluidMimeticTraceFlows(previousPressure);
     const auto previousCollapsedVelocity =
         collapseSceneFluidMimeticCorrectedMacVelocity(
-            previousCorrectedFlow, previousEpoch.pressureFaceLinks,
+            previousCorrectedFlow, previousPressure.controlCells,
+            previousEpoch.pressureFaceLinks,
             previousEpoch.openingPatches, geometryGrid);
     const auto previousMomentum = reconstructSceneFluidRegionMomentumState(
         geometryGrid, previousEpoch.pressureControlVolumes,

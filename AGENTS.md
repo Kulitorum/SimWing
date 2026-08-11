@@ -97,7 +97,7 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
-.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--moving-fsi] [--wall-trace-pressure-load] [--preflow-bootstrap|--preflow-steps N] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
+.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--moving-fsi] [--wall-trace-pressure-load] [--aggregate-opening-traces] [--preflow-bootstrap|--preflow-steps N] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
 .\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
@@ -1781,6 +1781,19 @@ makes this a certified aerodynamic solver.
   reconverged for the accepted topology; this is not permission to weaken
   fluid topology.
   Combined wall-trace/preflow selection has a distinct solver identity. Its
+  independent `--aggregate-opening-traces` experiment replaces the arbitrary
+  patch-per-cap-triangle mixed-hybrid traces with one trace for coplanar
+  fragments of the same authored opening and cell. It retains exact stable
+  member identities so corrected MAC collapse, regional reconstruction, and
+  transport can distribute the accepted group flow over the old diagnostic
+  patch ledger without restoring multiple pressure unknowns. The default path
+  remains bit-for-bit patch-owned. On the seamed gnuC2 `2^3`, two preflow
+  epochs plus wall-trace loading reduce the first loaded displacement from
+  `5.56742 mm` to `2.61949 mm` and clear the reversed tiny-cap-facet gate. The
+  next rejection is a material-plus-cap region-cycle break at moved intake edge
+  `(7260, 7261)` with a `0.338 um` line residual; moving cap incidence is the
+  next gate, not a reason to weaken topology validation.
+  Its
   `--continue-corrected-trace-flow` experiment preserves exact fixed-topology
   trace corrections across frames without changing default arithmetic. The
   mutually exclusive `--transport-corrected-region-flow` experiment projects

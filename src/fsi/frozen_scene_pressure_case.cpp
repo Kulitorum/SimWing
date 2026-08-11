@@ -89,12 +89,24 @@ void validateSettings(const FrozenScenePressureCaseSettings& settings) {
 const char* solverId(
     const FrozenScenePressureCaseSettings& settings) noexcept {
     if (settings.preflowBootstrapSteps != 0) {
+        if (settings.aggregateCoplanarOpeningPatches) {
+            return settings.useMaterialWallTracePressureLoads
+                ? movingSceneAggregateOpeningPreflowWallTraceSolverId
+                : movingSceneAggregateOpeningPreflowBootstrapSolverId;
+        }
         return settings.useMaterialWallTracePressureLoads
             ? movingScenePreflowWallTraceSolverId
             : movingScenePreflowBootstrapSolverId;
     }
     if (settings.useMaterialWallTracePressureLoads) {
-        return movingSceneWallTracePressureSolverId;
+        return settings.aggregateCoplanarOpeningPatches
+            ? movingSceneAggregateOpeningWallTracePressureSolverId
+            : movingSceneWallTracePressureSolverId;
+    }
+    if (settings.aggregateCoplanarOpeningPatches) {
+        return settings.useMovingGeometryFsi
+            ? movingSceneAggregateOpeningPressureSolverId
+            : frozenSceneAggregateOpeningPressureSolverId;
     }
     return settings.useMovingGeometryFsi
         ? movingScenePressureSolverId
@@ -680,6 +692,8 @@ BuiltCase buildCase(
     pressureSettings.densityKgPerCubicMeter =
         settings.densityKgPerCubicMeter;
     pressureSettings.timeStepSeconds = settings.timeStepSeconds;
+    pressureSettings.controlCells.aggregateCoplanarOpeningPatches =
+        settings.aggregateCoplanarOpeningPatches;
     pressureSettings.pressureSolve
         .absoluteResidualTolerancePascalsMeters = 1.0e-10;
     pressureSettings.pressureSolve.relativeResidualTolerance = 1.0e-5;
@@ -703,7 +717,7 @@ BuiltCase buildCase(
             "frozen scene mimetic pressure correction was not accepted");
     }
     auto correctedMac = collapseSceneFluidMimeticCorrectedMacVelocity(
-        correctedFlow, geometryEpoch.pressureFaceLinks,
+        correctedFlow, pressure.controlCells, geometryEpoch.pressureFaceLinks,
         geometryEpoch.openingPatches, grid);
     auto regionalMomentum = reconstructSceneFluidRegionMomentumState(
         grid, geometryEpoch.pressureControlVolumes,
@@ -895,7 +909,8 @@ void advanceFixedGeometryFlow(
     }
     auto candidateCorrectedMac =
         collapseSceneFluidMimeticCorrectedMacVelocity(
-            candidateCorrectedFlow, geometry.pressureFaceLinks,
+            candidateCorrectedFlow, candidatePressure.controlCells,
+            geometry.pressureFaceLinks,
             geometry.openingPatches, built.grid);
     auto candidateRegionalMomentum =
         reconstructSceneFluidRegionMomentumState(
@@ -1130,7 +1145,7 @@ void advanceMovingGeometryFsi(
         }
         auto candidateCorrectedMac =
             collapseSceneFluidMimeticCorrectedMacVelocity(
-                candidateCorrectedFlow,
+                candidateCorrectedFlow, candidatePressure.controlCells,
                 geometryTransition.currentGeometryEpoch.pressureFaceLinks,
                 geometryTransition.currentGeometryEpoch.openingPatches,
                 built.grid);
@@ -1232,6 +1247,9 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.usesMovingGeometryFsi = built.geometryAdvanceCount > 0;
     result.usesMaterialWallTracePressureLoads =
         built.usesMaterialWallTracePressureLoads;
+    result.usesCoplanarOpeningAggregation =
+        built.pressure.controlCells.settings
+            .aggregateCoplanarOpeningPatches;
     result.usesPreflowBootstrap = built.usesPreflowBootstrap;
     result.preflowBootstrapStepCount = built.preflowBootstrapStepCount;
     result.completedPreflowBootstrapStepCount =

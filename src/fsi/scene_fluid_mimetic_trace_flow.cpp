@@ -251,6 +251,51 @@ double dot(const fluid::Vector3& first, const fluid::Vector3& second) {
         + first.z * second.z;
 }
 
+struct OpeningGroupFlow {
+    double relativeFlowCubicMetersPerSecond = 0.0;
+    double surfaceSweepCubicMetersPerSecond = 0.0;
+};
+
+OpeningGroupFlow consumeOpeningGroup(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const std::size_t groupIndex,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    std::map<std::uint64_t, const SceneFluidOpeningFluxSample*>& samples) {
+    if (groupIndex >= controlCells.openingTraceGroups.size()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic opening group index is invalid");
+    }
+    const auto& group = controlCells.openingTraceGroups[groupIndex];
+    CompensatedSum relativeFlow;
+    CompensatedSum sweep;
+    for (std::size_t offset = 0; offset < group.patchCount; ++offset) {
+        const std::size_t patchIndex =
+            controlCells.openingTracePatchIndices[
+                group.firstPatchIndex + offset];
+        if (patchIndex >= openingFlux.samples.size()) {
+            throw std::invalid_argument(
+                "scene fluid mimetic opening group sample is missing");
+        }
+        const auto& sample = openingFlux.samples[patchIndex];
+        const auto found = samples.find(sample.patchStableId);
+        if (found == samples.end() || found->second != &sample
+            || sample.openingId != group.openingId
+            || sample.negativeSideRegionId
+                != group.negativeSideRegionId
+            || sample.positiveSideRegionId
+                != group.positiveSideRegionId
+            || sample.role != group.role) {
+            throw std::invalid_argument(
+                "scene fluid mimetic opening group sample is foreign");
+        }
+        relativeFlow.add(
+            sample.relativeVolumeFlowRateCubicMetersPerSecond);
+        sweep.add(sample.surfaceSweepRateCubicMetersPerSecond);
+        samples.erase(found);
+    }
+    return {relativeFlow.value(), sweep.value()};
+}
+
 fluid::Vector3 averageVelocity(
     const SceneFluidRegionWallExchange& wallExchange,
     const std::size_t minusControlCellIndex,
@@ -552,6 +597,7 @@ double regionTransportPredictedFlow(
     const SceneFluidMimeticControlCellSet& controlCells,
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidRegionTransport& regionTransport,
+    const SceneFluidOpeningFluxSet& openingFlux,
     std::map<std::uint64_t, const SceneFluidOpeningFluxSample*>&
         openingSamples) {
     const fluid::Vector3 velocity = averageVelocity(
@@ -602,27 +648,29 @@ double regionTransportPredictedFlow(
         throw std::invalid_argument(
             "scene fluid mimetic regional-transport trace kind is invalid");
     }
-    const auto found = openingSamples.find(trace.sourceStableId);
-    if (found == openingSamples.end()) {
+    if (oriented.minus->sourceIndex
+        >= controlCells.openingTraceGroups.size()) {
         throw std::invalid_argument(
-            "scene fluid mimetic regional-transport embedded opening sample is missing");
+            "scene fluid mimetic regional-transport embedded opening group is missing");
     }
-    const auto& sample = *found->second;
+    const auto& group = controlCells.openingTraceGroups[
+        oriented.minus->sourceIndex];
     const auto& minusCell = controlCells.controlCells[
         oriented.minusControlCellIndex];
     const auto& plusCell = controlCells.controlCells[
         oriented.plusControlCellIndex];
-    if (sample.patchStableId != trace.sourceStableId
-        || sample.areaSquareMeters != oriented.minus->areaSquareMeters
-        || sample.negativeSideRegionId != minusCell.regionId
-        || sample.positiveSideRegionId != plusCell.regionId) {
+    if (group.stableId != trace.sourceStableId
+        || group.areaSquareMeters != oriented.minus->areaSquareMeters
+        || group.negativeSideRegionId != minusCell.regionId
+        || group.positiveSideRegionId != plusCell.regionId) {
         throw std::invalid_argument(
             "scene fluid mimetic regional-transport embedded opening identity is inconsistent");
     }
-    const double result = sample.areaSquareMeters
+    const auto groupFlow = consumeOpeningGroup(
+        controlCells, group.groupIndex, openingFlux, openingSamples);
+    const double result = group.areaSquareMeters
             * dot(velocity, oriented.minus->outwardUnitNormal)
-        - sample.surfaceSweepRateCubicMetersPerSecond;
-    openingSamples.erase(found);
+        - groupFlow.surfaceSweepCubicMetersPerSecond;
     return result;
 }
 
@@ -732,27 +780,28 @@ SceneFluidMimeticTraceFlowPrediction sampleSceneFluidMimeticTraceFlows(
             }
             ++result.cartesianTraceCount;
         } else {
-            const auto found = openingSamples.find(trace.sourceStableId);
-            if (found == openingSamples.end()) {
+            if (oriented.minus->sourceIndex
+                    >= controlCells.openingTraceGroups.size()) {
                 throw std::invalid_argument(
-                    "scene fluid mimetic trace-flow embedded opening sample is missing");
+                    "scene fluid mimetic trace-flow embedded opening group is missing");
             }
-            const auto& sample = *found->second;
+            const auto& group = controlCells.openingTraceGroups[
+                oriented.minus->sourceIndex];
             const auto& minusCell = controlCells.controlCells[
                 oriented.minusControlCellIndex];
             const auto& plusCell = controlCells.controlCells[
                 oriented.plusControlCellIndex];
-            if (sample.patchStableId != trace.sourceStableId
-                || sample.areaSquareMeters
+            if (group.stableId != trace.sourceStableId
+                || group.areaSquareMeters
                     != oriented.minus->areaSquareMeters
-                || sample.negativeSideRegionId != minusCell.regionId
-                || sample.positiveSideRegionId != plusCell.regionId) {
+                || group.negativeSideRegionId != minusCell.regionId
+                || group.positiveSideRegionId != plusCell.regionId) {
                 throw std::invalid_argument(
                     "scene fluid mimetic trace-flow embedded opening identity is inconsistent");
             }
-            predictedFlow =
-                sample.relativeVolumeFlowRateCubicMetersPerSecond;
-            openingSamples.erase(found);
+            predictedFlow = consumeOpeningGroup(
+                controlCells, group.groupIndex, openingFlux,
+                openingSamples).relativeFlowCubicMetersPerSecond;
             ++result.authoredOpeningTraceCount;
         }
         if (!std::isfinite(predictedFlow)) {
@@ -913,28 +962,31 @@ SceneFluidMimeticTraceFlowPrediction sampleSceneFluidMimeticTraceFlows(
             }
             ++result.cartesianTraceCount;
         } else {
-            const auto found = openingSamples.find(trace.sourceStableId);
-            if (found == openingSamples.end()) {
+            if (oriented.minus->sourceIndex
+                >= controlCells.openingTraceGroups.size()) {
                 throw std::invalid_argument(
-                    "scene fluid mimetic wall trace-flow embedded opening sample is missing");
+                    "scene fluid mimetic wall trace-flow embedded opening group is missing");
             }
-            const auto& sample = *found->second;
+            const auto& group = controlCells.openingTraceGroups[
+                oriented.minus->sourceIndex];
             const auto& minusCell = controlCells.controlCells[
                 oriented.minusControlCellIndex];
             const auto& plusCell = controlCells.controlCells[
                 oriented.plusControlCellIndex];
-            if (sample.patchStableId != trace.sourceStableId
-                || sample.areaSquareMeters
+            if (group.stableId != trace.sourceStableId
+                || group.areaSquareMeters
                     != oriented.minus->areaSquareMeters
-                || sample.negativeSideRegionId != minusCell.regionId
-                || sample.positiveSideRegionId != plusCell.regionId) {
+                || group.negativeSideRegionId != minusCell.regionId
+                || group.positiveSideRegionId != plusCell.regionId) {
                 throw std::invalid_argument(
                     "scene fluid mimetic wall trace-flow embedded opening identity is inconsistent");
             }
-            predictedFlow = sample.areaSquareMeters
+            const auto groupFlow = consumeOpeningGroup(
+                controlCells, group.groupIndex, openingFlux,
+                openingSamples);
+            predictedFlow = group.areaSquareMeters
                     * dot(velocity, oriented.minus->outwardUnitNormal)
-                - sample.surfaceSweepRateCubicMetersPerSecond;
-            openingSamples.erase(found);
+                - groupFlow.surfaceSweepCubicMetersPerSecond;
             ++result.authoredOpeningTraceCount;
         }
         if (!std::isfinite(predictedFlow)) {
@@ -1218,7 +1270,7 @@ predictSceneFluidMimeticTraceFlowsFromRegionTransportFixedTopology(
             trace, traceSystem, controlCells);
         const double predictedFlow = regionTransportPredictedFlow(
             trace, oriented, controlCells, faceLinks,
-            regionTransport, openingSamples);
+            regionTransport, openingFlux, openingSamples);
         if (!std::isfinite(predictedFlow)) {
             throw std::overflow_error(
                 "scene fluid mimetic regional-transport trace-flow prediction is non-finite");
@@ -1594,7 +1646,7 @@ void validateSceneFluidMimeticRegionTransportFlowPrediction(
             trace, traceSystem, controlCells);
         const double expectedFlow = regionTransportPredictedFlow(
             trace, oriented, controlCells, faceLinks,
-            regionTransport, openingSamples);
+            regionTransport, openingFlux, openingSamples);
         const auto& actual = prediction.prediction.traces[sharedOrdinal];
         const auto& baseline = currentBulkBaseline.traces[sharedOrdinal];
         if (actual.sharedTraceOrdinal != baseline.sharedTraceOrdinal

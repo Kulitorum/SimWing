@@ -21,6 +21,19 @@ inline constexpr const char* movingScenePreflowBootstrapSolverId =
     "moving-scene-preflow-bootstrap-v1";
 inline constexpr const char* movingScenePreflowWallTraceSolverId =
     "moving-scene-preflow-wall-trace-v1";
+inline constexpr const char* frozenSceneAggregateOpeningPressureSolverId =
+    "frozen-scene-aggregate-opening-pressure-v1";
+inline constexpr const char* movingSceneAggregateOpeningPressureSolverId =
+    "moving-scene-aggregate-opening-pressure-v1";
+inline constexpr const char*
+    movingSceneAggregateOpeningWallTracePressureSolverId =
+        "moving-scene-aggregate-opening-wall-trace-v1";
+inline constexpr const char*
+    movingSceneAggregateOpeningPreflowBootstrapSolverId =
+        "moving-scene-aggregate-opening-preflow-v1";
+inline constexpr const char*
+    movingSceneAggregateOpeningPreflowWallTraceSolverId =
+        "moving-scene-aggregate-opening-preflow-wall-trace-v1";
 
 struct FrozenScenePressureCaseSettings {
     fluid::GridCellCounts cellCounts{2, 2, 2};
@@ -34,6 +47,7 @@ struct FrozenScenePressureCaseSettings {
     bool useRegionalTransportFlowPrediction = false;
     bool useMovingGeometryFsi = false;
     bool useMaterialWallTracePressureLoads = false;
+    bool aggregateCoplanarOpeningPatches = false;
     std::size_t preflowBootstrapSteps = 0;
     double diagnosticPerturbationSpeedMetersPerSecond = 0.0;
     double timeStepSeconds = 1.0 / 60.0;
@@ -51,6 +65,7 @@ struct FrozenScenePressureCaseDiagnostics {
     bool usesRegionalTransportFlowPrediction = false;
     bool usesMovingGeometryFsi = false;
     bool usesMaterialWallTracePressureLoads = false;
+    bool usesCoplanarOpeningAggregation = false;
     bool usesPreflowBootstrap = false;
     std::size_t preflowBootstrapStepCount = 0;
     std::size_t completedPreflowBootstrapStepCount = 0;

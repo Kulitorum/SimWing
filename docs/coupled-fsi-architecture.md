@@ -3523,6 +3523,21 @@ a grid-aligned material point across sparse control ownership. Subsequent
 epochs use the selected accepted
 pressure ledger normally. Preflow and preflow-plus-wall-trace combinations
 carry separate solver identities; neither changes the default path.
+The independent `--aggregate-opening-traces` experiment addresses the next
+discrete-pressure ownership issue. Cell-owned coplanar fragments from the same
+authored opening and coarse cell share one mixed-hybrid trace, independent of
+the arbitrary diagonal used to triangulate the virtual cap. The immutable
+control product retains every member patch index and stable ID; corrected-flow
+collapse and the regional momentum/transport diagnostics distribute the one
+accepted group flow by member area only at their legacy patch boundary. The
+default remains exactly one trace per cap triangle. On the seamed gnuC2 `2^3`
+case with two frozen preflow epochs and wall-trace loading, the option reduces
+the first loaded displacement from `5.56742 mm` to `2.61949 mm` and clears the
+former reversed tiny-cap-facet rejection. Rebuild then reaches a stricter
+material-plus-cap cycle failure at moved intake edge `(7260, 7261)`, with a
+`0.338 um` suspension residual and `0.000482757 N` fluid resultant. This makes
+moving cap incidence the next acceptance gate; it does not justify weakening
+the closed-region-cycle check.
 The frozen bootstrap explicitly carries the accepted corrected trace flow, so
 its next pressure solve sees only the new bulk predictor increment. Repeating
 the ordinary absolute-velocity fixed path is not a viable pre-roll: on gnuC2 at

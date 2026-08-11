@@ -4,6 +4,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <tuple>
@@ -117,7 +118,10 @@ void validateSettings(
         || !std::isfinite(settings.relativeGeometryTolerance)
         || settings.relativeGeometryTolerance < 0.0
         || !std::isfinite(settings.unitNormalTolerance)
-        || settings.unitNormalTolerance < 0.0) {
+        || settings.unitNormalTolerance < 0.0
+        || !std::isfinite(
+            settings.openingCoplanarityToleranceMeters)
+        || settings.openingCoplanarityToleranceMeters < 0.0) {
         throw std::invalid_argument(
             "invalid scene fluid mimetic control-cell settings");
     }
@@ -125,11 +129,17 @@ void validateSettings(
 
 std::size_t checkedStorageBytes(const std::size_t controlCount,
                                 const std::size_t halfFaceCount,
+                                const std::size_t openingGroupCount,
+                                const std::size_t openingMemberCount,
                                 const std::size_t omittedSampleCount) {
     if (controlCount > std::numeric_limits<std::size_t>::max()
             / sizeof(SceneFluidMimeticControlCell)
         || halfFaceCount > std::numeric_limits<std::size_t>::max()
             / sizeof(SceneFluidMimeticHalfFace)
+        || openingGroupCount > std::numeric_limits<std::size_t>::max()
+            / sizeof(SceneFluidMimeticOpeningTraceGroup)
+        || openingMemberCount > std::numeric_limits<std::size_t>::max()
+            / (sizeof(std::size_t) + sizeof(std::uint64_t))
         || omittedSampleCount > std::numeric_limits<std::size_t>::max()
             / sizeof(SceneFluidMimeticOmittedMaterialSample)) {
         throw std::length_error(
@@ -139,16 +149,26 @@ std::size_t checkedStorageBytes(const std::size_t controlCount,
         * sizeof(SceneFluidMimeticControlCell);
     const std::size_t halfFaceBytes = halfFaceCount
         * sizeof(SceneFluidMimeticHalfFace);
+    const std::size_t openingGroupBytes = openingGroupCount
+        * sizeof(SceneFluidMimeticOpeningTraceGroup);
+    const std::size_t openingMemberBytes = openingMemberCount
+        * (sizeof(std::size_t) + sizeof(std::uint64_t));
     const std::size_t omittedSampleBytes = omittedSampleCount
         * sizeof(SceneFluidMimeticOmittedMaterialSample);
     if (halfFaceBytes > std::numeric_limits<std::size_t>::max()
             - controlBytes
+        || openingGroupBytes > std::numeric_limits<std::size_t>::max()
+            - controlBytes - halfFaceBytes
+        || openingMemberBytes > std::numeric_limits<std::size_t>::max()
+            - controlBytes - halfFaceBytes - openingGroupBytes
         || omittedSampleBytes > std::numeric_limits<std::size_t>::max()
-            - controlBytes - halfFaceBytes) {
+            - controlBytes - halfFaceBytes - openingGroupBytes
+                - openingMemberBytes) {
         throw std::length_error(
             "scene fluid mimetic control-cell storage overflows");
     }
-    return controlBytes + halfFaceBytes + omittedSampleBytes;
+    return controlBytes + halfFaceBytes + openingGroupBytes
+        + openingMemberBytes + omittedSampleBytes;
 }
 
 std::uint64_t halfFaceStableId(
@@ -162,6 +182,21 @@ std::uint64_t halfFaceStableId(
     fingerprint.enumeration(side);
     fingerprint.integer(sourceStableId);
     fingerprint.integer(controlStableId);
+    const std::uint64_t result = fingerprint.value();
+    return result == 0 ? 1 : result;
+}
+
+std::uint64_t openingGroupStableId(
+    const std::size_t cellIndex,
+    const StableId openingId,
+    const StableId negativeRegionId,
+    const StableId positiveRegionId) {
+    Fingerprint fingerprint;
+    fingerprint.integer(0x4d494d4f50454e47ULL);
+    fingerprint.integer(cellIndex);
+    fingerprint.integer(openingId);
+    fingerprint.integer(negativeRegionId);
+    fingerprint.integer(positiveRegionId);
     const std::uint64_t result = fingerprint.value();
     return result == 0 ? 1 : result;
 }
@@ -194,6 +229,10 @@ std::uint64_t productFingerprint(
         set.settings.absoluteDivergenceTheoremToleranceCubicMeters);
     fingerprint.real(set.settings.relativeGeometryTolerance);
     fingerprint.real(set.settings.unitNormalTolerance);
+    fingerprint.real(
+        set.settings.openingCoplanarityToleranceMeters);
+    fingerprint.integer(
+        set.settings.aggregateCoplanarOpeningPatches ? 1 : 0);
     fingerprint.integer(set.ownedStorageBytes);
     fingerprint.integer(set.readyControlCellCount);
     fingerprint.integer(set.incompleteTopologyControlCellCount);
@@ -260,6 +299,34 @@ std::uint64_t productFingerprint(
         fingerprint.real(face.outwardUnitNormal.x);
         fingerprint.real(face.outwardUnitNormal.y);
         fingerprint.real(face.outwardUnitNormal.z);
+    }
+    fingerprint.integer(set.openingTraceGroups.size());
+    for (const auto& group : set.openingTraceGroups) {
+        fingerprint.integer(group.groupIndex);
+        fingerprint.integer(group.stableId);
+        fingerprint.integer(group.cellIndex);
+        fingerprint.integer(group.openingId);
+        fingerprint.integer(group.negativeSideRegionId);
+        fingerprint.integer(group.positiveSideRegionId);
+        fingerprint.enumeration(group.role);
+        fingerprint.integer(group.firstPatchIndex);
+        fingerprint.integer(group.patchCount);
+        fingerprint.real(group.areaSquareMeters);
+        fingerprint.real(group.centroidMeters.x);
+        fingerprint.real(group.centroidMeters.y);
+        fingerprint.real(group.centroidMeters.z);
+        fingerprint.real(group.unitNormalNegativeToPositive.x);
+        fingerprint.real(group.unitNormalNegativeToPositive.y);
+        fingerprint.real(group.unitNormalNegativeToPositive.z);
+        fingerprint.real(group.surfaceSweepRateCubicMetersPerSecond);
+    }
+    fingerprint.integer(set.openingTracePatchIndices.size());
+    for (const std::size_t index : set.openingTracePatchIndices) {
+        fingerprint.integer(index);
+    }
+    fingerprint.integer(set.openingTracePatchStableIds.size());
+    for (const std::uint64_t stableId : set.openingTracePatchStableIds) {
+        fingerprint.integer(stableId);
     }
     fingerprint.integer(set.omittedMaterialSamples.size());
     for (const auto& sample : set.omittedMaterialSamples) {
@@ -418,7 +485,7 @@ SceneFluidMimeticControlCellSet buildSceneFluidMimeticControlCells(
         throw std::invalid_argument(
             "invalid scene fluid mimetic control-cell limits");
     }
-    if (checkedStorageBytes(controlCount, 0, 0)
+    if (checkedStorageBytes(controlCount, 0, 0, 0, 0)
         > limits.maximumOwnedBytes) {
         throw std::length_error(
             "scene fluid mimetic control-cell byte limit exceeded");
@@ -486,7 +553,7 @@ SceneFluidMimeticControlCellSet buildSceneFluidMimeticControlCells(
                 "scene fluid mimetic half-face limit exceeded");
         }
         if (checkedStorageBytes(
-                controlCount, appendedHalfFaceCount + 1,
+                controlCount, appendedHalfFaceCount + 1, 0, 0,
                 result.omittedMaterialSamples.size())
             > limits.maximumOwnedBytes) {
             throw std::length_error(
@@ -589,7 +656,7 @@ SceneFluidMimeticControlCellSet buildSceneFluidMimeticControlCells(
                     "scene fluid mimetic omitted-material sample limit exceeded");
             }
             if (checkedStorageBytes(
-                    controlCount, appendedHalfFaceCount,
+                    controlCount, appendedHalfFaceCount, 0, 0,
                     result.omittedMaterialSamples.size() + 1)
                 > limits.maximumOwnedBytes) {
                 throw std::length_error(
@@ -620,25 +687,143 @@ SceneFluidMimeticControlCellSet buildSceneFluidMimeticControlCells(
         }
     }
 
+    using OpeningGroupKey = std::tuple<
+        std::size_t, StableId, StableId, StableId, OpeningRole>;
+    std::map<OpeningGroupKey, std::vector<std::size_t>> openingGroups;
     for (std::size_t patchIndex = 0;
          patchIndex < openingPatches.patches.size(); ++patchIndex) {
         const auto& patch = openingPatches.patches[patchIndex];
         if (patch.ownerKind != SceneFluidOpeningPatchOwnerKind::Cell) {
             continue;
         }
-        const auto negative = controlIndex(
-            patch.cellIndex, patch.negativeSideRegionId);
-        const auto positive = controlIndex(
-            patch.cellIndex, patch.positiveSideRegionId);
+        const OpeningGroupKey key{
+            patch.cellIndex, patch.openingId,
+            patch.negativeSideRegionId, patch.positiveSideRegionId,
+            patch.role};
+        if (settings.aggregateCoplanarOpeningPatches) {
+            openingGroups[key].push_back(patchIndex);
+        } else {
+            openingGroups.emplace(
+                OpeningGroupKey{
+                    patchIndex, patch.openingId,
+                    patch.negativeSideRegionId,
+                    patch.positiveSideRegionId, patch.role},
+                std::vector<std::size_t>{patchIndex});
+        }
+    }
+    const auto coplanar = [&](const std::vector<std::size_t>& indices) {
+        const auto& first = openingPatches.patches[indices.front()];
         const fluid::Vector3 normal = vector(
-            patch.unitNormalNegativeToPositive);
-        const fluid::Vector3 centroid = vector(patch.centroidMeters);
+            first.unitNormalNegativeToPositive);
+        const fluid::Vector3 origin = vector(first.centroidMeters);
+        for (const std::size_t patchIndex : indices) {
+            const auto& patch = openingPatches.patches[patchIndex];
+            const fluid::Vector3 candidateNormal = vector(
+                patch.unitNormalNegativeToPositive);
+            const fluid::Vector3 normalDelta = subtract(
+                candidateNormal, normal);
+            const double planeDistance = std::abs(dot(
+                subtract(vector(patch.centroidMeters), origin), normal));
+            if (std::sqrt(dot(normalDelta, normalDelta))
+                    > settings.unitNormalTolerance
+                || planeDistance
+                    > settings.openingCoplanarityToleranceMeters) {
+                return false;
+            }
+        }
+        return true;
+    };
+    const auto appendOpeningGroup =
+        [&](const std::vector<std::size_t>& patchIndices,
+            const bool aggregated) {
+        const auto& first = openingPatches.patches[patchIndices.front()];
+        fluid::Vector3 areaVector;
+        fluid::Vector3 firstMoment;
+        double sweepRate = 0.0;
+        for (const std::size_t patchIndex : patchIndices) {
+            const auto& patch = openingPatches.patches[patchIndex];
+            const fluid::Vector3 normal = vector(
+                patch.unitNormalNegativeToPositive);
+            areaVector.x += patch.areaSquareMeters * normal.x;
+            areaVector.y += patch.areaSquareMeters * normal.y;
+            areaVector.z += patch.areaSquareMeters * normal.z;
+            firstMoment.x += patch.areaSquareMeters
+                * patch.centroidMeters.x;
+            firstMoment.y += patch.areaSquareMeters
+                * patch.centroidMeters.y;
+            firstMoment.z += patch.areaSquareMeters
+                * patch.centroidMeters.z;
+            sweepRate += patch.surfaceSweepRateCubicMetersPerSecond;
+        }
+        double summedArea = 0.0;
+        for (const std::size_t patchIndex : patchIndices) {
+            summedArea += openingPatches.patches[patchIndex]
+                .areaSquareMeters;
+        }
+        const double effectiveArea = std::sqrt(dot(areaVector, areaVector));
+        if (!(effectiveArea > 0.0) || !std::isfinite(effectiveArea)
+            || !(summedArea > 0.0) || !std::isfinite(summedArea)
+            || !std::isfinite(sweepRate)) {
+            throw std::invalid_argument(
+                "invalid aggregated mimetic opening geometry");
+        }
+        fluid::Vector3 normal{
+            areaVector.x / effectiveArea,
+            areaVector.y / effectiveArea,
+            areaVector.z / effectiveArea,
+        };
+        fluid::Vector3 centroid{
+            firstMoment.x / summedArea,
+            firstMoment.y / summedArea,
+            firstMoment.z / summedArea,
+        };
+        double groupArea = effectiveArea;
+        if (!aggregated) {
+            groupArea = first.areaSquareMeters;
+            centroid = vector(first.centroidMeters);
+            normal = vector(first.unitNormalNegativeToPositive);
+            sweepRate = first.surfaceSweepRateCubicMetersPerSecond;
+        }
+        const std::uint64_t stableId = aggregated
+            ? openingGroupStableId(
+                first.cellIndex, first.openingId,
+                first.negativeSideRegionId,
+                first.positiveSideRegionId)
+            : first.stableId;
+        SceneFluidMimeticOpeningTraceGroup group;
+        group.groupIndex = result.openingTraceGroups.size();
+        group.stableId = stableId;
+        group.cellIndex = first.cellIndex;
+        group.openingId = first.openingId;
+        group.negativeSideRegionId = first.negativeSideRegionId;
+        group.positiveSideRegionId = first.positiveSideRegionId;
+        group.role = first.role;
+        group.firstPatchIndex = result.openingTracePatchIndices.size();
+        group.patchCount = patchIndices.size();
+        group.areaSquareMeters = groupArea;
+        group.centroidMeters = centroid;
+        group.unitNormalNegativeToPositive = normal;
+        group.surfaceSweepRateCubicMetersPerSecond = sweepRate;
+        result.openingTracePatchIndices.insert(
+            result.openingTracePatchIndices.end(),
+            patchIndices.begin(), patchIndices.end());
+        for (const std::size_t patchIndex : patchIndices) {
+            result.openingTracePatchStableIds.push_back(
+                openingPatches.patches[patchIndex].stableId);
+        }
+        result.openingTraceGroups.push_back(group);
+
+        const auto negative = controlIndex(
+            group.cellIndex, group.negativeSideRegionId);
+        const auto positive = controlIndex(
+            group.cellIndex, group.positiveSideRegionId);
         if (negative) {
             append(*negative, positive,
                    SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace,
                    SceneFluidMimeticHalfFaceSide::MinusOrNegative,
-                   patchIndex, patch.stableId, patch.areaSquareMeters,
-                   centroid, normal);
+                   group.groupIndex, group.stableId,
+                   group.areaSquareMeters, group.centroidMeters,
+                   group.unitNormalNegativeToPositive);
         } else {
             ++result.missingOpeningControlSideCount;
         }
@@ -646,10 +831,21 @@ SceneFluidMimeticControlCellSet buildSceneFluidMimeticControlCells(
             append(*positive, negative,
                    SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace,
                    SceneFluidMimeticHalfFaceSide::PlusOrPositive,
-                   patchIndex, patch.stableId, patch.areaSquareMeters,
-                   centroid, negate(normal));
+                   group.groupIndex, group.stableId,
+                   group.areaSquareMeters, group.centroidMeters,
+                   negate(group.unitNormalNegativeToPositive));
         } else {
             ++result.missingOpeningControlSideCount;
+        }
+    };
+    for (const auto& [key, patchIndices] : openingGroups) {
+        static_cast<void>(key);
+        if (patchIndices.size() > 1 && coplanar(patchIndices)) {
+            appendOpeningGroup(patchIndices, true);
+        } else {
+            for (const std::size_t patchIndex : patchIndices) {
+                appendOpeningGroup({patchIndex}, false);
+            }
         }
     }
 
@@ -772,6 +968,8 @@ SceneFluidMimeticControlCellSet buildSceneFluidMimeticControlCells(
 
     result.ownedStorageBytes = checkedStorageBytes(
         result.controlCells.size(), result.halfFaces.size(),
+        result.openingTraceGroups.size(),
+        result.openingTracePatchIndices.size(),
         result.omittedMaterialSamples.size());
     if (result.ownedStorageBytes > limits.maximumOwnedBytes) {
         throw std::length_error(
@@ -803,7 +1001,11 @@ void validateSceneFluidMimeticControlCellIntegrity(
         || set.cellCounts.z == 0
         || set.ownedStorageBytes != checkedStorageBytes(
             set.controlCells.size(), set.halfFaces.size(),
+            set.openingTraceGroups.size(),
+            set.openingTracePatchIndices.size(),
             set.omittedMaterialSamples.size())
+        || set.openingTracePatchStableIds.size()
+            != set.openingTracePatchIndices.size()
         || set.readyControlCellCount > set.controlCells.size()
         || set.incompleteTopologyControlCellCount > set.controlCells.size()
         || set.nonclosingControlCellCount > set.controlCells.size()
@@ -894,6 +1096,53 @@ void validateSceneFluidMimeticControlCellIntegrity(
         throw std::invalid_argument(
             "scene fluid mimetic aggregate counts are inconsistent");
     }
+    std::size_t nextOpeningMember = 0;
+    std::vector<std::uint64_t> openingGroupStableIds;
+    openingGroupStableIds.reserve(set.openingTraceGroups.size());
+    for (std::size_t groupIndex = 0;
+         groupIndex < set.openingTraceGroups.size(); ++groupIndex) {
+        const auto& group = set.openingTraceGroups[groupIndex];
+        const double normalLength = std::sqrt(dot(
+            group.unitNormalNegativeToPositive,
+            group.unitNormalNegativeToPositive));
+        if (group.groupIndex != groupIndex || group.stableId == 0
+            || group.openingId == invalidStableId
+            || group.negativeSideRegionId == invalidStableId
+            || group.positiveSideRegionId == invalidStableId
+            || group.negativeSideRegionId == group.positiveSideRegionId
+            || group.firstPatchIndex != nextOpeningMember
+            || group.patchCount == 0
+            || group.firstPatchIndex
+                > set.openingTracePatchIndices.size()
+            || group.patchCount
+                > set.openingTracePatchIndices.size()
+                    - group.firstPatchIndex
+            || !std::isfinite(group.areaSquareMeters)
+            || !(group.areaSquareMeters > 0.0)
+            || !finite(group.centroidMeters)
+            || !finite(group.unitNormalNegativeToPositive)
+            || !std::isfinite(normalLength)
+            || std::abs(normalLength - 1.0)
+                > set.settings.unitNormalTolerance
+            || !std::isfinite(
+                group.surfaceSweepRateCubicMetersPerSecond)) {
+            throw std::invalid_argument(
+                "invalid scene fluid mimetic opening-trace group");
+        }
+        nextOpeningMember += group.patchCount;
+        openingGroupStableIds.push_back(group.stableId);
+    }
+    std::ranges::sort(openingGroupStableIds);
+    if (nextOpeningMember != set.openingTracePatchIndices.size()
+        || nextOpeningMember != set.openingTracePatchStableIds.size()
+        || std::ranges::any_of(
+            set.openingTracePatchStableIds,
+            [](const std::uint64_t stableId) { return stableId == 0; })
+        || std::ranges::adjacent_find(openingGroupStableIds)
+            != openingGroupStableIds.end()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic opening-trace groups are inconsistent");
+    }
     std::size_t omittedSideCount = 0;
     std::size_t previousOmittedSourceIndex = 0;
     bool havePreviousOmittedSource = false;
@@ -938,7 +1187,12 @@ void validateSceneFluidMimeticControlCellIntegrity(
                 > set.settings.unitNormalTolerance
             || (face.kind == SceneFluidMimeticHalfFaceKind::MaterialWall
                 ? face.traceStableId != 0
-                : face.traceStableId == 0)) {
+                : face.traceStableId == 0)
+            || (face.kind
+                    == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace
+                && (face.sourceIndex >= set.openingTraceGroups.size()
+                    || set.openingTraceGroups[face.sourceIndex].stableId
+                        != face.sourceStableId))) {
             throw std::invalid_argument(
                 "invalid scene fluid mimetic half-face record");
         }
@@ -986,6 +1240,94 @@ void validateSceneFluidMimeticControlCells(
         || controlCells.upperMeters != grid.upperMeters()) {
         throw std::invalid_argument(
             "scene fluid mimetic control-cell binding is invalid");
+    }
+    std::vector<bool> seenOpeningPatches(openingPatches.patches.size(), false);
+    for (const auto& group : controlCells.openingTraceGroups) {
+        fluid::Vector3 areaVector;
+        fluid::Vector3 firstMoment;
+        double summedArea = 0.0;
+        double sweepRate = 0.0;
+        for (std::size_t offset = 0; offset < group.patchCount; ++offset) {
+            const std::size_t patchIndex =
+                controlCells.openingTracePatchIndices[
+                    group.firstPatchIndex + offset];
+            if (patchIndex >= openingPatches.patches.size()
+                || seenOpeningPatches[patchIndex]) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic opening group patch mapping is invalid");
+            }
+            seenOpeningPatches[patchIndex] = true;
+            const auto& patch = openingPatches.patches[patchIndex];
+            if (controlCells.openingTracePatchStableIds[
+                    group.firstPatchIndex + offset] != patch.stableId
+                || patch.ownerKind != SceneFluidOpeningPatchOwnerKind::Cell
+                || patch.cellIndex != group.cellIndex
+                || patch.openingId != group.openingId
+                || patch.negativeSideRegionId
+                    != group.negativeSideRegionId
+                || patch.positiveSideRegionId
+                    != group.positiveSideRegionId
+                || patch.role != group.role) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic opening group source is foreign");
+            }
+            const fluid::Vector3 normal = vector(
+                patch.unitNormalNegativeToPositive);
+            areaVector.x += patch.areaSquareMeters * normal.x;
+            areaVector.y += patch.areaSquareMeters * normal.y;
+            areaVector.z += patch.areaSquareMeters * normal.z;
+            firstMoment.x += patch.areaSquareMeters
+                * patch.centroidMeters.x;
+            firstMoment.y += patch.areaSquareMeters
+                * patch.centroidMeters.y;
+            firstMoment.z += patch.areaSquareMeters
+                * patch.centroidMeters.z;
+            summedArea += patch.areaSquareMeters;
+            sweepRate += patch.surfaceSweepRateCubicMetersPerSecond;
+        }
+        const auto& firstPatch = openingPatches.patches[
+            controlCells.openingTracePatchIndices[group.firstPatchIndex]];
+        const bool aggregated = group.patchCount > 1;
+        const double expectedArea = aggregated
+            ? std::sqrt(dot(areaVector, areaVector))
+            : firstPatch.areaSquareMeters;
+        const fluid::Vector3 expectedCentroid = aggregated
+            ? fluid::Vector3{
+                firstMoment.x / summedArea,
+                firstMoment.y / summedArea,
+                firstMoment.z / summedArea}
+            : vector(firstPatch.centroidMeters);
+        const fluid::Vector3 expectedNormal = aggregated
+            ? fluid::Vector3{
+                areaVector.x / expectedArea,
+                areaVector.y / expectedArea,
+                areaVector.z / expectedArea}
+            : vector(firstPatch.unitNormalNegativeToPositive);
+        const std::uint64_t expectedStableId = aggregated
+            ? openingGroupStableId(
+                group.cellIndex, group.openingId,
+                group.negativeSideRegionId,
+                group.positiveSideRegionId)
+            : firstPatch.stableId;
+        if ((aggregated
+                && !controlCells.settings.aggregateCoplanarOpeningPatches)
+            || group.stableId != expectedStableId
+            || group.areaSquareMeters != expectedArea
+            || group.centroidMeters != expectedCentroid
+            || group.unitNormalNegativeToPositive != expectedNormal
+            || group.surfaceSweepRateCubicMetersPerSecond != sweepRate) {
+            throw std::invalid_argument(
+                "scene fluid mimetic opening group aggregate changed");
+        }
+    }
+    for (std::size_t patchIndex = 0;
+         patchIndex < openingPatches.patches.size(); ++patchIndex) {
+        const bool expected = openingPatches.patches[patchIndex].ownerKind
+            == SceneFluidOpeningPatchOwnerKind::Cell;
+        if (seenOpeningPatches[patchIndex] != expected) {
+            throw std::invalid_argument(
+                "scene fluid mimetic opening group coverage is incomplete");
+        }
     }
 }
 
