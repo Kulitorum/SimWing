@@ -1593,7 +1593,12 @@ collocated velocity and momentum vector for each positive cell/region control
 directly from the exact corrected links. Its maximum speed, link-normal fit
 residual, and kinetic energy are published as diagnostics; this state is the
 input boundary for future conservative regional transport and currently does
-not alter either continuation path.
+not alter either continuation path. Later frames now advance a read-only
+regional transport candidate over those exact corrected links, including the
+bound bulk-predictor increment, donor-cell vector-momentum transfer, and graph
+viscosity. Its substeps, velocity change, momentum residual, and advective/
+viscous losses are published, but the candidate does not yet drive the next
+pressure solve.
 The ram-cell command shows the same conservative complete-reaction path acting
 on a multi-panel open fabric shell; it is a deformation/inflation precursor,
 not a resolved moving-cavity or aerodynamic-wing result.

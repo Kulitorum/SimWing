@@ -16,6 +16,7 @@
 #include "scene_fluid_pressure_face_link.h"
 #include "scene_fluid_region_connectivity.h"
 #include "scene_fluid_region_momentum.h"
+#include "scene_fluid_region_transport.h"
 #include "scene_fluid_surface.h"
 #include "scene_fluid_surface_transfer.h"
 #include "scene_structure.h"
@@ -192,6 +193,7 @@ struct BuiltCase {
     viewer::StructureFrameMapping frameMapping;
     std::optional<SceneFluidMimeticTraceFlowContinuation>
         traceFlowContinuation;
+    std::optional<SceneFluidRegionTransport> regionalTransport;
     std::optional<fluid::PeriodicFlowStrangSubcyclingDiagnostics> bulkFlow;
     std::optional<fluid::ProjectionDiagnostics> bulkProjection;
     double meanStreamwiseVelocityBeforePumpMetersPerSecond = 0.0;
@@ -371,6 +373,18 @@ void advanceFixedGeometryFlow(
             + std::to_string(candidateBulkFlow.finalDivergenceL2PerSecond)
             + ")");
     }
+    SceneFluidRegionTransportSettings regionalTransportSettings;
+    regionalTransportSettings.timeStepSeconds = settings.timeStepSeconds;
+    regionalTransportSettings.maximumSubsteps = 1024;
+    auto candidateRegionalTransport = advanceSceneFluidRegionMomentum(
+        built.regionalMomentum, built.pressureFaceLinks,
+        built.correctedFlow, built.grid,
+        built.correctedMac.velocityMetersPerSecond,
+        candidateVelocity, regionalTransportSettings);
+    if (!candidateRegionalTransport.diagnostics.accepted) {
+        throw std::runtime_error(
+            "frozen scene regional momentum transport was not accepted");
+    }
     const auto candidateOpeningFlux = evaluateSceneFluidOpeningFlux(
         built.surface.definition, built.surfaceState,
         built.openingCaps, built.openingQuadrature,
@@ -439,6 +453,7 @@ void advanceFixedGeometryFlow(
     built.pressureTransfer = std::move(candidatePressureTransfer);
     built.traceFlowContinuation =
         std::move(candidateTraceFlowContinuation);
+    built.regionalTransport = std::move(candidateRegionalTransport);
     built.bulkFlow = std::move(candidateBulkFlow);
     built.bulkProjection = candidateBulkProjection;
     built.meanStreamwiseVelocityBeforePumpMetersPerSecond = meanBeforePump;
@@ -505,6 +520,21 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.regionalKineticEnergyJoules =
         built.regionalMomentum.diagnostics.kineticEnergyJoules;
     result.flowAdvanceCount = built.flowAdvanceCount;
+    if (built.regionalTransport) {
+        result.regionalTransportSubstepCount =
+            built.regionalTransport->diagnostics.substepCount;
+        result.regionalTransportMaximumVelocityChangeMetersPerSecond =
+            built.regionalTransport->diagnostics
+                .maximumVelocityChangeMetersPerSecond;
+        result.regionalTransportMomentumResidualKilogramMetersPerSecond =
+            built.regionalTransport->diagnostics
+                .momentumResidualNormKilogramMetersPerSecond;
+        result.regionalTransportAdvectiveEnergyLossJoules =
+            built.regionalTransport->diagnostics
+                .advectiveEnergyLossJoules;
+        result.regionalTransportViscousEnergyLossJoules =
+            built.regionalTransport->diagnostics.viscousEnergyLossJoules;
+    }
     result.meanStreamwiseVelocityBeforePumpMetersPerSecond =
         built.meanStreamwiseVelocityBeforePumpMetersPerSecond;
     result.streamwisePumpIncrementMetersPerSecond =
@@ -552,6 +582,16 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         && std::isfinite(
             result.maximumRegionalLinkVelocityResidualMetersPerSecond)
         && std::isfinite(result.regionalKineticEnergyJoules)
+        && (!built.regionalTransport
+            || built.regionalTransport->diagnostics.accepted)
+        && std::isfinite(
+            result.regionalTransportMaximumVelocityChangeMetersPerSecond)
+        && std::isfinite(
+            result.regionalTransportMomentumResidualKilogramMetersPerSecond)
+        && std::isfinite(
+            result.regionalTransportAdvectiveEnergyLossJoules)
+        && std::isfinite(
+            result.regionalTransportViscousEnergyLossJoules)
         && std::isfinite(
             result.maximumCarriedTraceCorrectionCubicMetersPerSecond)
         && std::isfinite(
@@ -868,6 +908,34 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
         "frozen_scene.regional_kinetic_energy", "J",
         viewer::FieldAssociation::Global,
         {state.diagnostics.regionalKineticEnergyJoules},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.regional_transport_substeps", "1",
+        viewer::FieldAssociation::Global,
+        {static_cast<double>(
+            state.diagnostics.regionalTransportSubstepCount)},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.regional_transport_velocity_change", "m/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics
+             .regionalTransportMaximumVelocityChangeMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.regional_transport_momentum_residual", "kg*m/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics
+             .regionalTransportMomentumResidualKilogramMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.regional_transport_advective_loss", "J",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.regionalTransportAdvectiveEnergyLossJoules},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.regional_transport_viscous_loss", "J",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.regionalTransportViscousEnergyLossJoules},
     });
     frame.scalarFields.push_back({
         "frozen_scene.embedded_opening_traces", "1",

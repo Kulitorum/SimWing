@@ -1454,7 +1454,10 @@ makes this a certified aerodynamic solver.
    validated. Accepted corrected traces now also reconstruct the existing
    collocated region-momentum state directly, including explicit-normal fits
    at embedded openings. The frozen worker publishes this state's speed,
-   link-normal residual, and energy read-only; it does not yet transport it.
+   link-normal residual, and energy read-only. Later frames advance a
+   conservative donor/graph-viscosity transport candidate over those exact
+   links and publish its closure/loss diagnostics; that candidate does not yet
+   drive the next pressure solve.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
   loads/state, trusted constraint/membrane/bending assembly, explicit optional
   fabric self-contact, rigid-pilot suspension, diagnostics, and composite
@@ -1680,7 +1683,8 @@ makes this a certified aerodynamic solver.
   corresponding final sample to `72176.4 Pa` and `24295.1 N`, confirming a
   repeated boundary-impulse loss without making that remaining load physical.
   Exact corrected links additionally reconstruct one diagnostic collocated
-  momentum vector per positive region control without feeding the solver yet.
+  momentum vector per positive region control. A read-only conservative
+  regional transport candidate consumes it without feeding pressure yet.
   The coarse periodic domain, pump, and
   pressure magnitude are not aerodynamic validation; no external-domain wake,
   polar/refinement study, or structural feedback is present.

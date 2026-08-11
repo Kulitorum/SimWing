@@ -168,6 +168,17 @@ void testFrozenScenePressureCase() {
                      .maximumRegionalLinkVelocityResidualMetersPerSecond
                   >= 0.0
               && diagnostics.regionalKineticEnergyJoules > 0.0
+              && diagnostics.regionalTransportSubstepCount > 0
+              && diagnostics
+                     .regionalTransportMaximumVelocityChangeMetersPerSecond
+                  > 0.0
+              && diagnostics
+                     .regionalTransportMomentumResidualKilogramMetersPerSecond
+                  < 1.0e-10
+              && diagnostics.regionalTransportAdvectiveEnergyLossJoules
+                  >= 0.0
+              && diagnostics.regionalTransportViscousEnergyLossJoules
+                  >= 0.0
               && diagnostics.bulkFlowSubstepCount > 0
               && diagnostics.bulkProjectionDivergenceAfterPerSecond
                   < diagnostics.bulkProjectionDivergenceBeforePerSecond

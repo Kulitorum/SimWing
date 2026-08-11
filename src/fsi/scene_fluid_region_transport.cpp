@@ -1,9 +1,12 @@
 #include "scene_fluid_region_transport.h"
 
+#include "scene_fluid_mimetic_pressure_flow.h"
+
 #include <algorithm>
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <type_traits>
 
@@ -330,19 +333,210 @@ void updateVelocities(
     }
 }
 
+struct RegionTransportControlSource {
+    std::size_t controlVolumeIndex = 0;
+    std::uint64_t stableId = 0;
+    std::size_t componentIndex = 0;
+    double geometryVolumeChangeRateCubicMetersPerSecond = 0.0;
+};
+
+struct RegionTransportLinkSource {
+    std::size_t linkIndex = 0;
+    std::uint64_t stableId = 0;
+    SceneFluidPressureFaceLinkKind kind =
+        SceneFluidPressureFaceLinkKind::SameRegion;
+    std::size_t minusControlVolumeIndex = 0;
+    std::size_t plusControlVolumeIndex = 0;
+    double correctedRelativeVolumeFlowRateCubicMetersPerSecond = 0.0;
+};
+
+struct RegionTransportFlowSource {
+    std::uint64_t fingerprint = 0;
+    std::uint64_t pressureFaceLinkFingerprint = 0;
+    std::uint64_t pressureVolumeRateFingerprint = 0;
+    std::uint64_t acceptedStepCount = 0;
+    double simulationTimeSeconds = 0.0;
+    double densityKgPerCubicMeter = 0.0;
+    double absoluteContinuityToleranceCubicMetersPerSecond = 0.0;
+    double relativeContinuityTolerance = 0.0;
+    double predictedContinuityResidualMaximumCubicMetersPerSecond = 0.0;
+    bool usesMovingVolumeRates = false;
+    std::vector<RegionTransportControlSource> controls;
+    std::vector<RegionTransportLinkSource> links;
+};
+
+RegionTransportFlowSource regionTransportFlowSource(
+    const SceneFluidPressureProjection& projection) {
+    validateSceneFluidPressureProjectionIntegrity(projection);
+    RegionTransportFlowSource result;
+    result.fingerprint = projection.fingerprint;
+    result.pressureFaceLinkFingerprint =
+        projection.pressureFaceLinkFingerprint;
+    result.pressureVolumeRateFingerprint =
+        projection.pressureVolumeRateFingerprint;
+    result.acceptedStepCount = projection.acceptedStepCount;
+    result.simulationTimeSeconds = projection.simulationTimeSeconds;
+    result.densityKgPerCubicMeter =
+        projection.settings.densityKgPerCubicMeter;
+    result.absoluteContinuityToleranceCubicMetersPerSecond =
+        projection.settings
+            .absoluteCorrectedVolumeRateToleranceCubicMetersPerSecond;
+    result.relativeContinuityTolerance =
+        projection.settings.relativeCorrectedVolumeRateTolerance;
+    result.predictedContinuityResidualMaximumCubicMetersPerSecond =
+        projection.diagnostics
+            .predictedContinuityResidualMaximumCubicMetersPerSecond;
+    result.usesMovingVolumeRates =
+        projection.diagnostics.usesMovingVolumeRates;
+    result.controls.reserve(projection.controlVolumes.size());
+    for (const auto& source : projection.controlVolumes) {
+        result.controls.push_back({
+            source.controlVolumeIndex,
+            source.stableId,
+            source.componentIndex,
+            source.geometryVolumeChangeRateCubicMetersPerSecond,
+        });
+    }
+    result.links.reserve(projection.links.size());
+    for (const auto& source : projection.links) {
+        result.links.push_back({
+            source.linkIndex,
+            source.stableId,
+            source.kind,
+            source.minusControlVolumeIndex,
+            source.plusControlVolumeIndex,
+            source.correctedRelativeVolumeFlowRateCubicMetersPerSecond,
+        });
+    }
+    return result;
+}
+
+RegionTransportFlowSource regionTransportFlowSource(
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow) {
+    validateSceneFluidMimeticCorrectedTraceFlowIntegrity(correctedFlow);
+    if (!correctedFlow.accepted
+        || sourceMomentum.pressureProjectionFingerprint
+            != correctedFlow.fingerprint
+        || sourceMomentum.pressureFaceLinkFingerprint
+            != faceLinks.fingerprint
+        || correctedFlow.pressureFaceLinkFingerprint
+            != faceLinks.fingerprint
+        || correctedFlow.acceptedStepCount
+            != sourceMomentum.acceptedStepCount
+        || correctedFlow.simulationTimeSeconds
+            != sourceMomentum.simulationTimeSeconds
+        || correctedFlow.densityKgPerCubicMeter
+            != sourceMomentum.densityKgPerCubicMeter
+        || correctedFlow.traces.size() != faceLinks.links.size()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic region transport source is foreign");
+    }
+
+    std::map<std::uint64_t, std::size_t> embeddedLinkByPatchId;
+    for (const auto& link : faceLinks.links) {
+        if (link.geometryKind
+            == SceneFluidPressureLinkGeometryKind::EmbeddedOpening
+            && (link.openingPatchStableId == 0
+                || !embeddedLinkByPatchId.emplace(
+                        link.openingPatchStableId,
+                        link.linkIndex).second)) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region transport embedded identity is invalid");
+        }
+    }
+    std::vector<const SceneFluidMimeticCorrectedTrace*> traceByLink(
+        faceLinks.links.size(), nullptr);
+    for (const auto& trace : correctedFlow.traces) {
+        std::size_t linkIndex = trace.sourceIndex;
+        if (trace.kind
+            == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace) {
+            const auto found = embeddedLinkByPatchId.find(
+                trace.sourceStableId);
+            if (found == embeddedLinkByPatchId.end()) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region transport embedded trace is missing");
+            }
+            linkIndex = found->second;
+        } else if (trace.kind
+                   != SceneFluidMimeticHalfFaceKind::CartesianTrace) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region transport trace kind is invalid");
+        }
+        if (linkIndex >= traceByLink.size()
+            || traceByLink[linkIndex] != nullptr) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region transport trace ownership is invalid");
+        }
+        const auto& link = faceLinks.links[linkIndex];
+        if (link.linkIndex != linkIndex
+            || (trace.kind
+                    == SceneFluidMimeticHalfFaceKind::CartesianTrace
+                && (link.geometryKind
+                        != SceneFluidPressureLinkGeometryKind::CartesianFace
+                    || trace.sourceStableId != link.stableId))
+            || (trace.kind
+                    == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace
+                && (link.geometryKind
+                        != SceneFluidPressureLinkGeometryKind::EmbeddedOpening
+                    || trace.sourceStableId
+                        != link.openingPatchStableId))) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region transport trace binding is invalid");
+        }
+        traceByLink[linkIndex] = &trace;
+    }
+
+    RegionTransportFlowSource result;
+    result.fingerprint = correctedFlow.fingerprint;
+    result.pressureFaceLinkFingerprint = faceLinks.fingerprint;
+    result.acceptedStepCount = correctedFlow.acceptedStepCount;
+    result.simulationTimeSeconds = correctedFlow.simulationTimeSeconds;
+    result.densityKgPerCubicMeter = correctedFlow.densityKgPerCubicMeter;
+    result.absoluteContinuityToleranceCubicMetersPerSecond =
+        correctedFlow.correctedContinuityToleranceCubicMetersPerSecond;
+    result.controls.reserve(sourceMomentum.controlVolumes.size());
+    for (const auto& source : sourceMomentum.controlVolumes) {
+        result.controls.push_back({
+            source.controlVolumeIndex,
+            source.stableId,
+            source.componentIndex,
+            0.0,
+        });
+    }
+    result.links.reserve(faceLinks.links.size());
+    for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
+        const auto& source = faceLinks.links[index];
+        const auto* trace = traceByLink[index];
+        if (trace == nullptr) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region transport missed a link");
+        }
+        result.links.push_back({
+            source.linkIndex,
+            source.stableId,
+            source.kind,
+            source.minusControlVolumeIndex,
+            source.plusControlVolumeIndex,
+            trace->correctedRelativeVolumeFlowRateCubicMetersPerSecond,
+        });
+    }
+    return result;
+}
+
 } // namespace
 
 static SceneFluidRegionTransport advanceSceneFluidRegionMomentumImpl(
     const SceneFluidRegionMomentumState& sourceMomentum,
     const SceneFluidPressureFaceLinkSet& faceLinks,
-    const SceneFluidPressureProjection& correctedProjection,
+    const RegionTransportFlowSource& flowSource,
     const fluid::PeriodicCartesianGrid* const bulkGrid,
     const fluid::MacVelocityField* const previousBulkVelocity,
     const fluid::MacVelocityField* const currentBulkVelocity,
     const SceneFluidRegionTransportSettings& settings,
     const SceneFluidRegionTransportLimits& limits) {
     validateSceneFluidRegionMomentumStateIntegrity(sourceMomentum);
-    validateSceneFluidPressureProjectionIntegrity(correctedProjection);
     if (!validSettings(settings)) {
         throw std::invalid_argument(
             "scene fluid region transport settings are invalid");
@@ -365,21 +559,20 @@ static SceneFluidRegionTransport advanceSceneFluidRegionMomentumImpl(
     if (faceLinks.version != sceneFluidPressureFaceLinkVersion
         || faceLinks.fingerprint == 0
         || sourceMomentum.pressureProjectionFingerprint
-            != correctedProjection.fingerprint
+            != flowSource.fingerprint
         || sourceMomentum.pressureFaceLinkFingerprint
             != faceLinks.fingerprint
-        || correctedProjection.pressureFaceLinkFingerprint
+        || flowSource.pressureFaceLinkFingerprint
             != faceLinks.fingerprint
-        || !correctedProjection.diagnostics.accepted
         || sourceMomentum.acceptedStepCount
-            != correctedProjection.acceptedStepCount
+            != flowSource.acceptedStepCount
         || sourceMomentum.simulationTimeSeconds
-            != correctedProjection.simulationTimeSeconds
+            != flowSource.simulationTimeSeconds
         || sourceMomentum.densityKgPerCubicMeter
-            != correctedProjection.settings.densityKgPerCubicMeter
+            != flowSource.densityKgPerCubicMeter
         || sourceMomentum.controlVolumes.size()
-            != correctedProjection.controlVolumes.size()
-        || correctedProjection.links.size() != faceLinks.links.size()) {
+            != flowSource.controls.size()
+        || flowSource.links.size() != faceLinks.links.size()) {
         throw std::invalid_argument(
             "scene fluid region transport identity is invalid");
     }
@@ -396,10 +589,10 @@ static SceneFluidRegionTransport advanceSceneFluidRegionMomentumImpl(
 
     SceneFluidRegionTransport result;
     result.sourceMomentumFingerprint = sourceMomentum.fingerprint;
-    result.pressureProjectionFingerprint = correctedProjection.fingerprint;
+    result.pressureProjectionFingerprint = flowSource.fingerprint;
     result.pressureFaceLinkFingerprint = faceLinks.fingerprint;
     result.pressureVolumeRateFingerprint =
-        correctedProjection.pressureVolumeRateFingerprint;
+        flowSource.pressureVolumeRateFingerprint;
     result.previousBulkVelocityFingerprint = usesBulkVelocityIncrement
         ? sceneFluidOpeningFluxVelocityFingerprint(
             *bulkGrid, *previousBulkVelocity) : 0;
@@ -416,7 +609,7 @@ static SceneFluidRegionTransport advanceSceneFluidRegionMomentumImpl(
     diagnostics.controlVolumeCount = sourceMomentum.controlVolumes.size();
     diagnostics.linkCount = faceLinks.links.size();
     diagnostics.usesMovingVolumeRates =
-        correctedProjection.diagnostics.usesMovingVolumeRates;
+        flowSource.usesMovingVolumeRates;
     diagnostics.usesBulkVelocityIncrement = usesBulkVelocityIncrement;
     std::vector<SceneFluidRegionTransportControlVolume> forcedControls;
     forcedControls.reserve(sourceMomentum.controlVolumes.size());
@@ -467,7 +660,7 @@ static SceneFluidRegionTransport advanceSceneFluidRegionMomentumImpl(
     for (std::size_t index = 0;
          index < sourceMomentum.controlVolumes.size(); ++index) {
         const auto& source = sourceMomentum.controlVolumes[index];
-        const auto& projected = correctedProjection.controlVolumes[index];
+        const auto& projected = flowSource.controls[index];
         if (projected.controlVolumeIndex != index
             || projected.stableId != source.stableId
             || projected.componentIndex != source.componentIndex) {
@@ -499,7 +692,7 @@ static SceneFluidRegionTransport advanceSceneFluidRegionMomentumImpl(
     }
     for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
         const auto& source = faceLinks.links[index];
-        const auto& projected = correctedProjection.links[index];
+        const auto& projected = flowSource.links[index];
         if (source.linkIndex != index
             || source.minusControlVolumeIndex >= outwardRates.size()
             || source.plusControlVolumeIndex >= outwardRates.size()
@@ -560,10 +753,9 @@ static SceneFluidRegionTransport advanceSceneFluidRegionMomentumImpl(
                 * viscousGeometryWeights[index] / stabilityVolume);
     }
     const double continuityTolerance = std::max(
-        correctedProjection.settings
-            .absoluteCorrectedVolumeRateToleranceCubicMetersPerSecond,
-        correctedProjection.settings.relativeCorrectedVolumeRateTolerance
-            * correctedProjection.diagnostics
+        flowSource.absoluteContinuityToleranceCubicMetersPerSecond,
+        flowSource.relativeContinuityTolerance
+            * flowSource
                 .predictedContinuityResidualMaximumCubicMetersPerSecond);
     if (diagnostics.failureStage
             == SceneFluidRegionTransportFailureStage::None
@@ -771,9 +963,27 @@ SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
     const SceneFluidPressureProjection& correctedProjection,
     const SceneFluidRegionTransportSettings& settings,
     const SceneFluidRegionTransportLimits& limits) {
+    const auto flowSource = regionTransportFlowSource(
+        correctedProjection);
     return advanceSceneFluidRegionMomentumImpl(
-        sourceMomentum, faceLinks, correctedProjection,
+        sourceMomentum, faceLinks, flowSource,
         nullptr, nullptr, nullptr, settings, limits);
+}
+
+SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
+    const SceneFluidRegionTransportSettings& settings,
+    const SceneFluidRegionTransportLimits& limits) {
+    const auto flowSource = regionTransportFlowSource(
+        sourceMomentum, faceLinks, correctedFlow);
+    auto result = advanceSceneFluidRegionMomentumImpl(
+        sourceMomentum, faceLinks, flowSource,
+        nullptr, nullptr, nullptr, settings, limits);
+    validateSceneFluidRegionTransport(
+        result, sourceMomentum, faceLinks, correctedFlow);
+    return result;
 }
 
 SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
@@ -785,10 +995,32 @@ SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
     const fluid::MacVelocityField& currentBulkVelocityMetersPerSecond,
     const SceneFluidRegionTransportSettings& settings,
     const SceneFluidRegionTransportLimits& limits) {
+    const auto flowSource = regionTransportFlowSource(
+        correctedProjection);
     return advanceSceneFluidRegionMomentumImpl(
-        sourceMomentum, faceLinks, correctedProjection,
+        sourceMomentum, faceLinks, flowSource,
         &grid, &previousBulkVelocityMetersPerSecond,
         &currentBulkVelocityMetersPerSecond, settings, limits);
+}
+
+SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::MacVelocityField& previousBulkVelocityMetersPerSecond,
+    const fluid::MacVelocityField& currentBulkVelocityMetersPerSecond,
+    const SceneFluidRegionTransportSettings& settings,
+    const SceneFluidRegionTransportLimits& limits) {
+    const auto flowSource = regionTransportFlowSource(
+        sourceMomentum, faceLinks, correctedFlow);
+    auto result = advanceSceneFluidRegionMomentumImpl(
+        sourceMomentum, faceLinks, flowSource,
+        &grid, &previousBulkVelocityMetersPerSecond,
+        &currentBulkVelocityMetersPerSecond, settings, limits);
+    validateSceneFluidRegionTransport(
+        result, sourceMomentum, faceLinks, correctedFlow);
+    return result;
 }
 
 void validateSceneFluidRegionTransportIntegrity(
@@ -934,6 +1166,48 @@ void validateSceneFluidRegionTransport(
                 || control.volumeCubicMeters != expectedVolume) {
                 throw std::invalid_argument(
                     "scene fluid region transport control binding is invalid");
+            }
+        }
+    }
+}
+
+void validateSceneFluidRegionTransport(
+    const SceneFluidRegionTransport& transport,
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow) {
+    validateSceneFluidRegionTransportIntegrity(transport);
+    validateSceneFluidRegionMomentumStateIntegrity(sourceMomentum);
+    validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
+    validateSceneFluidMimeticCorrectedTraceFlowIntegrity(correctedFlow);
+    if (!correctedFlow.accepted
+        || transport.sourceMomentumFingerprint != sourceMomentum.fingerprint
+        || transport.pressureProjectionFingerprint
+            != correctedFlow.fingerprint
+        || transport.pressureFaceLinkFingerprint != faceLinks.fingerprint
+        || transport.pressureVolumeRateFingerprint != 0
+        || sourceMomentum.pressureProjectionFingerprint
+            != correctedFlow.fingerprint
+        || correctedFlow.pressureFaceLinkFingerprint
+            != faceLinks.fingerprint
+        || transport.acceptedStepCount != sourceMomentum.acceptedStepCount
+        || transport.sourceSimulationTimeSeconds
+            != sourceMomentum.simulationTimeSeconds
+        || transport.densityKgPerCubicMeter
+            != sourceMomentum.densityKgPerCubicMeter) {
+        throw std::invalid_argument(
+            "scene fluid mimetic region transport binding is invalid");
+    }
+    if (transport.diagnostics.accepted) {
+        for (std::size_t index = 0;
+             index < transport.controlVolumes.size(); ++index) {
+            const auto& control = transport.controlVolumes[index];
+            const auto& source = sourceMomentum.controlVolumes[index];
+            if (control.controlVolumeIndex != source.controlVolumeIndex
+                || control.stableId != source.stableId
+                || control.volumeCubicMeters != source.volumeCubicMeters) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region transport control binding is invalid");
             }
         }
     }

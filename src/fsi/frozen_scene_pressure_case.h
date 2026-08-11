@@ -12,7 +12,7 @@
 namespace simwing::fsi {
 
 inline constexpr const char* frozenScenePressureSolverId =
-    "frozen-scene-mimetic-pressure-v3";
+    "frozen-scene-mimetic-pressure-v4";
 
 struct FrozenScenePressureCaseSettings {
     fluid::GridCellCounts cellCounts{2, 2, 2};
@@ -55,6 +55,11 @@ struct FrozenScenePressureCaseDiagnostics {
     double maximumRegionalVelocityMetersPerSecond = 0.0;
     double maximumRegionalLinkVelocityResidualMetersPerSecond = 0.0;
     double regionalKineticEnergyJoules = 0.0;
+    std::size_t regionalTransportSubstepCount = 0;
+    double regionalTransportMaximumVelocityChangeMetersPerSecond = 0.0;
+    double regionalTransportMomentumResidualKilogramMetersPerSecond = 0.0;
+    double regionalTransportAdvectiveEnergyLossJoules = 0.0;
+    double regionalTransportViscousEnergyLossJoules = 0.0;
     std::size_t embeddedOpeningTraceCount = 0;
     std::size_t flowAdvanceCount = 0;
     std::size_t bulkFlowSubstepCount = 0;
@@ -80,7 +85,9 @@ struct FrozenScenePressureCaseDiagnostics {
 // periodic bulk transport, and reapply the fixed-geometry mimetic pressure
 // boundary. An opt-in continuation retains the exact last corrected trace flow
 // and applies only the bulk predictor delta before that pressure solve. Every
-// path commits only after pressure, continuity, and conservative load transfer
+// later frame also evaluates read-only conservative regional momentum transport
+// over the exact corrected links; it does not yet drive pressure. Every path
+// commits only after pressure, continuity, and conservative load transfer
 // accept. This is an integration probe, not a validated external-flow wake,
 // lift polar, or two-way FSI step.
 class FrozenScenePressureCase final {

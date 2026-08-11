@@ -3490,7 +3490,13 @@ incident to embedded openings use the bounded three-dimensional normal-equation
 fit with the collapsed MAC velocity only in unconstrained directions. The
 state is deterministic and read-only in this checkpoint; reported regional
 speed, link-normal residual, and kinetic energy quantify the next transport
-input without changing pressure or load arithmetic.
+input without changing pressure or load arithmetic. Later frames also run the
+existing conservative regional donor/graph-viscosity transport directly from
+the mimetic corrected-flow source, with the same bound bulk-MAC increment used
+by the diagnostic worker. The accepted candidate reports exact internal
+momentum closure and nonnegative advective/viscous loss, but remains read-only
+until a mimetic regional-link predictor is connected to the next pressure
+transaction.
 The first uniform, explicitly zero-ramp `4^3` real-wing run accepts 358 controls
 after 1,472 PCG iterations. It resolves all material loads using 240 bounded
 zero-volume-side

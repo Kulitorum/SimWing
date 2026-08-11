@@ -102,6 +102,8 @@ struct SceneFluidRegionTransport {
     std::uint32_t version = sceneFluidRegionTransportVersion;
     std::uint64_t fingerprint = 0;
     std::uint64_t sourceMomentumFingerprint = 0;
+    // Legacy field name retained for checkpoint compatibility; strong source
+    // validation binds it to the graph projection or mimetic corrected flow.
     std::uint64_t pressureProjectionFingerprint = 0;
     std::uint64_t pressureFaceLinkFingerprint = 0;
     std::uint64_t pressureVolumeRateFingerprint = 0;
@@ -126,6 +128,13 @@ struct SceneFluidRegionTransport {
     const SceneFluidRegionTransportSettings& settings = {},
     const SceneFluidRegionTransportLimits& limits = {});
 
+[[nodiscard]] SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
+    const SceneFluidRegionTransportSettings& settings = {},
+    const SceneFluidRegionTransportLimits& limits = {});
+
 // Applies the collocated difference between two consecutive bulk MAC
 // predictors as an explicit body-flow split before conservative region
 // transport. This retains cut-region velocity differences while transmitting
@@ -141,6 +150,16 @@ struct SceneFluidRegionTransport {
     const SceneFluidRegionTransportSettings& settings = {},
     const SceneFluidRegionTransportLimits& limits = {});
 
+[[nodiscard]] SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::MacVelocityField& previousBulkVelocityMetersPerSecond,
+    const fluid::MacVelocityField& currentBulkVelocityMetersPerSecond,
+    const SceneFluidRegionTransportSettings& settings = {},
+    const SceneFluidRegionTransportLimits& limits = {});
+
 void validateSceneFluidRegionTransportIntegrity(
     const SceneFluidRegionTransport& transport);
 
@@ -149,5 +168,11 @@ void validateSceneFluidRegionTransport(
     const SceneFluidRegionMomentumState& sourceMomentum,
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidPressureProjection& correctedProjection);
+
+void validateSceneFluidRegionTransport(
+    const SceneFluidRegionTransport& transport,
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow);
 
 } // namespace simwing::fsi

@@ -1950,6 +1950,7 @@ int main(int argc, char* argv[]) {
                     "[%.6g %.6g %.6g] N, corrected-continuity=%.3g m^3/s, "
                     "collapsed-speed=%.6g m/s, embedded-openings=%zu, "
                     "regional-speed=%.6g m/s, regional-link-residual=%.3g m/s, "
+                    "regional-transport-substeps=%zu, regional-transport-residual=%.3g kg*m/s, "
                     "flow-advances=%zu, trace-continuation=%u, trace-carry=%.3g m^3/s, trace-delta=%.3g m^3/s, "
                     "bulk-substeps=%zu, bulk-dv=%.3g m/s, "
                     "transfer-residual=%.3g N, "
@@ -1977,6 +1978,9 @@ int main(int argc, char* argv[]) {
                     diagnostics.maximumRegionalVelocityMetersPerSecond,
                     diagnostics
                         .maximumRegionalLinkVelocityResidualMetersPerSecond,
+                    diagnostics.regionalTransportSubstepCount,
+                    diagnostics
+                        .regionalTransportMomentumResidualKilogramMetersPerSecond,
                     diagnostics.flowAdvanceCount,
                     diagnostics.usesCorrectedTraceFlowContinuation ? 1U : 0U,
                     diagnostics
