@@ -51,6 +51,9 @@ void validateSettings(const FrozenScenePressureCaseSettings& settings) {
         || !std::isfinite(settings.backgroundWindMetersPerSecond.x)
         || !std::isfinite(settings.backgroundWindMetersPerSecond.y)
         || !std::isfinite(settings.backgroundWindMetersPerSecond.z)
+        || !std::isfinite(settings.windRampSeconds)
+        || settings.windRampSeconds < 0.0
+        || settings.windRampSeconds > 60.0
         || !std::isfinite(
             settings.diagnosticPerturbationSpeedMetersPerSecond)
         || settings.diagnosticPerturbationSpeedMetersPerSecond < 0.0
@@ -115,7 +118,8 @@ fluid::PeriodicCartesianGrid makeGrid(
 
 fluid::MacVelocityField makePredictor(
     const fluid::PeriodicCartesianGrid& grid,
-    const FrozenScenePressureCaseSettings& settings) {
+    const FrozenScenePressureCaseSettings& settings,
+    const double rampFraction) {
     fluid::MacVelocityField result(grid);
     const auto counts = grid.cellCounts();
     for (std::size_t k = 0; k < counts.z; ++k) {
@@ -124,21 +128,36 @@ fluid::MacVelocityField makePredictor(
                 const std::size_t index = grid.cellIndex(i, j, k);
                 const double sample = static_cast<double>(index + 1);
                 result.xFaces()[index] =
-                    settings.backgroundWindMetersPerSecond.x
+                    rampFraction
+                        * settings.backgroundWindMetersPerSecond.x
                     + settings.diagnosticPerturbationSpeedMetersPerSecond
                         * 0.01 * sample;
                 result.yFaces()[index] =
-                    settings.backgroundWindMetersPerSecond.y
+                    rampFraction
+                        * settings.backgroundWindMetersPerSecond.y
                     + settings.diagnosticPerturbationSpeedMetersPerSecond
                         * 0.02 * sample;
                 result.zFaces()[index] =
-                    settings.backgroundWindMetersPerSecond.z
+                    rampFraction
+                        * settings.backgroundWindMetersPerSecond.z
                     - settings.diagnosticPerturbationSpeedMetersPerSecond
                         * 0.015 * sample;
             }
         }
     }
     return result;
+}
+
+double windRampFraction(
+    const FrozenScenePressureCaseSettings& settings,
+    const std::size_t sampleNumber) {
+    if (settings.windRampSeconds == 0.0) {
+        return 1.0;
+    }
+    return std::min(
+        static_cast<double>(sampleNumber) * settings.timeStepSeconds
+            / settings.windRampSeconds,
+        1.0);
 }
 
 double meanXVelocity(const fluid::MacVelocityField& velocity) {
@@ -173,6 +192,7 @@ struct BuiltCase {
     std::optional<fluid::ProjectionDiagnostics> bulkProjection;
     double meanStreamwiseVelocityBeforePumpMetersPerSecond = 0.0;
     double streamwisePumpIncrementMetersPerSecond = 0.0;
+    double windRampFraction = 0.0;
     std::size_t flowAdvanceCount = 0;
 };
 
@@ -231,7 +251,9 @@ BuiltCase buildCase(
         openingCaps, openingQuadrature, openingPatches,
         openingFaceCrossings, cappedFacePartitions, cellVolumes,
         connectivity, pressureVolumes);
-    const auto predictor = makePredictor(grid, settings);
+    const double initialRampFraction = windRampFraction(settings, 1);
+    const auto predictor = makePredictor(
+        grid, settings, initialRampFraction);
     const auto openingFlux = evaluateSceneFluidOpeningFlux(
         surface.definition, state, openingCaps, openingQuadrature,
         openingPatches, grid, predictor);
@@ -265,7 +287,7 @@ BuiltCase buildCase(
         pressure.pressureEpoch.acceptedPressureSamples);
     auto frameMapping = viewer::makeStructureFrameMapping(
         scene, assembly, structure);
-    return {
+    BuiltCase result{
         std::move(scene), std::move(surface), std::move(assembly),
         std::move(structure), std::move(state), std::move(transfer),
         std::move(grid), std::move(gridEpoch), std::move(openingCaps),
@@ -275,6 +297,8 @@ BuiltCase buildCase(
         std::move(correctedFlow), std::move(correctedMac),
         std::move(pressureTransfer), std::move(frameMapping),
     };
+    result.windRampFraction = initialRampFraction;
+    return result;
 }
 
 void advanceFixedGeometryFlow(
@@ -282,8 +306,12 @@ void advanceFixedGeometryFlow(
     const FrozenScenePressureCaseSettings& settings) {
     auto candidateVelocity = built.correctedMac.velocityMetersPerSecond;
     const double meanBeforePump = meanXVelocity(candidateVelocity);
+    const double candidateRampFraction = windRampFraction(
+        settings, built.flowAdvanceCount + 2);
     const double pumpIncrement =
-        settings.backgroundWindMetersPerSecond.x - meanBeforePump;
+        candidateRampFraction
+            * settings.backgroundWindMetersPerSecond.x
+        - meanBeforePump;
     for (double& value : candidateVelocity.xFaces()) {
         value += pumpIncrement;
     }
@@ -363,6 +391,7 @@ void advanceFixedGeometryFlow(
     built.bulkProjection = candidateBulkProjection;
     built.meanStreamwiseVelocityBeforePumpMetersPerSecond = meanBeforePump;
     built.streamwisePumpIncrementMetersPerSecond = pumpIncrement;
+    built.windRampFraction = candidateRampFraction;
     ++built.flowAdvanceCount;
 }
 
@@ -372,6 +401,7 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.gridCellCounts = built.grid.cellCounts();
     result.gridLowerMeters = built.grid.lowerMeters();
     result.gridUpperMeters = built.grid.upperMeters();
+    result.windRampFraction = built.windRampFraction;
     result.pressureControlCount =
         built.pressure.controlCells.controlCells.size();
     result.sharedTraceCount =
@@ -434,6 +464,9 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         && transfer.finite
         && std::isfinite(
             result.maximumPressureExtrapolationDistanceMeters)
+        && std::isfinite(result.windRampFraction)
+        && result.windRampFraction >= 0.0
+        && result.windRampFraction <= 1.0
         && std::isfinite(result.maximumAbsolutePressureDifferencePascals)
         && std::isfinite(
             result.maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond)
@@ -572,6 +605,7 @@ struct FrozenScenePressureCase::Implementation {
         stepSettings.gravityMetersPerSecondSquared = {};
         diagnostics.backgroundWindMetersPerSecond =
             settings.backgroundWindMetersPerSecond;
+        diagnostics.windRampSeconds = settings.windRampSeconds;
         diagnostics.diagnosticPerturbationSpeedMetersPerSecond =
             settings.diagnosticPerturbationSpeedMetersPerSecond;
         if (!diagnostics.finite) {
@@ -614,6 +648,8 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
         state.diagnostics = makeDiagnostics(state.built);
         state.diagnostics.backgroundWindMetersPerSecond =
             state.settings.backgroundWindMetersPerSecond;
+        state.diagnostics.windRampSeconds =
+            state.settings.windRampSeconds;
         state.diagnostics.diagnosticPerturbationSpeedMetersPerSecond =
             state.settings.diagnosticPerturbationSpeedMetersPerSecond;
     }
@@ -763,6 +799,16 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
              .diagnosticPerturbationSpeedMetersPerSecond},
     });
     frame.scalarFields.push_back({
+        "frozen_scene.wind_ramp_fraction", "1",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.windRampFraction},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.wind_ramp_duration", "s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.windRampSeconds},
+    });
+    frame.scalarFields.push_back({
         "frozen_scene.bulk_substeps", "1",
         viewer::FieldAssociation::Global,
         {static_cast<double>(state.diagnostics.bulkFlowSubstepCount)},
@@ -821,6 +867,16 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
         {{state.settings.backgroundWindMetersPerSecond.x,
           state.settings.backgroundWindMetersPerSecond.y,
           state.settings.backgroundWindMetersPerSecond.z}},
+    });
+    frame.vectorFields.push_back({
+        "frozen_scene.current_target_wind", "m/s",
+        viewer::FieldAssociation::Global,
+        {{state.diagnostics.windRampFraction
+              * state.settings.backgroundWindMetersPerSecond.x,
+          state.diagnostics.windRampFraction
+              * state.settings.backgroundWindMetersPerSecond.y,
+          state.diagnostics.windRampFraction
+              * state.settings.backgroundWindMetersPerSecond.z}},
     });
 
     viewer::ProtocolError error;

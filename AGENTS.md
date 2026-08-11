@@ -97,7 +97,7 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
-.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-x MPS] [--perturbation MPS] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
+.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
 .\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
@@ -283,8 +283,9 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   fields to the immutable Structure frame for viewer inspection. Those samples
   never enter solver state. It is not a validated external-flow wake, polar,
   or two-way solver. Frozen-scene-only CLI controls select an isotropic `2..16`
-  grid, positive domain padding, signed X wind, and nonnegative deterministic
-  perturbation; defaults remain `2`, `0.5 m`, `-0.85 m/s`, and `0 m/s`.
+  grid, positive domain padding, signed X wind, a bounded startup-ramp duration,
+  and nonnegative deterministic perturbation; defaults remain `2`, `0.5 m`,
+  `-0.85 m/s`, `0.5 s`, and `0 m/s`.
   The perturbation default is zero; nonzero values are explicit diagnostic
   forcing, not turbulence or an aerodynamic boundary condition. Refined grids
   may omit zero-volume material sides from the local operator; their retained
@@ -1663,9 +1664,12 @@ makes this a certified aerodynamic solver.
   fields alongside the frozen wing. The real `4^3` probe accepts in 1,472 PCG
   iterations and reports 240 bounded extrapolated zero-volume sides; its
   pressure/load contraction versus `2^3` is evidence of grid sensitivity, not
-  convergence. The coarse periodic domain, pump, and pressure magnitude are
-  not aerodynamic validation; no external-domain wake, polar/refinement study,
-  or structural feedback is present.
+  convergence. The ramp advances its target once per accepted frame and a zero
+  duration explicitly restores impulsive startup. A six-frame `0.1 s` real
+  ramp still reaches `397123 Pa` and `130287 N`, so it conditions startup but
+  does not cure the pressure scale. The coarse periodic domain, pump, and
+  pressure magnitude are not aerodynamic validation; no external-domain wake,
+  polar/refinement study, or structural feedback is present.
 - `tools/simwing_mimetic_conductance_audit_main.cpp` is the opt-in Qt-free
   high-resolution evidence runner. It consumes the canonical offline profile
   and grid phases owned by the mimetic conductance phase-audit boundary. An

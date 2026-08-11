@@ -3461,22 +3461,28 @@ magnitudes are not a wing polar, lift result, external wake, or aerodynamic
 validation. It therefore does not close the Phase 2 gate or begin the Phase 3
 validation gate.
 The worker exposes bounded experiment controls for an isotropic `2..16` grid,
-positive domain padding, signed streamwise wind, and initial deterministic
-perturbation. These make repeatable grid/domain/predictor studies possible
-without recompilation. They do not constitute a convergence study, and the
-upper bounds are safety limits rather than recommended interactive settings.
-Uniform streamwise flow is the default. The optional deterministic perturbation
-is an integration probe, not physical turbulence. On the coarse real-wing grid,
-removing it restores near-symmetric transverse loads but leaves the unphysical
-pressure magnitude, isolating that scale error from the old test pattern.
-The first uniform `4^3` real-wing run accepts 358 controls after 1,472 PCG
-iterations. It resolves all material loads using 240 bounded zero-volume-side
+positive domain padding, signed streamwise wind, bounded startup-ramp duration,
+and initial deterministic perturbation. These make repeatable grid/domain/
+predictor studies possible without recompilation. They do not constitute a
+convergence study, and the upper bounds are safety limits rather than
+recommended interactive settings. Uniform streamwise flow with a `0.5 s` ramp
+is the default; a zero duration explicitly restores impulsive startup. The
+optional deterministic perturbation is an integration probe, not physical
+turbulence. On the coarse real-wing grid, removing it restores near-symmetric
+transverse loads but leaves the unphysical pressure magnitude, isolating that
+scale error from the old test pattern.
+The first uniform, explicitly zero-ramp `4^3` real-wing run accepts 358 controls
+after 1,472 PCG iterations. It resolves all material loads using 240 bounded
+zero-volume-side
 extrapolations (maximum centroid-to-control distance `0.566398 m`) and retains
 `9.72e-10 N` force-transfer closure. Maximum pressure jump contracts from the
 `2^3` result's `420536 Pa` to `183054 Pa`, while streamwise pressure load falls
 from `141548 N` to `51144 N`. This strong grid sensitivity rejects the coarse
 absolute scale as aerodynamic evidence; two levels do not establish a
-converged trend.
+converged trend. A separate six-frame `0.1 s` ramp reaches full target wind at
+`397123 Pa` maximum jump and `130287 N` streamwise pressure load. The modest
+reduction from impulsive startup shows that ramping is useful conditioning for
+future structural activation, not a remedy for the periodic pressure scale.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

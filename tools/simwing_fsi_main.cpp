@@ -92,6 +92,7 @@ struct Options {
     std::optional<std::size_t> frozenGridCellsPerAxis;
     std::optional<double> frozenDomainPaddingMeters;
     std::optional<double> frozenWindXMetersPerSecond;
+    std::optional<double> frozenWindRampSeconds;
     std::optional<double> frozenPerturbationMetersPerSecond;
     std::uint64_t checkpointEvery = 0;
     bool viewer = true;
@@ -107,7 +108,8 @@ void printUsage(FILE* stream) {
         "Usage: simwing-fsi [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--scene PATH]\n"
         "                   [--grid N] [--padding METERS]\n"
-        "                   [--wind-x MPS] [--perturbation MPS]\n"
+        "                   [--wind-x MPS] [--ramp-seconds SECONDS]\n"
+        "                   [--perturbation MPS]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
         "                   [--checkpoint-in PATH]\n"
@@ -124,7 +126,8 @@ void printUsage(FILE* stream) {
         "an evolving bulk-flow/mixed-hybrid pressure projection and conservative\n"
         "load field; it is not a validated external wake or aerodynamic polar;\n"
         "frozen-scene defaults to a 2^3 grid, 0.5 m padding, -0.85 m/s X wind,\n"
-        "and zero deterministic perturbation; N is bounded to 2..16;\n"
+        "a 0.5 s startup ramp, and zero deterministic perturbation; N is bounded\n"
+        "to 2..16; a zero ramp explicitly restores impulsive startup;\n"
         "'flag' maps the complete reaction from a fixed-reference projected gust\n"
         "onto a one-edge-clamped XPBD fabric panel;\n"
         "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"
@@ -377,6 +380,22 @@ bool parseOptions(int argc,
                 return false;
             }
             options.frozenWindXMetersPerSecond = value;
+        } else if (argument == "--ramp-seconds") {
+            double value = 0.0;
+            if (++index >= argc || !parseFiniteDouble(argv[index], value)
+                || value < 0.0 || value > 60.0) {
+                error = "--ramp-seconds requires a value from 0 through 60 seconds";
+                return false;
+            }
+            options.frozenWindRampSeconds = value;
+        } else if (argument.starts_with("--ramp-seconds=")) {
+            double value = 0.0;
+            if (!parseFiniteDouble(argument.substr(15), value)
+                || value < 0.0 || value > 60.0) {
+                error = "--ramp-seconds requires a value from 0 through 60 seconds";
+                return false;
+            }
+            options.frozenWindRampSeconds = value;
         } else if (argument == "--perturbation") {
             double value = 0.0;
             if (++index >= argc || !parseFiniteDouble(argv[index], value)
@@ -456,10 +475,11 @@ bool parseOptions(int argc,
         options.frozenGridCellsPerAxis.has_value()
         || options.frozenDomainPaddingMeters.has_value()
         || options.frozenWindXMetersPerSecond.has_value()
+        || options.frozenWindRampSeconds.has_value()
         || options.frozenPerturbationMetersPerSecond.has_value();
     if (frozenControlRequested
         && options.workerCase != WorkerCase::FrozenScene) {
-        error = "--grid, --padding, --wind-x, and --perturbation require --case frozen-scene";
+        error = "--grid, --padding, --wind-x, --ramp-seconds, and --perturbation require --case frozen-scene";
         return false;
     }
     if (options.workerCase == WorkerCase::FrozenScene && !stepsRequested) {
@@ -1917,7 +1937,7 @@ int main(int argc, char* argv[]) {
                 const auto& diagnostics = simulation.diagnostics();
                 std::printf(
                     "simwing-fsi completed %llu frozen-scene sample(s), "
-                    "t=%.9g s, grid=%zux%zux%zu, controls=%zu, traces=%zu, iterations=%zu, "
+                    "t=%.9g s, grid=%zux%zux%zu, controls=%zu, traces=%zu, iterations=%zu, ramp=%.6g, "
                     "extrapolated-sides=%zu, max-extrapolation=%.6g m, "
                     "max-pressure-jump=%.6g Pa, pressure-force="
                     "[%.6g %.6g %.6g] N, corrected-continuity=%.3g m^3/s, "
@@ -1934,6 +1954,7 @@ int main(int argc, char* argv[]) {
                     diagnostics.pressureControlCount,
                     diagnostics.sharedTraceCount,
                     diagnostics.pressureIterationCount,
+                    diagnostics.windRampFraction,
                     diagnostics.extrapolatedZeroVolumePressureSideCount,
                     diagnostics.maximumPressureExtrapolationDistanceMeters,
                     diagnostics.maximumAbsolutePressureDifferencePascals,
@@ -2046,6 +2067,10 @@ int main(int argc, char* argv[]) {
             if (options.frozenWindXMetersPerSecond) {
                 settings.backgroundWindMetersPerSecond.x =
                     *options.frozenWindXMetersPerSecond;
+            }
+            if (options.frozenWindRampSeconds) {
+                settings.windRampSeconds =
+                    *options.frozenWindRampSeconds;
             }
             if (options.frozenPerturbationMetersPerSecond) {
                 settings.diagnosticPerturbationSpeedMetersPerSecond =

@@ -12,7 +12,7 @@
 namespace simwing::fsi {
 
 inline constexpr const char* frozenScenePressureSolverId =
-    "frozen-scene-mimetic-pressure-v1";
+    "frozen-scene-mimetic-pressure-v2";
 
 struct FrozenScenePressureCaseSettings {
     fluid::GridCellCounts cellCounts{2, 2, 2};
@@ -21,6 +21,7 @@ struct FrozenScenePressureCaseSettings {
     fluid::Vector3 lowerMeters;
     fluid::Vector3 upperMeters;
     fluid::Vector3 backgroundWindMetersPerSecond{-0.85, 0.0, 0.0};
+    double windRampSeconds = 0.5;
     double diagnosticPerturbationSpeedMetersPerSecond = 0.0;
     double timeStepSeconds = 1.0 / 60.0;
     double densityKgPerCubicMeter = 1.225;
@@ -31,6 +32,8 @@ struct FrozenScenePressureCaseDiagnostics {
     fluid::Vector3 gridLowerMeters;
     fluid::Vector3 gridUpperMeters;
     fluid::Vector3 backgroundWindMetersPerSecond;
+    double windRampSeconds = 0.0;
+    double windRampFraction = 0.0;
     double diagnosticPerturbationSpeedMetersPerSecond = 0.0;
     std::size_t pressureControlCount = 0;
     std::size_t sharedTraceCount = 0;
@@ -65,11 +68,12 @@ struct FrozenScenePressureCaseDiagnostics {
 
 // Loads one already authoritative scene-v2 payload and freezes its Structure
 // geometry. The first frame evaluates a deterministic mixed-hybrid pressure
-// projection from a prescribed periodic MAC predictor. Later frames project
-// the collapsed continuation field, advance periodic bulk transport, reapply
-// the fixed-geometry mimetic pressure boundary, and commit only after pressure,
-// continuity, and conservative load transfer accept. This is an integration
-// probe, not a validated external-flow wake, lift polar, or two-way FSI step.
+// projection from a prescribed periodic MAC predictor. Later frames advance a
+// bounded target-wind ramp, project the collapsed continuation field, advance
+// periodic bulk transport, reapply the fixed-geometry mimetic pressure
+// boundary, and commit only after pressure, continuity, and conservative load
+// transfer accept. This is an integration probe, not a validated external-flow
+// wake, lift polar, or two-way FSI step.
 class FrozenScenePressureCase final {
 public:
     explicit FrozenScenePressureCase(

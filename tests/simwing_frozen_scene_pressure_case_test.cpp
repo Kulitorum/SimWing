@@ -111,6 +111,12 @@ void testFrozenScenePressureCase() {
               && pressure != nullptr
               && secondPressure->values != pressure->values
               && firstDiagnostics.flowAdvanceCount == 0
+              && firstDiagnostics.windRampSeconds
+                  == settings.windRampSeconds
+              && firstDiagnostics.windRampFraction > 0.0
+              && diagnostics.windRampFraction
+                  > firstDiagnostics.windRampFraction
+              && diagnostics.windRampFraction <= 1.0
               && diagnostics.flowAdvanceCount == 1,
           "frozen scene flow evolves deterministically while leaving geometry unchanged");
     check(pressure != nullptr
@@ -152,6 +158,12 @@ void testFrozenScenePressureCase() {
               && diagnostics.transferForceResidualNewtons < 1.0e-8
               && diagnostics.transferMomentResidualNewtonMeters < 1.0e-8,
           "frozen scene pressure solve and conservative transfer are accepted");
+
+    settings.windRampSeconds = 0.0;
+    simwing::fsi::FrozenScenePressureCase impulsive(scene, settings);
+    static_cast<void>(impulsive.advance());
+    check(impulsive.diagnostics().windRampFraction == 1.0,
+          "zero ramp duration explicitly restores full-wind startup");
 }
 
 } // namespace
