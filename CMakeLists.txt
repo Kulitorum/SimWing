@@ -379,6 +379,8 @@ add_library(simwing_scene_fluid_cell_volume STATIC
     src/fsi/scene_fluid_mimetic_pressure_solve.h
     src/fsi/scene_fluid_mimetic_pressure_audit.cpp
     src/fsi/scene_fluid_mimetic_pressure_audit.h
+    src/fsi/scene_fluid_mimetic_geometry_epoch.cpp
+    src/fsi/scene_fluid_mimetic_geometry_epoch.h
     src/fsi/scene_fluid_mimetic_pressure_sampling.cpp
     src/fsi/scene_fluid_mimetic_pressure_sampling.h
     src/fsi/scene_fluid_mimetic_pressure_epoch.cpp

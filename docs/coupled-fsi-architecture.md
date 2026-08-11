@@ -424,6 +424,7 @@ src/fsi/
     scene_fluid_region_connectivity.* pressure components and gauges
     scene_fluid_pressure_control_volume.* sparse volume-weighted unknowns
     scene_fluid_pressure_face_link.* Cartesian and embedded pressure links
+    scene_fluid_mimetic_geometry_epoch.* graph-free mixed-hybrid geometry epoch
     scene_fluid_pressure_operator.* symmetric integrated graph Laplacian
     scene_fluid_pressure_epoch.* atomic accepted pressure geometry/operator
     scene_fluid_pressure_epoch_transition.* consecutive rebuilt epoch and row mapping
@@ -3447,6 +3448,15 @@ builds the capped-region mixed-hybrid system, solves one prescribed-flow
 mimetic pressure projection, conservatively transfers its pressure quadrature
 to Structure nodes, reconstructs pressure-corrected shared-trace volume flow,
 and publishes per-triangle pressure, per-vertex load, and continuity fields.
+The complete scene/grid/opening/volume/link assembly is now owned by
+`scene_fluid_mimetic_geometry_epoch.*` rather than being repeated privately in
+the worker. This bounded fingerprinted aggregate deliberately omits the older
+graph Laplacian, so the real authored intake traces remain admissible without
+weakening the graph operator's closed-stencil requirements. A one-frame gnuC2
+run retains all 138 controls and 42,927 shared traces through this owner with
+the same accepted pressure/load arithmetic. The aggregate is the next moving
+mimetic geometry boundary; it does not yet classify a post-XPBD transition,
+rebase regional momentum, or change worker selection.
 Cartesian subfaces are conservatively area-collapsed into a bulk continuation
 MAC field; cell-owned intake traces remain explicit because they have no unique
 Cartesian face. The real gnuC2 developer export completes this path through 138

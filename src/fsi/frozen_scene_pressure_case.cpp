@@ -4,6 +4,7 @@
 #include "fluid_frame.h"
 #include "scene_fluid_capped_face_partition.h"
 #include "scene_fluid_cell_volume.h"
+#include "scene_fluid_mimetic_geometry_epoch.h"
 #include "scene_fluid_mimetic_pressure_audit.h"
 #include "scene_fluid_mimetic_pressure_flow.h"
 #include "scene_fluid_mimetic_pressure_sampling.h"
@@ -180,12 +181,7 @@ struct BuiltCase {
     SceneFluidSurfaceState surfaceState;
     SceneFluidSurfaceTransfer transfer;
     fluid::PeriodicCartesianGrid grid;
-    SceneFluidGridEpoch gridEpoch;
-    SceneFluidOpeningCapSet openingCaps;
-    SceneFluidOpeningQuadratureSet openingQuadrature;
-    SceneFluidOpeningGridPatchSet openingPatches;
-    SceneFluidPressureControlVolumeSet pressureVolumes;
-    SceneFluidPressureFaceLinkSet pressureFaceLinks;
+    SceneFluidMimeticGeometryEpoch geometryEpoch;
     SceneFluidMimeticPressureAuditSettings pressureSettings;
     SceneFluidMimeticPressureAuditEndpoint pressure;
     SceneFluidMimeticCorrectedTraceFlow correctedFlow;
@@ -233,40 +229,17 @@ BuiltCase buildCase(
     SceneFluidSurfaceTransfer transfer(
         surface.definition, assembly.mappings, structure);
     auto grid = makeGrid(state, settings);
-    auto gridEpoch = buildSceneFluidGridEpoch(
-        surface.definition, state, grid, transfer);
-    auto openingCaps = buildSceneFluidOpeningCaps(
-        surface.definition, state);
-    auto openingQuadrature = buildSceneFluidOpeningQuadrature(
-        surface.definition, state, openingCaps);
-    auto openingPatches = buildSceneFluidOpeningGridPatches(
-        surface.definition, state, openingCaps, openingQuadrature, grid);
-    const auto openingFaceCrossings =
-        buildSceneFluidOpeningFaceCrossings(
-            surface.definition, state, openingCaps, openingQuadrature,
-            openingPatches, grid);
-    const auto cappedFacePartitions =
-        buildSceneFluidCappedFacePartitions(
-            surface.definition, state, grid, transfer, gridEpoch,
-            openingCaps, openingQuadrature, openingPatches,
-            openingFaceCrossings);
-    const auto cellVolumes = buildSceneFluidCellVolumes(
-        surface.definition, state, grid, transfer, gridEpoch);
     const auto connectivity = buildSceneFluidRegionConnectivity(
         surface.definition);
-    auto pressureVolumes = buildSceneFluidPressureControlVolumes(
-        surface.definition, cellVolumes, connectivity);
-    auto pressureFaceLinks = buildSceneFluidPressureFaceLinks(
-        surface.definition, state, grid, transfer, gridEpoch,
-        openingCaps, openingQuadrature, openingPatches,
-        openingFaceCrossings, cappedFacePartitions, cellVolumes,
-        connectivity, pressureVolumes);
+    auto geometryEpoch = buildSceneFluidMimeticGeometryEpoch(
+        surface.definition, state, grid, transfer, connectivity);
     const double initialRampFraction = windRampFraction(settings, 1);
     const auto predictor = makePredictor(
         grid, settings, initialRampFraction);
     const auto openingFlux = evaluateSceneFluidOpeningFlux(
-        surface.definition, state, openingCaps, openingQuadrature,
-        openingPatches, grid, predictor);
+        surface.definition, state, geometryEpoch.openingCaps,
+        geometryEpoch.openingQuadrature, geometryEpoch.openingPatches,
+        grid, predictor);
     SceneFluidMimeticPressureAuditSettings pressureSettings;
     pressureSettings.densityKgPerCubicMeter =
         settings.densityKgPerCubicMeter;
@@ -278,9 +251,12 @@ BuiltCase buildCase(
         .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-8;
     pressureSettings.pressureSolve.maximumIterations = 4000;
     auto pressure = buildSceneFluidMimeticPressureAuditEndpoint(
-        surface.definition, state, grid, gridEpoch, openingCaps,
-        openingQuadrature, openingPatches, pressureVolumes,
-        pressureFaceLinks, openingFlux, predictor, pressureSettings);
+        surface.definition, state, grid, geometryEpoch.gridEpoch,
+        geometryEpoch.openingCaps, geometryEpoch.openingQuadrature,
+        geometryEpoch.openingPatches,
+        geometryEpoch.pressureControlVolumes,
+        geometryEpoch.pressureFaceLinks, openingFlux, predictor,
+        pressureSettings);
     if (!pressure.pressureEpoch.diagnostics.accepted) {
         throw std::runtime_error(
             "frozen scene mimetic pressure solve was not accepted");
@@ -291,22 +267,23 @@ BuiltCase buildCase(
             "frozen scene mimetic pressure correction was not accepted");
     }
     auto correctedMac = collapseSceneFluidMimeticCorrectedMacVelocity(
-        correctedFlow, pressureFaceLinks, openingPatches, grid);
+        correctedFlow, geometryEpoch.pressureFaceLinks,
+        geometryEpoch.openingPatches, grid);
     auto regionalMomentum = reconstructSceneFluidRegionMomentumState(
-        grid, pressureVolumes, pressureFaceLinks, openingPatches,
+        grid, geometryEpoch.pressureControlVolumes,
+        geometryEpoch.pressureFaceLinks, geometryEpoch.openingPatches,
         pressure.controlCells, correctedFlow,
         correctedMac.velocityMetersPerSecond);
     auto pressureTransfer = evaluateSceneFluidMimeticPressureQuadrature(
-        surface.definition, state, transfer, gridEpoch.quadrature,
+        surface.definition, state, transfer,
+        geometryEpoch.gridEpoch.quadrature,
         pressure.pressureEpoch.acceptedPressureSamples);
     auto frameMapping = viewer::makeStructureFrameMapping(
         scene, assembly, structure);
     BuiltCase result{
         std::move(scene), std::move(surface), std::move(assembly),
         std::move(structure), std::move(state), std::move(transfer),
-        std::move(grid), std::move(gridEpoch), std::move(openingCaps),
-        std::move(openingQuadrature), std::move(openingPatches),
-        std::move(pressureVolumes), std::move(pressureFaceLinks),
+        std::move(grid), std::move(geometryEpoch),
         std::move(pressureSettings), std::move(pressure),
         std::move(correctedFlow), std::move(correctedMac),
         std::move(regionalMomentum),
@@ -319,18 +296,19 @@ BuiltCase buildCase(
 void advanceFixedGeometryFlow(
     BuiltCase& built,
     const FrozenScenePressureCaseSettings& settings) {
+    const auto& geometry = built.geometryEpoch;
     auto candidateVelocity = built.correctedMac.velocityMetersPerSecond;
     std::optional<SceneFluidMimeticTraceFlowPrediction> previousBulkBaseline;
     if (settings.useCorrectedTraceFlowContinuation) {
         const auto previousOpeningFlux = evaluateSceneFluidOpeningFlux(
             built.surface.definition, built.surfaceState,
-            built.openingCaps, built.openingQuadrature,
-            built.openingPatches, built.grid,
+            geometry.openingCaps, geometry.openingQuadrature,
+            geometry.openingPatches, built.grid,
             built.correctedMac.velocityMetersPerSecond);
         previousBulkBaseline = sampleSceneFluidMimeticTraceFlows(
             built.pressure.controlCells,
             built.pressure.fullTraceSystem,
-            built.pressureFaceLinks, previousOpeningFlux, built.grid,
+            geometry.pressureFaceLinks, previousOpeningFlux, built.grid,
             built.correctedMac.velocityMetersPerSecond);
     }
     const double meanBeforePump = meanXVelocity(candidateVelocity);
@@ -381,7 +359,7 @@ void advanceFixedGeometryFlow(
     regionalTransportSettings.timeStepSeconds = settings.timeStepSeconds;
     regionalTransportSettings.maximumSubsteps = 1024;
     auto candidateRegionalTransport = advanceSceneFluidRegionMomentum(
-        built.regionalMomentum, built.pressureFaceLinks,
+        built.regionalMomentum, geometry.pressureFaceLinks,
         built.pressure.controlCells, built.correctedFlow, built.grid,
         built.correctedMac.velocityMetersPerSecond,
         candidateVelocity, regionalTransportSettings);
@@ -391,8 +369,8 @@ void advanceFixedGeometryFlow(
     }
     const auto candidateOpeningFlux = evaluateSceneFluidOpeningFlux(
         built.surface.definition, built.surfaceState,
-        built.openingCaps, built.openingQuadrature,
-        built.openingPatches, built.grid, candidateVelocity);
+        geometry.openingCaps, geometry.openingQuadrature,
+        geometry.openingPatches, built.grid, candidateVelocity);
     std::optional<SceneFluidMimeticTraceFlowContinuation>
         candidateTraceFlowContinuation;
     std::optional<SceneFluidMimeticRegionTransportFlowPrediction>
@@ -402,7 +380,7 @@ void advanceFixedGeometryFlow(
         const auto currentBulkBaseline = sampleSceneFluidMimeticTraceFlows(
             built.pressure.controlCells,
             built.pressure.fullTraceSystem,
-            built.pressureFaceLinks, candidateOpeningFlux, built.grid,
+            geometry.pressureFaceLinks, candidateOpeningFlux, built.grid,
             candidateVelocity);
         candidateTraceFlowContinuation =
             continueSceneFluidMimeticTraceFlowsFixedTopology(
@@ -410,34 +388,37 @@ void advanceFixedGeometryFlow(
                 currentBulkBaseline);
         candidatePressure =
             advanceSceneFluidMimeticPressureAuditFixedTopology(
-                built.pressure, built.gridEpoch.quadrature,
-                built.pressureVolumes, built.pressureFaceLinks,
+                built.pressure, geometry.gridEpoch.quadrature,
+                geometry.pressureControlVolumes,
+                geometry.pressureFaceLinks,
                 *candidateTraceFlowContinuation,
                 built.pressureSettings);
     } else if (settings.useRegionalTransportFlowPrediction) {
         const auto currentBulkBaseline = sampleSceneFluidMimeticTraceFlows(
             built.pressure.controlCells,
             built.pressure.fullTraceSystem,
-            built.pressureFaceLinks, candidateOpeningFlux, built.grid,
+            geometry.pressureFaceLinks, candidateOpeningFlux, built.grid,
             candidateVelocity);
         candidateRegionalTransportFlowPrediction =
             predictSceneFluidMimeticTraceFlowsFromRegionTransportFixedTopology(
                 built.pressure.controlCells,
                 built.pressure.fullTraceSystem,
-                built.pressureFaceLinks, candidateOpeningFlux,
+                geometry.pressureFaceLinks, candidateOpeningFlux,
                 built.correctedFlow, candidateRegionalTransport,
                 currentBulkBaseline);
         candidatePressure =
             advanceSceneFluidMimeticPressureAuditFixedTopology(
-                built.pressure, built.gridEpoch.quadrature,
-                built.pressureVolumes, built.pressureFaceLinks,
+                built.pressure, geometry.gridEpoch.quadrature,
+                geometry.pressureControlVolumes,
+                geometry.pressureFaceLinks,
                 *candidateRegionalTransportFlowPrediction,
                 built.pressureSettings);
     } else {
         candidatePressure =
             advanceSceneFluidMimeticPressureAuditFixedTopology(
-                built.pressure, built.gridEpoch.quadrature,
-                built.pressureVolumes, built.pressureFaceLinks,
+                built.pressure, geometry.gridEpoch.quadrature,
+                geometry.pressureControlVolumes,
+                geometry.pressureFaceLinks,
                 candidateOpeningFlux, built.grid, candidateVelocity,
                 built.pressureSettings);
     }
@@ -453,18 +434,19 @@ void advanceFixedGeometryFlow(
     }
     auto candidateCorrectedMac =
         collapseSceneFluidMimeticCorrectedMacVelocity(
-            candidateCorrectedFlow, built.pressureFaceLinks,
-            built.openingPatches, built.grid);
+            candidateCorrectedFlow, geometry.pressureFaceLinks,
+            geometry.openingPatches, built.grid);
     auto candidateRegionalMomentum =
         reconstructSceneFluidRegionMomentumState(
-            built.grid, built.pressureVolumes, built.pressureFaceLinks,
-            built.openingPatches, candidatePressure.controlCells,
+            built.grid, geometry.pressureControlVolumes,
+            geometry.pressureFaceLinks, geometry.openingPatches,
+            candidatePressure.controlCells,
             candidateCorrectedFlow,
             candidateCorrectedMac.velocityMetersPerSecond);
     auto candidatePressureTransfer =
         evaluateSceneFluidMimeticPressureQuadrature(
             built.surface.definition, built.surfaceState, built.transfer,
-            built.gridEpoch.quadrature,
+            geometry.gridEpoch.quadrature,
             candidatePressure.pressureEpoch.acceptedPressureSamples);
     if (!candidatePressureTransfer.diagnostics().finite) {
         throw std::runtime_error(
@@ -853,7 +835,8 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
     std::vector<double> trianglePressure(
         state.built.structure.definition().triangles.size(), 0.0);
     std::vector<double> triangleArea(trianglePressure.size(), 0.0);
-    const auto& quadrature = state.built.gridEpoch.quadrature;
+    const auto& quadrature =
+        state.built.geometryEpoch.gridEpoch.quadrature;
     const auto& samples = state.built.pressure.pressureEpoch
         .acceptedPressureSamples;
     if (samples.bindings.size() != quadrature.points.size()) {

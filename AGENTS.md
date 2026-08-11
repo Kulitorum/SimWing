@@ -1417,6 +1417,13 @@ makes this a certified aerodynamic solver.
    The global audit now pairs all shared traces, retains one zero-flux wall
    trace per material half-face and one gauge per pressure component, and
    applies the symmetric positive-semidefinite condensed operator matrix-free.
+   `scene_fluid_mimetic_geometry_epoch.*` now owns the complete graph-free
+   scene/grid/opening/volume/link aggregate used by that path. It intentionally
+   stops before the rejected reference graph Laplacian, validates every nested
+   product against one accepted Structure epoch, and replaces the frozen
+   worker's former hand-assembled copy of the same pipeline. This is the
+   authoritative whole-scene geometry target for a later moving mimetic epoch;
+   it does not itself sample flow, solve pressure, or apply loads.
    The coarse real-wing system has 191,579 trace unknowns and 13,132,336 bytes
    of compact local factors. Its component-constant action is roundoff-null.
    The bounded gauge-fixed Jacobi-PCG solve now recovers manufactured fields
