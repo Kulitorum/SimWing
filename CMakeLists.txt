@@ -273,6 +273,22 @@ if(SIMWING_ENABLE_AMREX_BACKEND)
     target_link_libraries(simwing_amr_external_flow PRIVATE
         ${simwing_amrex_target}
     )
+
+    if(SIMWING_AMREX_ENABLE_LINEAR_SOLVERS)
+        add_library(simwing_amr_external_flow_projection STATIC
+            src/fsi/amr_external_flow_projection.cpp
+            src/fsi/amr_external_flow_projection.h
+        )
+        target_include_directories(simwing_amr_external_flow_projection PUBLIC
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+        )
+        target_link_libraries(simwing_amr_external_flow_projection PUBLIC
+            simwing_amr_external_flow
+        )
+        target_link_libraries(simwing_amr_external_flow_projection PRIVATE
+            ${simwing_amrex_target}
+        )
+    endif()
 endif()
 target_include_directories(simwing_scene PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
@@ -1565,6 +1581,14 @@ if(SIMWING_ENABLE_AMREX_BACKEND)
     target_link_libraries(simwing-amr-external-flow-test
         PRIVATE simwing_amr_external_flow
     )
+    if(SIMWING_AMREX_ENABLE_LINEAR_SOLVERS)
+        add_executable(simwing-amr-external-flow-projection-test
+            tests/simwing_amr_external_flow_projection_test.cpp
+        )
+        target_link_libraries(simwing-amr-external-flow-projection-test
+            PRIVATE simwing_amr_external_flow_projection
+        )
+    endif()
 endif()
 
 add_executable(simwing-structure-frame-test
@@ -2334,6 +2358,10 @@ add_test(NAME simwing_cfd_slice COMMAND simwing-cfd-slice-test)
 if(SIMWING_ENABLE_AMREX_BACKEND)
     add_test(NAME simwing_amr_external_flow
         COMMAND simwing-amr-external-flow-test)
+    if(SIMWING_AMREX_ENABLE_LINEAR_SOLVERS)
+        add_test(NAME simwing_amr_external_flow_projection
+            COMMAND simwing-amr-external-flow-projection-test)
+    endif()
 endif()
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
 add_test(NAME simwing_fsi_worker COMMAND simwing-fsi-worker-test)

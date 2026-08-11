@@ -3785,11 +3785,18 @@ layer. The physical-face contract is X/Z far field, `-Y` prescribed inflow,
 and `+Y` pressure-outlet ownership with a zero normal velocity gradient. A
 bounded nonuniform interior wake makes the outflow check nontrivial; inflow,
 outflow-gradient, and far-field ghost errors close exactly on the Windows CPU
-backend. The standard build remains independent of AMReX. This is an AMR
-layout, allocation, coordinate, and boundary-ownership gate only: it performs
-no pressure projection, advection, diffusion, interface coupling, or wing
-aerodynamics. AMReX multigrid remains a separately enabled next checkpoint so
-dependency build cost cannot be mistaken for a completed fluid operator.
+backend. The separately enabled projection target then gives that wake a
+nonzero discrete divergence, synchronizes fine face fluxes onto the covered
+coarse faces, and solves one composite cell-centred pressure correction with
+homogeneous Neumann conditions at prescribed-normal-velocity boundaries and a
+homogeneous Dirichlet pressure reference at `+Y`. On the 46,080-cell composite
+hierarchy, ten multigrid iterations reduce maximum divergence from
+`6.9856873897208516e-2 s^-1` to `4.5793369096713832e-12 s^-1`, preserve the
+`-Y` normal inflow exactly, adjust outlet flux, and produce a finite maximum
+pressure correction of about `249.17 Pa` at `rho=1.225 kg/m^3`. The standard
+build remains independent of AMReX. This is a grid/boundary/projection gate;
+it still performs no advection, diffusion, interface coupling, or wing
+aerodynamics.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written
