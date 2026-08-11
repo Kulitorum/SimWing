@@ -57,8 +57,13 @@ struct FrozenScenePressureCaseDiagnostics {
     std::size_t sharedTraceCount = 0;
     std::size_t pressureIterationCount = 0;
     std::size_t extrapolatedZeroVolumePressureSideCount = 0;
+    std::size_t reconstructedMaterialWallPressureSideCount = 0;
+    std::size_t fallbackMaterialWallPressureSideCount = 0;
     double maximumPressureExtrapolationDistanceMeters = 0.0;
     double maximumAbsolutePressureDifferencePascals = 0.0;
+    double maximumAbsoluteMaterialWallTracePressureDifferencePascals = 0.0;
+    double maximumAbsoluteMaterialWallTraceDifferenceFromControlSamplePascals =
+        0.0;
     double maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond =
         0.0;
     double maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond =
@@ -84,6 +89,9 @@ struct FrozenScenePressureCaseDiagnostics {
     double bulkProjectionDivergenceAfterPerSecond = 0.0;
     StructureVector3 pressureForceNewtons;
     StructureVector3 pressureMomentNewtonMeters;
+    StructureVector3 materialWallTracePressureForceNewtons;
+    double materialWallTracePressureTransferForceResidualNewtons = 0.0;
+    double materialWallTracePressureTransferMomentResidualNewtonMeters = 0.0;
     StructureVector3 wallForceNewtons;
     StructureVector3 totalFluidForceNewtons;
     double wallMomentumResidualKilogramMetersPerSecond = 0.0;

@@ -3487,6 +3487,13 @@ momentum, and accepts a warm mixed-hybrid pressure solve plus conservative
 pressure/wall/total load fields for the next step. Rejection restores the
 pre-step Structure checkpoint; the mode has a distinct trace solver identity
 and is mutually exclusive with the fixed-geometry continuation experiments.
+Alongside the applied control-cell pressure load, every accepted endpoint now
+reconstructs its eliminated impermeable material-wall trace pressures from the
+same reduced solution and physical source. A separate conservative transfer
+reports their pressure jump, difference from the current control-cell sample,
+and resultant force. Only explicitly omitted zero-volume sides use the current
+bounded fallback. This is a shadow diagnostic: it does not replace accepted
+pressure samples or alter the load applied to Structure.
 The focused authored-intake case deterministically deforms on its first frame
 and accepts a real pressure-control topology change. This closes the first
 input-driven two-way plumbing loop, not aerodynamic validity: the coarse
@@ -3529,6 +3536,16 @@ This isolates the next investigation to the coarse periodic pressure/bootstrap
 path rather than imported rest geometry. The real-export fixture still supplies
 synthetic physical properties and permits vertex-snapped terminal attachments,
 so it is not a moving-physics oracle.
+
+The first exact wall-trace shadow comparison narrows that gate substantially.
+On the same accepted solve, all 148,652 material sides reconstruct without a
+fallback. Their conservative resultant is `0.0152279 N`, about 1,094 times
+smaller than the control-cell-sampled `16.6527 N`. This supports sampling the
+mixed-hybrid boundary value at its actual material wall rather than treating a
+small cut control as a constant face pressure. However, the maximum local wall
+jump is `3.85721e7 Pa` on tiny patches. Until area/load distribution, work, and
+moving-step behavior are bounded, the wall-trace ledger remains diagnostic and
+the production load path is unchanged.
 Cartesian subfaces are conservatively area-collapsed into a bulk continuation
 MAC field; cell-owned intake traces remain explicit because they have no unique
 Cartesian face. The real gnuC2 developer export completes this path through 138

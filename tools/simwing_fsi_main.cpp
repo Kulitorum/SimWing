@@ -1972,7 +1972,10 @@ int main(int argc, char* argv[]) {
                     "t=%.9g s, grid=%zux%zux%zu, controls=%zu, traces=%zu, iterations=%zu, ramp=%.6g, "
                     "extrapolated-sides=%zu, max-extrapolation=%.6g m, "
                     "max-pressure-jump=%.6g Pa, pressure-force="
-                    "[%.6g %.6g %.6g] N, corrected-continuity=%.3g m^3/s, "
+                    "[%.6g %.6g %.6g] N, wall-trace-sides=%zu+%zu, "
+                    "wall-trace-jump=%.6g Pa, wall-trace-delta=%.6g Pa, "
+                    "wall-trace-force=[%.6g %.6g %.6g] N, "
+                    "corrected-continuity=%.3g m^3/s, "
                     "collapsed-speed=%.6g m/s, embedded-openings=%zu, "
                     "regional-speed=%.6g m/s, regional-link-residual=%.3g m/s, "
                     "regional-transport-substeps=%zu, regional-transport-residual=%.3g kg*m/s, "
@@ -1998,6 +2001,15 @@ int main(int argc, char* argv[]) {
                     diagnostics.pressureForceNewtons.x,
                     diagnostics.pressureForceNewtons.y,
                     diagnostics.pressureForceNewtons.z,
+                    diagnostics.reconstructedMaterialWallPressureSideCount,
+                    diagnostics.fallbackMaterialWallPressureSideCount,
+                    diagnostics
+                        .maximumAbsoluteMaterialWallTracePressureDifferencePascals,
+                    diagnostics
+                        .maximumAbsoluteMaterialWallTraceDifferenceFromControlSamplePascals,
+                    diagnostics.materialWallTracePressureForceNewtons.x,
+                    diagnostics.materialWallTracePressureForceNewtons.y,
+                    diagnostics.materialWallTracePressureForceNewtons.z,
                     diagnostics
                         .maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond,
                     diagnostics.maximumCollapsedMacVelocityMetersPerSecond,

@@ -218,6 +218,15 @@ struct BuiltCase {
     bool pressureControlTopologyStable = false;
     std::size_t flowAdvanceCount = 0;
     std::size_t geometryAdvanceCount = 0;
+    struct MaterialWallTracePressureTransfer {
+        std::size_t reconstructedSideCount = 0;
+        std::size_t fallbackSideCount = 0;
+        double maximumAbsolutePressureDifferencePascals = 0.0;
+        double maximumAbsoluteDifferenceFromControlSamplePascals = 0.0;
+        ConservativeTransferResult transfer;
+    };
+    std::optional<MaterialWallTracePressureTransfer>
+        materialWallTracePressure;
 };
 
 struct FluidLoadTransfers {
@@ -283,6 +292,170 @@ FluidLoadTransfers evaluateFluidLoads(
     auto total = evaluateSceneFluidQuadrature(
         transfer, state, quadrature, pressureTractions);
     return {std::move(pressure), std::move(wall), std::move(total)};
+}
+
+BuiltCase::MaterialWallTracePressureTransfer
+evaluateMaterialWallTracePressure(
+    const SceneFluidSurfaceDefinition& surface,
+    const SceneFluidSurfaceState& state,
+    const SceneFluidSurfaceTransfer& transfer,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& fullSystem,
+    const SceneFluidMimeticCondensedTraceSystem& condensedSystem,
+    const SceneFluidMimeticPressureSourceSet& sources,
+    const SceneFluidMimeticPressureState& pressureState,
+    const SceneFluidMimeticPressureSampleSet& controlSamples) {
+    validateSceneFluidMimeticPressureSamples(
+        controlSamples, quadrature, pressureVolumes,
+        controlCells, fullSystem, condensedSystem, pressureState);
+    validateSceneFluidMimeticPressureSources(sources, controlCells);
+    if (pressureState.pressureSourceFingerprint != sources.fingerprint
+        || controlSamples.pressures.size() != quadrature.points.size()
+        || controlCells.halfFaces.size()
+            != fullSystem.halfFaceTraceIndices.size()) {
+        throw std::invalid_argument(
+            "material-wall trace pressure source identity is invalid");
+    }
+
+    const auto integratedSources =
+        sceneFluidMimeticIntegratedCellSources(sources);
+    const auto fullRightHandSide =
+        buildSceneFluidMimeticTraceRightHandSide(
+            fullSystem, integratedSources);
+    std::vector<double> reducedTracePascals(
+        condensedSystem.traces.size(), 0.0);
+    std::vector<bool> reducedTraceWritten(
+        condensedSystem.traces.size(), false);
+    for (const auto& trace : pressureState.traces) {
+        if (trace.reducedTraceIndex >= reducedTracePascals.size()
+            || reducedTraceWritten[trace.reducedTraceIndex]) {
+            throw std::invalid_argument(
+                "material-wall trace pressure state ordering is invalid");
+        }
+        reducedTracePascals[trace.reducedTraceIndex] =
+            trace.pressurePascals;
+        reducedTraceWritten[trace.reducedTraceIndex] = true;
+    }
+    if (std::ranges::find(reducedTraceWritten, false)
+        != reducedTraceWritten.end()) {
+        throw std::invalid_argument(
+            "material-wall trace pressure state is incomplete");
+    }
+    const auto fullTracePascals = reconstructSceneFluidMimeticFullTraces(
+        condensedSystem, fullSystem, fullRightHandSide,
+        reducedTracePascals);
+
+    const std::size_t missing = invalidSceneFluidMimeticTraceIndex;
+    std::vector<std::size_t> negativeTraces(
+        quadrature.points.size(), missing);
+    std::vector<std::size_t> positiveTraces(
+        quadrature.points.size(), missing);
+    for (const auto& face : controlCells.halfFaces) {
+        if (face.kind != SceneFluidMimeticHalfFaceKind::MaterialWall) {
+            continue;
+        }
+        if (face.sourceIndex >= quadrature.points.size()
+            || face.sourceStableId
+                != quadrature.points[face.sourceIndex].stableId) {
+            throw std::invalid_argument(
+                "material-wall trace pressure quadrature binding is invalid");
+        }
+        const std::size_t traceIndex =
+            fullSystem.halfFaceTraceIndices[face.halfFaceIndex];
+        if (traceIndex >= fullSystem.traces.size()
+            || fullSystem.traces[traceIndex].kind
+                != SceneFluidMimeticHalfFaceKind::MaterialWall
+            || fullSystem.traces[traceIndex].sourceStableId
+                != face.sourceStableId) {
+            throw std::invalid_argument(
+                "material-wall trace pressure topology is invalid");
+        }
+        auto& sideTrace =
+            face.side
+                    == SceneFluidMimeticHalfFaceSide::MinusOrNegative
+                ? negativeTraces[face.sourceIndex]
+                : positiveTraces[face.sourceIndex];
+        if (sideTrace != missing) {
+            throw std::invalid_argument(
+                "material-wall trace pressure side is duplicated");
+        }
+        sideTrace = traceIndex;
+    }
+
+    std::vector<SceneFluidQuadraturePressure> wallPressures;
+    wallPressures.reserve(quadrature.points.size());
+    std::size_t reconstructedSideCount = 0;
+    double maximumPressureDifference = 0.0;
+    double maximumControlDifference = 0.0;
+    for (std::size_t index = 0; index < quadrature.points.size(); ++index) {
+        const auto& point = quadrature.points[index];
+        const auto& control = controlSamples.pressures[index];
+        const auto& binding = controlSamples.bindings[index];
+        if (control.stableId != point.stableId
+            || binding.sampleIndex != index
+            || binding.stableId != point.stableId) {
+            throw std::invalid_argument(
+                "material-wall trace pressure sample order is invalid");
+        }
+        double negativePressure = control.negativeSidePressurePascals;
+        double positivePressure = control.positiveSidePressurePascals;
+        if (negativeTraces[index] != missing) {
+            negativePressure = fullTracePascals[negativeTraces[index]];
+            ++reconstructedSideCount;
+        }
+        if (positiveTraces[index] != missing) {
+            positivePressure = fullTracePascals[positiveTraces[index]];
+            ++reconstructedSideCount;
+        }
+        if ((negativeTraces[index] != missing
+             && fullSystem.traces[negativeTraces[index]].componentIndex
+                 != binding.componentIndex)
+            || (positiveTraces[index] != missing
+                && fullSystem.traces[positiveTraces[index]].componentIndex
+                    != binding.componentIndex)) {
+            throw std::invalid_argument(
+                "material-wall trace pressure side uses a foreign gauge");
+        }
+        const double wallDifference = negativePressure - positivePressure;
+        const double controlDifference =
+            control.negativeSidePressurePascals
+            - control.positiveSidePressurePascals;
+        if (!std::isfinite(wallDifference)) {
+            throw std::overflow_error(
+                "material-wall trace pressure difference is non-finite");
+        }
+        maximumPressureDifference = std::max(
+            maximumPressureDifference, std::abs(wallDifference));
+        maximumControlDifference = std::max(
+            maximumControlDifference,
+            std::abs(wallDifference - controlDifference));
+        wallPressures.push_back({
+            point.stableId, negativePressure, positivePressure,
+        });
+    }
+    const std::size_t totalSideCount = 2 * quadrature.points.size();
+    const std::size_t fallbackSideCount =
+        totalSideCount - reconstructedSideCount;
+    if (fallbackSideCount
+        != controlCells.omittedZeroVolumeMaterialSideCount) {
+        throw std::logic_error(
+            "material-wall trace pressure fallback count is invalid");
+    }
+    auto wallTransfer = evaluateSceneFluidPressureQuadrature(
+        surface, state, transfer, quadrature, wallPressures);
+    if (!wallTransfer.diagnostics().finite) {
+        throw std::runtime_error(
+            "material-wall trace pressure transfer was not accepted");
+    }
+    return {
+        reconstructedSideCount,
+        fallbackSideCount,
+        maximumPressureDifference,
+        maximumControlDifference,
+        std::move(wallTransfer),
+    };
 }
 
 BuiltCase buildCase(
@@ -427,6 +600,14 @@ BuiltCase buildCase(
         surface.definition, state, transfer,
         geometryEpoch.gridEpoch.quadrature,
         pressure.pressureEpoch.acceptedPressureSamples);
+    auto materialWallTracePressure = evaluateMaterialWallTracePressure(
+        surface.definition, state, transfer,
+        geometryEpoch.gridEpoch.quadrature,
+        geometryEpoch.pressureControlVolumes,
+        pressure.controlCells, pressure.fullTraceSystem,
+        pressure.condensedTraceSystem, pressure.pressureSources,
+        pressure.pressureEpoch.acceptedPressureState,
+        pressure.pressureEpoch.acceptedPressureSamples);
     auto frameMapping = viewer::makeStructureFrameMapping(
         scene, assembly, structure);
     BuiltCase result{
@@ -441,6 +622,8 @@ BuiltCase buildCase(
         std::move(fluidLoads.total), std::move(frameMapping),
     };
     result.windRampFraction = initialRampFraction;
+    result.materialWallTracePressure =
+        std::move(materialWallTracePressure);
     return result;
 }
 
@@ -603,12 +786,25 @@ void advanceFixedGeometryFlow(
         throw std::runtime_error(
             "frozen scene continued pressure transfer was not accepted");
     }
+    auto candidateMaterialWallTracePressure =
+        evaluateMaterialWallTracePressure(
+            built.surface.definition, built.surfaceState, built.transfer,
+            geometry.gridEpoch.quadrature,
+            geometry.pressureControlVolumes,
+            candidatePressure.controlCells,
+            candidatePressure.fullTraceSystem,
+            candidatePressure.condensedTraceSystem,
+            candidatePressure.pressureSources,
+            candidatePressure.pressureEpoch.acceptedPressureState,
+            candidatePressure.pressureEpoch.acceptedPressureSamples);
 
     built.pressure = std::move(candidatePressure);
     built.correctedFlow = std::move(candidateCorrectedFlow);
     built.correctedMac = std::move(candidateCorrectedMac);
     built.regionalMomentum = std::move(candidateRegionalMomentum);
     built.pressureTransfer = std::move(candidatePressureTransfer);
+    built.materialWallTracePressure =
+        std::move(candidateMaterialWallTracePressure);
     built.traceFlowContinuation =
         std::move(candidateTraceFlowContinuation);
     built.regionalTransportFlowPrediction =
@@ -829,6 +1025,19 @@ void advanceMovingGeometryFsi(
             throw std::runtime_error(
                 "moving scene fluid load transfer was not accepted");
         }
+        auto candidateMaterialWallTracePressure =
+            evaluateMaterialWallTracePressure(
+                built.surface.definition, currentSurfaceState,
+                built.transfer,
+                geometryTransition.currentGeometryEpoch.gridEpoch.quadrature,
+                geometryTransition.currentGeometryEpoch
+                    .pressureControlVolumes,
+                candidatePressure.controlCells,
+                candidatePressure.fullTraceSystem,
+                candidatePressure.condensedTraceSystem,
+                candidatePressure.pressureSources,
+                candidatePressure.pressureEpoch.acceptedPressureState,
+                candidatePressure.pressureEpoch.acceptedPressureSamples);
 
         built.surfaceState = std::move(currentSurfaceState);
         built.pressureControlTopologyStable =
@@ -843,6 +1052,8 @@ void advanceMovingGeometryFsi(
             std::move(candidateFluidLoads.pressure);
         built.wallTransfer = std::move(candidateFluidLoads.wall);
         built.totalFluidTransfer = std::move(candidateFluidLoads.total);
+        built.materialWallTracePressure =
+            std::move(candidateMaterialWallTracePressure);
         built.regionalTransport = std::move(candidateRegionalTransport);
         built.regionWall = std::move(regionWall);
         built.structureStep = structureStep;
@@ -915,6 +1126,19 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.maximumAbsolutePressureDifferencePascals =
         built.pressure.pressureEpoch.acceptedPressureSamples
             .maximumAbsolutePressureDifferencePascals;
+    if (built.materialWallTracePressure) {
+        result.reconstructedMaterialWallPressureSideCount =
+            built.materialWallTracePressure->reconstructedSideCount;
+        result.fallbackMaterialWallPressureSideCount =
+            built.materialWallTracePressure->fallbackSideCount;
+        result.maximumAbsoluteMaterialWallTracePressureDifferencePascals =
+            built.materialWallTracePressure
+                ->maximumAbsolutePressureDifferencePascals;
+        result
+            .maximumAbsoluteMaterialWallTraceDifferenceFromControlSamplePascals =
+            built.materialWallTracePressure
+                ->maximumAbsoluteDifferenceFromControlSamplePascals;
+    }
     result.maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond =
         built.pressure.pressureSources
             .maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond;
@@ -979,6 +1203,16 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.transferForceResidualNewtons = transfer.forceResidualNormNewtons;
     result.transferMomentResidualNewtonMeters =
         transfer.momentResidualNormNewtonMeters;
+    if (built.materialWallTracePressure) {
+        const auto& wallTraceTransfer =
+            built.materialWallTracePressure->transfer.diagnostics();
+        result.materialWallTracePressureForceNewtons =
+            wallTraceTransfer.transferredNodalForceNewtons;
+        result.materialWallTracePressureTransferForceResidualNewtons =
+            wallTraceTransfer.forceResidualNormNewtons;
+        result.materialWallTracePressureTransferMomentResidualNewtonMeters =
+            wallTraceTransfer.momentResidualNormNewtonMeters;
+    }
     const auto& totalTransfer = built.totalFluidTransfer.diagnostics();
     result.totalFluidForceNewtons =
         totalTransfer.transferredNodalForceNewtons;
@@ -1005,6 +1239,12 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         && result.windRampFraction >= 0.0
         && result.windRampFraction <= 1.0
         && std::isfinite(result.maximumAbsolutePressureDifferencePascals)
+        && built.materialWallTracePressure
+        && built.materialWallTracePressure->transfer.diagnostics().finite
+        && std::isfinite(
+            result.maximumAbsoluteMaterialWallTracePressureDifferencePascals)
+        && std::isfinite(
+            result.maximumAbsoluteMaterialWallTraceDifferenceFromControlSamplePascals)
         && std::isfinite(
             result.maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond)
         && std::isfinite(
@@ -1051,6 +1291,10 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         && std::isfinite(result.bulkProjectionDivergenceAfterPerSecond)
         && std::isfinite(result.transferForceResidualNewtons)
         && std::isfinite(result.transferMomentResidualNewtonMeters)
+        && std::isfinite(
+            result.materialWallTracePressureTransferForceResidualNewtons)
+        && std::isfinite(
+            result.materialWallTracePressureTransferMomentResidualNewtonMeters)
         && std::isfinite(result.maximumGeometryDisplacementMeters)
         && std::isfinite(result.maximumSuspensionResidualMeters)
         && std::isfinite(

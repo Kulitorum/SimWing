@@ -1743,6 +1743,11 @@ makes this a certified aerodynamic solver.
   --scene <scene-v2.bin>` freezes Structure geometry, retains a projected bulk
   continuation velocity, advances periodic viscosity/advection, re-solves the
   mimetic pressure boundary, and publishes accepted diagnostic frames. Its
+  diagnostic load ledger independently reconstructs the eliminated
+  one-incidence material-wall trace pressure on every available quadrature
+  side, falls back to the existing control sample only for an explicitly
+  omitted zero-volume side, and reports wall-trace versus control-sample jump
+  and force. This shadow ledger never supplies Structure loads. Its
   `--continue-corrected-trace-flow` experiment preserves exact fixed-topology
   trace corrections across frames without changing default arithmetic. The
   mutually exclusive `--transport-corrected-region-flow` experiment projects
@@ -1768,6 +1773,12 @@ makes this a certified aerodynamic solver.
   traces. The six-frame regional experiment reaches `86369.3 Pa` and
   `29870.5 N` with exact internal momentum closure, but its `12.6851 m/s`
   regional speed remains nonphysical and does not justify promotion.
+  On the stationary exported gnuC2 `2^3` scene at `-0.0001 m/s`, the current
+  control-cell sample produces `16.6527 N`, while exact reconstructed wall
+  traces produce a `0.0152279 N` resultant from the same accepted solve. The
+  wall field also has a `3.85721e7 Pa` local jump on tiny cut patches, so this
+  large aggregate improvement is evidence for the load-location hypothesis,
+  not yet permission to switch production sampling.
   The coarse periodic domain, pump, and
   pressure magnitude are not aerodynamic validation; no external-domain wake,
   polar/refinement study, or structural feedback is present.

@@ -168,6 +168,20 @@ void testFrozenScenePressureCase() {
               && diagnostics.maximumPressureExtrapolationDistanceMeters
                   == 0.0
               && diagnostics.maximumAbsolutePressureDifferencePascals > 0.0
+              && diagnostics.reconstructedMaterialWallPressureSideCount > 0
+              && diagnostics.fallbackMaterialWallPressureSideCount == 0
+              && diagnostics
+                     .maximumAbsoluteMaterialWallTracePressureDifferencePascals
+                  > 0.0
+              && diagnostics
+                     .maximumAbsoluteMaterialWallTraceDifferenceFromControlSamplePascals
+                  > 0.0
+              && diagnostics
+                     .materialWallTracePressureTransferForceResidualNewtons
+                  < 1.0e-8
+              && diagnostics
+                     .materialWallTracePressureTransferMomentResidualNewtonMeters
+                  < 1.0e-8
               && diagnostics
                      .maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond
                   <= diagnostics.correctedContinuityToleranceCubicMetersPerSecond
