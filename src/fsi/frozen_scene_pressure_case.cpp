@@ -1,6 +1,7 @@
 #include "frozen_scene_pressure_case.h"
 
 #include "fluid/evolution.h"
+#include "fluid_frame.h"
 #include "scene_fluid_capped_face_partition.h"
 #include "scene_fluid_cell_volume.h"
 #include "scene_fluid_mimetic_pressure_audit.h"
@@ -21,8 +22,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -442,6 +445,110 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     return result;
 }
 
+void appendFluidDiagnostics(
+    viewer::DiagnosticFrame& frame,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::MacVelocityField& velocity) {
+    const auto fluidFields = viewer::buildPeriodicFluidCellFields(
+        grid, velocity);
+    const std::size_t structureVertexCount = frame.vertices.size();
+    const std::size_t fluidVertexCount = grid.cellCount();
+    if (fluidFields.velocityMetersPerSecond.size() != fluidVertexCount
+        || fluidFields.speedMetersPerSecond.size() != fluidVertexCount
+        || fluidFields.divergencePerSecond.size() != fluidVertexCount
+        || fluidFields.vorticityPerSecond.size() != fluidVertexCount
+        || fluidFields.vorticityMagnitudePerSecond.size()
+            != fluidVertexCount) {
+        throw std::logic_error(
+            "frozen scene fluid viewer fields are incomplete");
+    }
+    for (auto& field : frame.scalarFields) {
+        if (field.association == viewer::FieldAssociation::Vertex) {
+            field.values.resize(
+                structureVertexCount + fluidVertexCount, 0.0);
+        }
+    }
+    for (auto& field : frame.vectorFields) {
+        if (field.association == viewer::FieldAssociation::Vertex) {
+            field.values.resize(
+                structureVertexCount + fluidVertexCount, {});
+        }
+    }
+
+    std::set<std::uint64_t> usedIds;
+    std::uint64_t candidateId = 0;
+    for (const auto& vertex : frame.vertices) {
+        usedIds.insert(vertex.stableId);
+        candidateId = std::max(candidateId, vertex.stableId);
+    }
+    const auto nextAvailableId = [&]() {
+        do {
+            candidateId = candidateId
+                    == std::numeric_limits<std::uint64_t>::max()
+                ? 1 : candidateId + 1;
+        } while (candidateId == 0 || usedIds.contains(candidateId));
+        usedIds.insert(candidateId);
+        return candidateId;
+    };
+    frame.vertices.reserve(structureVertexCount + fluidVertexCount);
+    const auto counts = grid.cellCounts();
+    for (std::size_t k = 0; k < counts.z; ++k) {
+        for (std::size_t j = 0; j < counts.y; ++j) {
+            for (std::size_t i = 0; i < counts.x; ++i) {
+                const auto position = grid.cellCenterMeters(i, j, k);
+                frame.vertices.push_back({
+                    nextAvailableId(),
+                    {position.x, position.y, position.z},
+                });
+            }
+        }
+    }
+
+    const auto scalarValues = [&](const std::vector<double>& values) {
+        std::vector<double> result(
+            structureVertexCount + fluidVertexCount, 0.0);
+        std::copy(
+            values.begin(), values.end(),
+            result.begin() + static_cast<std::ptrdiff_t>(
+                structureVertexCount));
+        return result;
+    };
+    const auto vectorValues = [&](const std::vector<viewer::Vec3d>& values) {
+        std::vector<viewer::Vec3d> result(
+            structureVertexCount + fluidVertexCount);
+        std::copy(
+            values.begin(), values.end(),
+            result.begin() + static_cast<std::ptrdiff_t>(
+                structureVertexCount));
+        return result;
+    };
+    frame.scalarFields.push_back({
+        "frozen_scene.fluid_speed", "m/s",
+        viewer::FieldAssociation::Vertex,
+        scalarValues(fluidFields.speedMetersPerSecond),
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.fluid_divergence", "1/s",
+        viewer::FieldAssociation::Vertex,
+        scalarValues(fluidFields.divergencePerSecond),
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.fluid_vorticity_magnitude", "1/s",
+        viewer::FieldAssociation::Vertex,
+        scalarValues(fluidFields.vorticityMagnitudePerSecond),
+    });
+    frame.vectorFields.push_back({
+        "frozen_scene.fluid_velocity", "m/s",
+        viewer::FieldAssociation::Vertex,
+        vectorValues(fluidFields.velocityMetersPerSecond),
+    });
+    frame.vectorFields.push_back({
+        "frozen_scene.fluid_vorticity", "1/s",
+        viewer::FieldAssociation::Vertex,
+        vectorValues(fluidFields.vorticityPerSecond),
+    });
+}
+
 } // namespace
 
 struct FrozenScenePressureCase::Implementation {
@@ -520,6 +627,9 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
         state.built.structure, state.built.frameMapping, context);
     frame.step = nextStep;
     frame.simulationTimeSeconds = nextTime;
+    appendFluidDiagnostics(
+        frame, state.built.grid,
+        state.built.correctedMac.velocityMetersPerSecond);
 
     std::map<StableId, std::size_t> triangleIndices;
     for (std::size_t index = 0;

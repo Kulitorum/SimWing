@@ -1557,7 +1557,10 @@ The `frozen-scene` command is the first input-driven whole-wing diagnostic. It
 loads a binary scene-v2 payload, holds the assembled geometry fixed, evaluates
 an initial prescribed-flow mixed-hybrid pressure projection, conservatively
 maps pressure forces to Structure nodes, and publishes triangle pressure plus
-nodal load fields to the trace viewer. Later samples retain the pressure-
+nodal load fields to the trace viewer. The same frame appends bounded cell-
+centre fluid points with selectable speed, divergence, vorticity, velocity-
+arrow, and vorticity-arrow fields; these points do not alter wing topology or
+solver state. Later samples retain the pressure-
 corrected bulk velocity, remove its small area-collapse divergence, advance one
 periodic viscous/advection step with a streamwise mean-flow pump, and reapply
 the fixed-geometry mimetic pressure boundary transactionally. This proves the

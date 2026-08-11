@@ -523,6 +523,7 @@ target_include_directories(simwing_frozen_scene_pressure_case PUBLIC
 )
 target_link_libraries(simwing_frozen_scene_pressure_case PUBLIC
     simwing_scene_fluid_cell_volume
+    simwing_fluid_frame
     simwing_structure_frame
 )
 

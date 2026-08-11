@@ -3444,7 +3444,11 @@ projects away its small area-collapse divergence, advances one subcycled
 periodic viscous/advection interval with an explicit streamwise mean-flow pump,
 resamples opening flux, and re-solves the fixed-topology mimetic pressure and
 load transactionally. A two-frame real-wing run changes both pressure and load
-while retaining exact frozen geometry. This is an integration result only: the
+while retaining exact frozen geometry. Each frame also appends bounded,
+unreferenced cell-centre points carrying speed, divergence, vorticity, and
+velocity/vorticity vector fields, allowing the standalone viewer to inspect
+the retained bulk state without introducing a second solver geometry or
+aliasing fluid storage. This is an integration result only: the
 grid is the deliberately coarse periodic geometry audit domain, pressure starts
 from a zero warm field each frame, and the large absolute pressure/load
 magnitudes are not a wing polar, lift result, external wake, or aerodynamic

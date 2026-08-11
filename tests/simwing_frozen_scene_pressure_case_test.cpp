@@ -1,6 +1,7 @@
 #include "frozen_scene_pressure_case.h"
 #include "scene_pressure_cell_geometry.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <exception>
@@ -97,6 +98,8 @@ void testFrozenScenePressureCase() {
         firstFrame, "frozen_scene.pressure_jump");
     const auto* nodalForce = vectorField(
         firstFrame, "frozen_scene.nodal_pressure_force");
+    const auto* fluidVelocity = vectorField(
+        firstFrame, "frozen_scene.fluid_velocity");
     const auto* secondPressure = scalarField(
         secondFrame, "frozen_scene.pressure_jump");
     const auto& diagnostics = first.diagnostics();
@@ -117,8 +120,18 @@ void testFrozenScenePressureCase() {
               && nodalForce != nullptr
               && nodalForce->association
                   == simwing::viewer::FieldAssociation::Vertex
-              && nodalForce->values.size() == firstFrame.vertices.size(),
-          "frozen scene frame publishes complete triangle pressure and nodal load fields");
+              && nodalForce->values.size() == firstFrame.vertices.size()
+              && fluidVelocity != nullptr
+              && fluidVelocity->association
+                  == simwing::viewer::FieldAssociation::Vertex
+              && fluidVelocity->values.size() == firstFrame.vertices.size()
+              && std::any_of(
+                  fluidVelocity->values.begin(), fluidVelocity->values.end(),
+                  [](const auto value) {
+                      return value.x != 0.0 || value.y != 0.0
+                          || value.z != 0.0;
+                  }),
+          "frozen scene frame publishes complete pressure, nodal load, and fluid velocity fields");
     check(diagnostics.finite
               && diagnostics.pressureControlCount > 0
               && diagnostics.sharedTraceCount > 0

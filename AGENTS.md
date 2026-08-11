@@ -279,7 +279,10 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   bulk viscosity/advection with a mean-flow pump, and reapplies the fixed-
   topology mimetic pressure solve transactionally. Embedded opening traces
   remain explicit rather than being smeared onto the grid. This coarse periodic
-  diagnostic is not a validated external-flow wake, polar, or two-way solver.
+  diagnostic appends unreferenced cell-centre points and velocity/vorticity
+  fields to the immutable Structure frame for viewer inspection. Those samples
+  never enter solver state. It is not a validated external-flow wake, polar,
+  or two-way solver.
 - `simwing_scene_fluid_surface`: deterministic compact ownership of the
   authoritative scene-v2 fluid regions, porous fabric, oriented surface
   triangles, and openings, plus immutable capture of accepted Structure
@@ -1647,7 +1650,9 @@ makes this a certified aerodynamic solver.
   --scene <scene-v2.bin>` freezes Structure geometry, retains a projected bulk
   continuation velocity, advances periodic viscosity/advection, re-solves the
   mimetic pressure boundary, and publishes accepted diagnostic frames. Its
-  coarse periodic domain, pump, and pressure magnitude are not aerodynamic
+  fluid cell centres appear as unreferenced viewer points with scalar and arrow
+  fields alongside the frozen wing. The coarse periodic domain, pump, and
+  pressure magnitude are not aerodynamic
   validation; no external-domain wake, polar/refinement study, or structural
   feedback is present.
 - `tools/simwing_mimetic_conductance_audit_main.cpp` is the opt-in Qt-free
