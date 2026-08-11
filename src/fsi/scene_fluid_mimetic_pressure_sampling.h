@@ -10,13 +10,16 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t
-    sceneFluidMimeticPressureSamplingVersion = 1;
+    sceneFluidMimeticPressureSamplingVersion = 2;
 
 // Immutable one-sided surface samples from an accepted mimetic pressure
-// state. Each quadrature side resolves through the exact pressure-control row
-// also owned by the mimetic control topology. Both sides must share one
-// pressure component so their difference is gauge-safe. The resulting
-// one-sided samples use the existing conservative pressure-traction path.
+// state. A side normally resolves through its exact cell/region pressure row.
+// When that cut-cell region was deliberately omitted as zero-volume, the side
+// uses the nearest same-region row in an immediately adjacent periodic cell;
+// this is an explicit cell-constant extrapolation, never an invented absolute
+// pressure. Both sides must share one pressure component so their difference
+// is gauge-safe. The resulting one-sided samples use the existing conservative
+// pressure-traction path.
 struct SceneFluidMimeticPressureSampleSet {
     std::uint32_t version =
         sceneFluidMimeticPressureSamplingVersion;
@@ -34,6 +37,8 @@ struct SceneFluidMimeticPressureSampleSet {
     std::size_t ownedStorageBytes = 0;
     std::size_t controlVolumeCount = 0;
     std::size_t componentCount = 0;
+    std::size_t extrapolatedZeroVolumeSideCount = 0;
+    double maximumExtrapolationDistanceMeters = 0.0;
     double maximumAbsolutePressureDifferencePascals = 0.0;
     std::vector<SceneFluidPressureSampleBinding> bindings;
     std::vector<SceneFluidQuadraturePressure> pressures;

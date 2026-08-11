@@ -286,7 +286,10 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   grid, positive domain padding, signed X wind, and nonnegative deterministic
   perturbation; defaults remain `2`, `0.5 m`, `-0.85 m/s`, and `0 m/s`.
   The perturbation default is zero; nonzero values are explicit diagnostic
-  forcing, not turbulence or an aerodynamic boundary condition.
+  forcing, not turbulence or an aerodynamic boundary condition. Refined grids
+  may omit zero-volume material sides from the local operator; their retained
+  quadrature centroids drive a bounded nearest same-region adjacent-cell
+  pressure extrapolation, reported separately in diagnostics.
 - `simwing_scene_fluid_surface`: deterministic compact ownership of the
   authoritative scene-v2 fluid regions, porous fabric, oriented surface
   triangles, and openings, plus immutable capture of accepted Structure
@@ -424,9 +427,10 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   paired half-faces, so rejected two-point apertures are not missing geometry.
   The manual `4 x 4 x 4` audit likewise classifies six untouched faces and
   closes all 358 controls. It safely omits 240 zero-volume material sides,
+  retains one bounded centroid record for each affected material sample,
   misses no opening side, retains 95,984 paired opening half-faces, and reaches
-  2,947 half-faces in its largest control. It does not replace the production
-  graph operator.
+  2,947 half-faces in its largest control. It does not add zero-volume unknowns
+  or replace the production graph operator.
 - `scene_fluid_mimetic_trace_system.{h,cpp}` is the audit-only immutable
   global mixed-hybrid topology and matrix-free action over those completed
   shells. Shared Cartesian and authored-opening identities form exactly one
@@ -526,15 +530,16 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   the atomic solve. The opt-in pressure-cell shadow now consumes it after the
   first audited endpoint; the default graph worker remains unchanged.
 - `scene_fluid_mimetic_pressure_sampling.{h,cpp}` is the accepted-state load
-  adapter. Every material quadrature side resolves through the exact
-  cell/region pressure-control row shared by the mimetic topology and state.
-  The two authored sides must belong to one pressure component before their
-  gauge-safe difference is published. The bounded fingerprinted sample set
-  then reuses the existing conservative pressure quadrature and Structure-load
-  transfer without another force path. Analytic and coarse real-wing tests
-  require exact one-sided values plus force/moment closure. The opt-in worker
-  shadow retains these samples but does not apply them; production load
-  selection is still the graph pressure operator.
+  adapter. Every normal material side resolves through its exact cell/region
+  pressure-control row. An explicitly omitted zero-volume side instead selects
+  the nearest same-region control in one face-adjacent periodic cell from the
+  retained material centroid; the extrapolated-side count and maximum distance
+  remain fingerprinted diagnostics. The two authored sides must belong to one
+  pressure component before their gauge-safe difference is published. The
+  sample set then reuses the existing conservative pressure quadrature and
+  Structure-load transfer without another force path. The opt-in worker shadow
+  retains these samples but does not apply them; production load selection is
+  still the graph pressure operator.
 - `scene_fluid_pressure_shadow_comparison.{h,cpp}` is the immutable evidence
   gate at that unchanged load boundary. It pairs every graph/reference and
   mimetic material pressure jump by exact control/region identity, evaluates
@@ -1655,10 +1660,12 @@ makes this a certified aerodynamic solver.
   continuation velocity, advances periodic viscosity/advection, re-solves the
   mimetic pressure boundary, and publishes accepted diagnostic frames. Its
   fluid cell centres appear as unreferenced viewer points with scalar and arrow
-  fields alongside the frozen wing. The coarse periodic domain, pump, and
-  pressure magnitude are not aerodynamic
-  validation; no external-domain wake, polar/refinement study, or structural
-  feedback is present.
+  fields alongside the frozen wing. The real `4^3` probe accepts in 1,472 PCG
+  iterations and reports 240 bounded extrapolated zero-volume sides; its
+  pressure/load contraction versus `2^3` is evidence of grid sensitivity, not
+  convergence. The coarse periodic domain, pump, and pressure magnitude are
+  not aerodynamic validation; no external-domain wake, polar/refinement study,
+  or structural feedback is present.
 - `tools/simwing_mimetic_conductance_audit_main.cpp` is the opt-in Qt-free
   high-resolution evidence runner. It consumes the canonical offline profile
   and grid phases owned by the mimetic conductance phase-audit boundary. An

@@ -244,7 +244,7 @@ BuiltCase buildCase(
     pressureSettings.pressureSolve.relativeResidualTolerance = 1.0e-5;
     pressureSettings.pressureSolve
         .absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-8;
-    pressureSettings.pressureSolve.maximumIterations = 1000;
+    pressureSettings.pressureSolve.maximumIterations = 4000;
     auto pressure = buildSceneFluidMimeticPressureAuditEndpoint(
         surface.definition, state, grid, gridEpoch, openingCaps,
         openingQuadrature, openingPatches, pressureVolumes,
@@ -378,6 +378,12 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         built.pressure.fullTraceSystem.sharedTraceCount;
     result.pressureIterationCount = built.pressure.pressureEpoch
         .diagnostics.pressureSolve.reducedTraceSolve.iterationCount;
+    result.extrapolatedZeroVolumePressureSideCount =
+        built.pressure.pressureEpoch.acceptedPressureSamples
+            .extrapolatedZeroVolumeSideCount;
+    result.maximumPressureExtrapolationDistanceMeters =
+        built.pressure.pressureEpoch.acceptedPressureSamples
+            .maximumExtrapolationDistanceMeters;
     result.maximumAbsolutePressureDifferencePascals =
         built.pressure.pressureEpoch.acceptedPressureSamples
             .maximumAbsolutePressureDifferencePascals;
@@ -426,6 +432,8 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         && built.correctedFlow.accepted
         && built.correctedMac.diagnostics.finite
         && transfer.finite
+        && std::isfinite(
+            result.maximumPressureExtrapolationDistanceMeters)
         && std::isfinite(result.maximumAbsolutePressureDifferencePascals)
         && std::isfinite(
             result.maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond)

@@ -1,10 +1,12 @@
 #include "scene_fluid_mimetic_pressure_sampling.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 
 namespace simwing::fsi {
@@ -77,6 +79,9 @@ std::uint64_t productFingerprint(
         samples.controlVolumeCount));
     fingerprint.integer(static_cast<std::uint64_t>(
         samples.componentCount));
+    fingerprint.integer(static_cast<std::uint64_t>(
+        samples.extrapolatedZeroVolumeSideCount));
+    fingerprint.real(samples.maximumExtrapolationDistanceMeters);
     fingerprint.real(samples.maximumAbsolutePressureDifferencePascals);
     fingerprint.integer(static_cast<std::uint64_t>(
         samples.bindings.size()));
@@ -157,7 +162,7 @@ void validateSources(
     }
 }
 
-const SceneFluidPressureControlVolume& findControl(
+const SceneFluidPressureControlVolume* findControl(
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
     const std::size_t cellIndex,
     const StableId regionId) {
@@ -178,11 +183,141 @@ const SceneFluidPressureControlVolume& findControl(
             found = &control;
         }
     }
-    if (found == nullptr) {
-        throw std::invalid_argument(
-            "scene fluid mimetic pressure sample has no matching control");
+    return found;
+}
+
+struct MaterialSampleCentroid {
+    bool present = false;
+    fluid::Vector3 wrappedMeters;
+    bool negativeSideOmitted = false;
+    bool positiveSideOmitted = false;
+};
+
+std::vector<MaterialSampleCentroid> materialSampleCentroids(
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidMimeticControlCellSet& controlCells) {
+    std::vector<MaterialSampleCentroid> result(quadrature.points.size());
+    for (const auto& omitted : controlCells.omittedMaterialSamples) {
+        if (omitted.sourceIndex >= result.size()
+            || omitted.sourceStableId
+                != quadrature.points[omitted.sourceIndex].stableId) {
+            throw std::invalid_argument(
+                "scene fluid mimetic omitted-material sample is foreign");
+        }
+        result[omitted.sourceIndex] = {
+            true, omitted.centroidMeters,
+            omitted.negativeSideOmitted,
+            omitted.positiveSideOmitted,
+        };
     }
-    return *found;
+    return result;
+}
+
+double periodicSquaredDistance(
+    const fluid::Vector3& point,
+    const Vec3& controlCentroid,
+    const fluid::Vector3& lower,
+    const fluid::Vector3& upper) {
+    double squared = 0.0;
+    const std::array<double, 3> pointValues{
+        point.x, point.y, point.z};
+    const std::array<double, 3> controlValues{
+        controlCentroid.x, controlCentroid.y, controlCentroid.z};
+    const std::array<double, 3> lowerValues{
+        lower.x, lower.y, lower.z};
+    const std::array<double, 3> upperValues{
+        upper.x, upper.y, upper.z};
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        const double length = upperValues[axis] - lowerValues[axis];
+        double delta = std::abs(pointValues[axis] - controlValues[axis]);
+        delta = std::fmod(delta, length);
+        delta = std::min(delta, length - delta);
+        squared += delta * delta;
+    }
+    return squared;
+}
+
+const SceneFluidPressureControlVolume& resolveControl(
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const std::size_t cellIndex,
+    const StableId regionId,
+    const SceneFluidQuadraturePoint& point,
+    const MaterialSampleCentroid& sampleCentroid,
+    const bool negativeSide,
+    const char* const side,
+    bool& extrapolated,
+    double& extrapolationDistanceMeters) {
+    if (const auto* exact = findControl(
+            pressureVolumes, cellIndex, regionId)) {
+        extrapolated = false;
+        extrapolationDistanceMeters = 0.0;
+        return *exact;
+    }
+    if (!sampleCentroid.present
+        || (negativeSide
+                ? !sampleCentroid.negativeSideOmitted
+                : !sampleCentroid.positiveSideOmitted)) {
+        throw std::invalid_argument(
+            "scene fluid mimetic pressure sample has no matching omitted-side centroid");
+    }
+    const auto counts = pressureVolumes.cellCounts;
+    const auto& cell = pressureVolumes.cells[cellIndex].cell;
+    const std::array<std::size_t, 6> neighborCells{
+        (cell.i + counts.x - 1) % counts.x
+            + counts.x * (cell.j + counts.y * cell.k),
+        (cell.i + 1) % counts.x
+            + counts.x * (cell.j + counts.y * cell.k),
+        cell.i + counts.x
+            * ((cell.j + counts.y - 1) % counts.y + counts.y * cell.k),
+        cell.i + counts.x
+            * ((cell.j + 1) % counts.y + counts.y * cell.k),
+        cell.i + counts.x
+            * (cell.j + counts.y * ((cell.k + counts.z - 1) % counts.z)),
+        cell.i + counts.x
+            * (cell.j + counts.y * ((cell.k + 1) % counts.z)),
+    };
+    const SceneFluidPressureControlVolume* nearest = nullptr;
+    double nearestSquaredDistance =
+        std::numeric_limits<double>::infinity();
+    std::array<std::size_t, 6> visited{};
+    std::size_t visitedCount = 0;
+    for (const std::size_t neighborCell : neighborCells) {
+        if (neighborCell == cellIndex
+            || std::find(
+                   visited.begin(), visited.begin() + visitedCount,
+                   neighborCell)
+                != visited.begin() + visitedCount) {
+            continue;
+        }
+        visited[visitedCount++] = neighborCell;
+        const auto* candidate = findControl(
+            pressureVolumes, neighborCell, regionId);
+        if (candidate == nullptr) {
+            continue;
+        }
+        const double squaredDistance = periodicSquaredDistance(
+            sampleCentroid.wrappedMeters, candidate->centroidMeters,
+            pressureVolumes.lowerMeters, pressureVolumes.upperMeters);
+        if (squaredDistance < nearestSquaredDistance
+            || (squaredDistance == nearestSquaredDistance
+                && nearest != nullptr
+                && candidate->stableId < nearest->stableId)) {
+            nearest = candidate;
+            nearestSquaredDistance = squaredDistance;
+        }
+    }
+    if (nearest == nullptr || !std::isfinite(nearestSquaredDistance)) {
+        throw std::invalid_argument(
+            "scene fluid mimetic pressure sample has no matching "
+            + std::string(side) + " control in its cell or immediate "
+              "neighbors: sample=" + std::to_string(point.stableId)
+            + ", triangle=" + std::to_string(point.triangleId)
+            + ", cell=" + std::to_string(cellIndex)
+            + ", region=" + std::to_string(regionId));
+    }
+    extrapolated = true;
+    extrapolationDistanceMeters = std::sqrt(nearestSquaredDistance);
+    return *nearest;
 }
 
 SceneFluidMimeticPressureSampleSet buildSamples(
@@ -219,16 +354,34 @@ SceneFluidMimeticPressureSampleSet buildSamples(
     result.simulationTimeSeconds = quadrature.simulationTimeSeconds;
     result.controlVolumeCount = pressureVolumes.controlVolumes.size();
     result.componentCount = condensedSystem.componentCount;
+    const auto sampleCentroids = materialSampleCentroids(
+        quadrature, controlCells);
     result.bindings.reserve(quadrature.points.size());
     result.pressures.reserve(quadrature.points.size());
     for (std::size_t index = 0; index < quadrature.points.size(); ++index) {
         const auto& point = quadrature.points[index];
-        const auto& negative = findControl(
+        bool negativeExtrapolated = false;
+        bool positiveExtrapolated = false;
+        double negativeExtrapolationDistance = 0.0;
+        double positiveExtrapolationDistance = 0.0;
+        const auto& negative = resolveControl(
             pressureVolumes, point.negativeSideCellIndex,
-            point.negativeSideRegionId);
-        const auto& positive = findControl(
+            point.negativeSideRegionId, point, sampleCentroids[index],
+            true, "negative-side", negativeExtrapolated,
+            negativeExtrapolationDistance);
+        const auto& positive = resolveControl(
             pressureVolumes, point.positiveSideCellIndex,
-            point.positiveSideRegionId);
+            point.positiveSideRegionId, point, sampleCentroids[index],
+            false, "positive-side", positiveExtrapolated,
+            positiveExtrapolationDistance);
+        result.extrapolatedZeroVolumeSideCount +=
+            static_cast<std::size_t>(negativeExtrapolated)
+            + static_cast<std::size_t>(positiveExtrapolated);
+        result.maximumExtrapolationDistanceMeters = std::max({
+            result.maximumExtrapolationDistanceMeters,
+            negativeExtrapolationDistance,
+            positiveExtrapolationDistance,
+        });
         if (negative.componentIndex != positive.componentIndex) {
             throw std::invalid_argument(
                 "scene fluid mimetic sheet sides use independent pressure gauges");
@@ -260,6 +413,11 @@ SceneFluidMimeticPressureSampleSet buildSamples(
         result.pressures.push_back({
             point.stableId, negativePressure, positivePressure,
         });
+    }
+    if (result.extrapolatedZeroVolumeSideCount
+        != controlCells.omittedZeroVolumeMaterialSideCount) {
+        throw std::logic_error(
+            "scene fluid mimetic pressure extrapolation count does not match omitted material sides");
     }
     result.ownedStorageBytes = expectedBytes;
     result.fingerprint = productFingerprint(result);
@@ -303,6 +461,12 @@ void validateSceneFluidMimeticPressureSampleIntegrity(
         || !std::isfinite(samples.simulationTimeSeconds)
         || samples.controlVolumeCount == 0
         || samples.componentCount == 0
+        || samples.extrapolatedZeroVolumeSideCount
+            > 2 * samples.bindings.size()
+        || !std::isfinite(samples.maximumExtrapolationDistanceMeters)
+        || samples.maximumExtrapolationDistanceMeters < 0.0
+        || (samples.extrapolatedZeroVolumeSideCount == 0
+            && samples.maximumExtrapolationDistanceMeters != 0.0)
         || samples.bindings.empty()
         || samples.bindings.size() != samples.pressures.size()
         || samples.ownedStorageBytes

@@ -312,6 +312,7 @@ void testNestedClosedShells() {
               && first.nonclosingControlCellCount == 0
               && first.unresolvedCartesianFaceCount == 0
               && first.omittedZeroVolumeMaterialSideCount == 0
+              && first.omittedMaterialSamples.empty()
               && first.missingOpeningControlSideCount == 0
               && first.cartesianHalfFaceCount > 0
               && first.materialWallHalfFaceCount > 0
@@ -345,6 +346,7 @@ void testFaceAndEmbeddedOpeningShells() {
               && faceSet.readyControlCellCount == faceSet.controlCells.size()
               && faceSet.openingHalfFaceCount == 0
               && faceSet.omittedZeroVolumeMaterialSideCount == 0
+              && faceSet.omittedMaterialSamples.empty()
               && faceSet.missingOpeningControlSideCount == 0,
           "face-aligned opening is retained through its Cartesian trace pair");
     checkPairedHalfFaces(
@@ -371,6 +373,7 @@ void testFaceAndEmbeddedOpeningShells() {
               && embeddedSet.incompleteTopologyControlCellCount == 0
               && embeddedSet.nonclosingControlCellCount == 0
               && embeddedSet.omittedZeroVolumeMaterialSideCount == 0
+              && embeddedSet.omittedMaterialSamples.empty()
               && embeddedSet.missingOpeningControlSideCount == 0;
     if (!embeddedComplete) {
         std::fprintf(
@@ -422,6 +425,11 @@ void testLimitsAndCorruption() {
     expectLimited(
         [&] { static_cast<void>(fixture.mimetic({}, limits)); },
         "mimetic shell assembly bounds owned storage");
+    limits = {};
+    limits.maximumOmittedMaterialSamples = 0;
+    expectInvalid(
+        [&] { static_cast<void>(fixture.mimetic({}, limits)); },
+        "mimetic shell assembly requires an omitted-material sample bound");
 
     auto badSettings = SceneFluidMimeticControlCellSettings{};
     badSettings.unitNormalTolerance = -1.0;

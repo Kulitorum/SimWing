@@ -138,6 +138,9 @@ void testFrozenScenePressureCase() {
               && diagnostics.pressureControlCount > 0
               && diagnostics.sharedTraceCount > 0
               && diagnostics.pressureIterationCount > 0
+              && diagnostics.extrapolatedZeroVolumePressureSideCount == 0
+              && diagnostics.maximumPressureExtrapolationDistanceMeters
+                  == 0.0
               && diagnostics.maximumAbsolutePressureDifferencePascals > 0.0
               && diagnostics
                      .maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond

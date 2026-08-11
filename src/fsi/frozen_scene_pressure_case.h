@@ -35,6 +35,8 @@ struct FrozenScenePressureCaseDiagnostics {
     std::size_t pressureControlCount = 0;
     std::size_t sharedTraceCount = 0;
     std::size_t pressureIterationCount = 0;
+    std::size_t extrapolatedZeroVolumePressureSideCount = 0;
+    double maximumPressureExtrapolationDistanceMeters = 0.0;
     double maximumAbsolutePressureDifferencePascals = 0.0;
     double maximumAbsoluteComponentContinuityResidualCubicMetersPerSecond =
         0.0;

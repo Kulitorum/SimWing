@@ -3,6 +3,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
@@ -353,8 +354,25 @@ SceneFluidMimeticPressureAuditEndpoint finishEndpoint(
     SceneFluidMimeticPressureAuditEndpoint result,
     const SceneFluidMimeticPressureAuditLimits& limits) {
     if (!result.pressureEpoch.diagnostics.accepted) {
-        throw std::runtime_error(
-            "scene fluid mimetic pressure-audit solve was not accepted");
+        const auto& pressure =
+            result.pressureEpoch.diagnostics.pressureSolve;
+        const auto& trace = pressure.reducedTraceSolve;
+        std::ostringstream message;
+        message << "scene fluid mimetic pressure-audit solve was not accepted "
+                << "(compatible=" << trace.compatible
+                << ", converged=" << trace.converged
+                << ", finite=" << trace.finite
+                << ", iterations=" << trace.iterationCount
+                << ", initial-l2="
+                << trace.initialResidualL2PascalsMeters
+                << ", final-l2="
+                << trace.finalResidualL2PascalsMeters
+                << ", reconstructed-max="
+                << pressure.reconstructedFullResidualMaximumPascalsMeters
+                << ", reconstructed-tolerance="
+                << pressure.reconstructedFullResidualTolerancePascalsMeters
+                << ')';
+        throw std::runtime_error(message.str());
     }
     result.ownedStorageBytes = checkedStorageSum(result);
     if (result.ownedStorageBytes > limits.maximumOwnedBytes) {

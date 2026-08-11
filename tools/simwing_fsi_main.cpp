@@ -1918,6 +1918,7 @@ int main(int argc, char* argv[]) {
                 std::printf(
                     "simwing-fsi completed %llu frozen-scene sample(s), "
                     "t=%.9g s, grid=%zux%zux%zu, controls=%zu, traces=%zu, iterations=%zu, "
+                    "extrapolated-sides=%zu, max-extrapolation=%.6g m, "
                     "max-pressure-jump=%.6g Pa, pressure-force="
                     "[%.6g %.6g %.6g] N, corrected-continuity=%.3g m^3/s, "
                     "collapsed-speed=%.6g m/s, embedded-openings=%zu, "
@@ -1933,6 +1934,8 @@ int main(int argc, char* argv[]) {
                     diagnostics.pressureControlCount,
                     diagnostics.sharedTraceCount,
                     diagnostics.pressureIterationCount,
+                    diagnostics.extrapolatedZeroVolumePressureSideCount,
+                    diagnostics.maximumPressureExtrapolationDistanceMeters,
                     diagnostics.maximumAbsolutePressureDifferencePascals,
                     diagnostics.pressureForceNewtons.x,
                     diagnostics.pressureForceNewtons.y,

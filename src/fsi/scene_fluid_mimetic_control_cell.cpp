@@ -124,11 +124,14 @@ void validateSettings(
 }
 
 std::size_t checkedStorageBytes(const std::size_t controlCount,
-                                const std::size_t halfFaceCount) {
+                                const std::size_t halfFaceCount,
+                                const std::size_t omittedSampleCount) {
     if (controlCount > std::numeric_limits<std::size_t>::max()
             / sizeof(SceneFluidMimeticControlCell)
         || halfFaceCount > std::numeric_limits<std::size_t>::max()
-            / sizeof(SceneFluidMimeticHalfFace)) {
+            / sizeof(SceneFluidMimeticHalfFace)
+        || omittedSampleCount > std::numeric_limits<std::size_t>::max()
+            / sizeof(SceneFluidMimeticOmittedMaterialSample)) {
         throw std::length_error(
             "scene fluid mimetic control-cell storage overflows");
     }
@@ -136,12 +139,16 @@ std::size_t checkedStorageBytes(const std::size_t controlCount,
         * sizeof(SceneFluidMimeticControlCell);
     const std::size_t halfFaceBytes = halfFaceCount
         * sizeof(SceneFluidMimeticHalfFace);
+    const std::size_t omittedSampleBytes = omittedSampleCount
+        * sizeof(SceneFluidMimeticOmittedMaterialSample);
     if (halfFaceBytes > std::numeric_limits<std::size_t>::max()
-            - controlBytes) {
+            - controlBytes
+        || omittedSampleBytes > std::numeric_limits<std::size_t>::max()
+            - controlBytes - halfFaceBytes) {
         throw std::length_error(
             "scene fluid mimetic control-cell storage overflows");
     }
-    return controlBytes + halfFaceBytes;
+    return controlBytes + halfFaceBytes + omittedSampleBytes;
 }
 
 std::uint64_t halfFaceStableId(
@@ -253,6 +260,16 @@ std::uint64_t productFingerprint(
         fingerprint.real(face.outwardUnitNormal.x);
         fingerprint.real(face.outwardUnitNormal.y);
         fingerprint.real(face.outwardUnitNormal.z);
+    }
+    fingerprint.integer(set.omittedMaterialSamples.size());
+    for (const auto& sample : set.omittedMaterialSamples) {
+        fingerprint.integer(sample.sourceIndex);
+        fingerprint.integer(sample.sourceStableId);
+        fingerprint.real(sample.centroidMeters.x);
+        fingerprint.real(sample.centroidMeters.y);
+        fingerprint.real(sample.centroidMeters.z);
+        fingerprint.integer(sample.negativeSideOmitted ? 1 : 0);
+        fingerprint.integer(sample.positiveSideOmitted ? 1 : 0);
     }
     return fingerprint.value();
 }
@@ -395,11 +412,13 @@ SceneFluidMimeticControlCellSet buildSceneFluidMimeticControlCells(
         throw std::length_error(
             "scene fluid mimetic control-cell limit exceeded");
     }
-    if (limits.maximumHalfFaces == 0 || limits.maximumOwnedBytes == 0) {
+    if (limits.maximumHalfFaces == 0
+        || limits.maximumOmittedMaterialSamples == 0
+        || limits.maximumOwnedBytes == 0) {
         throw std::invalid_argument(
             "invalid scene fluid mimetic control-cell limits");
     }
-    if (checkedStorageBytes(controlCount, 0)
+    if (checkedStorageBytes(controlCount, 0, 0)
         > limits.maximumOwnedBytes) {
         throw std::length_error(
             "scene fluid mimetic control-cell byte limit exceeded");
@@ -467,7 +486,8 @@ SceneFluidMimeticControlCellSet buildSceneFluidMimeticControlCells(
                 "scene fluid mimetic half-face limit exceeded");
         }
         if (checkedStorageBytes(
-                controlCount, appendedHalfFaceCount + 1)
+                controlCount, appendedHalfFaceCount + 1,
+                result.omittedMaterialSamples.size())
             > limits.maximumOwnedBytes) {
             throw std::length_error(
                 "scene fluid mimetic control-cell byte limit exceeded");
@@ -562,6 +582,24 @@ SceneFluidMimeticControlCellSet buildSceneFluidMimeticControlCells(
         const fluid::Vector3 normal = materialNormal(
             surface, state, point.triangleId);
         const fluid::Vector3 centroid = vector(kinematics.positionMeters);
+        if (!negative || !positive) {
+            if (result.omittedMaterialSamples.size()
+                == limits.maximumOmittedMaterialSamples) {
+                throw std::length_error(
+                    "scene fluid mimetic omitted-material sample limit exceeded");
+            }
+            if (checkedStorageBytes(
+                    controlCount, appendedHalfFaceCount,
+                    result.omittedMaterialSamples.size() + 1)
+                > limits.maximumOwnedBytes) {
+                throw std::length_error(
+                    "scene fluid mimetic control-cell byte limit exceeded");
+            }
+            result.omittedMaterialSamples.push_back({
+                pointIndex, point.stableId, centroid,
+                !negative, !positive,
+            });
+        }
         if (negative) {
             append(*negative, positive,
                    SceneFluidMimeticHalfFaceKind::MaterialWall,
@@ -733,7 +771,8 @@ SceneFluidMimeticControlCellSet buildSceneFluidMimeticControlCells(
     }
 
     result.ownedStorageBytes = checkedStorageBytes(
-        result.controlCells.size(), result.halfFaces.size());
+        result.controlCells.size(), result.halfFaces.size(),
+        result.omittedMaterialSamples.size());
     if (result.ownedStorageBytes > limits.maximumOwnedBytes) {
         throw std::length_error(
             "scene fluid mimetic control-cell byte limit exceeded");
@@ -757,10 +796,14 @@ void validateSceneFluidMimeticControlCellIntegrity(
         || set.structureDefinitionFingerprint == 0
         || !std::isfinite(set.simulationTimeSeconds)
         || !finite(set.lowerMeters) || !finite(set.upperMeters)
+        || !(set.upperMeters.x > set.lowerMeters.x)
+        || !(set.upperMeters.y > set.lowerMeters.y)
+        || !(set.upperMeters.z > set.lowerMeters.z)
         || set.cellCounts.x == 0 || set.cellCounts.y == 0
         || set.cellCounts.z == 0
         || set.ownedStorageBytes != checkedStorageBytes(
-            set.controlCells.size(), set.halfFaces.size())
+            set.controlCells.size(), set.halfFaces.size(),
+            set.omittedMaterialSamples.size())
         || set.readyControlCellCount > set.controlCells.size()
         || set.incompleteTopologyControlCellCount > set.controlCells.size()
         || set.nonclosingControlCellCount > set.controlCells.size()
@@ -768,6 +811,8 @@ void validateSceneFluidMimeticControlCellIntegrity(
         || set.materialWallHalfFaceCount > set.halfFaces.size()
         || set.openingHalfFaceCount > set.halfFaces.size()
         || set.maximumHalfFaceCountPerControl > set.halfFaces.size()
+        || set.omittedMaterialSamples.size()
+            > set.omittedZeroVolumeMaterialSideCount
         || set.cartesianHalfFaceCount + set.materialWallHalfFaceCount
             + set.openingHalfFaceCount != set.halfFaces.size()
         || !std::isfinite(set.maximumAreaClosureErrorSquareMeters)
@@ -848,6 +893,29 @@ void validateSceneFluidMimeticControlCellIntegrity(
             != set.maximumHalfFaceCountPerControl) {
         throw std::invalid_argument(
             "scene fluid mimetic aggregate counts are inconsistent");
+    }
+    std::size_t omittedSideCount = 0;
+    std::size_t previousOmittedSourceIndex = 0;
+    bool havePreviousOmittedSource = false;
+    for (const auto& sample : set.omittedMaterialSamples) {
+        if (sample.sourceStableId == 0
+            || !finite(sample.centroidMeters)
+            || (!sample.negativeSideOmitted
+                && !sample.positiveSideOmitted)
+            || (havePreviousOmittedSource
+                && sample.sourceIndex <= previousOmittedSourceIndex)) {
+            throw std::invalid_argument(
+                "invalid scene fluid mimetic omitted-material sample");
+        }
+        omittedSideCount +=
+            static_cast<std::size_t>(sample.negativeSideOmitted)
+            + static_cast<std::size_t>(sample.positiveSideOmitted);
+        previousOmittedSourceIndex = sample.sourceIndex;
+        havePreviousOmittedSource = true;
+    }
+    if (omittedSideCount != set.omittedZeroVolumeMaterialSideCount) {
+        throw std::invalid_argument(
+            "scene fluid mimetic omitted-material count is inconsistent");
     }
     for (std::size_t faceIndex = 0;
          faceIndex < set.halfFaces.size(); ++faceIndex) {

@@ -10,7 +10,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidMimeticControlCellVersion = 1;
+inline constexpr std::uint32_t sceneFluidMimeticControlCellVersion = 2;
 inline constexpr std::size_t invalidSceneFluidMimeticControlVolumeIndex =
     std::numeric_limits<std::size_t>::max();
 
@@ -38,7 +38,23 @@ struct SceneFluidMimeticControlCellSettings {
 struct SceneFluidMimeticControlCellLimits {
     std::size_t maximumControlCells = 50'000'000;
     std::size_t maximumHalfFaces = 200'000'000;
+    std::size_t maximumOmittedMaterialSamples = 50'000'000;
     std::size_t maximumOwnedBytes = 4096ULL * 1024ULL * 1024ULL;
+};
+
+// Wrapped material position retained only when one or both authored sides have
+// no positive cell-region control. It gives pressure sampling an exact point
+// from which to select a bounded adjacent same-region extrapolation without
+// adding a zero-volume unknown to the local mimetic operator.
+struct SceneFluidMimeticOmittedMaterialSample {
+    std::size_t sourceIndex = 0;
+    std::uint64_t sourceStableId = 0;
+    fluid::Vector3 centroidMeters;
+    bool negativeSideOmitted = false;
+    bool positiveSideOmitted = false;
+
+    bool operator==(
+        const SceneFluidMimeticOmittedMaterialSample&) const = default;
 };
 
 struct SceneFluidMimeticHalfFace {
@@ -131,6 +147,8 @@ struct SceneFluidMimeticControlCellSet {
     double maximumDivergenceTheoremErrorCubicMeters = 0.0;
     std::vector<SceneFluidMimeticControlCell> controlCells;
     std::vector<SceneFluidMimeticHalfFace> halfFaces;
+    std::vector<SceneFluidMimeticOmittedMaterialSample>
+        omittedMaterialSamples;
 
     bool operator==(
         const SceneFluidMimeticControlCellSet&) const = default;

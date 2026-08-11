@@ -1238,19 +1238,22 @@ atomic solver. The opt-in pressure-cell shadow now consumes it after bootstrap;
 default production selection remains unchanged.
 
 `src/fsi/scene_fluid_mimetic_pressure_sampling.*` crosses the accepted-state
-boundary into the existing conservative load path. Each material quadrature
-side resolves to its exact cell/region pressure-control row, whose stable
-identity and index must agree across the pressure-volume, mimetic-control, and
-accepted-state products. Two sheet sides may form a physical pressure jump
-only when they share one pressure component; independently gauged absolute
-values reject. The bounded fingerprinted output retains both one-sided values,
-their exact difference, all source topology/state provenance, and the complete
-quadrature binding. It then calls the unchanged pressure-traction quadrature,
-so there is no new force path. The moving analytic fixture closes conservative
-force and moment transfer, and the coarse real-wing accepted state now samples
-every material quadrature point through the same boundary. The opt-in shadow
-retains these samples without applying them; the production worker still
-selects the graph pressure operator.
+boundary into the existing conservative load path. Each normal material side
+resolves to its exact cell/region pressure-control row. When the sparse volume
+stage deliberately omitted a zero-volume side, the control-shell product
+retains that material centroid and sampling selects the nearest same-region
+control in one face-adjacent periodic cell. This bounded cell-constant
+extrapolation is counted and its maximum distance is fingerprinted; it neither
+adds a zero-volume pressure unknown nor fabricates an absolute pressure. Two
+sheet sides may form a physical pressure jump only when they share one pressure
+component; independently gauged absolute values reject. The output retains
+both one-sided values, their exact difference, all source topology/state
+provenance, and the complete quadrature binding. It then calls the unchanged
+pressure-traction quadrature, so there is no new force path. The moving analytic
+fixture closes conservative force and moment transfer, and real-wing accepted
+states sample every material quadrature point through the same boundary. The
+opt-in shadow retains these samples without applying them; the production
+worker still selects the graph pressure operator.
 
 `src/fsi/scene_fluid_mimetic_pressure_epoch.*` composes the isolated acceptance
 path into one transaction. It starts from an already bounded, fingerprinted
@@ -1678,11 +1681,14 @@ links are geometrically present. A manual refined `4 x 4 x 4` audit likewise
 classifies its six formerly ambiguous untouched faces and closes all 358
 controls. The adapter safely omits 240 material quadrature sides whose
 corresponding positive cell/region volume does not exist; those are
-impermeable-wall sides, not missing shared traces. No authored-opening side is
-missing. The refined shell set retains 95,984 paired opening half-faces and at
-most 2,947 total half-faces in one control, exposing the future dense-local-
-matrix cost without paying it: every coarse real-wing shell builds the compact
-linear-storage local factorization. The global coarse audit contains 191,579
+impermeable-wall sides, not missing shared traces. It retains the bounded
+wrapped centroid and omitted-side bits for each affected material sample so a
+later load sampler can locate its explicit adjacent-cell extrapolation. No
+authored-opening side is missing. The refined shell set retains 95,984 paired
+opening half-faces and at most 2,947 total half-faces in one control, exposing
+the future dense-local-matrix cost without paying it: every coarse real-wing
+shell builds the compact linear-storage local factorization. The global coarse
+audit contains 191,579
 trace unknowns and 13,132,336 bytes of compact local factor data, and its full
 component-constant matrix-free action is roundoff-null. A bounded gauge-fixed
 Jacobi-PCG step now runs across the complete real system, reduces its residual,
@@ -3463,6 +3469,14 @@ Uniform streamwise flow is the default. The optional deterministic perturbation
 is an integration probe, not physical turbulence. On the coarse real-wing grid,
 removing it restores near-symmetric transverse loads but leaves the unphysical
 pressure magnitude, isolating that scale error from the old test pattern.
+The first uniform `4^3` real-wing run accepts 358 controls after 1,472 PCG
+iterations. It resolves all material loads using 240 bounded zero-volume-side
+extrapolations (maximum centroid-to-control distance `0.566398 m`) and retains
+`9.72e-10 N` force-transfer closure. Maximum pressure jump contracts from the
+`2^3` result's `420536 Pa` to `183054 Pa`, while streamwise pressure load falls
+from `141548 N` to `51144 N`. This strong grid sensitivity rejects the coarse
+absolute scale as aerodynamic evidence; two levels do not establish a
+converged trend.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written
