@@ -213,7 +213,7 @@ void testDeterministicAcceptedFrames() {
               && firstFrame.triangles.empty()
               && firstFrame.lines.empty(),
           "periodic fluid frame publishes one unconnected point per cell");
-    check(firstFrame.scalarFields.size() == 11
+    check(firstFrame.scalarFields.size() == 15
               && firstFrame.scalarFields[0].name == "pressure"
               && firstFrame.scalarFields[0].association
                   == viewer::FieldAssociation::Vertex

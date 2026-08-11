@@ -1,5 +1,7 @@
 #include "fluid_frame.h"
 
+#include "cfd_slice.h"
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -238,6 +240,17 @@ DiagnosticFrame buildPeriodicFluidFrame(
     frame.scalarFields.push_back(std::move(speed));
     frame.scalarFields.push_back(std::move(divergence));
     frame.scalarFields.push_back(std::move(vorticityMagnitude));
+    addGlobalScalar(
+        frame, std::string(cfdGridVertexBeginFieldName), "1", 0.0);
+    addGlobalScalar(
+        frame, std::string(cfdGridCellCountXFieldName), "1",
+        static_cast<double>(counts.x));
+    addGlobalScalar(
+        frame, std::string(cfdGridCellCountYFieldName), "1",
+        static_cast<double>(counts.y));
+    addGlobalScalar(
+        frame, std::string(cfdGridCellCountZFieldName), "1",
+        static_cast<double>(counts.z));
     addGlobalScalar(
         frame, "substeps", "1",
         static_cast<double>(diagnostics.plannedSubstepCount));

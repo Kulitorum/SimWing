@@ -164,9 +164,13 @@ The first viewer renders:
   entity IDs.
 
 The first periodic CFD subset now renders scalar-coloured cell-centre points
-and bounded selectable velocity glyphs. As later fields arrive, add AMR blocks,
-streamlines, pressure and vorticity slices, divergence, interface pressure jump,
-porous flux, and wake tracers. Field extraction is explicit and rate-limited;
+and bounded selectable velocity glyphs. An explicit X-fast grid descriptor
+also lets the Qt viewer reconstruct one source-indexed cell-quad slice without
+copying solver storage. A second toolbar enables the slice, switches its normal
+between X/Y/Z, and moves it by cell index; scalar selection colours the cells
+and fluid vector glyphs are restricted to the active plane. As later fields
+arrive, add AMR blocks, streamlines, interface pressure jump, porous flux, and
+wake tracers. Field extraction is explicit and rate-limited;
 the default stream is a surface/diagnostic subset rather than a copy of the
 whole volume.
 
@@ -550,8 +554,9 @@ src/viewer/
     viewer_protocol.*       immutable frame/control schema and trace files
     fluid_frame.*           owning accepted MAC-to-cell diagnostic adapter
     pressure_jump_frame.*   owning cell and layered-interface diagnostics
+    cfd_slice.*              validated X-fast grid descriptor + cell quads
     vector_glyphs.*         bounded deterministic vertex-vector arrows
-    viewer_window.*         standalone Qt/OpenGL diagnostics + XYZ triad
+    viewer_window.*         Qt/OpenGL diagnostics + XYZ triad/CFD controls
     viewer_layers.*         structure, interface, grid, field, and HUD layers
 
 tools/
@@ -3750,6 +3755,24 @@ the first `1/60`-load moving frame commits at `0.149 mm` displacement and
 to `8.34328e19 Pa` locally with `1.56546e7 N` integrated absolute wall load.
 This proves staged structure/geometry/pressure publication but is not suitable
 for extension; moving-volume/source conditioning is the next gate.
+
+The explicit `--hold-preflow-load-preview` diagnostic provides continuous
+visualization while that gate remains closed. After frozen preflow, it applies
+the immutable final conservative load to XPBD on each frame and publishes the
+resulting Structure state. It does not rebuild fluid geometry, advance
+pressure, or claim a coupled CFD epoch; its trace has a separate solver
+identity and Structure-preview counter. The extended `0..3600 s` opt-in load
+ramp conditions this display without changing default immediate-load
+arithmetic. The preview retains the authored suspension certification bound;
+six deterministic cable sweep pairs and `60 s^-1` velocity damping condition
+it toward quasi-static response rather than accepting unresolved line motion.
+
+For long fixed-wing preflow, `--trace-every N` advances every numerical step
+but records only the first, every Nth, and final accepted immutable frame. The
+default remains one, and the binary control path retains per-command frame
+ownership. Interactive batch launch creates the trace and opens the follow-
+viewer before expensive case construction, making initialization visible
+without moving Qt into the worker or solver targets.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

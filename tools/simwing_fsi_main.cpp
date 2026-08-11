@@ -85,6 +85,7 @@ enum class WorkerCase {
 
 struct Options {
     std::uint64_t steps = defaultSteps;
+    std::uint64_t traceEvery = 1;
     std::filesystem::path tracePath;
     std::filesystem::path checkpointInputPath;
     std::filesystem::path checkpointOutputPath;
@@ -101,6 +102,7 @@ struct Options {
     bool frozenMaterialWallTracePressureLoads = false;
     bool frozenAggregateOpeningTraces = false;
     std::size_t frozenPreflowBootstrapSteps = 0;
+    bool frozenHeldPreflowLoadStructurePreview = false;
     std::optional<std::size_t> frozenMovingStructureSubsteps;
     std::optional<double> frozenMovingLoadRampSeconds;
     std::optional<double> frozenMovingPressureRelativeTolerance;
@@ -127,12 +129,14 @@ void printUsage(FILE* stream) {
         "                   [--aggregate-opening-traces]\n"
         "                   [--preflow-bootstrap]\n"
         "                   [--preflow-steps N]\n"
+        "                   [--hold-preflow-load-preview]\n"
         "                   [--structure-substeps N]\n"
         "                   [--load-ramp-seconds SECONDS]\n"
         "                   [--moving-pressure-relative-tolerance VALUE]\n"
         "                   [--moving-pressure-reconstruction-tolerance VALUE]\n"
         "                   [--perturbation MPS]\n"
         "                   [--steps N]\n"
+        "                   [--trace-every N]\n"
         "                   [--trace PATH]\n"
         "                   [--checkpoint-in PATH]\n"
         "                   [--checkpoint-out PATH]\n"
@@ -166,10 +170,12 @@ void printUsage(FILE* stream) {
         "per cap triangle;\n"
         "--preflow-bootstrap is shorthand for one frozen corrected-flow epoch;\n"
         "--preflow-steps N selects 1..16 such epochs before XPBD receives load;\n"
+        "--hold-preflow-load-preview advances XPBD under the final immutable\n"
+        "preflow load without rebuilding CFD; it is a visual Structure preview;\n"
         "--structure-substeps N selects 1..64 XPBD substeps per moving interval;\n"
         "the verified default remains 8 and the override requires --moving-fsi;\n"
         "--load-ramp-seconds stages the fluid load delivered to XPBD from zero\n"
-        "to one over accepted moving frames; zero keeps full-load activation;\n"
+        "to one over accepted moving frames (0..3600 s); zero keeps full load;\n"
         "--moving-pressure-relative-tolerance selects 1e-12..1e-2 for each\n"
         "consecutive moving solve; the verified default remains 1e-5;\n"
         "--moving-pressure-reconstruction-tolerance declares a separate 0..1\n"
@@ -207,7 +213,9 @@ void printUsage(FILE* stream) {
         "restore/save exact accepted state;\n"
         "--checkpoint-every\n"
         "autosaves at absolute accepted-step multiples and the final state. --steps\n"
-        "counts additional intervals. --control-stdio instead exchanges bounded\n"
+        "counts additional intervals. --trace-every writes the first, every Nth,\n"
+        "and the final accepted frame while still advancing every solver step.\n"
+        "--control-stdio instead exchanges bounded\n"
         "binary strong-piston, moving-porous-flow, porous-sheet, open-piston, or\n"
         "periodic-flow\n"
         "commands/responses\n"
@@ -349,6 +357,19 @@ bool parseOptions(int argc,
             stepsRequested = true;
             if (!parseUnsigned(argument.substr(8), options.steps)) {
                 error = "--steps requires an unsigned integer";
+                return false;
+            }
+        } else if (argument == "--trace-every") {
+            if (++index >= argc
+                || !parseUnsigned(argv[index], options.traceEvery)
+                || options.traceEvery == 0) {
+                error = "--trace-every requires a positive integer";
+                return false;
+            }
+        } else if (argument.starts_with("--trace-every=")) {
+            if (!parseUnsigned(argument.substr(14), options.traceEvery)
+                || options.traceEvery == 0) {
+                error = "--trace-every requires a positive integer";
                 return false;
             }
         } else if (argument == "--trace") {
@@ -509,6 +530,8 @@ bool parseOptions(int argc,
             }
             options.frozenPreflowBootstrapSteps =
                 static_cast<std::size_t>(value);
+        } else if (argument == "--hold-preflow-load-preview") {
+            options.frozenHeldPreflowLoadStructurePreview = true;
         } else if (argument == "--structure-substeps") {
             std::uint64_t value = 0;
             if (++index >= argc || !parseUnsigned(argv[index], value)
@@ -530,16 +553,18 @@ bool parseOptions(int argc,
         } else if (argument == "--load-ramp-seconds") {
             double value = 0.0;
             if (++index >= argc || !parseFiniteDouble(argv[index], value)
-                || value < 0.0 || value > 60.0) {
-                error = "--load-ramp-seconds requires a value from 0 through 60";
+                || value < 0.0
+                || value > simwing::fsi::maximumMovingLoadRampSeconds) {
+                error = "--load-ramp-seconds requires a value from 0 through 3600";
                 return false;
             }
             options.frozenMovingLoadRampSeconds = value;
         } else if (argument.starts_with("--load-ramp-seconds=")) {
             double value = 0.0;
             if (!parseFiniteDouble(argument.substr(20), value)
-                || value < 0.0 || value > 60.0) {
-                error = "--load-ramp-seconds requires a value from 0 through 60";
+                || value < 0.0
+                || value > simwing::fsi::maximumMovingLoadRampSeconds) {
+                error = "--load-ramp-seconds requires a value from 0 through 3600";
                 return false;
             }
             options.frozenMovingLoadRampSeconds = value;
@@ -665,6 +690,7 @@ bool parseOptions(int argc,
         || options.frozenMaterialWallTracePressureLoads
         || options.frozenAggregateOpeningTraces
         || options.frozenPreflowBootstrapSteps != 0
+        || options.frozenHeldPreflowLoadStructurePreview
         || options.frozenMovingStructureSubsteps.has_value()
         || options.frozenMovingLoadRampSeconds.has_value()
         || options.frozenMovingPressureRelativeTolerance.has_value()
@@ -693,6 +719,12 @@ bool parseOptions(int argc,
     if (options.frozenPreflowBootstrapSteps != 0
         && !options.frozenMovingGeometryFsi) {
         error = "preflow bootstrap requires --moving-fsi";
+        return false;
+    }
+    if (options.frozenHeldPreflowLoadStructurePreview
+        && (!options.frozenMovingGeometryFsi
+            || options.frozenPreflowBootstrapSteps == 0)) {
+        error = "--hold-preflow-load-preview requires --moving-fsi and preflow bootstrap";
         return false;
     }
     if (options.frozenMovingStructureSubsteps
@@ -758,6 +790,10 @@ bool parseOptions(int argc,
         }
         if (options.checkpointEvery != 0) {
             error = "--control-stdio does not accept --checkpoint-every";
+            return false;
+        }
+        if (options.traceEvery != 1) {
+            error = "--control-stdio does not accept --trace-every";
             return false;
         }
         if (viewerRequested) {
@@ -1665,6 +1701,18 @@ int main(int argc, char* argv[]) {
             return runWorkerControl(options, simulation, output);
         }
 
+        // Open the diagnostic window before constructing a potentially
+        // expensive real-scene case. Follow mode treats the empty trace as a
+        // live initialization state, so the user sees a responsive window
+        // while geometry and the first accepted CFD frame are assembled.
+        if (options.viewer) {
+            const std::filesystem::path viewer = siblingViewerPath(argv[0]);
+            if (!launchViewer(viewer, options.tracePath, error)) {
+                std::fprintf(stderr, "%s\n", error.c_str());
+                return 1;
+            }
+        }
+
         const auto run = [&](auto& simulation) -> int {
             std::uint64_t lastCheckpointStep =
                 std::numeric_limits<std::uint64_t>::max();
@@ -1678,15 +1726,6 @@ int main(int argc, char* argv[]) {
                 std::fprintf(stderr, "trace header failed: %s\n",
                              error.c_str());
                 return 1;
-            }
-
-            if (options.viewer) {
-                const std::filesystem::path viewer =
-                    siblingViewerPath(argv[0]);
-                if (!launchViewer(viewer, options.tracePath, error)) {
-                    std::fprintf(stderr, "%s\n", error.c_str());
-                    return 1;
-                }
             }
 
             const double stepSeconds = [&] {
@@ -1703,14 +1742,19 @@ int main(int argc, char* argv[]) {
             for (std::uint64_t step = 0; step < options.steps; ++step) {
                 const simwing::viewer::DiagnosticFrame frame =
                     simulation.advance();
-                if (!writer.writeFrame(frame)
-                    || !flushTrace(output, error)) {
-                    if (error.empty()) {
-                        error = writer.error().message;
+                const bool publishFrame = step == 0
+                    || (step + 1) % options.traceEvery == 0
+                    || step + 1 == options.steps;
+                if (publishFrame) {
+                    if (!writer.writeFrame(frame)
+                        || !flushTrace(output, error)) {
+                        if (error.empty()) {
+                            error = writer.error().message;
+                        }
+                        std::fprintf(stderr, "trace frame failed: %s\n",
+                                     error.c_str());
+                        return 1;
                     }
-                    std::fprintf(stderr, "trace frame failed: %s\n",
-                                 error.c_str());
-                    return 1;
                 }
                 using Simulation =
                     std::remove_cvref_t<decltype(simulation)>;
@@ -2369,6 +2413,8 @@ int main(int argc, char* argv[]) {
                 options.frozenAggregateOpeningTraces;
             settings.preflowBootstrapSteps =
                 options.frozenPreflowBootstrapSteps;
+            settings.holdPreflowFluidLoadForStructurePreview =
+                options.frozenHeldPreflowLoadStructurePreview;
             if (options.frozenMovingStructureSubsteps) {
                 settings.movingStructureSubsteps =
                     *options.frozenMovingStructureSubsteps;

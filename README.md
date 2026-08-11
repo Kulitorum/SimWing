@@ -1520,7 +1520,9 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --ramp-seconds 0.1 --continue-corrected-trace-flow --steps 6 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --ramp-seconds 0.1 --transport-corrected-region-flow --steps 6 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --grid 4 --padding 1.0 --wind-y 0.85 --ramp-seconds 0 --perturbation 0.25 --steps 2 --no-viewer
+.\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --grid 4 --wind-y 0.85 --ramp-seconds 2 --continue-corrected-trace-flow --steps 1000 --trace-every 30
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --wind-y 0.0001 --moving-fsi --load-ramp-seconds 1 --moving-pressure-reconstruction-tolerance 2e-6 --wall-trace-pressure-load --preflow-steps 2 --aggregate-opening-traces --steps 3
+.\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --wind-y 0.0001 --moving-fsi --hold-preflow-load-preview --load-ramp-seconds 600 --wall-trace-pressure-load --preflow-steps 2 --aggregate-opening-traces --steps 62
 .\build\bin\Release\simwing-fsi.exe --case hemisphere --steps 600
 .\build\bin\Release\simwing-fsi.exe --case flag --steps 600
 .\build\bin\Release\simwing-fsi.exe --case ram-cell --steps 600
@@ -1578,20 +1580,36 @@ The imported wing is X spanwise, Y chordwise/fore-aft, and Z up. The
 frozen-scene default is therefore `+0.85 m/s` Y wind; `--wind-x` remains an
 explicit spanwise diagnostic, and the two CLI axis selectors are exclusive.
 Moving-only diagnostic controls can select `1..64` XPBD substeps, ramp the
-conservative load delivered to XPBD over `0..60 s`, independently tighten the
+conservative load delivered to XPBD over `0..3600 s`, independently tighten the
 consecutive reduced solve, and declare an absolute RMS floor for reconstructed
 full wall traces. Their defaults preserve the existing full-load/eight-substep/
 `1e-5` pressure arithmetic with no extra reconstruction floor.
+`--hold-preflow-load-preview` is the explicit continuous-visualization bridge
+while the moving pressure endpoint remains unphysical. After frozen preflow it
+advances the real XPBD Structure under the immutable final conservative load,
+uses a distinct solver identity and preview counter, and leaves moving-CFD
+geometry advances at zero. It is a structural visualization, not coupled FSI.
+The preview keeps the authored iteration and line-residual contracts while
+using six deterministic cable sweep pairs and `60 s^-1` velocity damping to
+approach a quasi-static response instead of exposing unresolved suspension
+oscillation.
 The frozen-scene-only controls accept an isotropic grid from 2 through 16,
 positive padding up to 1000 m, signed single-axis wind within 100 m/s, and a nonnegative
 initial perturbation up to 100 m/s. Wind reaches its target through a bounded
 `0.5 s` ramp by default; `--ramp-seconds 0` explicitly restores the impulsive
-diagnostic. The current ramp advances once per accepted output frame, so a
+diagnostic. The current ramp advances once per accepted solver step, so a
 one-frame run is intentionally only the first startup sample. The 2-cell default is the fast geometry
 integration probe; larger grids are offline experiments whose runtime and
 memory rise sharply and do not by themselves make the periodic setup physical.
 The perturbation defaults to zero. A nonzero value is deterministic diagnostic
 forcing only; it does not represent turbulence or an aerodynamic inflow model.
+The standalone viewer reconstructs the explicitly described X-fast CFD grid
+as a scalar-coloured axis-aligned slice. Its separate CFD toolbar enables the
+plane, selects X/Y/Z as its normal, and moves the plane by cell index. The
+existing Field selector colours the cells and the Vectors selector shows only
+the selected plane's fluid arrows. `--trace-every N` still advances every CFD
+step but serializes only the first, every Nth, and final accepted frame; this is
+essential for long whole-wing preflow runs whose immutable frames are large.
 `--continue-corrected-trace-flow` is a fixed-topology experiment which retains
 the exact last corrected shared-trace flow and adds only the change between the
 previous and current bulk predictors before re-solving pressure. It preserves

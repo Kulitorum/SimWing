@@ -96,6 +96,8 @@ void testFrozenScenePressureCase() {
           "moving scene keeps eight structural substeps by default");
     check(settings.movingLoadRampSeconds == 0.0,
           "moving scene keeps full-load activation by default");
+    check(!settings.holdPreflowFluidLoadForStructurePreview,
+          "held preflow-load Structure preview remains opt-in");
     check(settings.movingPressureRelativeResidualTolerance == 1.0e-5,
           "moving scene keeps the established pressure tolerance by default");
     check(settings
@@ -413,6 +415,22 @@ void testFrozenScenePressureCase() {
               && sameGeometry(frozenReferenceFrame, preflowFrame)
               && sameGeometry(preflowFrame, secondPreflowFrame),
           "moving scene preflow accepts corrected flow before exposing Structure to pressure load");
+
+    movingSettings.holdPreflowFluidLoadForStructurePreview = true;
+    simwing::fsi::FrozenScenePressureCase preview(
+        scene, movingSettings);
+    const auto firstPreviewPreflow = preview.advance();
+    static_cast<void>(preview.advance());
+    const auto previewFrame = preview.advance();
+    const auto& previewDiagnostics = preview.diagnostics();
+    check(preview.traceHeader().solverCommit
+                  == simwing::fsi::heldPreflowLoadStructurePreviewSolverId
+              && previewDiagnostics.finite
+              && previewDiagnostics.usesHeldPreflowLoadStructurePreview
+              && previewDiagnostics.structurePreviewAdvanceCount == 1
+              && previewDiagnostics.geometryAdvanceCount == 0
+              && !sameGeometry(firstPreviewPreflow, previewFrame),
+          "held preflow-load preview advances real Structure state without claiming a moving CFD epoch");
 }
 
 } // namespace

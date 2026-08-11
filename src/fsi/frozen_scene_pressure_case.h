@@ -34,6 +34,9 @@ inline constexpr const char*
 inline constexpr const char*
     movingSceneAggregateOpeningPreflowWallTraceSolverId =
         "moving-scene-aggregate-opening-preflow-wall-trace-v1";
+inline constexpr const char* heldPreflowLoadStructurePreviewSolverId =
+    "held-preflow-load-structure-preview-v1";
+inline constexpr double maximumMovingLoadRampSeconds = 3600.0;
 
 struct FrozenScenePressureCaseSettings {
     fluid::GridCellCounts cellCounts{2, 2, 2};
@@ -49,6 +52,7 @@ struct FrozenScenePressureCaseSettings {
     bool useMaterialWallTracePressureLoads = false;
     bool aggregateCoplanarOpeningPatches = false;
     std::size_t preflowBootstrapSteps = 0;
+    bool holdPreflowFluidLoadForStructurePreview = false;
     std::size_t movingStructureSubsteps = 8;
     double movingLoadRampSeconds = 0.0;
     double movingPressureRelativeResidualTolerance = 1.0e-5;
@@ -71,12 +75,14 @@ struct FrozenScenePressureCaseDiagnostics {
     bool usesMaterialWallTracePressureLoads = false;
     bool usesCoplanarOpeningAggregation = false;
     bool usesPreflowBootstrap = false;
+    bool usesHeldPreflowLoadStructurePreview = false;
     std::size_t preflowBootstrapStepCount = 0;
     std::size_t completedPreflowBootstrapStepCount = 0;
     bool usesConsecutivePressureWarmStart = false;
     bool usesRegionWallPrediction = false;
     bool pressureControlTopologyStable = false;
     std::size_t geometryAdvanceCount = 0;
+    std::size_t structurePreviewAdvanceCount = 0;
     double movingLoadActivationFraction = 0.0;
     double maximumGeometryDisplacementMeters = 0.0;
     double maximumSuspensionResidualMeters = 0.0;

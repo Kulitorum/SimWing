@@ -1,10 +1,12 @@
 #include "viewer_window.h"
 
+#include "cfd_slice.h"
 #include "vector_glyphs.h"
 #include "viewer_camera.h"
 #include "viewer_protocol.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QFileInfo>
@@ -23,6 +25,7 @@
 #include <QPainter>
 #include <QPolygonF>
 #include <QStatusBar>
+#include <QSlider>
 #include <QTimer>
 #include <QToolBar>
 #include <QVector3D>
@@ -184,13 +187,36 @@ private:
             return;
         }
 
-        TraceReader reader(
-            input, follow_ ? TraceReadMode::Follow : TraceReadMode::Replay);
         TraceHeader header;
-        if (!reader.readHeader(header)) {
-            errorCallback_(QStringLiteral("Cannot read trace header: %1")
-                               .arg(fromUtf8(reader.error().message)));
-            return;
+        std::unique_ptr<TraceReader> reader;
+        for (;;) {
+            input.clear();
+            input.seekg(0, std::ios::beg);
+            auto candidate = std::make_unique<TraceReader>(
+                input,
+                follow_ ? TraceReadMode::Follow : TraceReadMode::Replay);
+            if (candidate->readHeader(header)) {
+                reader = std::move(candidate);
+                break;
+            }
+            if (!follow_
+                || candidate->error().code
+                    != ProtocolErrorCode::Truncated) {
+                errorCallback_(QStringLiteral("Cannot read trace header: %1")
+                                   .arg(fromUtf8(
+                                       candidate->error().message)));
+                return;
+            }
+
+            // The worker creates the destination before its bounded scene
+            // setup has completed. In follow mode, an empty or partially
+            // flushed header is therefore ordinary temporary EOF.
+            std::unique_lock lock(mutex_);
+            if (condition_.wait_for(
+                    lock, std::chrono::milliseconds(100),
+                    [this] { return stopping_; })) {
+                return;
+            }
         }
         headerCallback_(std::move(header));
 
@@ -205,7 +231,7 @@ private:
             }
 
             DiagnosticFrame frame;
-            const TraceReadStatus status = reader.readNext(frame);
+            const TraceReadStatus status = reader->readNext(frame);
             if (status == TraceReadStatus::Frame) {
                 frameCallback_(
                     std::make_shared<const DiagnosticFrame>(std::move(frame)));
@@ -222,6 +248,10 @@ private:
                         [this] { return stopping_; })) {
                     return;
                 }
+                // The request remains in flight until a complete frame is
+                // delivered. Re-arm the internal poll rather than waiting
+                // for the UI to request a frame it has not received yet.
+                requested_ = true;
                 continue;
             }
 
@@ -233,7 +263,7 @@ private:
                 endCallback_();
             } else {
                 errorCallback_(QStringLiteral("Cannot read trace frame: %1")
-                                   .arg(fromUtf8(reader.error().message)));
+                                   .arg(fromUtf8(reader->error().message)));
             }
             return;
         }
@@ -285,6 +315,16 @@ public:
 
     void setVectorField(QString name) {
         vectorFieldName_ = std::move(name);
+        geometryDirty_ = true;
+        update();
+    }
+
+    void setCfdSlice(const bool visible,
+                     const CfdSliceAxis axis,
+                     const std::size_t index) {
+        cfdSliceVisible_ = visible;
+        cfdSliceAxis_ = axis;
+        cfdSliceIndex_ = index;
         geometryDirty_ = true;
         update();
     }
@@ -589,6 +629,8 @@ private:
         geometryDirty_ = false;
         vertices_.clear();
         triangleCount_ = 0;
+        sliceStart_ = 0;
+        sliceCount_ = 0;
         lineStart_ = 0;
         lineCount_ = 0;
         pointStart_ = 0;
@@ -599,6 +641,9 @@ private:
         vectorMaximum_ = 0.0;
         vectorGlyphCount_ = 0;
         haveVectorField_ = false;
+        haveCfdSlice_ = false;
+        cfdSliceCoordinateMetres_ = 0.0;
+        cfdSlicePlaneCount_ = 0;
         if (frame_ == nullptr) {
             return;
         }
@@ -620,7 +665,25 @@ private:
             haveVectorField_ = true;
         }
 
+        const auto cfdGrid = describeCfdGrid(*frame_);
+        const auto cfdSlice = cfdSliceVisible_
+            ? buildCfdSliceGeometry(
+                  *frame_, cfdSliceAxis_, cfdSliceIndex_)
+            : std::optional<CfdSliceGeometry>{};
+        std::vector<bool> activeSliceVertices(frame_->vertices.size(), false);
+        if (cfdSlice) {
+            haveCfdSlice_ = true;
+            cfdSliceCoordinateMetres_ = cfdSlice->coordinateMetres;
+            cfdSlicePlaneCount_ = cfdGrid
+                ? cfdGrid->cellCounts[static_cast<std::size_t>(cfdSliceAxis_)]
+                : 0;
+            for (const CfdSliceQuad& quad : cfdSlice->quads) {
+                activeSliceVertices[quad.sourceVertexIndex] = true;
+            }
+        }
+
         vertices_.reserve(frame_->triangles.size() * 3
+                          + (cfdSlice ? cfdSlice->quads.size() * 6 : 0)
                           + frame_->lines.size() * 2
                           + glyphs.segments.size() * 2
                           + frame_->vertices.size()
@@ -669,7 +732,48 @@ private:
         }
         triangleCount_ = static_cast<GLsizei>(vertices_.size());
 
-        lineStart_ = triangleCount_;
+        sliceStart_ = triangleCount_;
+        if (cfdSlice) {
+            const std::size_t normalAxis =
+                static_cast<std::size_t>(cfdSliceAxis_);
+            Vec3d normalValue;
+            if (normalAxis == 0) {
+                normalValue.x = 1.0;
+            } else if (normalAxis == 1) {
+                normalValue.y = 1.0;
+            } else {
+                normalValue.z = 1.0;
+            }
+            const QVector3D normal(
+                static_cast<float>(normalValue.x),
+                static_cast<float>(normalValue.y),
+                static_cast<float>(normalValue.z));
+            constexpr std::array<std::size_t, 6> corners{0, 1, 2, 0, 2, 3};
+            for (const CfdSliceQuad& quad : cfdSlice->quads) {
+                QVector3D colour(0.16F, 0.66F, 0.76F);
+                if (field != nullptr) {
+                    if (field->association == FieldAssociation::Global) {
+                        colour = colourMap(
+                            field->values.front(), minimum, maximum);
+                    } else if (field->association
+                                   == FieldAssociation::Vertex
+                               && quad.sourceVertexIndex
+                                   < field->values.size()) {
+                        colour = colourMap(
+                            field->values[quad.sourceVertexIndex],
+                            minimum, maximum);
+                    }
+                }
+                for (const std::size_t corner : corners) {
+                    appendVertex(
+                        vertices_, quad.cornersMetres[corner], normal,
+                        colour);
+                }
+            }
+        }
+        sliceCount_ = static_cast<GLsizei>(vertices_.size()) - sliceStart_;
+
+        lineStart_ = static_cast<GLsizei>(vertices_.size());
         for (std::size_t lineIndex = 0; lineIndex < frame_->lines.size(); ++lineIndex) {
             const DiagnosticLine& line = frame_->lines[lineIndex];
             referencedVertices[line.vertex0] = true;
@@ -688,6 +792,14 @@ private:
                          {}, colour);
         }
         for (const VectorGlyphSegment& segment : glyphs.segments) {
+            const bool cfdVertex = cfdGrid
+                && segment.sourceVertexIndex >= cfdGrid->vertexBegin
+                && segment.sourceVertexIndex
+                    < cfdGrid->vertexBegin + cfdGrid->cellCount();
+            if (cfdSlice && cfdVertex
+                && !activeSliceVertices[segment.sourceVertexIndex]) {
+                continue;
+            }
             QVector3D colour(0.98F, 0.82F, 0.25F);
             if (field != nullptr) {
                 if (field->association == FieldAssociation::Global) {
@@ -702,11 +814,23 @@ private:
             appendVertex(vertices_, segment.endMetres, {}, colour);
         }
         lineCount_ = static_cast<GLsizei>(vertices_.size()) - lineStart_;
+        if (haveVectorField_) {
+            vectorGlyphCount_ = static_cast<std::uint32_t>(
+                (lineCount_
+                 - static_cast<GLsizei>(frame_->lines.size() * 2))
+                / 6);
+        }
 
         pointStart_ = static_cast<GLsizei>(vertices_.size());
         for (std::size_t vertexIndex = 0;
              vertexIndex < frame_->vertices.size(); ++vertexIndex) {
             if (referencedVertices[vertexIndex]) {
+                continue;
+            }
+            const bool cfdVertex = cfdGrid
+                && vertexIndex >= cfdGrid->vertexBegin
+                && vertexIndex < cfdGrid->vertexBegin + cfdGrid->cellCount();
+            if (cfdSlice && cfdVertex) {
                 continue;
             }
             QVector3D colour(0.40F, 0.68F, 0.92F);
@@ -781,6 +905,10 @@ private:
             glDrawArrays(GL_TRIANGLES, 0, triangleCount_);
             glDisable(GL_POLYGON_OFFSET_FILL);
         }
+        if (sliceCount_ > 0) {
+            program_->setUniformValue("lit", false);
+            glDrawArrays(GL_TRIANGLES, sliceStart_, sliceCount_);
+        }
         if (lineCount_ > 0) {
             program_->setUniformValue("lit", false);
             glLineWidth(1.5F);
@@ -836,6 +964,17 @@ private:
                              .arg(vectorFieldName_)
                              .arg(vectorGlyphCount_)
                              .arg(vectorMaximum_, 0, 'g', 5);
+            }
+            if (haveCfdSlice_) {
+                const QChar axis = cfdSliceAxis_ == CfdSliceAxis::X
+                    ? QChar('X')
+                    : cfdSliceAxis_ == CfdSliceAxis::Y
+                        ? QChar('Y') : QChar('Z');
+                field += QStringLiteral("   slice %1 %2/%3 @ %4 m")
+                             .arg(axis)
+                             .arg(cfdSliceIndex_ + 1)
+                             .arg(cfdSlicePlaneCount_)
+                             .arg(cfdSliceCoordinateMetres_, 0, 'g', 5);
             }
             painter.drawText(22, y, field);
         } else {
@@ -933,6 +1072,8 @@ private:
     bool geometryDirty_ = true;
     std::vector<RenderVertex> vertices_;
     GLsizei triangleCount_ = 0;
+    GLsizei sliceStart_ = 0;
+    GLsizei sliceCount_ = 0;
     GLsizei lineStart_ = 0;
     GLsizei lineCount_ = 0;
     GLsizei pointStart_ = 0;
@@ -943,6 +1084,12 @@ private:
     double vectorMaximum_ = 0.0;
     std::uint32_t vectorGlyphCount_ = 0;
     bool haveVectorField_ = false;
+    bool cfdSliceVisible_ = true;
+    CfdSliceAxis cfdSliceAxis_ = CfdSliceAxis::Z;
+    std::size_t cfdSliceIndex_ = 0;
+    bool haveCfdSlice_ = false;
+    double cfdSliceCoordinateMetres_ = 0.0;
+    std::size_t cfdSlicePlaneCount_ = 0;
     bool depthBufferChecked_ = false;
 
     std::unique_ptr<QOpenGLShaderProgram> program_;
@@ -1021,6 +1168,44 @@ public:
         vectorCombo_->setMinimumContentsLength(15);
         toolbar->addWidget(vectorCombo_);
 
+        QToolBar* sliceToolbar = owner_->addToolBar(
+            QStringLiteral("CFD slice"));
+        sliceToolbar->setMovable(false);
+        showSliceAction_ = sliceToolbar->addAction(QStringLiteral("CFD slice"));
+        showSliceAction_->setCheckable(true);
+        showSliceAction_->setChecked(true);
+        sliceToolbar->addSeparator();
+        sliceToolbar->addWidget(
+            new QLabel(QStringLiteral(" Plane normal: "), sliceToolbar));
+        sliceAxisGroup_ = new QActionGroup(owner_);
+        sliceAxisGroup_->setExclusive(true);
+        const auto addSliceAxis = [&](const QString& text,
+                                      const CfdSliceAxis axis) {
+            QAction* action = sliceToolbar->addAction(text);
+            action->setCheckable(true);
+            sliceAxisGroup_->addAction(action);
+            QObject::connect(action, &QAction::triggered, owner_,
+                             [this, axis] {
+                cfdSliceAxis_ = axis;
+                refreshSliceControls();
+            });
+            return action;
+        };
+        sliceXAction_ = addSliceAxis(QStringLiteral("X"), CfdSliceAxis::X);
+        sliceYAction_ = addSliceAxis(QStringLiteral("Y"), CfdSliceAxis::Y);
+        sliceZAction_ = addSliceAxis(QStringLiteral("Z"), CfdSliceAxis::Z);
+        sliceZAction_->setChecked(true);
+        sliceToolbar->addSeparator();
+        sliceSlider_ = new QSlider(Qt::Horizontal, sliceToolbar);
+        sliceSlider_->setRange(0, 0);
+        sliceSlider_->setMinimumWidth(260);
+        sliceSlider_->setEnabled(false);
+        sliceToolbar->addWidget(sliceSlider_);
+        slicePositionLabel_ = new QLabel(
+            QStringLiteral(" no structured CFD grid "), sliceToolbar);
+        slicePositionLabel_->setMinimumWidth(220);
+        sliceToolbar->addWidget(slicePositionLabel_);
+
         QObject::connect(playAction_, &QAction::triggered, owner_, [this] {
             playing_ = !playing_;
             updatePlayAction();
@@ -1055,6 +1240,16 @@ public:
                 desiredVectorField_ =
                     vectorCombo_->itemData(index).toString();
                 view_->setVectorField(desiredVectorField_);
+            });
+        QObject::connect(
+            showSliceAction_, &QAction::toggled, owner_,
+            [this] { refreshSliceControls(); });
+        QObject::connect(
+            sliceSlider_, &QSlider::valueChanged, owner_,
+            [this](const int value) {
+                cfdSliceIndices_[static_cast<std::size_t>(cfdSliceAxis_)] =
+                    value;
+                refreshSliceControls();
             });
 
         timer_.setInterval(16);
@@ -1256,6 +1451,18 @@ private:
                 fields.push_back(&field);
             }
         }
+        if (!fieldChoiceInitialized_) {
+            const auto preferred = std::ranges::find_if(
+                fields,
+                [](const ScalarField* field) {
+                    return field->name == "frozen_scene.fluid_speed"
+                        || field->name == "speed";
+                });
+            if (preferred != fields.end()) {
+                desiredField_ = fromUtf8((*preferred)->name);
+            }
+            fieldChoiceInitialized_ = true;
+        }
 
         bool same = fieldCombo_->count() == static_cast<int>(fields.size() + 1);
         for (int i = 0; same && i < static_cast<int>(fields.size()); ++i) {
@@ -1291,6 +1498,18 @@ private:
             if (field.association == FieldAssociation::Vertex) {
                 vectorFields.push_back(&field);
             }
+        }
+        if (!vectorChoiceInitialized_) {
+            const auto preferred = std::ranges::find_if(
+                vectorFields,
+                [](const VectorField* field) {
+                    return field->name == "frozen_scene.fluid_velocity"
+                        || field->name == "velocity";
+                });
+            if (preferred != vectorFields.end()) {
+                desiredVectorField_ = fromUtf8((*preferred)->name);
+            }
+            vectorChoiceInitialized_ = true;
         }
         same = vectorCombo_->count()
             == static_cast<int>(vectorFields.size() + 1);
@@ -1330,6 +1549,50 @@ private:
         // incoming frame instead of relying on a selector-change signal.
         view_->setField(desiredField_);
         view_->setVectorField(desiredVectorField_);
+        refreshSliceControls();
+    }
+
+    void refreshSliceControls() {
+        const auto grid = currentFrame_ != nullptr
+            ? describeCfdGrid(*currentFrame_)
+            : std::optional<CfdGridDescriptor>{};
+        const bool available = grid.has_value();
+        showSliceAction_->setEnabled(available);
+        sliceXAction_->setEnabled(available);
+        sliceYAction_->setEnabled(available);
+        sliceZAction_->setEnabled(available);
+        sliceSlider_->setEnabled(available && showSliceAction_->isChecked());
+        if (!available) {
+            slicePositionLabel_->setText(
+                QStringLiteral(" no structured CFD grid "));
+            view_->setCfdSlice(false, cfdSliceAxis_, 0);
+            return;
+        }
+
+        const std::size_t axis = static_cast<std::size_t>(cfdSliceAxis_);
+        const std::size_t count = grid->cellCounts[axis];
+        int& requested = cfdSliceIndices_[axis];
+        if (requested < 0 || requested >= static_cast<int>(count)) {
+            requested = static_cast<int>(count / 2);
+        }
+        sliceSlider_->blockSignals(true);
+        sliceSlider_->setRange(0, static_cast<int>(count - 1));
+        sliceSlider_->setValue(requested);
+        sliceSlider_->blockSignals(false);
+        const QChar axisName = cfdSliceAxis_ == CfdSliceAxis::X
+            ? QChar('X')
+            : cfdSliceAxis_ == CfdSliceAxis::Y ? QChar('Y') : QChar('Z');
+        const double coordinate =
+            grid->cellCentreCoordinatesMetres[axis][requested];
+        slicePositionLabel_->setText(
+            QStringLiteral(" %1 plane %2/%3   %1=%4 m ")
+                .arg(axisName)
+                .arg(requested + 1)
+                .arg(count)
+                .arg(coordinate, 0, 'g', 6));
+        view_->setCfdSlice(
+            showSliceAction_->isChecked(), cfdSliceAxis_,
+            static_cast<std::size_t>(requested));
     }
 
     void updatePlayAction() {
@@ -1345,12 +1608,23 @@ private:
     QAction* fitAction_ = nullptr;
     QComboBox* fieldCombo_ = nullptr;
     QComboBox* vectorCombo_ = nullptr;
+    QAction* showSliceAction_ = nullptr;
+    QActionGroup* sliceAxisGroup_ = nullptr;
+    QAction* sliceXAction_ = nullptr;
+    QAction* sliceYAction_ = nullptr;
+    QAction* sliceZAction_ = nullptr;
+    QSlider* sliceSlider_ = nullptr;
+    QLabel* slicePositionLabel_ = nullptr;
     QTimer timer_;
     QElapsedTimer playbackClock_;
     QString traceFile_;
     bool follow_ = false;
     QString desiredField_;
     QString desiredVectorField_;
+    bool fieldChoiceInitialized_ = false;
+    bool vectorChoiceInitialized_ = false;
+    CfdSliceAxis cfdSliceAxis_ = CfdSliceAxis::Z;
+    std::array<int, 3> cfdSliceIndices_{-1, -1, -1};
     TraceHeader traceHeader_;
     std::unique_ptr<TraceStream> stream_;
     std::shared_ptr<const DiagnosticFrame> currentFrame_;

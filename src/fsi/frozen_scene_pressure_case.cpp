@@ -1,5 +1,6 @@
 #include "frozen_scene_pressure_case.h"
 
+#include "cfd_slice.h"
 #include "fluid/evolution.h"
 #include "fluid_frame.h"
 #include "scene_fluid_capped_face_partition.h"
@@ -74,11 +75,14 @@ void validateSettings(const FrozenScenePressureCaseSettings& settings) {
         || settings.preflowBootstrapSteps > 16
         || (settings.preflowBootstrapSteps != 0
             && !settings.useMovingGeometryFsi)
+        || (settings.holdPreflowFluidLoadForStructurePreview
+            && (!settings.useMovingGeometryFsi
+                || settings.preflowBootstrapSteps == 0))
         || settings.movingStructureSubsteps == 0
         || settings.movingStructureSubsteps > 64
         || !std::isfinite(settings.movingLoadRampSeconds)
         || settings.movingLoadRampSeconds < 0.0
-        || settings.movingLoadRampSeconds > 60.0
+        || settings.movingLoadRampSeconds > maximumMovingLoadRampSeconds
         || !std::isfinite(
             settings.movingPressureRelativeResidualTolerance)
         || settings.movingPressureRelativeResidualTolerance < 1.0e-12
@@ -105,6 +109,9 @@ void validateSettings(const FrozenScenePressureCaseSettings& settings) {
 
 const char* solverId(
     const FrozenScenePressureCaseSettings& settings) noexcept {
+    if (settings.holdPreflowFluidLoadForStructurePreview) {
+        return heldPreflowLoadStructurePreviewSolverId;
+    }
     if (settings.preflowBootstrapSteps != 0) {
         if (settings.aggregateCoplanarOpeningPatches) {
             return settings.useMaterialWallTracePressureLoads
@@ -330,6 +337,7 @@ struct BuiltCase {
     std::size_t completedPreflowBootstrapStepCount = 0;
     std::size_t flowAdvanceCount = 0;
     std::size_t geometryAdvanceCount = 0;
+    std::size_t structurePreviewAdvanceCount = 0;
     double movingLoadActivationFraction = 0.0;
     struct MaterialWallTracePressureTransfer {
         std::size_t reconstructedSideCount = 0;
@@ -384,6 +392,14 @@ StructureStepSettings makeStructureStepSettings(
         // scale explicitly instead of altering authored mass or stiffness at
         // the scene boundary.
         result.substeps = settings.movingStructureSubsteps;
+    }
+    if (settings.holdPreflowFluidLoadForStructurePreview) {
+        // This visual-only path seeks a slowly changing structural response,
+        // not free-flight dynamics. Keep the production line-residual guard,
+        // but converge the deep suspension graph more tightly and suppress
+        // unresolved oscillation while the immutable load is introduced.
+        result.cableConstraintSweepPairs = 6;
+        result.velocityDampingPerSecond = 60.0;
     }
     return result;
 }
@@ -1379,6 +1395,59 @@ void advanceMovingGeometryFsi(
     }
 }
 
+void advanceHeldPreflowLoadStructurePreview(
+    BuiltCase& built,
+    const FrozenScenePressureCaseSettings& settings,
+    const StructureStepSettings& structureSettings) {
+    const auto checkpoint = built.structure.checkpoint();
+    try {
+        const double loadActivation = movingLoadActivationFraction(
+            settings, built.structurePreviewAdvanceCount + 1);
+        built.transfer.addLoadsTo(
+            built.structure, built.totalFluidTransfer, loadActivation);
+        const auto step = built.structure.step(structureSettings);
+        if (!step.finite) {
+            throw std::runtime_error(
+                "held preflow-load Structure preview step was not accepted");
+        }
+        auto currentState = captureSceneFluidSurfaceState(
+            built.surface.definition, built.assembly.mappings,
+            built.structure);
+        if (currentState.vertices.size()
+            != built.surfaceState.vertices.size()) {
+            throw std::logic_error(
+                "held preflow-load Structure preview topology changed");
+        }
+        double maximumDisplacement = 0.0;
+        for (std::size_t index = 0;
+             index < currentState.vertices.size(); ++index) {
+            const auto& previous = built.surfaceState.vertices[index];
+            const auto& current = currentState.vertices[index];
+            if (previous.id != current.id) {
+                throw std::logic_error(
+                    "held preflow-load Structure preview identity changed");
+            }
+            const double dx = current.positionMeters.x
+                - previous.positionMeters.x;
+            const double dy = current.positionMeters.y
+                - previous.positionMeters.y;
+            const double dz = current.positionMeters.z
+                - previous.positionMeters.z;
+            maximumDisplacement = std::max(
+                maximumDisplacement,
+                std::sqrt(dx * dx + dy * dy + dz * dz));
+        }
+        built.surfaceState = std::move(currentState);
+        built.structureStep = step;
+        built.maximumGeometryDisplacementMeters = maximumDisplacement;
+        built.movingLoadActivationFraction = loadActivation;
+        ++built.structurePreviewAdvanceCount;
+    } catch (...) {
+        built.structure.restore(checkpoint);
+        throw;
+    }
+}
+
 FrozenScenePressureCaseDiagnostics makeDiagnostics(
     const BuiltCase& built) {
     FrozenScenePressureCaseDiagnostics result;
@@ -1397,6 +1466,8 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         built.pressure.controlCells.settings
             .aggregateCoplanarOpeningPatches;
     result.usesPreflowBootstrap = built.usesPreflowBootstrap;
+    result.usesHeldPreflowLoadStructurePreview =
+        built.structurePreviewAdvanceCount > 0;
     result.preflowBootstrapStepCount = built.preflowBootstrapStepCount;
     result.completedPreflowBootstrapStepCount =
         built.completedPreflowBootstrapStepCount;
@@ -1407,6 +1478,8 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.pressureControlTopologyStable =
         built.pressureControlTopologyStable;
     result.geometryAdvanceCount = built.geometryAdvanceCount;
+    result.structurePreviewAdvanceCount =
+        built.structurePreviewAdvanceCount;
     result.movingLoadActivationFraction =
         built.movingLoadActivationFraction;
     result.maximumGeometryDisplacementMeters =
@@ -1720,6 +1793,18 @@ void appendFluidDiagnostics(
             }
         }
     }
+    const auto addGridMetadata = [&](const std::string_view name,
+                                     const std::size_t value) {
+        frame.scalarFields.push_back({
+            std::string(name), "1", viewer::FieldAssociation::Global,
+            {static_cast<double>(value)},
+        });
+    };
+    addGridMetadata(
+        viewer::cfdGridVertexBeginFieldName, structureVertexCount);
+    addGridMetadata(viewer::cfdGridCellCountXFieldName, counts.x);
+    addGridMetadata(viewer::cfdGridCellCountYFieldName, counts.y);
+    addGridMetadata(viewer::cfdGridCellCountZFieldName, counts.z);
 
     const auto scalarValues = [&](const std::vector<double>& values) {
         std::vector<double> result(
@@ -1833,8 +1918,14 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
             advanceFixedGeometryFlow(state.built, preflowSettings);
             ++state.built.completedPreflowBootstrapStepCount;
         } else {
-            advanceMovingGeometryFsi(
-                state.built, state.settings, state.stepSettings);
+            if (state.settings
+                    .holdPreflowFluidLoadForStructurePreview) {
+                advanceHeldPreflowLoadStructurePreview(
+                    state.built, state.settings, state.stepSettings);
+            } else {
+                advanceMovingGeometryFsi(
+                    state.built, state.settings, state.stepSettings);
+            }
         }
         state.diagnostics = makeDiagnostics(state.built);
         state.diagnostics.usesMovingGeometryFsi = true;
@@ -2175,6 +2266,18 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
             "moving_scene.geometry_advances", "1",
             viewer::FieldAssociation::Global,
             {static_cast<double>(state.diagnostics.geometryAdvanceCount)},
+        });
+        frame.scalarFields.push_back({
+            "moving_scene.structure_preview_advances", "1",
+            viewer::FieldAssociation::Global,
+            {static_cast<double>(
+                state.diagnostics.structurePreviewAdvanceCount)},
+        });
+        frame.scalarFields.push_back({
+            "moving_scene.held_preflow_load_preview", "1",
+            viewer::FieldAssociation::Global,
+            {state.settings.holdPreflowFluidLoadForStructurePreview
+                 ? 1.0 : 0.0},
         });
         frame.scalarFields.push_back({
             "moving_scene.maximum_geometry_displacement", "m",
