@@ -1424,6 +1424,15 @@ makes this a certified aerodynamic solver.
    worker's former hand-assembled copy of the same pipeline. This is the
    authoritative whole-scene geometry target for a later moving mimetic epoch;
    it does not itself sample flow, solve pressure, or apply loads.
+   `scene_fluid_mimetic_geometry_epoch_transition.*` rebuilds that aggregate
+   for exactly one consecutive authoritative surface state, requires its grid
+   epoch to equal the independently accepted geometry handoff, and applies the
+   shared stable-ID appearance/retirement policy without constructing the graph
+   operator. The moving authored-intake cell retains every control with no
+   appearance or retirement. The isolated open planar regional harness remains
+   correctly inadmissible as a whole-scene volume because its material edges do
+   not form a closed region cycle; do not weaken that check or pretend the two
+   geometry representations are interchangeable.
    The coarse real-wing system has 191,579 trace unknowns and 13,132,336 bytes
    of compact local factors. Its component-constant action is roundoff-null.
    The bounded gauge-fixed Jacobi-PCG solve now recovers manufactured fields

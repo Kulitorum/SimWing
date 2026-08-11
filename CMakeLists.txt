@@ -381,6 +381,8 @@ add_library(simwing_scene_fluid_cell_volume STATIC
     src/fsi/scene_fluid_mimetic_pressure_audit.h
     src/fsi/scene_fluid_mimetic_geometry_epoch.cpp
     src/fsi/scene_fluid_mimetic_geometry_epoch.h
+    src/fsi/scene_fluid_mimetic_geometry_epoch_transition.cpp
+    src/fsi/scene_fluid_mimetic_geometry_epoch_transition.h
     src/fsi/scene_fluid_mimetic_pressure_sampling.cpp
     src/fsi/scene_fluid_mimetic_pressure_sampling.h
     src/fsi/scene_fluid_mimetic_pressure_epoch.cpp
@@ -1448,7 +1450,8 @@ add_executable(simwing-scene-fluid-regional-pressure-sampling-test
     tests/simwing_scene_fluid_regional_pressure_sampling_test.cpp
 )
 target_link_libraries(simwing-scene-fluid-regional-pressure-sampling-test
-    PRIVATE simwing_scene_fluid_quadrature simwing_scene_fluid_cell_volume)
+    PRIVATE simwing_scene_fluid_quadrature simwing_scene_fluid_cell_volume
+        simwing_scene_pressure_cell_case)
 
 add_executable(simwing-viewer-protocol-test
     tests/simwing_viewer_protocol_test.cpp

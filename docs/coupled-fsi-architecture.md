@@ -425,6 +425,7 @@ src/fsi/
     scene_fluid_pressure_control_volume.* sparse volume-weighted unknowns
     scene_fluid_pressure_face_link.* Cartesian and embedded pressure links
     scene_fluid_mimetic_geometry_epoch.* graph-free mixed-hybrid geometry epoch
+    scene_fluid_mimetic_geometry_epoch_transition.* consecutive graph-free topology
     scene_fluid_pressure_operator.* symmetric integrated graph Laplacian
     scene_fluid_pressure_epoch.* atomic accepted pressure geometry/operator
     scene_fluid_pressure_epoch_transition.* consecutive rebuilt epoch and row mapping
@@ -3083,6 +3084,16 @@ leaves the active grid all reject; the grid is never silently enlarged. This
 receipt stops at geometry. It does not classify pressure topology as stable,
 construct the next pressure graph, rebase fluid state, run another solve, or
 change production selection.
+`scene_fluid_mimetic_geometry_epoch_transition.*` now supplies the graph-free
+whole-scene classification boundary that follows such an authoritative grid
+handoff. It rebuilds the complete mixed-hybrid geometry epoch, requires exact
+agreement with the independently accepted grid epoch, and retains the shared
+stable-ID appearance/retirement mapping. A moving authored-intake tetrahedral
+cell keeps every pressure control across the transition. The planar regional
+wall harness deliberately cannot feed this whole-scene product: its exposed
+material edges do not close a three-dimensional region cycle. A future adapter
+must start from an authoritative closed scene rather than relaxing that
+invariant. The transition still rebases no momentum and solves no pressure.
 A calibrated Darcy-Forchheimer adapter now samples resolved X/Y/Z MAC normal
 velocity relative to each authored sheet tile and emits the corresponding
 signed sharp jump. It retains tile area, volume flow, and nonnegative pressure

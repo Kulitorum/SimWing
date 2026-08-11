@@ -13,6 +13,7 @@
 #include "fluid/planar_region_fragment_opening_velocity_metric.h"
 #include "fluid/planar_region_fragment_opening_velocity_state.h"
 #include "scene_fluid_regional_pressure_sampling.h"
+#include "scene_fluid_mimetic_geometry_epoch_transition.h"
 #include "scene_fluid_regional_opening_load_epoch.h"
 #include "scene_fluid_regional_opening_momentum_load_epoch.h"
 #include "scene_fluid_regional_opening_momentum_wall_exchange.h"
@@ -26,6 +27,7 @@
 #include "scene_fluid_regional_opening_momentum_wall_post_step_geometry.h"
 #include "scene_fluid_regional_opening_momentum_wall_pressure_epoch.h"
 #include "scene_fluid_regional_opening_momentum_wall_structure_step_epoch.h"
+#include "scene_pressure_cell_geometry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -897,6 +899,61 @@ void validateOpeningMomentumWallInput(
         endpoint.resistanceDefinitions, endpoint.baseMetric,
         endpoint.openingMetric, scene.surface.definition, scene.state,
         scene.quadrature, settings, limits);
+}
+
+void testMimeticGeometryEpochTransition() {
+    const auto scene = makeScenePressureCellGeometry();
+    const auto surface = assembleSceneFluidSurface(scene);
+    const auto assembly = makeScenePressureCellAssembly(scene);
+    check(surface.ok() && assembly.ok(),
+          "mimetic geometry transition: open-cell scene assembles");
+    Structure structure(assembly.definition);
+    SceneFluidSurfaceTransfer transfer(
+        surface.definition, assembly.mappings, structure);
+    const auto geometryGrid = makeScenePressureCellGrid({4, 4, 4});
+    const auto connectivity = buildSceneFluidRegionConnectivity(
+        surface.definition);
+    const auto previousState = captureSceneFluidSurfaceState(
+        surface.definition, assembly.mappings, structure);
+    const auto previousEpoch = buildSceneFluidMimeticGeometryEpoch(
+        surface.definition, previousState, geometryGrid, transfer,
+        connectivity);
+
+    StructureStepSettings stepSettings;
+    stepSettings.timeStepSeconds = 0.01;
+    stepSettings.substeps = 1;
+    stepSettings.constraintIterations = 8;
+    stepSettings.gravityMetersPerSecondSquared = {0.1, 0.0, 0.0};
+    stepSettings.velocityDampingPerSecond = 0.0;
+    const auto structureDiagnostics = structure.step(stepSettings);
+    const auto currentState = captureSceneFluidSurfaceState(
+        surface.definition, assembly.mappings, structure);
+    const auto acceptedGridEpoch = buildSceneFluidGridEpoch(
+        surface.definition, currentState, geometryGrid, transfer);
+    const auto transition =
+        buildSceneFluidMimeticGeometryEpochTransition(
+            previousEpoch, surface.definition, previousState,
+            currentState, geometryGrid, transfer, connectivity,
+            acceptedGridEpoch);
+    validateSceneFluidMimeticGeometryEpochTransition(
+        transition, previousEpoch, surface.definition, previousState,
+        currentState, geometryGrid, transfer, connectivity,
+        acceptedGridEpoch);
+    check(structureDiagnostics.finite
+              && currentState != previousState
+              && transition.version
+                  == sceneFluidMimeticGeometryEpochTransitionVersion
+              && transition.fingerprint != 0
+              && transition.previousGeometryEpochFingerprint
+                  == previousEpoch.fingerprint
+              && transition.currentGeometryEpoch.gridEpoch
+                  == acceptedGridEpoch
+              && transition.controlVolumeTopologyStable
+              && transition.topologyTransition
+                     .appearedControlVolumeCount == 0
+              && transition.topologyTransition
+                     .disappearedControlVolumeCount == 0,
+          "mimetic geometry transition: moving authored intake retains a consecutive graph-free topology");
 }
 
 void testStaticSamplingAndTransfer() {
@@ -3791,6 +3848,7 @@ void testRejectionAndLimits() {
 
 int main() {
     try {
+        testMimeticGeometryEpochTransition();
         testStaticSamplingAndTransfer();
         testOpeningAwareSamplingAndApplication();
         testPartialOpeningSamplingAndApplication();
