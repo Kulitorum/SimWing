@@ -938,6 +938,11 @@ void advanceFixedGeometryFlow(
     built.meanStreamwiseVelocityBeforePumpMetersPerSecond = meanBeforePump;
     built.streamwisePumpIncrementMetersPerSecond = pumpIncrement;
     built.windRampFraction = candidateRampFraction;
+    built.totalFluidTransfer =
+        built.usesMaterialWallTracePressureLoads
+        && built.materialWallTracePressure
+        ? built.materialWallTracePressure->transfer
+        : built.pressureTransfer;
     ++built.flowAdvanceCount;
 }
 
@@ -1189,6 +1194,8 @@ void advanceMovingGeometryFsi(
         built.totalFluidTransfer = std::move(candidateFluidLoads.total);
         built.materialWallTracePressure =
             std::move(candidateMaterialWallTracePressure);
+        built.traceFlowContinuation.reset();
+        built.regionalTransportFlowPrediction.reset();
         built.regionalTransport = std::move(candidateRegionalTransport);
         built.regionWall = std::move(regionWall);
         built.structureStep = structureStep;
@@ -1626,8 +1633,22 @@ viewer::TraceHeader FrozenScenePressureCase::traceHeader() const {
 viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
     auto& state = *implementation_;
     if (state.settings.useMovingGeometryFsi) {
-        advanceMovingGeometryFsi(
-            state.built, state.settings, state.stepSettings);
+        if (state.settings.usePreflowBootstrap
+            && state.acceptedStepCount == 0) {
+            // The bootstrap epoch is genuinely frozen. Even a zero-load XPBD
+            // solve may move grid-aligned vertices by roundoff and thereby
+            // change sparse cut-cell ownership before flow is initialized.
+            // Carry the accepted no-penetration trace correction so this
+            // epoch solves only the new bulk predictor increment instead of
+            // imposing the absolute startup velocity a second time.
+            auto preflowSettings = state.settings;
+            preflowSettings.useMovingGeometryFsi = false;
+            preflowSettings.useCorrectedTraceFlowContinuation = true;
+            advanceFixedGeometryFlow(state.built, preflowSettings);
+        } else {
+            advanceMovingGeometryFsi(
+                state.built, state.settings, state.stepSettings);
+        }
         state.diagnostics = makeDiagnostics(state.built);
         state.diagnostics.usesMovingGeometryFsi = true;
         state.diagnostics.backgroundWindMetersPerSecond =

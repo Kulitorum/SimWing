@@ -1751,8 +1751,15 @@ makes this a certified aerodynamic solver.
   `--wall-trace-pressure-load` experiment explicitly selects that conservative
   transfer; the default still supplies the control-cell load. The independent
   moving-only `--preflow-bootstrap` experiment suppresses just the initial
-  projection load, accepts one corrected-flow/mimetic epoch with a zero
-  conservative Structure load, then exposes later accepted pressure loads.
+  projection load, accepts one genuinely frozen corrected-flow/mimetic epoch
+  without calling XPBD, then exposes later accepted pressure loads. Skipping
+  the zero-load structural solve is load-bearing: roundoff motion of a point on
+  a grid plane can otherwise change sparse material-side ownership. The frozen
+  epoch uses exact corrected-trace continuation so it solves only the new bulk
+  predictor increment; ordinary fixed continuation reduced the gnuC2 tiny-wind
+  absolute load by only `1485.91 -> 1429.54 N` in one epoch. Exact continuation
+  instead reaches `42.4227 N` absolute load, `0.475433 N` control resultant,
+  and `0.0142197 N` maximum wall-trace nodal load with bit-identical geometry.
   Combined wall-trace/preflow selection has a distinct solver identity. Its
   `--continue-corrected-trace-flow` experiment preserves exact fixed-topology
   trace corrections across frames without changing default arithmetic. The

@@ -324,8 +324,11 @@ void testFrozenScenePressureCase() {
               && preflowDiagnostics.usesMovingGeometryFsi
               && preflowDiagnostics.usesPreflowBootstrap
               && !preflowDiagnostics.usesMaterialWallTracePressureLoads
-              && preflowDiagnostics.maximumGeometryDisplacementMeters
-                  <= 1.0e-8,
+              && preflowDiagnostics.geometryAdvanceCount == 0
+              && preflowDiagnostics.flowAdvanceCount == 1
+              && preflowDiagnostics.usesCorrectedTraceFlowContinuation
+              && preflowDiagnostics.maximumGeometryDisplacementMeters == 0.0
+              && sameGeometry(frozenReferenceFrame, preflowFrame),
           "moving scene preflow accepts corrected flow before exposing Structure to pressure load");
 }
 

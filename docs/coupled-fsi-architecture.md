@@ -3498,11 +3498,24 @@ moving-only `--wall-trace-pressure-load` experiment selects its conservative
 transfer for the structural step, retains both diagnostic ledgers, and uses a
 distinct solver identity.
 The separate `--preflow-bootstrap` experiment addresses startup ownership
-rather than sample location. Its first moving epoch transfers an exact zero
-pressure field to Structure while the initial projection is retained solely to
-correct and seed fluid flow. Subsequent epochs use the selected accepted
+rather than sample location. Its first moving epoch does not call XPBD; the
+initial projection is retained solely to correct and seed fluid flow on the
+exact frozen geometry. This avoids letting zero-load structural roundoff move
+a grid-aligned material point across sparse control ownership. Subsequent
+epochs use the selected accepted
 pressure ledger normally. Preflow and preflow-plus-wall-trace combinations
 carry separate solver identities; neither changes the default path.
+The frozen bootstrap explicitly carries the accepted corrected trace flow, so
+its next pressure solve sees only the new bulk predictor increment. Repeating
+the ordinary absolute-velocity fixed path is not a viable pre-roll: on gnuC2 at
+`-0.0001 m/s`, one such epoch reduced the control absolute load only from
+`1485.91 N` to `1429.54 N` while leaving geometry exactly fixed.
+The exact corrected-trace bootstrap instead reduces that control absolute load
+to `42.4227 N` in one epoch. Its control resultant is `0.475433 N`; the wall
+ledger falls to `43.0314 N` absolute load, `0.000434748 N` resultant, and
+`0.0142197 N` maximum nodal load. Geometry remains bit-identical. This is a
+credible kick-start endpoint, but a subsequent loaded XPBD step is still the
+acceptance gate.
 The focused authored-intake case deterministically deforms on its first frame
 and accepts a real pressure-control topology change. This closes the first
 input-driven two-way plumbing loop, not aerodynamic validity: the coarse
