@@ -1194,8 +1194,8 @@ all original trace rows. Reduced fields are only an internal warm-start copy;
 failure or a reconstructed RMS residual outside the larger declared solver and
 component-compatibility tolerance returns diagnostics with no published state.
 The coarse real wing accepts a balanced `+0.02/-0.02` cell-source pair after
-307 iterations: reconstructed full residual is `6.17e-9` RMS and `2.59e-6`
-maximum, with `5.05e-10` maximum local conservation residual. The transaction
+302 iterations: reconstructed full residual is `5.39e-9` RMS and `2.33e-6`
+maximum, with `2.49e-10` maximum local conservation residual. The transaction
 results remain bound to the full, condensed, and optional source fingerprints.
 
 `src/fsi/scene_fluid_mimetic_pressure_state.*` now supplies the accepted-state
@@ -1207,7 +1207,7 @@ zero. Only then are stable control pressures and reduced shared-trace pressures
 copied into a bounded fingerprinted state carrying control, full-system,
 condensed-system, source, structure, and accepted-epoch provenance. Corruption,
 a raw-source solve, a foreign topology, or an unnormalized gauge cannot become
-persistent state. The 191,579-row real balanced-source solve crosses this
+persistent state. The 191,703-row real balanced-source solve crosses this
 capture boundary as well.
 
 `src/fsi/scene_fluid_mimetic_pressure_state_persistence.*` makes that endpoint
@@ -1692,20 +1692,20 @@ authored-opening side is missing. The refined shell set retains 95,984 paired
 opening half-faces and at most 2,947 total half-faces in one control, exposing
 the future dense-local-matrix cost without paying it: every coarse real-wing
 shell builds the compact linear-storage local factorization. The global coarse
-audit contains 191,579
-trace unknowns and 13,132,336 bytes of compact local factor data, and its full
+audit contains 191,703
+trace unknowns and 13,139,280 bytes of compact local factor data, and its full
 component-constant matrix-free action is roundoff-null. A bounded gauge-fixed
 Jacobi-PCG step now runs across the complete real system, reduces its residual,
 and rolls back exactly when deliberately truncated. Every one of the 138
 coarse controls now builds the exact local wall Schur data, and the global
-adapter eliminates 148,652 wall traces into a separate 42,927-row shared
-system. It retains 3,986,602 bytes of linear condensation storage, positive
+adapter eliminates 148,776 wall traces into a separate 42,927-row shared
+system. It retains 3,988,710 bytes of linear condensation storage, positive
 assembled reduced diagonals, a roundoff-null component-constant action, and
 full-system wall reconstruction. The same transactional Jacobi-PCG core now
 runs on that reduced real system as well. It rolls back exactly after a
 deliberately truncated iteration, and a separate manufactured solve reaches
 `1e-5` relative RMS within 300 iterations before reconstructing the complete
-191,579-row operator below `2e-4` maximum residual. Further local or multilevel
+191,703-row operator below `2e-4` maximum residual. Further local or multilevel
 preconditioning and production integration remain open. The fixed MAC or
 transported wall-adjusted predictor plus accepted
 GCL volume-rate product now assemble a fully fingerprinted physical source.
@@ -1722,6 +1722,15 @@ each centreline segment's mass is divided among its four endpoints. The two
 rails recover the declared EA analytically while the stitch constraints own
 sewn coincidence. Noncoincident pairs and seam vertices outside fabric
 triangles reject transactionally.
+The analytical exporter now closes the two mirrored reference-collapsed gnuC2
+wingtips through that boundary. Each original loop has 33 vertices but unequal
+20/15-vertex material paths. Both paths are refined to their union of 33
+authoritative positions by splitting only incident boundary triangles; the
+paired interiors retain distinct stable IDs while their already-welded
+endpoints remain shared. The real regression assembles 95 constraints per
+wingtip, preserves fluid-shell closure, and maps the added diagnostic lines
+through trace replay. Explicit physical seam properties remain required export
+input because the design format does not author them.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy
 because scene-v2 has no authoritative contact material yet. `softwing_core`
@@ -1737,7 +1746,7 @@ semantically revalidates every committed diagnostic ledger. The
 real 3.28 regression now reaches an accepted coupled
 structural step and replayable diagnostic trace with synthetic physical export
 settings. Manufacturing flat-pattern UVs, exact authored line-attachment
-vertices, exporter-authored paired seam chains, live bidirectional
+vertices, general non-collapsed panel seam authoring, live bidirectional
 control, an authoritative settings source/engine CLI, and general cut-cell
 moving interfaces, nonplanar topology events, curved or changing grid-side
 correspondence, AMR, and full CFD evolution kernels remain open work.
@@ -3534,9 +3543,15 @@ reference-collapsed material boundary edge that has opened under motion. The
 earlier one-epoch release moved `6.43212 mm` and reversed an intake-cap facet.
 Reference-planar caps now retain their deterministic faceted disks through
 ordinary nonplanarity, but fold and open-boundary rejection remain intact. The
-two-epoch result moves the next gate from startup magnitude to missing
-structural stitching at the collapsed boundary; weakening fluid topology is
-not an acceptable substitute.
+original two-epoch result moved the next gate from startup magnitude to missing
+structural stitching at the collapsed boundary; weakening fluid topology was
+not an acceptable substitute. With the paired wingtip seams now authored and
+assembled, release passes that former edge but the changed local surface
+operator leaves a `0.571382 N` fluid resultant. Its first loaded step moves
+`180.471 mm` with a `1.70 um` line residual before an inferred cap facet at
+opening 278 reverses. The seam gate is closed; the corrected-flow pre-roll
+must now be reconverged for the refined accepted topology before moving
+acceptance can be claimed.
 The focused authored-intake case deterministically deforms on its first frame
 and accepts a real pressure-control topology change. This closes the first
 input-driven two-way plumbing loop, not aerodynamic validity: the coarse
@@ -3581,7 +3596,7 @@ synthetic physical properties and permits vertex-snapped terminal attachments,
 so it is not a moving-physics oracle.
 
 The first exact wall-trace shadow comparison narrows that gate substantially.
-On the same accepted solve, all 148,652 material sides reconstruct without a
+On the same accepted solve, all 148,776 material sides reconstruct without a
 fallback. Their conservative resultant is `0.0152279 N`, about 1,094 times
 smaller than the control-cell-sampled `16.6527 N`. This supports sampling the
 mixed-hybrid boundary value at its actual material wall rather than treating a

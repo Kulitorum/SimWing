@@ -144,9 +144,10 @@ struct Opening {
     std::vector<std::array<StableId, 3>> capTriangleVertexIds;
 };
 
-// The chains have equal cardinality and pair element-by-element. Distinct
-// vertex IDs preserve the intended sewn coincidence without welding topology
-// or assuming a constraint stiffness/discretization rule.
+// The chains have equal cardinality and pair element-by-element. Interior
+// vertex IDs are distinct to preserve sewn coincidence without welding
+// topology. Matching first and/or last IDs may be shared where two sheet
+// boundaries already meet at a seam endpoint.
 struct Seam {
     StableId id = invalidStableId;
     StableId materialId = invalidStableId;

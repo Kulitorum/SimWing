@@ -511,6 +511,10 @@ void assembleSeams(
         const std::size_t firstConstraint =
             assembly.definition.constraints.size();
         for (std::size_t index = 0; index < count; ++index) {
+            if (seam->firstOrderedVertexIds[index]
+                == seam->secondOrderedVertexIds[index]) {
+                continue;
+            }
             assembly.definition.constraints.push_back(
                 {StructureConstraintKind::Distance,
                  nodeIndices.at(seam->firstOrderedVertexIds[index]),

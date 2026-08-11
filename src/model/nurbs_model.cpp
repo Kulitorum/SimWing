@@ -5081,6 +5081,476 @@ public:
             }
         }
 
+        // A zero-area outer rib is an authored sewn closure, not a free
+        // material edge. The two skin paths generally have different source
+        // samples (gnuC2 has 20 versus 15 vertices including endpoints).
+        // Refine both boundary paths to the union of their monotone chordwise
+        // samples, retaining every original vertex and splitting only its
+        // incident boundary triangle. Corresponding refined vertices then
+        // occupy exactly the same point while keeping distinct IDs; the two
+        // already-welded path endpoints remain shared.
+        struct BoundaryIncidence
+        {
+            std::size_t triangleIndex = 0;
+            StableId from = invalidStableId;
+            StableId to = invalidStableId;
+            StableId negativeRegion = invalidStableId;
+            StableId positiveRegion = invalidStableId;
+        };
+        using BoundaryEdge = std::array<StableId, 2>;
+        const auto boundaryEdge = [](StableId first, StableId second) {
+            return BoundaryEdge{std::min(first, second),
+                                std::max(first, second)};
+        };
+        std::map<BoundaryEdge, std::vector<BoundaryIncidence>>
+            separatingEdges;
+        for (std::size_t triangleIndex = 0;
+             triangleIndex < scene.triangles.size(); ++triangleIndex) {
+            const Triangle &triangle = scene.triangles[triangleIndex];
+            if (triangle.negativeSideRegionId
+                == triangle.positiveSideRegionId) {
+                continue;
+            }
+            for (std::size_t corner = 0; corner < 3; ++corner) {
+                const StableId from = triangle.vertexIds[corner];
+                const StableId to =
+                    triangle.vertexIds[(corner + 1) % 3];
+                separatingEdges[boundaryEdge(from, to)].push_back(
+                    {triangleIndex, from, to,
+                     triangle.negativeSideRegionId,
+                     triangle.positiveSideRegionId});
+            }
+        }
+        std::set<BoundaryEdge> openingEdges;
+        for (const Opening &opening : scene.openings) {
+            for (std::size_t index = 0;
+                 index < opening.orderedVertexIds.size(); ++index) {
+                openingEdges.insert(boundaryEdge(
+                    opening.orderedVertexIds[index],
+                    opening.orderedVertexIds[
+                        (index + 1) % opening.orderedVertexIds.size()]));
+            }
+        }
+        using BoundaryRegions = std::pair<StableId, StableId>;
+        std::map<BoundaryRegions, std::vector<BoundaryIncidence>>
+            unresolvedBoundaries;
+        for (const auto &[edge, incidences] : separatingEdges) {
+            if (incidences.size() == 1 && !openingEdges.contains(edge)) {
+                const BoundaryIncidence &incidence = incidences.front();
+                unresolvedBoundaries[
+                    {incidence.negativeRegion,
+                     incidence.positiveRegion}]
+                    .push_back(incidence);
+            }
+        }
+
+        struct SeamSample
+        {
+            double parameter = 0.0;
+            Vec3 positionMeters;
+            std::array<std::optional<StableId>, 2> existingIds;
+        };
+        struct EdgeInsertion
+        {
+            StableId id = invalidStableId;
+            double fraction = 0.0;
+        };
+        const auto scenePosition = [&](StableId id) {
+            const auto vertex = std::lower_bound(
+                scene.vertices.begin(), scene.vertices.end(), id,
+                [](const Vertex &candidate, StableId value) {
+                    return candidate.id < value;
+                });
+            if (vertex == scene.vertices.end() || vertex->id != id) {
+                throw std::logic_error(
+                    "Collapsed seam references a missing scene vertex");
+            }
+            return vertex->positionMeters;
+        };
+        const auto squaredDistance = [](const Vec3 &first,
+                                        const Vec3 &second) {
+            const double x = first.x - second.x;
+            const double y = first.y - second.y;
+            const double z = first.z - second.z;
+            return x * x + y * y + z * z;
+        };
+        const auto splitBoundaryTriangle =
+            [&](StableId from,
+                StableId to,
+                const std::vector<EdgeInsertion> &insertions) {
+            if (insertions.empty()) {
+                return;
+            }
+            std::optional<std::size_t> foundTriangle;
+            std::size_t foundCorner = 0;
+            bool followsTriangle = false;
+            for (std::size_t triangleIndex = 0;
+                 triangleIndex < scene.triangles.size(); ++triangleIndex) {
+                const Triangle &candidate = scene.triangles[triangleIndex];
+                if (candidate.negativeSideRegionId
+                    == candidate.positiveSideRegionId) {
+                    continue;
+                }
+                for (std::size_t corner = 0; corner < 3; ++corner) {
+                    const StableId first = candidate.vertexIds[corner];
+                    const StableId second =
+                        candidate.vertexIds[(corner + 1) % 3];
+                    if ((first == from && second == to)
+                        || (first == to && second == from)) {
+                        if (foundTriangle) {
+                            addError(
+                                "Collapsed seam boundary edge has multiple material triangles");
+                            return;
+                        }
+                        foundTriangle = triangleIndex;
+                        foundCorner = corner;
+                        followsTriangle = first == from;
+                    }
+                }
+            }
+            if (!foundTriangle) {
+                addError(
+                    "Collapsed seam boundary edge has no material triangle");
+                return;
+            }
+
+            const Triangle original = scene.triangles[*foundTriangle];
+            const std::size_t oppositeCorner = (foundCorner + 2) % 3;
+            const StableId opposite = original.vertexIds[oppositeCorner];
+            const Vec2 fromChart = followsTriangle
+                ? original.materialCoordinates[foundCorner]
+                : original.materialCoordinates[(foundCorner + 1) % 3];
+            const Vec2 toChart = followsTriangle
+                ? original.materialCoordinates[(foundCorner + 1) % 3]
+                : original.materialCoordinates[foundCorner];
+            const Vec2 oppositeChart =
+                original.materialCoordinates[oppositeCorner];
+
+            std::vector<StableId> edgeIds;
+            std::vector<Vec2> edgeCharts;
+            edgeIds.reserve(insertions.size() + 2);
+            edgeCharts.reserve(insertions.size() + 2);
+            edgeIds.push_back(from);
+            edgeCharts.push_back(fromChart);
+            for (const EdgeInsertion &insertion : insertions) {
+                edgeIds.push_back(insertion.id);
+                edgeCharts.push_back(
+                    {fromChart.x
+                         + insertion.fraction
+                               * (toChart.x - fromChart.x),
+                     fromChart.y
+                         + insertion.fraction
+                               * (toChart.y - fromChart.y)});
+            }
+            edgeIds.push_back(to);
+            edgeCharts.push_back(toChart);
+
+            for (std::size_t segment = 0;
+                 segment + 1 < edgeIds.size(); ++segment) {
+                Triangle piece = original;
+                if (followsTriangle) {
+                    piece.vertexIds = {
+                        edgeIds[segment], edgeIds[segment + 1], opposite};
+                    piece.materialCoordinates = {
+                        edgeCharts[segment], edgeCharts[segment + 1],
+                        oppositeChart};
+                } else {
+                    piece.vertexIds = {
+                        edgeIds[segment + 1], edgeIds[segment], opposite};
+                    piece.materialCoordinates = {
+                        edgeCharts[segment + 1], edgeCharts[segment],
+                        oppositeChart};
+                }
+                if (segment == 0) {
+                    scene.triangles[*foundTriangle] = piece;
+                } else {
+                    piece.id = stableId(4, triangleOrdinal++);
+                    scene.triangles.push_back(std::move(piece));
+                }
+            }
+        };
+
+        std::optional<StableId> collapsedSeamMaterialId;
+        std::size_t seamOrdinal = 0;
+        const auto requireCollapsedSeamMaterial = [&]() {
+            if (collapsedSeamMaterialId) {
+                return *collapsedSeamMaterialId;
+            }
+            const auto &material = settings.collapsedBoundarySeam;
+            if (material.name.empty()
+                || !std::isfinite(material.linearDensityKgPerMeter)
+                || !(material.linearDensityKgPerMeter > 0.0)
+                || !std::isfinite(material.axialStiffnessNewtons)
+                || !(material.axialStiffnessNewtons > 0.0)) {
+                addError(
+                    "Collapsed sewn boundaries require explicit finite positive seam properties");
+            }
+            const StableId id = stableId(12, 0);
+            scene.seamMaterials.push_back(
+                {id, material.name,
+                 material.linearDensityKgPerMeter,
+                 material.axialStiffnessNewtons});
+            collapsedSeamMaterialId = id;
+            return id;
+        };
+
+        constexpr double collapsedBoundaryRelativeAreaTolerance = 1.0e-10;
+        constexpr double seamParameterTolerance = 1.0e-12;
+        for (const auto &[regions, incidences] : unresolvedBoundaries) {
+            std::map<StableId, BoundaryIncidence> next;
+            std::set<StableId> incoming;
+            for (const BoundaryIncidence &incidence : incidences) {
+                if (!next.emplace(incidence.from, incidence).second
+                    || !incoming.insert(incidence.to).second) {
+                    addError(
+                        "Unresolved material boundary is branched or inconsistently wound");
+                }
+            }
+            if (next.size() != incoming.size()) {
+                addError("Unresolved material boundary is not a closed cycle");
+                continue;
+            }
+            std::set<StableId> unvisited;
+            for (const auto &[from, incidence] : next) {
+                static_cast<void>(incidence);
+                unvisited.insert(from);
+            }
+            while (!unvisited.empty()) {
+                const StableId start = *unvisited.begin();
+                std::vector<StableId> loop;
+                StableId current = start;
+                do {
+                    if (!unvisited.erase(current)) {
+                        addError(
+                            "Unresolved material boundary cycles overlap");
+                        break;
+                    }
+                    loop.push_back(current);
+                    const auto found = next.find(current);
+                    if (found == next.end()) {
+                        addError(
+                            "Unresolved material boundary cycle is incomplete");
+                        break;
+                    }
+                    current = found->second.to;
+                } while (current != start);
+                if (current != start || loop.size() < 4) {
+                    continue;
+                }
+
+                Vec3 minimum = scenePosition(loop.front());
+                Vec3 maximum = minimum;
+                Vec3 areaVector;
+                for (std::size_t index = 0; index < loop.size(); ++index) {
+                    const Vec3 first = scenePosition(loop[index]);
+                    const Vec3 second =
+                        scenePosition(loop[(index + 1) % loop.size()]);
+                    minimum.x = std::min(minimum.x, first.x);
+                    minimum.y = std::min(minimum.y, first.y);
+                    minimum.z = std::min(minimum.z, first.z);
+                    maximum.x = std::max(maximum.x, first.x);
+                    maximum.y = std::max(maximum.y, first.y);
+                    maximum.z = std::max(maximum.z, first.z);
+                    areaVector.x +=
+                        (first.y - second.y) * (first.z + second.z);
+                    areaVector.y +=
+                        (first.z - second.z) * (first.x + second.x);
+                    areaVector.z +=
+                        (first.x - second.x) * (first.y + second.y);
+                }
+                const double extentSquared = squaredDistance(minimum, maximum);
+                const double relativeArea = 0.5 * std::hypot(
+                    areaVector.x, areaVector.y, areaVector.z)
+                    / extentSquared;
+                if (!(extentSquared > 0.0)
+                    || !std::isfinite(relativeArea)
+                    || relativeArea
+                        > collapsedBoundaryRelativeAreaTolerance) {
+                    addError(
+                        "Captured separating surface has an unauthored finite-area boundary");
+                    continue;
+                }
+
+                std::size_t firstEnd = 0;
+                std::size_t secondEnd = 1;
+                double maximumDistanceSquared = -1.0;
+                for (std::size_t first = 0; first < loop.size(); ++first) {
+                    for (std::size_t second = first + 1;
+                         second < loop.size(); ++second) {
+                        const double distanceSquared = squaredDistance(
+                            scenePosition(loop[first]),
+                            scenePosition(loop[second]));
+                        if (distanceSquared > maximumDistanceSquared) {
+                            maximumDistanceSquared = distanceSquared;
+                            firstEnd = first;
+                            secondEnd = second;
+                        }
+                    }
+                }
+                std::vector<StableId> paths[2];
+                for (std::size_t index = firstEnd;
+                     index <= secondEnd; ++index) {
+                    paths[0].push_back(loop[index]);
+                }
+                std::size_t index = firstEnd;
+                paths[1].push_back(loop[index]);
+                while (index != secondEnd) {
+                    index = (index + loop.size() - 1) % loop.size();
+                    paths[1].push_back(loop[index]);
+                }
+                if (paths[0].size() < 3 || paths[1].size() < 3) {
+                    addError(
+                        "Collapsed sewn boundary cannot be split into two fabric paths");
+                    continue;
+                }
+
+                const Vec3 axisStart = scenePosition(paths[0].front());
+                const Vec3 axisEnd = scenePosition(paths[0].back());
+                const Vec3 axis{axisEnd.x - axisStart.x,
+                                axisEnd.y - axisStart.y,
+                                axisEnd.z - axisStart.z};
+                const double axisSquared =
+                    axis.x * axis.x + axis.y * axis.y + axis.z * axis.z;
+                const auto parameter = [&](StableId id) {
+                    const Vec3 point = scenePosition(id);
+                    return ((point.x - axisStart.x) * axis.x
+                            + (point.y - axisStart.y) * axis.y
+                            + (point.z - axisStart.z) * axis.z)
+                        / axisSquared;
+                };
+                bool monotone = axisSquared > 0.0;
+                for (const auto &path : paths) {
+                    double previous = -std::numeric_limits<double>::infinity();
+                    for (const StableId id : path) {
+                        const double value = parameter(id);
+                        monotone = monotone && std::isfinite(value)
+                            && value > previous + seamParameterTolerance;
+                        previous = value;
+                    }
+                }
+                if (!monotone) {
+                    addError(
+                        "Collapsed sewn boundary paths are not monotone between their farthest endpoints");
+                    continue;
+                }
+
+                std::vector<SeamSample> samples;
+                for (std::size_t path = 0; path < 2; ++path) {
+                    for (const StableId id : paths[path]) {
+                        SeamSample sample;
+                        sample.parameter = parameter(id);
+                        sample.positionMeters = scenePosition(id);
+                        sample.existingIds[path] = id;
+                        samples.push_back(sample);
+                    }
+                }
+                std::ranges::sort(
+                    samples,
+                    [](const SeamSample &first, const SeamSample &second) {
+                        if (first.parameter != second.parameter) {
+                            return first.parameter < second.parameter;
+                        }
+                        return first.existingIds < second.existingIds;
+                    });
+                std::vector<SeamSample> mergedSamples;
+                const auto sampleExistingId = [](const SeamSample &sample) {
+                    return sample.existingIds[0]
+                        ? *sample.existingIds[0]
+                        : *sample.existingIds[1];
+                };
+                for (SeamSample sample : samples) {
+                    if (!mergedSamples.empty()) {
+                        SeamSample &previous = mergedSamples.back();
+                        const StableId previousId =
+                            sampleExistingId(previous);
+                        const StableId sampleId =
+                            sampleExistingId(sample);
+                        if (previousId == sampleId) {
+                            previous.existingIds[0] =
+                                previous.existingIds[0]
+                                    ? previous.existingIds[0]
+                                    : sample.existingIds[0];
+                            previous.existingIds[1] =
+                                previous.existingIds[1]
+                                    ? previous.existingIds[1]
+                                    : sample.existingIds[1];
+                            continue;
+                        }
+                        if (!(sample.parameter
+                              > previous.parameter
+                                  + seamParameterTolerance)) {
+                            addError(
+                                "Collapsed sewn boundary has ambiguous coincident samples");
+                            break;
+                        }
+                    }
+                    mergedSamples.push_back(std::move(sample));
+                }
+                if (mergedSamples.size() != loop.size()) {
+                    continue;
+                }
+
+                const auto refinePath =
+                    [&](std::size_t pathIndex) {
+                    const auto &path = paths[pathIndex];
+                    std::vector<double> pathParameters;
+                    pathParameters.reserve(path.size());
+                    for (const StableId id : path) {
+                        pathParameters.push_back(parameter(id));
+                    }
+                    std::vector<std::vector<EdgeInsertion>> insertions(
+                        path.size() - 1);
+                    std::vector<StableId> refined;
+                    refined.reserve(mergedSamples.size());
+                    for (const SeamSample &sample : mergedSamples) {
+                        if (sample.existingIds[pathIndex]) {
+                            refined.push_back(*sample.existingIds[pathIndex]);
+                            continue;
+                        }
+                        const auto upper = std::upper_bound(
+                            pathParameters.begin(), pathParameters.end(),
+                            sample.parameter);
+                        if (upper == pathParameters.begin()
+                            || upper == pathParameters.end()) {
+                            addError(
+                                "Collapsed seam sample lies outside its opposite path");
+                            return std::vector<StableId>{};
+                        }
+                        const std::size_t segment =
+                            static_cast<std::size_t>(
+                                upper - pathParameters.begin() - 1);
+                        const double fraction =
+                            (sample.parameter - pathParameters[segment])
+                            / (pathParameters[segment + 1]
+                               - pathParameters[segment]);
+                        const StableId id = stableId(2, scene.vertices.size());
+                        scene.vertices.push_back(
+                            {id, sample.positionMeters});
+                        insertions[segment].push_back({id, fraction});
+                        refined.push_back(id);
+                    }
+                    for (std::size_t segment = 0;
+                         segment < insertions.size(); ++segment) {
+                        splitBoundaryTriangle(
+                            path[segment], path[segment + 1],
+                            insertions[segment]);
+                    }
+                    return refined;
+                };
+                std::vector<StableId> firstChain = refinePath(0);
+                std::vector<StableId> secondChain = refinePath(1);
+                if (firstChain.size() != mergedSamples.size()
+                    || secondChain.size() != mergedSamples.size()) {
+                    continue;
+                }
+                scene.seams.push_back(
+                    {stableId(13, seamOrdinal++),
+                     requireCollapsedSeamMaterial(),
+                     std::move(firstChain),
+                     std::move(secondChain)});
+            }
+        }
+
         if (!result.errors.empty()) {
             finalizeFailure();
             return result;

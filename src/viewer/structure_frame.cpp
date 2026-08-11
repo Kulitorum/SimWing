@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -99,6 +100,7 @@ void addGlobalVector(
         && first.membraneTriangleIds == second.membraneTriangleIds
         && first.constraintSuspensionLineIds
                == second.constraintSuspensionLineIds
+        && first.constraintSeamRanges == second.constraintSeamRanges
         && first.suspensionSegmentLineIds
                == second.suspensionSegmentLineIds
         && first.pilotHarnessAttachmentIds
@@ -357,7 +359,7 @@ StructureFrameMapping makeStructureFrameMapping(
              found->second->positiveSideRegionId});
     }
     definition.lines.reserve(
-        canonical.mappings.constraintSuspensionLineIds.size()
+        canonical.definition.constraints.size()
         + canonical.mappings.suspensionSegmentLineIds.size());
     for (const fsi::StableId id :
          canonical.mappings.constraintSuspensionLineIds) {
@@ -368,6 +370,50 @@ StructureFrameMapping makeStructureFrameMapping(
         }
         definition.lines.push_back(
             {id, static_cast<std::uint32_t>(found->second->role)});
+    }
+    std::set<std::uint64_t> usedLineIds;
+    for (const auto& line : definition.lines) {
+        usedLineIds.insert(line.stableId);
+    }
+    for (const auto& [id, line] : linesById) {
+        static_cast<void>(line);
+        usedLineIds.insert(id);
+    }
+    std::uint64_t nextSeamDiagnosticId =
+        std::numeric_limits<std::uint64_t>::max();
+    const auto allocateSeamDiagnosticId = [&] {
+        while (nextSeamDiagnosticId != 0
+               && usedLineIds.contains(nextSeamDiagnosticId)) {
+            --nextSeamDiagnosticId;
+        }
+        if (nextSeamDiagnosticId == 0) {
+            throw std::length_error(
+                "Scene seam constraints exhausted diagnostic line IDs");
+        }
+        const std::uint64_t result = nextSeamDiagnosticId--;
+        usedLineIds.insert(result);
+        return result;
+    };
+    constexpr std::uint32_t seamDiagnosticLineRole = 5;
+    for (const auto& range : canonical.mappings.constraintSeamRanges) {
+        if (range.firstConstraint != definition.lines.size()
+            || range.firstConstraint
+                > canonical.definition.constraints.size()
+            || range.constraintCount
+                > canonical.definition.constraints.size()
+                    - range.firstConstraint) {
+            throw std::invalid_argument(
+                "Scene seam constraint mapping is incomplete");
+        }
+        for (std::size_t local = 0; local < range.constraintCount; ++local) {
+            definition.lines.push_back(
+                {allocateSeamDiagnosticId(), seamDiagnosticLineRole});
+        }
+    }
+    if (definition.lines.size()
+        != canonical.definition.constraints.size()) {
+        throw std::invalid_argument(
+            "Scene direct-constraint mapping is incomplete");
     }
     if (canonical.definition.suspension) {
         const fsi::StructureSuspensionDefinition& suspension =

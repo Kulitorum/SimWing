@@ -827,10 +827,10 @@ ValidationReport validateScene(const Scene& scene) {
         bool invalidChains = seam->firstOrderedVertexIds.size() < 2
             || seam->firstOrderedVertexIds.size()
                    != seam->secondOrderedVertexIds.size();
-        std::unordered_set<StableId> allChainVertices;
+        std::array<std::unordered_set<StableId>, 2> chainVertices;
         const auto validateChain = [&](const std::vector<StableId>& chain,
-                                       const char* label) {
-            std::unordered_set<StableId> localVertices;
+                                       const char* label,
+                                       std::unordered_set<StableId>& localVertices) {
             for (const StableId vertexId : chain) {
                 if (!vertexIds.contains(vertexId)) {
                     add(report, ValidationCode::MissingVertexReference,
@@ -838,14 +838,28 @@ ValidationReport validateScene(const Scene& scene) {
                         std::string("seam ") + label
                             + " chain references a missing vertex");
                 }
-                if (!localVertices.insert(vertexId).second
-                    || !allChainVertices.insert(vertexId).second) {
+                if (!localVertices.insert(vertexId).second) {
                     invalidChains = true;
                 }
             }
         };
-        validateChain(seam->firstOrderedVertexIds, "first");
-        validateChain(seam->secondOrderedVertexIds, "second");
+        validateChain(seam->firstOrderedVertexIds, "first", chainVertices[0]);
+        validateChain(seam->secondOrderedVertexIds, "second", chainVertices[1]);
+        for (const StableId id : chainVertices[0]) {
+            if (!chainVertices[1].contains(id)) {
+                continue;
+            }
+            const bool sharedFirst = !seam->firstOrderedVertexIds.empty()
+                && seam->firstOrderedVertexIds.front() == id
+                && seam->secondOrderedVertexIds.front() == id;
+            const bool sharedLast = !seam->firstOrderedVertexIds.empty()
+                && seam->firstOrderedVertexIds.back() == id
+                && seam->secondOrderedVertexIds.back() == id;
+            if (!sharedFirst && !sharedLast) {
+                invalidChains = true;
+            }
+        }
+        std::size_t distinctPairCount = 0;
         if (seam->firstOrderedVertexIds.size()
             == seam->secondOrderedVertexIds.size()) {
             for (std::size_t index = 0;
@@ -853,8 +867,8 @@ ValidationReport validateScene(const Scene& scene) {
                 std::array<StableId, 2> pair{
                     seam->firstOrderedVertexIds[index],
                     seam->secondOrderedVertexIds[index]};
-                if (pair[0] == pair[1]) {
-                    invalidChains = true;
+                if (pair[0] != pair[1]) {
+                    ++distinctPairCount;
                 }
                 std::ranges::sort(pair);
                 if (!seamVertexPairs.emplace(pair, seam->id).second) {
@@ -862,10 +876,13 @@ ValidationReport validateScene(const Scene& scene) {
                 }
             }
         }
+        if (distinctPairCount == 0) {
+            invalidChains = true;
+        }
         if (invalidChains) {
             add(report, ValidationCode::InvalidSeam, EntityKind::Seam,
                 seam->id,
-                "seam needs two disjoint equal-length ordered chains with at least two unique vertex pairs");
+                "seam needs equal-length unique ordered chains with at least one distinct pair; only matching endpoints may be shared");
         }
         if (!seamMaterialIds.contains(seam->materialId)) {
             add(report, ValidationCode::MissingMaterialReference,

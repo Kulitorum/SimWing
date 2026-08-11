@@ -76,6 +76,13 @@ struct SimWingLineExportSettings
     double dragCoefficient = 0.0;
 };
 
+struct SimWingSeamExportSettings
+{
+    std::string name;
+    double linearDensityKgPerMeter = 0.0;
+    double axialStiffnessNewtons = 0.0;
+};
+
 struct SimWingHarnessExportPoint
 {
     // Captured line endpoints within endpointMatchToleranceMeters of this
@@ -101,6 +108,9 @@ struct SimWingSceneExportSettings
     std::string designChecksum;
     std::string exporterVersion;
     std::vector<SimWingFabricExportSettings> fabricMaterials;
+    // Required only when the authoritative surface has a collapsed sewn
+    // boundary such as the two mirrored gnuC2 wingtip closures.
+    SimWingSeamExportSettings collapsedBoundarySeam;
     std::vector<SimWingLineExportSettings> lineMaterials;
     SimWingPilotExportSettings pilot;
     // Lumped mass assigned to every authored mass-carrying line junction.

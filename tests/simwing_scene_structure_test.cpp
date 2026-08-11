@@ -511,6 +511,17 @@ void testSeamAssemblyAndBendingTopologyRejections() {
     check(seamStructure.diagnostics().constraintCount == 5,
           "seam bridge: assembled constraints are accepted by Structure");
 
+    Scene sharedEndpointSeam = seamScene;
+    sharedEndpointSeam.seams.front().secondOrderedVertexIds.front() = 11;
+    const SceneStructureAssembly sharedEndpointAssembly =
+        assembleSceneStructure(sharedEndpointSeam);
+    const auto sharedEndpointRange =
+        sharedEndpointAssembly.mappings.seamConstraintRange(610);
+    check(sharedEndpointAssembly.ok()
+              && sharedEndpointRange.has_value()
+              && sharedEndpointRange->constraintCount == 3,
+          "seam bridge: an already welded endpoint omits only its redundant pair stitch");
+
     Scene reorderedSeam = seamScene;
     reverseCollections(reorderedSeam);
     const SceneStructureAssembly reorderedSeamAssembly =

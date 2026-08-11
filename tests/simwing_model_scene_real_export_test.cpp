@@ -119,6 +119,8 @@ lep::SimWingSceneExportSettings settings()
         fabric(SurfaceRole::Diagonal, "synthetic fixture diagonal"),
         fabric(SurfaceRole::MiniRib, "synthetic fixture mini-rib"),
     };
+    value.collapsedBoundarySeam = {
+        "synthetic fixture collapsed wingtip seam", 0.001, 5000.0};
     value.lineMaterials = {
         line("Riser", 0.005),
         line("Line275", 0.0019),
@@ -244,6 +246,40 @@ void testRealDesignCapture(const std::filesystem::path &input,
             [id](const auto &candidate) { return candidate.id == id; });
         return vertex->positionMeters;
     };
+    const bool collapsedSeamsArePaired =
+        result.scene.seams.size() == 2
+        && result.scene.seamMaterials.size() == 1
+        && std::ranges::all_of(
+            result.scene.seams,
+            [&](const simwing::fsi::Seam &seam) {
+                if (seam.firstOrderedVertexIds.size() != 33
+                    || seam.secondOrderedVertexIds.size() != 33
+                    || seam.firstOrderedVertexIds.front()
+                        != seam.secondOrderedVertexIds.front()
+                    || seam.firstOrderedVertexIds.back()
+                        != seam.secondOrderedVertexIds.back()) {
+                    return false;
+                }
+                for (std::size_t index = 0;
+                     index < seam.firstOrderedVertexIds.size(); ++index) {
+                    const auto first = vertexPosition(
+                        seam.firstOrderedVertexIds[index]);
+                    const auto second = vertexPosition(
+                        seam.secondOrderedVertexIds[index]);
+                    if (first.x != second.x || first.y != second.y
+                        || first.z != second.z
+                        || (index != 0
+                            && index + 1
+                                != seam.firstOrderedVertexIds.size()
+                            && seam.firstOrderedVertexIds[index]
+                                == seam.secondOrderedVertexIds[index])) {
+                        return false;
+                    }
+                }
+                return true;
+            });
+    check(collapsedSeamsArePaired,
+          "real collapsed wingtips become two exact 33-pair sewn chains with shared endpoints");
     const auto subtract = [](const auto &first, const auto &second) {
         return simwing::fsi::Vec3{
             first.x - second.x,
@@ -409,8 +445,14 @@ void testRealDesignCapture(const std::filesystem::path &input,
     check(assembly.definition.suspension.has_value()
               && assembly.definition.suspension->segments.size() == 190
               && assembly.mappings.suspensionSegmentLineIds.size() == 190
-              && assembly.mappings.pilotHarnessAttachmentIds.size() == 2,
-          "real assembly retains all suspension segments and both harness roots");
+              && assembly.mappings.pilotHarnessAttachmentIds.size() == 2
+              && assembly.definition.constraints.size() == 190
+              && assembly.mappings.constraintSeamRanges.size() == 2
+              && assembly.mappings.constraintSeamRanges[0].constraintCount
+                  == 95
+              && assembly.mappings.constraintSeamRanges[1].constraintCount
+                  == 95,
+          "real assembly retains suspension and both 95-constraint wingtip seams");
 
     simwing::fsi::Structure structure(assembly.definition);
     const simwing::fsi::SceneFluidSurfaceAssembly fluidSurface =
@@ -933,7 +975,7 @@ void testRealDesignCapture(const std::filesystem::path &input,
         && mimeticTraceSystem.localOperatorStorageBytes
             == 7 * mimeticControlCells.halfFaces.size() * sizeof(double)
         && mimeticTraceSystem.sharedTraceCount == 42'927
-        && mimeticTraceSystem.materialWallTraceCount == 148'652
+        && mimeticTraceSystem.materialWallTraceCount == 148'776
         && condensedTraceSystem.traces.size()
             == mimeticTraceSystem.sharedTraceCount
         && condensedTraceSystem.eliminatedMaterialWallTraceCount
@@ -1296,7 +1338,8 @@ void testRealDesignCapture(const std::filesystem::path &input,
                      replayFrame, replayBytes, &protocolError)
               && firstBytes == replayBytes,
           "real structural step and composite checkpoint replay are bit-identical");
-    check(firstFrame.lines.size() == 190
+    check(firstFrame.lines.size()
+                  == assembly.definition.constraints.size() + 190
               && firstFrame.vertices.size()
                      == assembly.definition.nodes.size() + 2,
           "real diagnostic frame contains all lines and rigid harness vertices");
@@ -1320,7 +1363,8 @@ void testRealDesignCapture(const std::filesystem::path &input,
               && decodedHeader.solverCommit == header.solverCommit
               && reader.readNext(decodedFrame)
                      == simwing::viewer::TraceReadStatus::Frame
-              && decodedFrame.lines.size() == 190
+              && decodedFrame.lines.size()
+                  == assembly.definition.constraints.size() + 190
               && reader.readNext(decodedFrame)
                      == simwing::viewer::TraceReadStatus::End,
           "real viewer trace replays one complete accepted frame");

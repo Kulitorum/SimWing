@@ -341,9 +341,15 @@ void testSeamsJunctionsAndInternalSheets() {
 
     badSeam = validScene();
     badSeam.seams.front().secondOrderedVertexIds[0] =
-        badSeam.seams.front().firstOrderedVertexIds[0];
+        badSeam.seams.front().firstOrderedVertexIds[1];
     check(contains(validateScene(badSeam), ValidationCode::InvalidSeam),
-          "seam chains require distinct paired vertices");
+          "seam chains reject a vertex shared away from a matching endpoint");
+
+    Scene sharedEndpoint = validScene();
+    sharedEndpoint.seams.front().secondOrderedVertexIds[0] =
+        sharedEndpoint.seams.front().firstOrderedVertexIds[0];
+    check(validateScene(sharedEndpoint).ok(),
+          "seam chains may share an already welded matching endpoint");
 
     badSeam = validScene();
     badSeam.seams.front().materialId = 9999;
