@@ -339,12 +339,22 @@ double absoluteLinkFlow(
         + orientation * patch.surfaceSweepRateCubicMetersPerSecond;
 }
 
+struct AdditionalRegionMomentumNormalSample {
+    std::size_t minusControlVolumeIndex = 0;
+    std::size_t plusControlVolumeIndex = 0;
+    double areaSquareMeters = 0.0;
+    fluid::Vector3 unitNormalMinusToPlus;
+    double absoluteNormalVelocityMetersPerSecond = 0.0;
+};
+
 SceneFluidRegionMomentumState reconstructFromAbsoluteLinkVelocities(
     const fluid::PeriodicCartesianGrid& grid,
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidOpeningGridPatchSet& openingPatches,
     const std::vector<double>& absoluteVelocities,
+    const std::vector<AdditionalRegionMomentumNormalSample>&
+        additionalNormalSamples,
     const fluid::MacVelocityField& fallbackVelocityMetersPerSecond,
     const std::uint64_t pressureProjectionFingerprint,
     const std::uint64_t acceptedStepCount,
@@ -375,6 +385,41 @@ SceneFluidRegionMomentumState reconstructFromAbsoluteLinkVelocities(
         pressureVolumes.controlVolumes.size());
     std::size_t openingLinkCount = 0;
     std::size_t embeddedOpeningLinkCount = 0;
+    const auto accumulateNormalSample = [&accumulators](
+        const std::size_t minusControlVolumeIndex,
+        const std::size_t plusControlVolumeIndex,
+        const double areaSquareMeters,
+        const fluid::Vector3& normal,
+        const double velocity,
+        const bool embedded) {
+        if (minusControlVolumeIndex >= accumulators.size()
+            || plusControlVolumeIndex >= accumulators.size()
+            || minusControlVolumeIndex == plusControlVolumeIndex
+            || !(areaSquareMeters > 0.0)
+            || !finite(normal) || !std::isfinite(velocity)) {
+            throw std::invalid_argument(
+                "scene fluid region momentum normal sample is invalid");
+        }
+        const std::array<double, 3> components{
+            normal.x, normal.y, normal.z};
+        for (const std::size_t controlVolume : {
+                 minusControlVolumeIndex,
+                 plusControlVolumeIndex}) {
+            auto& accumulator = accumulators[controlVolume];
+            if (embedded) {
+                ++accumulator.embeddedLinkCount;
+            }
+            for (std::size_t row = 0; row < 3; ++row) {
+                component(accumulator.normalRightHandSide, row) +=
+                    areaSquareMeters * velocity * components[row];
+                for (std::size_t column = 0; column < 3; ++column) {
+                    accumulator.normalMatrix[row][column] +=
+                        areaSquareMeters
+                        * components[row] * components[column];
+                }
+            }
+        }
+    };
     for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
         const auto& source = faceLinks.links[index];
         const bool cartesian = source.geometryKind
@@ -398,10 +443,6 @@ SceneFluidRegionMomentumState reconstructFromAbsoluteLinkVelocities(
             throw std::invalid_argument(
                 "scene fluid region momentum link binding is invalid");
         }
-        const std::array<double, 3> normal{
-            source.unitNormalMinusToPlus.x,
-            source.unitNormalMinusToPlus.y,
-            source.unitNormalMinusToPlus.z};
         for (const std::size_t controlVolume : {
                  source.minusControlVolumeIndex,
                  source.plusControlVolumeIndex}) {
@@ -413,19 +454,13 @@ SceneFluidRegionMomentumState reconstructFromAbsoluteLinkVelocities(
                 accumulator.areaVelocity[axis] +=
                     source.areaSquareMeters * velocity;
                 ++accumulator.linkCount[axis];
-            } else {
-                ++accumulator.embeddedLinkCount;
-            }
-            for (std::size_t row = 0; row < 3; ++row) {
-                component(accumulator.normalRightHandSide, row) +=
-                    source.areaSquareMeters * velocity * normal[row];
-                for (std::size_t column = 0; column < 3; ++column) {
-                    accumulator.normalMatrix[row][column] +=
-                        source.areaSquareMeters
-                        * normal[row] * normal[column];
-                }
             }
         }
+        accumulateNormalSample(
+            source.minusControlVolumeIndex,
+            source.plusControlVolumeIndex,
+            source.areaSquareMeters, source.unitNormalMinusToPlus,
+            velocity, embedded);
         if (source.kind
             == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
             ++openingLinkCount;
@@ -433,6 +468,16 @@ SceneFluidRegionMomentumState reconstructFromAbsoluteLinkVelocities(
                 ++embeddedOpeningLinkCount;
             }
         }
+    }
+    for (const auto& sample : additionalNormalSamples) {
+        accumulateNormalSample(
+            sample.minusControlVolumeIndex,
+            sample.plusControlVolumeIndex,
+            sample.areaSquareMeters,
+            sample.unitNormalMinusToPlus,
+            sample.absoluteNormalVelocityMetersPerSecond, true);
+        ++openingLinkCount;
+        ++embeddedOpeningLinkCount;
     }
 
     SceneFluidRegionMomentumState result;
@@ -453,7 +498,8 @@ SceneFluidRegionMomentumState reconstructFromAbsoluteLinkVelocities(
     result.controlVolumes.reserve(pressureVolumes.controlVolumes.size());
     auto& diagnostics = result.diagnostics;
     diagnostics.controlVolumeCount = pressureVolumes.controlVolumes.size();
-    diagnostics.linkCount = faceLinks.links.size();
+    diagnostics.linkCount =
+        faceLinks.links.size() + additionalNormalSamples.size();
     diagnostics.openingLinkCount = openingLinkCount;
     diagnostics.embeddedOpeningLinkCount = embeddedOpeningLinkCount;
 
@@ -569,6 +615,24 @@ SceneFluidRegionMomentumState reconstructFromAbsoluteLinkVelocities(
                     .maximumLinkNormalVelocityResidualMetersPerSecond,
                 std::abs(absoluteVelocities[index] - reconstructed));
     }
+    for (const auto& sample : additionalNormalSamples) {
+        const double reconstructed = 0.5
+            * (dot(
+                   result.controlVolumes[sample.minusControlVolumeIndex]
+                       .velocityMetersPerSecond,
+                   sample.unitNormalMinusToPlus)
+               + dot(
+                   result.controlVolumes[sample.plusControlVolumeIndex]
+                       .velocityMetersPerSecond,
+                   sample.unitNormalMinusToPlus));
+        diagnostics.maximumLinkNormalVelocityResidualMetersPerSecond =
+            std::max(
+                diagnostics
+                    .maximumLinkNormalVelocityResidualMetersPerSecond,
+                std::abs(
+                    sample.absoluteNormalVelocityMetersPerSecond
+                    - reconstructed));
+    }
     diagnostics.finite = finite(
             diagnostics.totalMomentumKilogramMetersPerSecond)
         && std::isfinite(diagnostics.kineticEnergyJoules)
@@ -675,7 +739,7 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
     }
     auto result = reconstructFromAbsoluteLinkVelocities(
         grid, pressureVolumes, faceLinks, openingPatches,
-        absoluteVelocities, fallbackVelocityMetersPerSecond,
+        absoluteVelocities, {}, fallbackVelocityMetersPerSecond,
         projection.fingerprint, projection.acceptedStepCount,
         projection.simulationTimeSeconds,
         projection.settings.densityKgPerCubicMeter, limits);
@@ -716,8 +780,11 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
         grid, openingPatches.cellCounts,
         openingPatches.lowerMeters, openingPatches.upperMeters,
         "scene fluid mimetic region momentum opening grid is foreign");
-    if (!correctedFlow.accepted
-        || mimeticControlCells.pressureControlVolumeFingerprint
+    if (!correctedFlow.accepted) {
+        throw std::invalid_argument(
+            "scene fluid mimetic region momentum corrected flow was rejected");
+    }
+    if (mimeticControlCells.pressureControlVolumeFingerprint
             != pressureVolumes.fingerprint
         || mimeticControlCells.pressureFaceLinkFingerprint
             != faceLinks.fingerprint
@@ -730,8 +797,11 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
         || correctedFlow.openingPatchFingerprint
             != openingPatches.fingerprint
         || correctedFlow.structureDefinitionFingerprint
-            != pressureVolumes.structureDefinitionFingerprint
-        || correctedFlow.acceptedStepCount
+            != pressureVolumes.structureDefinitionFingerprint) {
+        throw std::invalid_argument(
+            "scene fluid mimetic region momentum topology identity is invalid");
+    }
+    if (correctedFlow.acceptedStepCount
             != pressureVolumes.acceptedStepCount
         || correctedFlow.acceptedStepCount != faceLinks.acceptedStepCount
         || correctedFlow.acceptedStepCount
@@ -741,12 +811,14 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
         || correctedFlow.simulationTimeSeconds
             != faceLinks.simulationTimeSeconds
         || correctedFlow.simulationTimeSeconds
-            != openingPatches.simulationTimeSeconds
-        || mimeticControlCells.controlCells.size()
-            != pressureVolumes.controlVolumes.size()
-        || correctedFlow.traces.size() != faceLinks.links.size()) {
+            != openingPatches.simulationTimeSeconds) {
         throw std::invalid_argument(
-            "scene fluid mimetic region momentum identity is invalid");
+            "scene fluid mimetic region momentum epoch identity is invalid");
+    }
+    if (mimeticControlCells.controlCells.size()
+        != pressureVolumes.controlVolumes.size()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic region momentum control count is invalid");
     }
     for (std::size_t index = 0;
          index < mimeticControlCells.controlCells.size(); ++index) {
@@ -784,8 +856,24 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
                 "scene fluid mimetic region momentum embedded identity is invalid");
         }
     }
+    std::map<std::uint64_t, const SceneFluidMimeticHalfFace*>
+        negativeOpeningHalfFaceByTraceId;
+    for (const auto& halfFace : mimeticControlCells.halfFaces) {
+        if (halfFace.kind
+                == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace
+            && halfFace.side
+                == SceneFluidMimeticHalfFaceSide::MinusOrNegative
+            && (halfFace.traceStableId == 0
+                || !negativeOpeningHalfFaceByTraceId.emplace(
+                        halfFace.traceStableId, &halfFace).second)) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region momentum opening half-face identity is invalid");
+        }
+    }
     std::vector<const SceneFluidMimeticCorrectedTrace*> traceByLink(
         faceLinks.links.size(), nullptr);
+    std::vector<AdditionalRegionMomentumNormalSample>
+        additionalNormalSamples;
     for (const auto& trace : correctedFlow.traces) {
         std::size_t linkIndex = 0;
         if (trace.kind
@@ -796,8 +884,57 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
             const auto found = embeddedLinkByPatchId.find(
                 trace.sourceStableId);
             if (found == embeddedLinkByPatchId.end()) {
-                throw std::invalid_argument(
-                    "scene fluid mimetic region momentum embedded trace is missing");
+                const auto halfFaceFound =
+                    negativeOpeningHalfFaceByTraceId.find(
+                        trace.stableId);
+                const auto patchFound = patchById.find(
+                    trace.sourceStableId);
+                if (halfFaceFound
+                        == negativeOpeningHalfFaceByTraceId.end()
+                    || patchFound == patchById.end()) {
+                    throw std::invalid_argument(
+                        "scene fluid mimetic region momentum unresolved opening trace is missing");
+                }
+                const auto& halfFace = *halfFaceFound->second;
+                const auto& patch = *patchFound->second;
+                if (halfFace.sourceStableId != trace.sourceStableId
+                    || halfFace.controlVolumeIndex
+                        != trace.minusControlCellIndex
+                    || halfFace.otherControlVolumeIndex
+                        != trace.plusControlCellIndex
+                    || halfFace.areaSquareMeters
+                        != patch.areaSquareMeters
+                    || mimeticControlCells.controlCells[
+                            trace.minusControlCellIndex].regionId
+                        != patch.negativeSideRegionId
+                    || mimeticControlCells.controlCells[
+                            trace.plusControlCellIndex].regionId
+                        != patch.positiveSideRegionId
+                    || (halfFace.outwardUnitNormal.x
+                            * patch.unitNormalNegativeToPositive.x
+                        + halfFace.outwardUnitNormal.y
+                            * patch.unitNormalNegativeToPositive.y
+                        + halfFace.outwardUnitNormal.z
+                            * patch.unitNormalNegativeToPositive.z)
+                        < 1.0 - 1.0e-10) {
+                    throw std::invalid_argument(
+                        "scene fluid mimetic region momentum unresolved opening binding is invalid");
+                }
+                AdditionalRegionMomentumNormalSample sample;
+                sample.minusControlVolumeIndex =
+                    trace.minusControlCellIndex;
+                sample.plusControlVolumeIndex =
+                    trace.plusControlCellIndex;
+                sample.areaSquareMeters = halfFace.areaSquareMeters;
+                sample.unitNormalMinusToPlus =
+                    halfFace.outwardUnitNormal;
+                sample.absoluteNormalVelocityMetersPerSecond =
+                    (trace
+                         .correctedRelativeVolumeFlowRateCubicMetersPerSecond
+                     + patch.surfaceSweepRateCubicMetersPerSecond)
+                    / halfFace.areaSquareMeters;
+                additionalNormalSamples.push_back(sample);
+                continue;
             }
             linkIndex = found->second;
         } else {
@@ -844,7 +981,8 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
     }
     auto result = reconstructFromAbsoluteLinkVelocities(
         grid, pressureVolumes, faceLinks, openingPatches,
-        absoluteVelocities, fallbackVelocityMetersPerSecond,
+        absoluteVelocities, additionalNormalSamples,
+        fallbackVelocityMetersPerSecond,
         correctedFlow.fingerprint, correctedFlow.acceptedStepCount,
         correctedFlow.simulationTimeSeconds,
         correctedFlow.densityKgPerCubicMeter, limits);
@@ -1099,7 +1237,7 @@ void validateSceneFluidRegionMomentumState(
             != pressureVolumes.controlVolumes.size()
         || momentum.controlVolumes.size()
             != mimeticControlCells.controlCells.size()
-        || momentum.diagnostics.linkCount != faceLinks.links.size()) {
+        || momentum.diagnostics.linkCount != correctedFlow.traces.size()) {
         throw std::invalid_argument(
             "scene fluid mimetic region momentum binding is invalid");
     }
@@ -1107,6 +1245,7 @@ void validateSceneFluidRegionMomentumState(
     std::size_t embeddedOpeningLinkCount = 0;
     std::vector<bool> normalEquationControls(
         pressureVolumes.controlVolumes.size(), false);
+    std::map<std::uint64_t, std::size_t> embeddedLinkByPatchId;
     for (const auto& link : faceLinks.links) {
         if (link.kind
             == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
@@ -1122,8 +1261,32 @@ void validateSceneFluidRegionMomentumState(
                     "scene fluid mimetic region momentum embedded binding is invalid");
             }
             ++embeddedOpeningLinkCount;
+            if (link.openingPatchStableId == 0
+                || !embeddedLinkByPatchId.emplace(
+                        link.openingPatchStableId,
+                        link.linkIndex).second) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region momentum embedded identity changed");
+            }
             normalEquationControls[link.minusControlVolumeIndex] = true;
             normalEquationControls[link.plusControlVolumeIndex] = true;
+        }
+    }
+    for (const auto& trace : correctedFlow.traces) {
+        if (trace.kind
+                == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace
+            && !embeddedLinkByPatchId.contains(trace.sourceStableId)) {
+            if (trace.minusControlCellIndex
+                    >= normalEquationControls.size()
+                || trace.plusControlCellIndex
+                    >= normalEquationControls.size()) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region momentum unresolved opening binding changed");
+            }
+            ++openingLinkCount;
+            ++embeddedOpeningLinkCount;
+            normalEquationControls[trace.minusControlCellIndex] = true;
+            normalEquationControls[trace.plusControlCellIndex] = true;
         }
     }
     if (momentum.diagnostics.openingLinkCount != openingLinkCount

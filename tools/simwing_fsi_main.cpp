@@ -95,6 +95,7 @@ struct Options {
     std::optional<double> frozenWindRampSeconds;
     std::optional<double> frozenPerturbationMetersPerSecond;
     bool frozenCorrectedTraceFlowContinuation = false;
+    bool frozenRegionalTransportFlowPrediction = false;
     std::uint64_t checkpointEvery = 0;
     bool viewer = true;
     bool controlStdio = false;
@@ -111,6 +112,7 @@ void printUsage(FILE* stream) {
         "                   [--grid N] [--padding METERS]\n"
         "                   [--wind-x MPS] [--ramp-seconds SECONDS]\n"
         "                   [--continue-corrected-trace-flow]\n"
+        "                   [--transport-corrected-region-flow]\n"
         "                   [--perturbation MPS]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
@@ -132,6 +134,8 @@ void printUsage(FILE* stream) {
         "to 2..16; a zero ramp explicitly restores impulsive startup;\n"
         "--continue-corrected-trace-flow enables the fixed-topology exact-trace\n"
         "continuation experiment without changing the default worker path;\n"
+        "--transport-corrected-region-flow instead projects conservative\n"
+        "regional transport onto the next fixed-topology pressure predictor;\n"
         "'flag' maps the complete reaction from a fixed-reference projected gust\n"
         "onto a one-edge-clamped XPBD fabric panel;\n"
         "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"
@@ -402,6 +406,8 @@ bool parseOptions(int argc,
             options.frozenWindRampSeconds = value;
         } else if (argument == "--continue-corrected-trace-flow") {
             options.frozenCorrectedTraceFlowContinuation = true;
+        } else if (argument == "--transport-corrected-region-flow") {
+            options.frozenRegionalTransportFlowPrediction = true;
         } else if (argument == "--perturbation") {
             double value = 0.0;
             if (++index >= argc || !parseFiniteDouble(argv[index], value)
@@ -483,10 +489,16 @@ bool parseOptions(int argc,
         || options.frozenWindXMetersPerSecond.has_value()
         || options.frozenWindRampSeconds.has_value()
         || options.frozenPerturbationMetersPerSecond.has_value()
-        || options.frozenCorrectedTraceFlowContinuation;
+        || options.frozenCorrectedTraceFlowContinuation
+        || options.frozenRegionalTransportFlowPrediction;
     if (frozenControlRequested
         && options.workerCase != WorkerCase::FrozenScene) {
-        error = "--grid, --padding, --wind-x, --ramp-seconds, --continue-corrected-trace-flow, and --perturbation require --case frozen-scene";
+        error = "frozen-scene flow controls require --case frozen-scene";
+        return false;
+    }
+    if (options.frozenCorrectedTraceFlowContinuation
+        && options.frozenRegionalTransportFlowPrediction) {
+        error = "--continue-corrected-trace-flow and --transport-corrected-region-flow are mutually exclusive";
         return false;
     }
     if (options.workerCase == WorkerCase::FrozenScene && !stepsRequested) {
@@ -1952,6 +1964,7 @@ int main(int argc, char* argv[]) {
                     "regional-speed=%.6g m/s, regional-link-residual=%.3g m/s, "
                     "regional-transport-substeps=%zu, regional-transport-residual=%.3g kg*m/s, "
                     "flow-advances=%zu, trace-continuation=%u, trace-carry=%.3g m^3/s, trace-delta=%.3g m^3/s, "
+                    "regional-predictor=%u, regional-flow-delta=%.3g m^3/s, "
                     "bulk-substeps=%zu, bulk-dv=%.3g m/s, "
                     "transfer-residual=%.3g N, "
                     "trace=%s\n",
@@ -1986,6 +1999,10 @@ int main(int argc, char* argv[]) {
                     diagnostics
                         .maximumCarriedTraceCorrectionCubicMetersPerSecond,
                     diagnostics.maximumTraceBulkIncrementCubicMetersPerSecond,
+                    diagnostics.usesRegionalTransportFlowPrediction
+                        ? 1U : 0U,
+                    diagnostics
+                        .maximumRegionalTransportFlowDifferenceFromBulkBaselineCubicMetersPerSecond,
                     diagnostics.bulkFlowSubstepCount,
                     diagnostics.bulkFlowMaximumVelocityChangeMetersPerSecond,
                     diagnostics.transferForceResidualNewtons,
@@ -2094,6 +2111,8 @@ int main(int argc, char* argv[]) {
             }
             settings.useCorrectedTraceFlowContinuation =
                 options.frozenCorrectedTraceFlowContinuation;
+            settings.useRegionalTransportFlowPrediction =
+                options.frozenRegionalTransportFlowPrediction;
             if (options.frozenPerturbationMetersPerSecond) {
                 settings.diagnosticPerturbationSpeedMetersPerSecond =
                     *options.frozenPerturbationMetersPerSecond;

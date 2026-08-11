@@ -1,6 +1,7 @@
 #include "scene_fluid_mimetic_trace_flow.h"
 
 #include "scene_fluid_mimetic_pressure_flow.h"
+#include "scene_fluid_region_transport.h"
 
 #include <algorithm>
 #include <bit>
@@ -165,6 +166,32 @@ std::uint64_t continuationFingerprint(
     return fingerprint.value();
 }
 
+std::uint64_t regionTransportPredictionFingerprint(
+    const SceneFluidMimeticRegionTransportFlowPrediction& prediction) {
+    Fingerprint fingerprint;
+    fingerprint.integer(prediction.version);
+    fingerprint.integer(prediction.regionTransportFingerprint);
+    fingerprint.integer(
+        prediction.sourceCorrectedTraceFlowFingerprint);
+    fingerprint.integer(
+        prediction.currentBulkBaselinePredictionFingerprint);
+    fingerprint.integer(prediction.mimeticControlCellFingerprint);
+    fingerprint.integer(prediction.mimeticTraceSystemFingerprint);
+    fingerprint.integer(prediction.pressureFaceLinkFingerprint);
+    fingerprint.integer(prediction.structureDefinitionFingerprint);
+    fingerprint.integer(prediction.acceptedStepCount);
+    fingerprint.real(prediction.simulationTimeSeconds);
+    fingerprint.real(prediction.transportTargetSimulationTimeSeconds);
+    fingerprint.integer(static_cast<std::uint64_t>(
+        prediction.ownedStorageBytes));
+    fingerprint.real(
+        prediction
+            .maximumAbsoluteFlowDifferenceFromBulkBaselineCubicMetersPerSecond);
+    fingerprint.integer(static_cast<std::uint8_t>(prediction.finite));
+    fingerprint.integer(prediction.prediction.fingerprint);
+    return fingerprint.value();
+}
+
 double faceVelocity(const SceneFluidPressureFace& face,
                     const fluid::PeriodicCartesianGrid& grid,
                     const fluid::MacVelocityField& velocity) {
@@ -232,6 +259,26 @@ fluid::Vector3 averageVelocity(
         minusControlCellIndex].velocityMetersPerSecond;
     const auto& plus = wallExchange.controlVolumes[
         plusControlCellIndex].velocityMetersPerSecond;
+    return {
+        0.5 * (minus.x + plus.x),
+        0.5 * (minus.y + plus.y),
+        0.5 * (minus.z + plus.z),
+    };
+}
+
+fluid::Vector3 averageVelocity(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidRegionTransport& regionTransport,
+    const std::size_t minusControlCellIndex,
+    const std::size_t plusControlCellIndex) {
+    const auto& minusCell = controlCells.controlCells[
+        minusControlCellIndex];
+    const auto& plusCell = controlCells.controlCells[
+        plusControlCellIndex];
+    const auto& minus = regionTransport.controlVolumes[
+        minusCell.controlVolumeIndex].velocityMetersPerSecond;
+    const auto& plus = regionTransport.controlVolumes[
+        plusCell.controlVolumeIndex].velocityMetersPerSecond;
     return {
         0.5 * (minus.x + plus.x),
         0.5 * (minus.y + plus.y),
@@ -410,6 +457,173 @@ void validateWallInputIdentity(
                 "scene fluid mimetic trace-flow wall control topology is invalid");
         }
     }
+}
+
+void validateRegionTransportInputIdentity(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidMimeticCorrectedTraceFlow& sourceCorrectedFlow,
+    const SceneFluidRegionTransport& regionTransport,
+    const SceneFluidMimeticTraceFlowPrediction& currentBulkBaseline) {
+    validateSceneFluidMimeticTraceSystem(traceSystem, controlCells);
+    validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
+    validateSceneFluidOpeningFluxIntegrity(openingFlux);
+    validateSceneFluidMimeticCorrectedTraceFlowIntegrity(
+        sourceCorrectedFlow);
+    validateSceneFluidRegionTransportIntegrity(regionTransport);
+    validateSceneFluidMimeticTraceFlowPredictionIntegrity(
+        currentBulkBaseline);
+    if (!regionTransport.diagnostics.accepted
+        || !sourceCorrectedFlow.accepted
+        || !regionTransport.diagnostics.usesBulkVelocityIncrement
+        || regionTransport.pressureProjectionFingerprint
+            != sourceCorrectedFlow.fingerprint
+        || sourceCorrectedFlow.mimeticControlCellFingerprint
+            != controlCells.fingerprint
+        || sourceCorrectedFlow.pressureFaceLinkFingerprint
+            != faceLinks.fingerprint
+        || sourceCorrectedFlow.openingPatchFingerprint
+            != openingFlux.openingPatchFingerprint
+        || sourceCorrectedFlow.structureDefinitionFingerprint
+            != controlCells.structureDefinitionFingerprint
+        || sourceCorrectedFlow.acceptedStepCount
+            != controlCells.acceptedStepCount
+        || sourceCorrectedFlow.simulationTimeSeconds
+            != controlCells.simulationTimeSeconds
+        || sourceCorrectedFlow.densityKgPerCubicMeter
+            != regionTransport.densityKgPerCubicMeter
+        || regionTransport.pressureFaceLinkFingerprint
+            != faceLinks.fingerprint
+        || regionTransport.currentBulkVelocityFingerprint
+            != openingFlux.velocityFingerprint
+        || regionTransport.currentBulkVelocityFingerprint
+            != currentBulkBaseline.velocityFingerprint
+        || regionTransport.acceptedStepCount
+            != controlCells.acceptedStepCount
+        || regionTransport.sourceSimulationTimeSeconds
+            != controlCells.simulationTimeSeconds
+        || regionTransport.controlVolumes.size()
+            != controlCells.controlCells.size()
+        || currentBulkBaseline.mimeticControlCellFingerprint
+            != controlCells.fingerprint
+        || currentBulkBaseline.mimeticTraceSystemFingerprint
+            != traceSystem.fingerprint
+        || currentBulkBaseline.pressureFaceLinkFingerprint
+            != faceLinks.fingerprint
+        || currentBulkBaseline.openingFluxFingerprint
+            != openingFlux.fingerprint
+        || currentBulkBaseline.regionWallExchangeFingerprint != 0
+        || currentBulkBaseline.sourceDensityKgPerCubicMeter != 0.0
+        || currentBulkBaseline.structureDefinitionFingerprint
+            != controlCells.structureDefinitionFingerprint
+        || currentBulkBaseline.acceptedStepCount
+            != controlCells.acceptedStepCount
+        || currentBulkBaseline.simulationTimeSeconds
+            != controlCells.simulationTimeSeconds
+        || currentBulkBaseline.componentCount
+            != traceSystem.componentCount
+        || currentBulkBaseline.traces.size()
+            != traceSystem.sharedTraceCount) {
+        throw std::invalid_argument(
+            "scene fluid mimetic regional-transport trace-flow input identity is invalid");
+    }
+    for (const auto& cell : controlCells.controlCells) {
+        if (cell.controlVolumeIndex
+            >= regionTransport.controlVolumes.size()) {
+            throw std::invalid_argument(
+                "scene fluid mimetic regional-transport control index is invalid");
+        }
+        const auto& transported = regionTransport.controlVolumes[
+            cell.controlVolumeIndex];
+        if (transported.controlVolumeIndex != cell.controlVolumeIndex
+            || transported.stableId != cell.stableId
+            || transported.volumeCubicMeters != cell.volumeCubicMeters) {
+            throw std::invalid_argument(
+                "scene fluid mimetic regional-transport control topology is invalid");
+        }
+    }
+}
+
+double regionTransportPredictedFlow(
+    const SceneFluidMimeticTrace& trace,
+    const OrientedTrace& oriented,
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidRegionTransport& regionTransport,
+    std::map<std::uint64_t, const SceneFluidOpeningFluxSample*>&
+        openingSamples) {
+    const fluid::Vector3 velocity = averageVelocity(
+        controlCells, regionTransport,
+        oriented.minusControlCellIndex,
+        oriented.plusControlCellIndex);
+    if (trace.kind == SceneFluidMimeticHalfFaceKind::CartesianTrace) {
+        if (oriented.minus->sourceIndex >= faceLinks.links.size()) {
+            throw std::invalid_argument(
+                "scene fluid mimetic regional-transport face-link index is invalid");
+        }
+        const auto& link = faceLinks.links[oriented.minus->sourceIndex];
+        if (link.linkIndex != oriented.minus->sourceIndex
+            || link.stableId != trace.sourceStableId
+            || link.geometryKind
+                != SceneFluidPressureLinkGeometryKind::CartesianFace
+            || link.minusControlVolumeIndex
+                != controlCells.controlCells[
+                    oriented.minusControlCellIndex].controlVolumeIndex
+            || link.plusControlVolumeIndex
+                != controlCells.controlCells[
+                    oriented.plusControlCellIndex].controlVolumeIndex
+            || link.areaSquareMeters != oriented.minus->areaSquareMeters
+            || link.faceIndex >= faceLinks.faces.size()) {
+            throw std::invalid_argument(
+                "scene fluid mimetic regional-transport face-link binding is invalid");
+        }
+        double result = link.areaSquareMeters
+            * dot(velocity, link.unitNormalMinusToPlus);
+        if (link.kind == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
+            const auto found = openingSamples.find(
+                link.openingPatchStableId);
+            if (found == openingSamples.end()) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic regional-transport opening sample is missing");
+            }
+            result -= orientedOpeningSweep(link, *found->second);
+            openingSamples.erase(found);
+        } else if (link.kind
+                   != SceneFluidPressureFaceLinkKind::SameRegion) {
+            throw std::invalid_argument(
+                "scene fluid mimetic regional-transport face-link kind is invalid");
+        }
+        return result;
+    }
+    if (trace.kind
+        != SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace) {
+        throw std::invalid_argument(
+            "scene fluid mimetic regional-transport trace kind is invalid");
+    }
+    const auto found = openingSamples.find(trace.sourceStableId);
+    if (found == openingSamples.end()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic regional-transport embedded opening sample is missing");
+    }
+    const auto& sample = *found->second;
+    const auto& minusCell = controlCells.controlCells[
+        oriented.minusControlCellIndex];
+    const auto& plusCell = controlCells.controlCells[
+        oriented.plusControlCellIndex];
+    if (sample.patchStableId != trace.sourceStableId
+        || sample.areaSquareMeters != oriented.minus->areaSquareMeters
+        || sample.negativeSideRegionId != minusCell.regionId
+        || sample.positiveSideRegionId != plusCell.regionId) {
+        throw std::invalid_argument(
+            "scene fluid mimetic regional-transport embedded opening identity is inconsistent");
+    }
+    const double result = sample.areaSquareMeters
+            * dot(velocity, oriented.minus->outwardUnitNormal)
+        - sample.surfaceSweepRateCubicMetersPerSecond;
+    openingSamples.erase(found);
+    return result;
 }
 
 } // namespace
@@ -942,6 +1156,126 @@ continueSceneFluidMimeticTraceFlowsFixedTopology(
     return result;
 }
 
+SceneFluidMimeticRegionTransportFlowPrediction
+predictSceneFluidMimeticTraceFlowsFromRegionTransportFixedTopology(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidMimeticCorrectedTraceFlow& sourceCorrectedFlow,
+    const SceneFluidRegionTransport& regionTransport,
+    const SceneFluidMimeticTraceFlowPrediction& currentBulkBaseline,
+    const SceneFluidMimeticTraceFlowLimits& limits) {
+    validateRegionTransportInputIdentity(
+        controlCells, traceSystem, faceLinks, openingFlux,
+        sourceCorrectedFlow, regionTransport, currentBulkBaseline);
+    if (traceSystem.sharedTraceCount > limits.maximumSharedTraces
+        || traceSystem.componentCount > limits.maximumComponents
+        || currentBulkBaseline.ownedStorageBytes
+            > limits.maximumOwnedBytes) {
+        throw std::length_error(
+            "scene fluid mimetic regional-transport trace-flow limit exceeded");
+    }
+
+    std::map<std::uint64_t, const SceneFluidOpeningFluxSample*>
+        openingSamples;
+    for (const auto& sample : openingFlux.samples) {
+        if (sample.patchStableId == 0
+            || !openingSamples.emplace(
+                sample.patchStableId, &sample).second) {
+            throw std::invalid_argument(
+                "scene fluid mimetic regional-transport trace-flow has duplicate opening identity");
+        }
+    }
+
+    SceneFluidMimeticRegionTransportFlowPrediction result;
+    result.regionTransportFingerprint = regionTransport.fingerprint;
+    result.sourceCorrectedTraceFlowFingerprint =
+        sourceCorrectedFlow.fingerprint;
+    result.currentBulkBaselinePredictionFingerprint =
+        currentBulkBaseline.fingerprint;
+    result.mimeticControlCellFingerprint = controlCells.fingerprint;
+    result.mimeticTraceSystemFingerprint = traceSystem.fingerprint;
+    result.pressureFaceLinkFingerprint = faceLinks.fingerprint;
+    result.structureDefinitionFingerprint =
+        controlCells.structureDefinitionFingerprint;
+    result.acceptedStepCount = controlCells.acceptedStepCount;
+    result.simulationTimeSeconds = controlCells.simulationTimeSeconds;
+    result.transportTargetSimulationTimeSeconds =
+        regionTransport.targetSimulationTimeSeconds;
+    result.prediction = currentBulkBaseline;
+    result.prediction
+        .maximumAbsolutePredictedRelativeVolumeFlowRateCubicMetersPerSecond =
+        0.0;
+    std::vector<CompensatedSum> componentBalances(
+        result.prediction.componentCount);
+    std::size_t sharedOrdinal = 0;
+    for (const auto& trace : traceSystem.traces) {
+        if (trace.kind == SceneFluidMimeticHalfFaceKind::MaterialWall) {
+            continue;
+        }
+        const auto oriented = orientTrace(
+            trace, traceSystem, controlCells);
+        const double predictedFlow = regionTransportPredictedFlow(
+            trace, oriented, controlCells, faceLinks,
+            regionTransport, openingSamples);
+        if (!std::isfinite(predictedFlow)) {
+            throw std::overflow_error(
+                "scene fluid mimetic regional-transport trace-flow prediction is non-finite");
+        }
+        auto& predicted = result.prediction.traces[sharedOrdinal];
+        const double baselineFlow =
+            predicted.predictedRelativeVolumeFlowRateCubicMetersPerSecond;
+        predicted.predictedRelativeVolumeFlowRateCubicMetersPerSecond =
+            predictedFlow;
+        result
+            .maximumAbsoluteFlowDifferenceFromBulkBaselineCubicMetersPerSecond =
+            std::max(
+                result
+                    .maximumAbsoluteFlowDifferenceFromBulkBaselineCubicMetersPerSecond,
+                std::abs(predictedFlow - baselineFlow));
+        result.prediction
+            .maximumAbsolutePredictedRelativeVolumeFlowRateCubicMetersPerSecond =
+            std::max(
+                result.prediction
+                    .maximumAbsolutePredictedRelativeVolumeFlowRateCubicMetersPerSecond,
+                std::abs(predictedFlow));
+        componentBalances[trace.componentIndex].add(predictedFlow);
+        componentBalances[trace.componentIndex].add(-predictedFlow);
+        ++sharedOrdinal;
+    }
+    if (sharedOrdinal != result.prediction.traces.size()
+        || !openingSamples.empty()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic regional-transport trace-flow did not consume its complete topology");
+    }
+    result.prediction
+        .maximumAbsoluteComponentBalanceResidualCubicMetersPerSecond = 0.0;
+    for (std::size_t component = 0;
+         component < result.prediction.componentCount; ++component) {
+        const double balance = componentBalances[component].value();
+        result.prediction
+            .componentBalanceResidualsCubicMetersPerSecond[component] =
+            balance;
+        result.prediction
+            .maximumAbsoluteComponentBalanceResidualCubicMetersPerSecond =
+            std::max(
+                result.prediction
+                    .maximumAbsoluteComponentBalanceResidualCubicMetersPerSecond,
+                std::abs(balance));
+    }
+    result.prediction.fingerprint = productFingerprint(result.prediction);
+    result.ownedStorageBytes = result.prediction.ownedStorageBytes;
+    result.finite = std::isfinite(
+        result
+            .maximumAbsoluteFlowDifferenceFromBulkBaselineCubicMetersPerSecond);
+    result.fingerprint = regionTransportPredictionFingerprint(result);
+    validateSceneFluidMimeticRegionTransportFlowPrediction(
+        result, controlCells, traceSystem, faceLinks, openingFlux,
+        sourceCorrectedFlow, regionTransport, currentBulkBaseline);
+    return result;
+}
+
 void validateSceneFluidMimeticTraceFlowPredictionIntegrity(
     const SceneFluidMimeticTraceFlowPrediction& prediction) {
     const bool fixedEpochSource = prediction.regionWallExchangeFingerprint == 0
@@ -1149,6 +1483,150 @@ void validateSceneFluidMimeticTraceFlowContinuation(
             != maximumIncrement) {
         throw std::invalid_argument(
             "scene fluid mimetic trace-flow continuation summary changed");
+    }
+}
+
+void validateSceneFluidMimeticRegionTransportFlowPredictionIntegrity(
+    const SceneFluidMimeticRegionTransportFlowPrediction& prediction) {
+    validateSceneFluidMimeticTraceFlowPredictionIntegrity(
+        prediction.prediction);
+    if (prediction.version
+            != sceneFluidMimeticRegionTransportFlowPredictionVersion
+        || prediction.fingerprint == 0
+        || prediction.regionTransportFingerprint == 0
+        || prediction.sourceCorrectedTraceFlowFingerprint == 0
+        || prediction.currentBulkBaselinePredictionFingerprint == 0
+        || prediction.mimeticControlCellFingerprint == 0
+        || prediction.mimeticTraceSystemFingerprint == 0
+        || prediction.pressureFaceLinkFingerprint == 0
+        || prediction.structureDefinitionFingerprint == 0
+        || !std::isfinite(prediction.simulationTimeSeconds)
+        || !std::isfinite(
+            prediction.transportTargetSimulationTimeSeconds)
+        || !(prediction.transportTargetSimulationTimeSeconds
+            > prediction.simulationTimeSeconds)
+        || prediction.ownedStorageBytes
+            != prediction.prediction.ownedStorageBytes
+        || !std::isfinite(
+            prediction
+                .maximumAbsoluteFlowDifferenceFromBulkBaselineCubicMetersPerSecond)
+        || prediction
+               .maximumAbsoluteFlowDifferenceFromBulkBaselineCubicMetersPerSecond
+            < 0.0
+        || !prediction.finite
+        || prediction.mimeticControlCellFingerprint
+            != prediction.prediction.mimeticControlCellFingerprint
+        || prediction.mimeticTraceSystemFingerprint
+            != prediction.prediction.mimeticTraceSystemFingerprint
+        || prediction.pressureFaceLinkFingerprint
+            != prediction.prediction.pressureFaceLinkFingerprint
+        || prediction.structureDefinitionFingerprint
+            != prediction.prediction.structureDefinitionFingerprint
+        || prediction.acceptedStepCount
+            != prediction.prediction.acceptedStepCount
+        || prediction.simulationTimeSeconds
+            != prediction.prediction.simulationTimeSeconds
+        || prediction.prediction.regionWallExchangeFingerprint != 0
+        || prediction.prediction.sourceDensityKgPerCubicMeter != 0.0
+        || prediction.fingerprint
+            != regionTransportPredictionFingerprint(prediction)) {
+        throw std::invalid_argument(
+            "scene fluid mimetic regional-transport trace-flow integrity is invalid");
+    }
+}
+
+void validateSceneFluidMimeticRegionTransportFlowPrediction(
+    const SceneFluidMimeticRegionTransportFlowPrediction& prediction,
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidMimeticCorrectedTraceFlow& sourceCorrectedFlow,
+    const SceneFluidRegionTransport& regionTransport,
+    const SceneFluidMimeticTraceFlowPrediction& currentBulkBaseline) {
+    validateRegionTransportInputIdentity(
+        controlCells, traceSystem, faceLinks, openingFlux,
+        sourceCorrectedFlow, regionTransport, currentBulkBaseline);
+    validateSceneFluidMimeticRegionTransportFlowPredictionIntegrity(
+        prediction);
+    if (prediction.regionTransportFingerprint
+            != regionTransport.fingerprint
+        || prediction.sourceCorrectedTraceFlowFingerprint
+            != sourceCorrectedFlow.fingerprint
+        || prediction.currentBulkBaselinePredictionFingerprint
+            != currentBulkBaseline.fingerprint
+        || prediction.mimeticControlCellFingerprint
+            != controlCells.fingerprint
+        || prediction.mimeticTraceSystemFingerprint
+            != traceSystem.fingerprint
+        || prediction.pressureFaceLinkFingerprint
+            != faceLinks.fingerprint
+        || prediction.structureDefinitionFingerprint
+            != controlCells.structureDefinitionFingerprint
+        || prediction.acceptedStepCount
+            != controlCells.acceptedStepCount
+        || prediction.simulationTimeSeconds
+            != controlCells.simulationTimeSeconds
+        || prediction.transportTargetSimulationTimeSeconds
+            != regionTransport.targetSimulationTimeSeconds
+        || prediction.prediction.traces.size()
+            != currentBulkBaseline.traces.size()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic regional-transport trace-flow binding is invalid");
+    }
+    std::map<std::uint64_t, const SceneFluidOpeningFluxSample*>
+        openingSamples;
+    for (const auto& sample : openingFlux.samples) {
+        if (sample.patchStableId == 0
+            || !openingSamples.emplace(
+                sample.patchStableId, &sample).second) {
+            throw std::invalid_argument(
+                "scene fluid mimetic regional-transport trace-flow has duplicate opening identity");
+        }
+    }
+    double maximumDifference = 0.0;
+    std::size_t sharedOrdinal = 0;
+    for (const auto& trace : traceSystem.traces) {
+        if (trace.kind == SceneFluidMimeticHalfFaceKind::MaterialWall) {
+            continue;
+        }
+        const auto oriented = orientTrace(
+            trace, traceSystem, controlCells);
+        const double expectedFlow = regionTransportPredictedFlow(
+            trace, oriented, controlCells, faceLinks,
+            regionTransport, openingSamples);
+        const auto& actual = prediction.prediction.traces[sharedOrdinal];
+        const auto& baseline = currentBulkBaseline.traces[sharedOrdinal];
+        if (actual.sharedTraceOrdinal != baseline.sharedTraceOrdinal
+            || actual.traceIndex != baseline.traceIndex
+            || actual.stableId != baseline.stableId
+            || actual.kind != baseline.kind
+            || actual.sourceStableId != baseline.sourceStableId
+            || actual.componentIndex != baseline.componentIndex
+            || actual.minusControlCellIndex
+                != baseline.minusControlCellIndex
+            || actual.plusControlCellIndex
+                != baseline.plusControlCellIndex
+            || actual.predictedRelativeVolumeFlowRateCubicMetersPerSecond
+                != expectedFlow) {
+            throw std::invalid_argument(
+                "scene fluid mimetic regional-transport trace-flow value changed");
+        }
+        maximumDifference = std::max(
+            maximumDifference,
+            std::abs(
+                expectedFlow
+                - baseline
+                    .predictedRelativeVolumeFlowRateCubicMetersPerSecond));
+        ++sharedOrdinal;
+    }
+    if (sharedOrdinal != prediction.prediction.traces.size()
+        || !openingSamples.empty()
+        || prediction
+               .maximumAbsoluteFlowDifferenceFromBulkBaselineCubicMetersPerSecond
+            != maximumDifference) {
+        throw std::invalid_argument(
+            "scene fluid mimetic regional-transport trace-flow summary changed");
     }
 }
 

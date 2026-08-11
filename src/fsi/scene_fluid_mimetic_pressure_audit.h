@@ -9,7 +9,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidMimeticPressureAuditVersion = 2;
+inline constexpr std::uint32_t sceneFluidMimeticPressureAuditVersion = 3;
 inline constexpr std::uint32_t
     sceneFluidMimeticPressureAuditTopologyVersion = 1;
 inline constexpr std::uint32_t
@@ -84,10 +84,12 @@ struct SceneFluidMimeticPressureAuditEndpoint {
     std::uint64_t scenePressureEpochFingerprint = 0;
     std::uint64_t pressureTopologyTransitionFingerprint = 0;
     std::uint64_t traceFlowContinuationFingerprint = 0;
+    std::uint64_t regionTransportFlowPredictionFingerprint = 0;
     std::uint64_t structureDefinitionFingerprint = 0;
     std::uint64_t acceptedStepCount = 0;
     double simulationTimeSeconds = 0.0;
     bool usesRegionWallPrediction = false;
+    bool usesRegionTransportPrediction = false;
     bool usesConsecutiveWarmStart = false;
     std::size_t ownedStorageBytes = 0;
     SceneFluidMimeticControlCellSet controlCells;
@@ -156,6 +158,21 @@ advanceSceneFluidMimeticPressureAuditFixedTopology(
     const SceneFluidOpeningFluxSet& openingFlux,
     const fluid::PeriodicCartesianGrid& grid,
     const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidMimeticPressureAuditSettings& settings = {},
+    const SceneFluidMimeticPressureAuditLimits& limits = {});
+
+// Reuses the fixed geometry/operator topology with link flow projected from an
+// accepted regional momentum transport. The wrapper retains the current bulk
+// opening/cap-sweep ledger and binds its transported source explicitly. This
+// remains a zero-warm fixed-topology pressure transaction.
+[[nodiscard]] SceneFluidMimeticPressureAuditEndpoint
+advanceSceneFluidMimeticPressureAuditFixedTopology(
+    const SceneFluidMimeticPressureAuditEndpoint& acceptedTopology,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& pressureFaceLinks,
+    const SceneFluidMimeticRegionTransportFlowPrediction&
+        regionTransportPrediction,
     const SceneFluidMimeticPressureAuditSettings& settings = {},
     const SceneFluidMimeticPressureAuditLimits& limits = {});
 

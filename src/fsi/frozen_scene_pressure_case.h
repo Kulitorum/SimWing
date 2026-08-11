@@ -12,7 +12,7 @@
 namespace simwing::fsi {
 
 inline constexpr const char* frozenScenePressureSolverId =
-    "frozen-scene-mimetic-pressure-v4";
+    "frozen-scene-mimetic-pressure-v5";
 
 struct FrozenScenePressureCaseSettings {
     fluid::GridCellCounts cellCounts{2, 2, 2};
@@ -23,6 +23,7 @@ struct FrozenScenePressureCaseSettings {
     fluid::Vector3 backgroundWindMetersPerSecond{-0.85, 0.0, 0.0};
     double windRampSeconds = 0.5;
     bool useCorrectedTraceFlowContinuation = false;
+    bool useRegionalTransportFlowPrediction = false;
     double diagnosticPerturbationSpeedMetersPerSecond = 0.0;
     double timeStepSeconds = 1.0 / 60.0;
     double densityKgPerCubicMeter = 1.225;
@@ -36,8 +37,11 @@ struct FrozenScenePressureCaseDiagnostics {
     double windRampSeconds = 0.0;
     double windRampFraction = 0.0;
     bool usesCorrectedTraceFlowContinuation = false;
+    bool usesRegionalTransportFlowPrediction = false;
     double maximumCarriedTraceCorrectionCubicMetersPerSecond = 0.0;
     double maximumTraceBulkIncrementCubicMetersPerSecond = 0.0;
+    double maximumRegionalTransportFlowDifferenceFromBulkBaselineCubicMetersPerSecond =
+        0.0;
     double diagnosticPerturbationSpeedMetersPerSecond = 0.0;
     std::size_t pressureControlCount = 0;
     std::size_t sharedTraceCount = 0;
@@ -83,13 +87,12 @@ struct FrozenScenePressureCaseDiagnostics {
 // projection from a prescribed periodic MAC predictor. Later frames advance a
 // bounded target-wind ramp, project the collapsed continuation field, advance
 // periodic bulk transport, and reapply the fixed-geometry mimetic pressure
-// boundary. An opt-in continuation retains the exact last corrected trace flow
-// and applies only the bulk predictor delta before that pressure solve. Every
-// later frame also evaluates read-only conservative regional momentum transport
-// over the exact corrected links; it does not yet drive pressure. Every path
-// commits only after pressure, continuity, and conservative load transfer
-// accept. This is an integration probe, not a validated external-flow wake,
-// lift polar, or two-way FSI step.
+// boundary. One opt-in continuation retains the exact last corrected trace
+// flow and applies only the bulk predictor delta. A mutually exclusive opt-in
+// instead projects the accepted conservative regional transport state onto the
+// next pressure predictor. Every path commits only after pressure, continuity,
+// and conservative load transfer accept. This is an integration probe, not a
+// validated external-flow wake, lift polar, or two-way FSI step.
 class FrozenScenePressureCase final {
 public:
     explicit FrozenScenePressureCase(

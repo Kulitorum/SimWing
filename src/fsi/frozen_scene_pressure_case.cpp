@@ -56,6 +56,8 @@ void validateSettings(const FrozenScenePressureCaseSettings& settings) {
         || !std::isfinite(settings.windRampSeconds)
         || settings.windRampSeconds < 0.0
         || settings.windRampSeconds > 60.0
+        || (settings.useCorrectedTraceFlowContinuation
+            && settings.useRegionalTransportFlowPrediction)
         || !std::isfinite(
             settings.diagnosticPerturbationSpeedMetersPerSecond)
         || settings.diagnosticPerturbationSpeedMetersPerSecond < 0.0
@@ -193,6 +195,8 @@ struct BuiltCase {
     viewer::StructureFrameMapping frameMapping;
     std::optional<SceneFluidMimeticTraceFlowContinuation>
         traceFlowContinuation;
+    std::optional<SceneFluidMimeticRegionTransportFlowPrediction>
+        regionalTransportFlowPrediction;
     std::optional<SceneFluidRegionTransport> regionalTransport;
     std::optional<fluid::PeriodicFlowStrangSubcyclingDiagnostics> bulkFlow;
     std::optional<fluid::ProjectionDiagnostics> bulkProjection;
@@ -378,7 +382,7 @@ void advanceFixedGeometryFlow(
     regionalTransportSettings.maximumSubsteps = 1024;
     auto candidateRegionalTransport = advanceSceneFluidRegionMomentum(
         built.regionalMomentum, built.pressureFaceLinks,
-        built.correctedFlow, built.grid,
+        built.pressure.controlCells, built.correctedFlow, built.grid,
         built.correctedMac.velocityMetersPerSecond,
         candidateVelocity, regionalTransportSettings);
     if (!candidateRegionalTransport.diagnostics.accepted) {
@@ -391,6 +395,8 @@ void advanceFixedGeometryFlow(
         built.openingPatches, built.grid, candidateVelocity);
     std::optional<SceneFluidMimeticTraceFlowContinuation>
         candidateTraceFlowContinuation;
+    std::optional<SceneFluidMimeticRegionTransportFlowPrediction>
+        candidateRegionalTransportFlowPrediction;
     SceneFluidMimeticPressureAuditEndpoint candidatePressure;
     if (settings.useCorrectedTraceFlowContinuation) {
         const auto currentBulkBaseline = sampleSceneFluidMimeticTraceFlows(
@@ -407,6 +413,25 @@ void advanceFixedGeometryFlow(
                 built.pressure, built.gridEpoch.quadrature,
                 built.pressureVolumes, built.pressureFaceLinks,
                 *candidateTraceFlowContinuation,
+                built.pressureSettings);
+    } else if (settings.useRegionalTransportFlowPrediction) {
+        const auto currentBulkBaseline = sampleSceneFluidMimeticTraceFlows(
+            built.pressure.controlCells,
+            built.pressure.fullTraceSystem,
+            built.pressureFaceLinks, candidateOpeningFlux, built.grid,
+            candidateVelocity);
+        candidateRegionalTransportFlowPrediction =
+            predictSceneFluidMimeticTraceFlowsFromRegionTransportFixedTopology(
+                built.pressure.controlCells,
+                built.pressure.fullTraceSystem,
+                built.pressureFaceLinks, candidateOpeningFlux,
+                built.correctedFlow, candidateRegionalTransport,
+                currentBulkBaseline);
+        candidatePressure =
+            advanceSceneFluidMimeticPressureAuditFixedTopology(
+                built.pressure, built.gridEpoch.quadrature,
+                built.pressureVolumes, built.pressureFaceLinks,
+                *candidateRegionalTransportFlowPrediction,
                 built.pressureSettings);
     } else {
         candidatePressure =
@@ -453,6 +478,8 @@ void advanceFixedGeometryFlow(
     built.pressureTransfer = std::move(candidatePressureTransfer);
     built.traceFlowContinuation =
         std::move(candidateTraceFlowContinuation);
+    built.regionalTransportFlowPrediction =
+        std::move(candidateRegionalTransportFlowPrediction);
     built.regionalTransport = std::move(candidateRegionalTransport);
     built.bulkFlow = std::move(candidateBulkFlow);
     built.bulkProjection = candidateBulkProjection;
@@ -471,6 +498,8 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.windRampFraction = built.windRampFraction;
     result.usesCorrectedTraceFlowContinuation =
         built.traceFlowContinuation.has_value();
+    result.usesRegionalTransportFlowPrediction =
+        built.regionalTransportFlowPrediction.has_value();
     if (built.traceFlowContinuation) {
         result.maximumCarriedTraceCorrectionCubicMetersPerSecond =
             built.traceFlowContinuation
@@ -478,6 +507,12 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         result.maximumTraceBulkIncrementCubicMetersPerSecond =
             built.traceFlowContinuation
                 ->maximumAbsoluteBulkIncrementCubicMetersPerSecond;
+    }
+    if (built.regionalTransportFlowPrediction) {
+        result
+            .maximumRegionalTransportFlowDifferenceFromBulkBaselineCubicMetersPerSecond =
+            built.regionalTransportFlowPrediction
+                ->maximumAbsoluteFlowDifferenceFromBulkBaselineCubicMetersPerSecond;
     }
     result.pressureControlCount =
         built.pressure.controlCells.controlCells.size();
@@ -596,6 +631,9 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
             result.maximumCarriedTraceCorrectionCubicMetersPerSecond)
         && std::isfinite(
             result.maximumTraceBulkIncrementCubicMetersPerSecond)
+        && std::isfinite(
+            result
+                .maximumRegionalTransportFlowDifferenceFromBulkBaselineCubicMetersPerSecond)
         && std::isfinite(
             result.bulkFlowMaximumVelocityChangeMetersPerSecond)
         && std::isfinite(
@@ -936,6 +974,17 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
         "frozen_scene.regional_transport_viscous_loss", "J",
         viewer::FieldAssociation::Global,
         {state.diagnostics.regionalTransportViscousEnergyLossJoules},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.regional_transport_flow_prediction", "1",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.usesRegionalTransportFlowPrediction ? 1.0 : 0.0},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.maximum_regional_transport_flow_delta", "m^3/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics
+             .maximumRegionalTransportFlowDifferenceFromBulkBaselineCubicMetersPerSecond},
     });
     frame.scalarFields.push_back({
         "frozen_scene.embedded_opening_traces", "1",

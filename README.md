@@ -1518,6 +1518,7 @@ Run:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --steps 2
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --ramp-seconds 0.1 --continue-corrected-trace-flow --steps 6 --no-viewer
+.\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --ramp-seconds 0.1 --transport-corrected-region-flow --steps 6 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --grid 4 --padding 1.0 --wind-x -0.85 --ramp-seconds 0 --perturbation 0.25 --steps 2 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case hemisphere --steps 600
 .\build\bin\Release\simwing-fsi.exe --case flag --steps 600
@@ -1587,18 +1588,30 @@ the exact last corrected shared-trace flow and adds only the change between the
 previous and current bulk predictors before re-solving pressure. It preserves
 embedded intake flow and mixed-subface differences that the MAC collapse cannot
 represent. The default remains the older resampling path while this continuation
-is assessed; neither path supplies region-resolved cut-cell advection.
+is assessed. The mutually exclusive `--transport-corrected-region-flow`
+experiment instead projects the accepted conservative per-region transport
+velocities onto every shared trace, retains the current opening cap-sweep
+ledger, and uses that predictor for the next zero-warm pressure solve. Neither
+experiment changes default worker arithmetic.
 Every accepted frozen-scene pressure result also reconstructs a read-only
 collocated velocity and momentum vector for each positive cell/region control
 directly from the exact corrected links. Its maximum speed, link-normal fit
 residual, and kinetic energy are published as diagnostics; this state is the
-input boundary for future conservative regional transport and currently does
-not alter either continuation path. Later frames now advance a read-only
+input boundary for conservative regional transport. Later frames advance a
 regional transport candidate over those exact corrected links, including the
 bound bulk-predictor increment, donor-cell vector-momentum transfer, and graph
 viscosity. Its substeps, velocity change, momentum residual, and advective/
-viscous losses are published, but the candidate does not yet drive the next
-pressure solve.
+viscous losses are published. It remains read-only by default and drives the
+next pressure solve only under `--transport-corrected-region-flow`.
+On the coarse gnuC2 topology, 24 accepted cell-owned opening traces have no
+graph pressure-link counterpart; the regional reconstruction and transport
+retain them as explicit normal/advective edges instead of dropping their mass
+flux. A six-frame `2^3`, `0.1 s` ramp with the regional predictor reaches
+`86369.3 Pa` maximum jump and `29870.5 N` streamwise pressure load, with a
+`2.84e-16 kg*m/s` transport residual. This is substantially below default
+resampling but above exact-trace continuation, and the `12.6851 m/s` maximum
+regional speed remains nonphysical for the prescribed `0.85 m/s` wind. The
+result validates transaction and conservation plumbing, not aerodynamic scale.
 The ram-cell command shows the same conservative complete-reaction path acting
 on a multi-panel open fabric shell; it is a deformation/inflation precursor,
 not a resolved moving-cavity or aerodynamic-wing result.

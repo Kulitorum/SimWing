@@ -3494,9 +3494,22 @@ input without changing pressure or load arithmetic. Later frames also run the
 existing conservative regional donor/graph-viscosity transport directly from
 the mimetic corrected-flow source, with the same bound bulk-MAC increment used
 by the diagnostic worker. The accepted candidate reports exact internal
-momentum closure and nonnegative advective/viscous loss, but remains read-only
-until a mimetic regional-link predictor is connected to the next pressure
-transaction.
+momentum closure and nonnegative advective/viscous loss. A fixed-topology,
+provenance-bound adapter now projects its endpoint-averaged regional velocities
+onto the existing shared traces while retaining the current opening cap-sweep
+ledger. `--transport-corrected-region-flow` uses that predictor for the next
+zero-warm pressure transaction; it is mutually exclusive with exact-trace
+continuation and remains opt-in, so default arithmetic is unchanged. This
+private fixed-geometry substep does not relax the consecutive-epoch regional
+link-flow contract used by moving geometry.
+The coarse real scene contains 24 accepted cell-owned opening traces without a
+graph pressure-link counterpart. Mimetic regional reconstruction and transport
+retain those as explicit normal and conservative advective edges. In the same
+six-frame `2^3`, `0.1 s`, `-0.85 m/s` comparison, the regional predictor ends
+at `86369.3 Pa`, `29870.5 N` streamwise load, and `2.84e-16 kg*m/s` transport
+closure. Its `12.6851 m/s` maximum regional speed and remaining load scale are
+still nonphysical, so the result verifies topology/provenance/conservation
+rather than selecting this experiment as the production predictor.
 The first uniform, explicitly zero-ramp `4^3` real-wing run accepts 358 controls
 after 1,472 PCG iterations. It resolves all material loads using 240 bounded
 zero-volume-side

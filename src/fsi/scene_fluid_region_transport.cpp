@@ -1,5 +1,6 @@
 #include "scene_fluid_region_transport.h"
 
+#include "scene_fluid_mimetic_control_cell.h"
 #include "scene_fluid_mimetic_pressure_flow.h"
 
 #include <algorithm>
@@ -348,6 +349,8 @@ struct RegionTransportLinkSource {
     std::size_t minusControlVolumeIndex = 0;
     std::size_t plusControlVolumeIndex = 0;
     double correctedRelativeVolumeFlowRateCubicMetersPerSecond = 0.0;
+    double areaSquareMeters = 0.0;
+    double geometryWeightMeters = 0.0;
 };
 
 struct RegionTransportFlowSource {
@@ -366,8 +369,15 @@ struct RegionTransportFlowSource {
 };
 
 RegionTransportFlowSource regionTransportFlowSource(
+    const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidPressureProjection& projection) {
+    validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
     validateSceneFluidPressureProjectionIntegrity(projection);
+    if (projection.pressureFaceLinkFingerprint != faceLinks.fingerprint
+        || projection.links.size() != faceLinks.links.size()) {
+        throw std::invalid_argument(
+            "scene fluid graph region transport source is foreign");
+    }
     RegionTransportFlowSource result;
     result.fingerprint = projection.fingerprint;
     result.pressureFaceLinkFingerprint =
@@ -398,7 +408,20 @@ RegionTransportFlowSource regionTransportFlowSource(
         });
     }
     result.links.reserve(projection.links.size());
-    for (const auto& source : projection.links) {
+    for (std::size_t index = 0;
+         index < projection.links.size(); ++index) {
+        const auto& source = projection.links[index];
+        const auto& geometry = faceLinks.links[index];
+        if (source.linkIndex != index || geometry.linkIndex != index
+            || source.stableId != geometry.stableId
+            || source.kind != geometry.kind
+            || source.minusControlVolumeIndex
+                != geometry.minusControlVolumeIndex
+            || source.plusControlVolumeIndex
+                != geometry.plusControlVolumeIndex) {
+            throw std::invalid_argument(
+                "scene fluid graph region transport link binding is invalid");
+        }
         result.links.push_back({
             source.linkIndex,
             source.stableId,
@@ -406,6 +429,8 @@ RegionTransportFlowSource regionTransportFlowSource(
             source.minusControlVolumeIndex,
             source.plusControlVolumeIndex,
             source.correctedRelativeVolumeFlowRateCubicMetersPerSecond,
+            geometry.areaSquareMeters,
+            geometry.geometryWeightMeters,
         });
     }
     return result;
@@ -414,8 +439,13 @@ RegionTransportFlowSource regionTransportFlowSource(
 RegionTransportFlowSource regionTransportFlowSource(
     const SceneFluidRegionMomentumState& sourceMomentum,
     const SceneFluidPressureFaceLinkSet& faceLinks,
-    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow) {
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
+    const SceneFluidMimeticControlCellSet* const mimeticControlCells) {
     validateSceneFluidMimeticCorrectedTraceFlowIntegrity(correctedFlow);
+    if (mimeticControlCells != nullptr) {
+        validateSceneFluidMimeticControlCellIntegrity(
+            *mimeticControlCells);
+    }
     if (!correctedFlow.accepted
         || sourceMomentum.pressureProjectionFingerprint
             != correctedFlow.fingerprint
@@ -429,7 +459,13 @@ RegionTransportFlowSource regionTransportFlowSource(
             != sourceMomentum.simulationTimeSeconds
         || correctedFlow.densityKgPerCubicMeter
             != sourceMomentum.densityKgPerCubicMeter
-        || correctedFlow.traces.size() != faceLinks.links.size()) {
+        || (mimeticControlCells != nullptr
+            && (correctedFlow.mimeticControlCellFingerprint
+                    != mimeticControlCells->fingerprint
+                || mimeticControlCells->pressureFaceLinkFingerprint
+                    != faceLinks.fingerprint
+                || mimeticControlCells->controlCells.size()
+                    != sourceMomentum.controlVolumes.size()))) {
         throw std::invalid_argument(
             "scene fluid mimetic region transport source is foreign");
     }
@@ -448,6 +484,8 @@ RegionTransportFlowSource regionTransportFlowSource(
     }
     std::vector<const SceneFluidMimeticCorrectedTrace*> traceByLink(
         faceLinks.links.size(), nullptr);
+    std::vector<const SceneFluidMimeticCorrectedTrace*>
+        additionalOpeningTraces;
     for (const auto& trace : correctedFlow.traces) {
         std::size_t linkIndex = trace.sourceIndex;
         if (trace.kind
@@ -455,8 +493,12 @@ RegionTransportFlowSource regionTransportFlowSource(
             const auto found = embeddedLinkByPatchId.find(
                 trace.sourceStableId);
             if (found == embeddedLinkByPatchId.end()) {
-                throw std::invalid_argument(
-                    "scene fluid mimetic region transport embedded trace is missing");
+                if (mimeticControlCells == nullptr) {
+                    throw std::invalid_argument(
+                        "scene fluid mimetic region transport requires control geometry for an unresolved opening trace");
+                }
+                additionalOpeningTraces.push_back(&trace);
+                continue;
             }
             linkIndex = found->second;
         } else if (trace.kind
@@ -505,7 +547,7 @@ RegionTransportFlowSource regionTransportFlowSource(
             0.0,
         });
     }
-    result.links.reserve(faceLinks.links.size());
+    result.links.reserve(correctedFlow.traces.size());
     for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
         const auto& source = faceLinks.links[index];
         const auto* trace = traceByLink[index];
@@ -514,13 +556,77 @@ RegionTransportFlowSource regionTransportFlowSource(
                 "scene fluid mimetic region transport missed a link");
         }
         result.links.push_back({
-            source.linkIndex,
+            result.links.size(),
             source.stableId,
             source.kind,
             source.minusControlVolumeIndex,
             source.plusControlVolumeIndex,
             trace->correctedRelativeVolumeFlowRateCubicMetersPerSecond,
+            source.areaSquareMeters,
+            source.geometryWeightMeters,
         });
+    }
+    if (mimeticControlCells != nullptr) {
+        std::map<std::uint64_t, const SceneFluidMimeticHalfFace*>
+            negativeOpeningHalfFaceByTraceId;
+        for (const auto& halfFace : mimeticControlCells->halfFaces) {
+            if (halfFace.kind
+                    == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace
+                && halfFace.side
+                    == SceneFluidMimeticHalfFaceSide::MinusOrNegative
+                && (halfFace.traceStableId == 0
+                    || !negativeOpeningHalfFaceByTraceId.emplace(
+                            halfFace.traceStableId, &halfFace).second)) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region transport opening half-face identity is invalid");
+            }
+        }
+        for (const auto* const trace : additionalOpeningTraces) {
+            const auto found = negativeOpeningHalfFaceByTraceId.find(
+                trace->stableId);
+            if (found == negativeOpeningHalfFaceByTraceId.end()
+                || trace->minusControlCellIndex
+                    >= mimeticControlCells->controlCells.size()
+                || trace->plusControlCellIndex
+                    >= mimeticControlCells->controlCells.size()) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region transport unresolved opening geometry is missing");
+            }
+            const auto& halfFace = *found->second;
+            const auto& minus = mimeticControlCells->controlCells[
+                trace->minusControlCellIndex];
+            const auto& plus = mimeticControlCells->controlCells[
+                trace->plusControlCellIndex];
+            const double centerDistance = norm(subtract(
+                plus.centroidMeters, minus.centroidMeters));
+            if (halfFace.sourceStableId != trace->sourceStableId
+                || halfFace.controlVolumeIndex
+                    != trace->minusControlCellIndex
+                || halfFace.otherControlVolumeIndex
+                    != trace->plusControlCellIndex
+                || minus.componentIndex != trace->componentIndex
+                || plus.componentIndex != trace->componentIndex
+                || !(halfFace.areaSquareMeters > 0.0)
+                || !(centerDistance > 0.0)) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region transport unresolved opening binding is invalid");
+            }
+            result.links.push_back({
+                result.links.size(),
+                trace->stableId,
+                SceneFluidPressureFaceLinkKind::AuthoredOpening,
+                trace->minusControlCellIndex,
+                trace->plusControlCellIndex,
+                trace
+                    ->correctedRelativeVolumeFlowRateCubicMetersPerSecond,
+                halfFace.areaSquareMeters,
+                halfFace.areaSquareMeters / centerDistance,
+            });
+        }
+    }
+    if (result.links.size() != correctedFlow.traces.size()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic region transport did not consume every trace");
     }
     return result;
 }
@@ -572,16 +678,16 @@ static SceneFluidRegionTransport advanceSceneFluidRegionMomentumImpl(
             != flowSource.densityKgPerCubicMeter
         || sourceMomentum.controlVolumes.size()
             != flowSource.controls.size()
-        || flowSource.links.size() != faceLinks.links.size()) {
+        || flowSource.links.empty()) {
         throw std::invalid_argument(
             "scene fluid region transport identity is invalid");
     }
     const std::size_t storageBytes = storageBytesForControlVolumes(
         sourceMomentum.controlVolumes.size());
     const std::size_t workingBytes = workingStorageBytes(
-        sourceMomentum.controlVolumes.size(), faceLinks.links.size());
+        sourceMomentum.controlVolumes.size(), flowSource.links.size());
     if (sourceMomentum.controlVolumes.size() > limits.maximumControlVolumes
-        || faceLinks.links.size() > limits.maximumLinks
+        || flowSource.links.size() > limits.maximumLinks
         || workingBytes > limits.maximumTransportBytes) {
         throw std::length_error(
             "scene fluid region transport exceeds its limits");
@@ -607,7 +713,7 @@ static SceneFluidRegionTransport advanceSceneFluidRegionMomentumImpl(
     result.settings = settings;
     auto& diagnostics = result.diagnostics;
     diagnostics.controlVolumeCount = sourceMomentum.controlVolumes.size();
-    diagnostics.linkCount = faceLinks.links.size();
+    diagnostics.linkCount = flowSource.links.size();
     diagnostics.usesMovingVolumeRates =
         flowSource.usesMovingVolumeRates;
     diagnostics.usesBulkVelocityIncrement = usesBulkVelocityIncrement;
@@ -649,7 +755,7 @@ static SceneFluidRegionTransport advanceSceneFluidRegionMomentumImpl(
         diagnostics.kineticEnergyBeforeJoules
         - sourceMomentum.diagnostics.kineticEnergyJoules;
 
-    std::vector<double> correctedFlows(faceLinks.links.size(), 0.0);
+    std::vector<double> correctedFlows(flowSource.links.size(), 0.0);
     std::vector<double> outwardRates(sourceMomentum.controlVolumes.size(), 0.0);
     std::vector<double> netOutwardRates(
         sourceMomentum.controlVolumes.size(), 0.0);
@@ -690,25 +796,22 @@ static SceneFluidRegionTransport advanceSceneFluidRegionMomentumImpl(
                 SceneFluidRegionTransportFailureStage::GeometryVolume;
         }
     }
-    for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
-        const auto& source = faceLinks.links[index];
-        const auto& projected = flowSource.links[index];
+    for (std::size_t index = 0;
+         index < flowSource.links.size(); ++index) {
+        const auto& source = flowSource.links[index];
         if (source.linkIndex != index
+            || source.stableId == 0
             || source.minusControlVolumeIndex >= outwardRates.size()
             || source.plusControlVolumeIndex >= outwardRates.size()
-            || projected.linkIndex != index
-            || projected.stableId != source.stableId
-            || projected.minusControlVolumeIndex
-                != source.minusControlVolumeIndex
-            || projected.plusControlVolumeIndex
-                != source.plusControlVolumeIndex
-            || projected.kind != source.kind
+            || source.minusControlVolumeIndex
+                == source.plusControlVolumeIndex
             || !(source.areaSquareMeters > 0.0)
-            || !(source.centerDistanceMeters > 0.0)) {
+            || !std::isfinite(source.geometryWeightMeters)
+            || source.geometryWeightMeters < 0.0) {
             throw std::invalid_argument(
                 "scene fluid region transport link binding is invalid");
         }
-        const double flow = projected
+        const double flow = source
             .correctedRelativeVolumeFlowRateCubicMetersPerSecond;
         if (!std::isfinite(flow)) {
             throw std::overflow_error(
@@ -803,8 +906,9 @@ static SceneFluidRegionTransport advanceSceneFluidRegionMomentumImpl(
     for (std::size_t substep = 0;
          substep < diagnostics.substepCount; ++substep) {
         std::ranges::fill(impulse, fluid::Vector3{});
-        for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
-            const auto& link = faceLinks.links[index];
+        for (std::size_t index = 0;
+             index < flowSource.links.size(); ++index) {
+            const auto& link = flowSource.links[index];
             const double flow = correctedFlows[index];
             const auto& donor = flow >= 0.0
                 ? candidate[link.minusControlVolumeIndex]
@@ -850,7 +954,7 @@ static SceneFluidRegionTransport advanceSceneFluidRegionMomentumImpl(
             energyAfterViscosity - energyAfterAdvection;
 
         std::ranges::fill(impulse, fluid::Vector3{});
-        for (const auto& link : faceLinks.links) {
+        for (const auto& link : flowSource.links) {
             const auto difference = subtract(
                 candidate[link.plusControlVolumeIndex]
                     .velocityMetersPerSecond,
@@ -964,7 +1068,7 @@ SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
     const SceneFluidRegionTransportSettings& settings,
     const SceneFluidRegionTransportLimits& limits) {
     const auto flowSource = regionTransportFlowSource(
-        correctedProjection);
+        faceLinks, correctedProjection);
     return advanceSceneFluidRegionMomentumImpl(
         sourceMomentum, faceLinks, flowSource,
         nullptr, nullptr, nullptr, settings, limits);
@@ -977,7 +1081,25 @@ SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
     const SceneFluidRegionTransportSettings& settings,
     const SceneFluidRegionTransportLimits& limits) {
     const auto flowSource = regionTransportFlowSource(
-        sourceMomentum, faceLinks, correctedFlow);
+        sourceMomentum, faceLinks, correctedFlow, nullptr);
+    auto result = advanceSceneFluidRegionMomentumImpl(
+        sourceMomentum, faceLinks, flowSource,
+        nullptr, nullptr, nullptr, settings, limits);
+    validateSceneFluidRegionTransport(
+        result, sourceMomentum, faceLinks, correctedFlow);
+    return result;
+}
+
+SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidMimeticControlCellSet& mimeticControlCells,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
+    const SceneFluidRegionTransportSettings& settings,
+    const SceneFluidRegionTransportLimits& limits) {
+    const auto flowSource = regionTransportFlowSource(
+        sourceMomentum, faceLinks, correctedFlow,
+        &mimeticControlCells);
     auto result = advanceSceneFluidRegionMomentumImpl(
         sourceMomentum, faceLinks, flowSource,
         nullptr, nullptr, nullptr, settings, limits);
@@ -996,7 +1118,7 @@ SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
     const SceneFluidRegionTransportSettings& settings,
     const SceneFluidRegionTransportLimits& limits) {
     const auto flowSource = regionTransportFlowSource(
-        correctedProjection);
+        faceLinks, correctedProjection);
     return advanceSceneFluidRegionMomentumImpl(
         sourceMomentum, faceLinks, flowSource,
         &grid, &previousBulkVelocityMetersPerSecond,
@@ -1013,7 +1135,29 @@ SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
     const SceneFluidRegionTransportSettings& settings,
     const SceneFluidRegionTransportLimits& limits) {
     const auto flowSource = regionTransportFlowSource(
-        sourceMomentum, faceLinks, correctedFlow);
+        sourceMomentum, faceLinks, correctedFlow, nullptr);
+    auto result = advanceSceneFluidRegionMomentumImpl(
+        sourceMomentum, faceLinks, flowSource,
+        &grid, &previousBulkVelocityMetersPerSecond,
+        &currentBulkVelocityMetersPerSecond, settings, limits);
+    validateSceneFluidRegionTransport(
+        result, sourceMomentum, faceLinks, correctedFlow);
+    return result;
+}
+
+SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidMimeticControlCellSet& mimeticControlCells,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::MacVelocityField& previousBulkVelocityMetersPerSecond,
+    const fluid::MacVelocityField& currentBulkVelocityMetersPerSecond,
+    const SceneFluidRegionTransportSettings& settings,
+    const SceneFluidRegionTransportLimits& limits) {
+    const auto flowSource = regionTransportFlowSource(
+        sourceMomentum, faceLinks, correctedFlow,
+        &mimeticControlCells);
     auto result = advanceSceneFluidRegionMomentumImpl(
         sourceMomentum, faceLinks, flowSource,
         &grid, &previousBulkVelocityMetersPerSecond,
@@ -1148,7 +1292,9 @@ void validateSceneFluidRegionTransport(
         || transport.sourceSimulationTimeSeconds
             != sourceMomentum.simulationTimeSeconds
         || transport.densityKgPerCubicMeter
-            != sourceMomentum.densityKgPerCubicMeter) {
+            != sourceMomentum.densityKgPerCubicMeter
+        || transport.diagnostics.linkCount
+            != faceLinks.links.size()) {
         throw std::invalid_argument(
             "scene fluid region transport binding is invalid");
     }
@@ -1194,7 +1340,9 @@ void validateSceneFluidRegionTransport(
         || transport.sourceSimulationTimeSeconds
             != sourceMomentum.simulationTimeSeconds
         || transport.densityKgPerCubicMeter
-            != sourceMomentum.densityKgPerCubicMeter) {
+            != sourceMomentum.densityKgPerCubicMeter
+        || transport.diagnostics.linkCount
+            != correctedFlow.traces.size()) {
         throw std::invalid_argument(
             "scene fluid mimetic region transport binding is invalid");
     }

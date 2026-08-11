@@ -172,11 +172,15 @@ std::uint64_t productFingerprint(
     fingerprint.integer(
         endpoint.pressureTopologyTransitionFingerprint);
     fingerprint.integer(endpoint.traceFlowContinuationFingerprint);
+    fingerprint.integer(
+        endpoint.regionTransportFlowPredictionFingerprint);
     fingerprint.integer(endpoint.structureDefinitionFingerprint);
     fingerprint.integer(endpoint.acceptedStepCount);
     fingerprint.real(endpoint.simulationTimeSeconds);
     fingerprint.integer(static_cast<std::uint8_t>(
         endpoint.usesRegionWallPrediction));
+    fingerprint.integer(static_cast<std::uint8_t>(
+        endpoint.usesRegionTransportPrediction));
     fingerprint.integer(static_cast<std::uint8_t>(
         endpoint.usesConsecutiveWarmStart));
     fingerprint.integer(static_cast<std::uint64_t>(
@@ -660,6 +664,100 @@ advanceSceneFluidMimeticPressureAuditFixedTopology(
     const SceneFluidQuadratureDefinition& quadrature,
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
     const SceneFluidPressureFaceLinkSet& pressureFaceLinks,
+    const SceneFluidMimeticRegionTransportFlowPrediction&
+        regionTransportPrediction,
+    const SceneFluidMimeticPressureAuditSettings& settings,
+    const SceneFluidMimeticPressureAuditLimits& limits) {
+    validateSettings(settings);
+    validateSceneFluidMimeticPressureAuditEndpointIntegrity(
+        acceptedTopology);
+    validateSceneFluidQuadratureDefinition(quadrature);
+    validateSceneFluidPressureControlVolumeIntegrity(pressureVolumes);
+    validateSceneFluidPressureFaceLinkIntegrity(pressureFaceLinks);
+    validateSceneFluidMimeticRegionTransportFlowPredictionIntegrity(
+        regionTransportPrediction);
+    const auto& prediction = regionTransportPrediction.prediction;
+    if (!acceptedTopology.pressureEpoch.diagnostics.accepted
+        || acceptedTopology.controlCells.settings != settings.controlCells
+        || acceptedTopology.fullTraceSystem.settings != settings.traceSystem
+        || acceptedTopology.pressureSources.settings.densityKgPerCubicMeter
+            != settings.densityKgPerCubicMeter
+        || acceptedTopology.pressureSources.settings.timeStepSeconds
+            != settings.timeStepSeconds
+        || acceptedTopology.controlCells.pressureControlVolumeFingerprint
+            != pressureVolumes.fingerprint
+        || acceptedTopology.controlCells.pressureFaceLinkFingerprint
+            != pressureFaceLinks.fingerprint
+        || acceptedTopology.controlCells.gridEpochFingerprint
+            != pressureFaceLinks.gridEpochFingerprint
+        || acceptedTopology.pressureEpoch.quadratureFingerprint
+            != quadrature.fingerprint
+        || acceptedTopology.structureDefinitionFingerprint
+            != pressureVolumes.structureDefinitionFingerprint
+        || acceptedTopology.structureDefinitionFingerprint
+            != pressureFaceLinks.structureDefinitionFingerprint
+        || acceptedTopology.acceptedStepCount
+            != pressureVolumes.acceptedStepCount
+        || acceptedTopology.simulationTimeSeconds
+            != pressureVolumes.simulationTimeSeconds
+        || regionTransportPrediction.mimeticControlCellFingerprint
+            != acceptedTopology.controlCells.fingerprint
+        || regionTransportPrediction.mimeticTraceSystemFingerprint
+            != acceptedTopology.fullTraceSystem.fingerprint
+        || regionTransportPrediction.pressureFaceLinkFingerprint
+            != pressureFaceLinks.fingerprint
+        || regionTransportPrediction.structureDefinitionFingerprint
+            != acceptedTopology.structureDefinitionFingerprint
+        || regionTransportPrediction.acceptedStepCount
+            != acceptedTopology.acceptedStepCount
+        || regionTransportPrediction.simulationTimeSeconds
+            != acceptedTopology.simulationTimeSeconds
+        || prediction.componentCount
+            != acceptedTopology.fullTraceSystem.componentCount
+        || prediction.traces.size()
+            != acceptedTopology.fullTraceSystem.sharedTraceCount
+        || prediction.regionWallExchangeFingerprint != 0
+        || prediction.sourceDensityKgPerCubicMeter != 0.0) {
+        throw std::invalid_argument(
+            "scene fluid mimetic regional-transport continuation is foreign");
+    }
+
+    SceneFluidMimeticPressureAuditEndpoint result;
+    result.scenePressureEpochFingerprint =
+        acceptedTopology.scenePressureEpochFingerprint;
+    result.regionTransportFlowPredictionFingerprint =
+        regionTransportPrediction.fingerprint;
+    result.structureDefinitionFingerprint =
+        acceptedTopology.structureDefinitionFingerprint;
+    result.acceptedStepCount = acceptedTopology.acceptedStepCount;
+    result.simulationTimeSeconds = acceptedTopology.simulationTimeSeconds;
+    result.usesRegionTransportPrediction = true;
+    result.controlCells = acceptedTopology.controlCells;
+    result.fullTraceSystem = acceptedTopology.fullTraceSystem;
+    result.condensedTraceSystem = acceptedTopology.condensedTraceSystem;
+    result.predictedTraceFlows = prediction;
+    SceneFluidMimeticPressureSourceSettings sourceSettings;
+    sourceSettings.densityKgPerCubicMeter =
+        settings.densityKgPerCubicMeter;
+    sourceSettings.timeStepSeconds = settings.timeStepSeconds;
+    result.pressureSources = buildSceneFluidMimeticPressureSources(
+        result.controlCells, result.fullTraceSystem,
+        result.predictedTraceFlows, sourceSettings,
+        limits.pressureSource);
+    result.pressureEpoch = acceptSceneFluidMimeticPressureEpoch(
+        quadrature, pressureVolumes, result.controlCells,
+        result.fullTraceSystem, result.condensedTraceSystem,
+        result.pressureSources, settings.pressureSolve,
+        limits.pressureEpoch);
+    return finishEndpoint(std::move(result), limits);
+}
+
+SceneFluidMimeticPressureAuditEndpoint
+advanceSceneFluidMimeticPressureAuditFixedTopology(
+    const SceneFluidMimeticPressureAuditEndpoint& acceptedTopology,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& pressureFaceLinks,
     const SceneFluidOpeningFluxSet& openingFlux,
     const fluid::PeriodicCartesianGrid& grid,
     const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
@@ -1086,7 +1184,13 @@ void validateSceneFluidMimeticPressureAuditEndpointIntegrity(
         || endpoint.usesRegionWallPrediction
             != (endpoint.predictedTraceFlows
                     .regionWallExchangeFingerprint != 0)
+        || endpoint.usesRegionTransportPrediction
+            != (endpoint.regionTransportFlowPredictionFingerprint != 0)
         || (endpoint.traceFlowContinuationFingerprint != 0
+            && (endpoint.usesRegionWallPrediction
+                || endpoint.usesRegionTransportPrediction
+                || endpoint.usesConsecutiveWarmStart))
+        || (endpoint.usesRegionTransportPrediction
             && (endpoint.usesRegionWallPrediction
                 || endpoint.usesConsecutiveWarmStart))
         || endpoint.ownedStorageBytes != checkedStorageSum(endpoint)

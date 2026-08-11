@@ -13,8 +13,11 @@ namespace simwing::fsi {
 inline constexpr std::uint32_t sceneFluidMimeticTraceFlowVersion = 2;
 inline constexpr std::uint32_t
     sceneFluidMimeticTraceFlowContinuationVersion = 1;
+inline constexpr std::uint32_t
+    sceneFluidMimeticRegionTransportFlowPredictionVersion = 1;
 
 struct SceneFluidMimeticCorrectedTraceFlow;
+struct SceneFluidRegionTransport;
 
 struct SceneFluidMimeticTraceFlowLimits {
     std::size_t maximumSharedTraces = 200'000'000;
@@ -103,6 +106,38 @@ struct SceneFluidMimeticTraceFlowContinuation {
         const SceneFluidMimeticTraceFlowContinuation&) const = default;
 };
 
+// Fixed-topology predictor which projects one accepted regional momentum
+// transport state onto the existing shared traces. The nested prediction keeps
+// the current bulk-MAC sample's exact opening/cap-sweep provenance, while this
+// wrapper records that transported per-region velocities replaced its bulk
+// link velocities. It is deliberately separate from the consecutive-epoch
+// region-link predictor: no geometry epoch advances and pressure still starts
+// from zero.
+struct SceneFluidMimeticRegionTransportFlowPrediction {
+    std::uint32_t version =
+        sceneFluidMimeticRegionTransportFlowPredictionVersion;
+    std::uint64_t fingerprint = 0;
+    std::uint64_t regionTransportFingerprint = 0;
+    std::uint64_t sourceCorrectedTraceFlowFingerprint = 0;
+    std::uint64_t currentBulkBaselinePredictionFingerprint = 0;
+    std::uint64_t mimeticControlCellFingerprint = 0;
+    std::uint64_t mimeticTraceSystemFingerprint = 0;
+    std::uint64_t pressureFaceLinkFingerprint = 0;
+    std::uint64_t structureDefinitionFingerprint = 0;
+    std::uint64_t acceptedStepCount = 0;
+    double simulationTimeSeconds = 0.0;
+    double transportTargetSimulationTimeSeconds = 0.0;
+    std::size_t ownedStorageBytes = 0;
+    double maximumAbsoluteFlowDifferenceFromBulkBaselineCubicMetersPerSecond =
+        0.0;
+    bool finite = false;
+    SceneFluidMimeticTraceFlowPrediction prediction;
+
+    bool operator==(
+        const SceneFluidMimeticRegionTransportFlowPrediction&) const =
+        default;
+};
+
 [[nodiscard]] SceneFluidMimeticTraceFlowPrediction
 sampleSceneFluidMimeticTraceFlows(
     const SceneFluidMimeticControlCellSet& controlCells,
@@ -117,6 +152,17 @@ sampleSceneFluidMimeticTraceFlows(
 continueSceneFluidMimeticTraceFlowsFixedTopology(
     const SceneFluidMimeticCorrectedTraceFlow& previousCorrectedFlow,
     const SceneFluidMimeticTraceFlowPrediction& previousBulkBaseline,
+    const SceneFluidMimeticTraceFlowPrediction& currentBulkBaseline,
+    const SceneFluidMimeticTraceFlowLimits& limits = {});
+
+[[nodiscard]] SceneFluidMimeticRegionTransportFlowPrediction
+predictSceneFluidMimeticTraceFlowsFromRegionTransportFixedTopology(
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidMimeticCorrectedTraceFlow& sourceCorrectedFlow,
+    const SceneFluidRegionTransport& regionTransport,
     const SceneFluidMimeticTraceFlowPrediction& currentBulkBaseline,
     const SceneFluidMimeticTraceFlowLimits& limits = {});
 
@@ -135,10 +181,23 @@ void validateSceneFluidMimeticTraceFlowPredictionIntegrity(
 void validateSceneFluidMimeticTraceFlowContinuationIntegrity(
     const SceneFluidMimeticTraceFlowContinuation& continuation);
 
+void validateSceneFluidMimeticRegionTransportFlowPredictionIntegrity(
+    const SceneFluidMimeticRegionTransportFlowPrediction& prediction);
+
 void validateSceneFluidMimeticTraceFlowContinuation(
     const SceneFluidMimeticTraceFlowContinuation& continuation,
     const SceneFluidMimeticCorrectedTraceFlow& previousCorrectedFlow,
     const SceneFluidMimeticTraceFlowPrediction& previousBulkBaseline,
+    const SceneFluidMimeticTraceFlowPrediction& currentBulkBaseline);
+
+void validateSceneFluidMimeticRegionTransportFlowPrediction(
+    const SceneFluidMimeticRegionTransportFlowPrediction& prediction,
+    const SceneFluidMimeticControlCellSet& controlCells,
+    const SceneFluidMimeticTraceSystem& traceSystem,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningFluxSet& openingFlux,
+    const SceneFluidMimeticCorrectedTraceFlow& sourceCorrectedFlow,
+    const SceneFluidRegionTransport& regionTransport,
     const SceneFluidMimeticTraceFlowPrediction& currentBulkBaseline);
 
 void validateSceneFluidMimeticTraceFlowPrediction(

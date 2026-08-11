@@ -135,6 +135,18 @@ struct SceneFluidRegionTransport {
     const SceneFluidRegionTransportSettings& settings = {},
     const SceneFluidRegionTransportLimits& limits = {});
 
+// Mimetic-only extension for fixed/coarse topologies where accepted authored
+// opening traces can exist without a graph pressure-face link. Shared
+// half-face geometry supplies those additional conservative transport edges;
+// graph-linked traces retain their exact pressure-face geometry.
+[[nodiscard]] SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidMimeticControlCellSet& mimeticControlCells,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
+    const SceneFluidRegionTransportSettings& settings = {},
+    const SceneFluidRegionTransportLimits& limits = {});
+
 // Applies the collocated difference between two consecutive bulk MAC
 // predictors as an explicit body-flow split before conservative region
 // transport. This retains cut-region velocity differences while transmitting
@@ -144,6 +156,17 @@ struct SceneFluidRegionTransport {
     const SceneFluidRegionMomentumState& sourceMomentum,
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidPressureProjection& correctedProjection,
+    const fluid::PeriodicCartesianGrid& grid,
+    const fluid::MacVelocityField& previousBulkVelocityMetersPerSecond,
+    const fluid::MacVelocityField& currentBulkVelocityMetersPerSecond,
+    const SceneFluidRegionTransportSettings& settings = {},
+    const SceneFluidRegionTransportLimits& limits = {});
+
+[[nodiscard]] SceneFluidRegionTransport advanceSceneFluidRegionMomentum(
+    const SceneFluidRegionMomentumState& sourceMomentum,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidMimeticControlCellSet& mimeticControlCells,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
     const fluid::PeriodicCartesianGrid& grid,
     const fluid::MacVelocityField& previousBulkVelocityMetersPerSecond,
     const fluid::MacVelocityField& currentBulkVelocityMetersPerSecond,

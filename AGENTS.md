@@ -1671,7 +1671,11 @@ makes this a certified aerodynamic solver.
   continuation velocity, advances periodic viscosity/advection, re-solves the
   mimetic pressure boundary, and publishes accepted diagnostic frames. Its
   `--continue-corrected-trace-flow` experiment preserves exact fixed-topology
-  trace corrections across frames without changing default arithmetic. Its
+  trace corrections across frames without changing default arithmetic. The
+  mutually exclusive `--transport-corrected-region-flow` experiment projects
+  the accepted conservative per-region transport velocity onto the next
+  zero-warm mimetic pressure predictor while retaining the current opening
+  cap-sweep ledger. Its
   fluid cell centres appear as unreferenced viewer points with scalar and arrow
   fields alongside the frozen wing. The real `4^3` probe accepts in 1,472 PCG
   iterations and reports 240 bounded extrapolated zero-volume sides; its
@@ -1683,8 +1687,14 @@ makes this a certified aerodynamic solver.
   corresponding final sample to `72176.4 Pa` and `24295.1 N`, confirming a
   repeated boundary-impulse loss without making that remaining load physical.
   Exact corrected links additionally reconstruct one diagnostic collocated
-  momentum vector per positive region control. A read-only conservative
-  regional transport candidate consumes it without feeding pressure yet.
+  momentum vector per positive region control. Conservative regional transport
+  consumes it every later frame; the candidate feeds pressure only under the
+  explicit regional-flow experiment and otherwise remains diagnostic. Mimetic
+  reconstruction/transport must retain accepted cell-owned opening traces that
+  have no coarse graph pressure-link counterpart; gnuC2 `2^3` has 24 such
+  traces. The six-frame regional experiment reaches `86369.3 Pa` and
+  `29870.5 N` with exact internal momentum closure, but its `12.6851 m/s`
+  regional speed remains nonphysical and does not justify promotion.
   The coarse periodic domain, pump, and
   pressure magnitude are not aerodynamic validation; no external-domain wake,
   polar/refinement study, or structural feedback is present.

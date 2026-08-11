@@ -90,7 +90,9 @@ void testFrozenScenePressureCase() {
     settings.upperMeters = {4.0, 4.0, 4.0};
     check(!settings.useCorrectedTraceFlowContinuation,
           "corrected trace-flow continuation remains opt-in");
-    settings.useCorrectedTraceFlowContinuation = true;
+    check(!settings.useRegionalTransportFlowPrediction,
+          "regional transport flow prediction remains opt-in");
+    settings.useRegionalTransportFlowPrediction = true;
     simwing::fsi::FrozenScenePressureCase first(scene, settings);
     simwing::fsi::FrozenScenePressureCase second(scene, settings);
     const auto firstFrame = first.advance();
@@ -123,12 +125,16 @@ void testFrozenScenePressureCase() {
                   > firstDiagnostics.windRampFraction
               && diagnostics.windRampFraction <= 1.0
               && diagnostics.flowAdvanceCount == 1
-              && diagnostics.usesCorrectedTraceFlowContinuation
+              && !diagnostics.usesCorrectedTraceFlowContinuation
+              && diagnostics.usesRegionalTransportFlowPrediction
+              && diagnostics
+                     .maximumRegionalTransportFlowDifferenceFromBulkBaselineCubicMetersPerSecond
+                  > 0.0
               && diagnostics
                      .maximumCarriedTraceCorrectionCubicMetersPerSecond
-                  > 0.0
+                  == 0.0
               && diagnostics.maximumTraceBulkIncrementCubicMetersPerSecond
-                  > 0.0,
+                  == 0.0,
           "frozen scene flow evolves deterministically while leaving geometry unchanged");
     check(pressure != nullptr
               && pressure->association
