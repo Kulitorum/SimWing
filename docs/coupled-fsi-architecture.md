@@ -667,11 +667,13 @@ closed oriented region cycle around every finite-area material-plus-cap edge,
 including valid three-region sheet/cap junctions, and derives final winding
 from adjacent fabric with the same region pair. Closed directed material loops
 may remain cap-free only while both reference and accepted geometry are
-collapsed. Without an explicit disk, planar convex loops preserve their
-exact fan and planar concave loops use bounded deterministic ear clipping from
-reference geometry. An authored disk may be nonplanar and retains each facet's
-normal and identity under accepted motion. Folded, intersecting, degenerate,
-or unauthored nonplanar caps reject without creating Structure or traction.
+collapsed. Without an explicit disk, reference-planar convex loops preserve
+their exact fan and reference-planar concave loops use bounded deterministic
+ear clipping. That reference disk retains each facet's current normal and
+identity when accepted motion makes the mouth nonplanar. A
+reference-nonplanar loop must author its disk. Folded, intersecting,
+degenerate, or unauthored reference-nonplanar caps reject without creating
+Structure or traction.
 The capped open-tetrahedron regression closes analytic volume and exposes its
 mouth area. A second immutable opening epoch gives every cap triangle a stable
 centroid sample, interpolates the accepted piecewise-linear vertex velocity,
@@ -714,7 +716,7 @@ balances for the negative- and positive-side regions, including cell-to-cell
 crossports, and verifies exact global cancellation. Partial-face tiles integrate
 analytically, linear off-face flow is recovered, reversed velocity reverses
 sign, and co-moving air/mouth motion has zero relative flux.
-Unauthored nonplanar, folded, or self-intersecting openings, opening-only cap
+Unauthored reference-nonplanar, folded, or self-intersecting openings, opening-only cap
 vertices, branching junctions, inconsistent winding, and general moving-boundary
 fluid equations remain open. A bounded two-epoch continuity owner now binds
 consecutive accepted volume and flux products by their exact surface-state and
@@ -3516,6 +3518,11 @@ ledger falls to `43.0314 N` absolute load, `0.000434748 N` resultant, and
 `0.0142197 N` maximum nodal load. Geometry remains bit-identical. This is a
 credible kick-start endpoint, but a subsequent loaded XPBD step is still the
 acceptance gate.
+That next control-loaded step moves gnuC2 `6.43212 mm`. Reference-planar caps
+now retain their deterministic faceted disks through ordinary nonplanarity,
+clearing the former blanket planarity rejection, but opening 476 contains a
+facet whose orientation genuinely reverses. Fold rejection remains intact;
+the result calls for additional bounded preflow, not weaker cap topology.
 The focused authored-intake case deterministically deforms on its first frame
 and accepts a real pressure-control topology change. This closes the first
 input-driven two-way plumbing loop, not aerodynamic validity: the coarse

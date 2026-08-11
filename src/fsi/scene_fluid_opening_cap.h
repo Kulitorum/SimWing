@@ -98,12 +98,13 @@ struct SceneFluidOpeningCap {
 // must form one oriented closed region cycle around every finite-area edge;
 // this includes consistently wound three-region sheet/cap junctions. A closed
 // material boundary may remain cap-free only while it is collapsed in both
-// reference and accepted geometry. Planar loops may omit cap triangles:
-// convex loops then retain the exact fan and concave loops receive
-// deterministic reference-geometry ear clipping. A nonplanar loop must author
-// one oriented boundary-vertex disk; its individual triangle normals survive
-// accepted motion. Cap winding is derived from an adjacent fabric edge with
-// the same region pair. No cap enters Structure or traction transfer.
+// reference and accepted geometry. Reference-planar loops may omit cap
+// triangles: convex loops then retain the exact fan and concave loops receive
+// deterministic reference-geometry ear clipping. That reference disk and its
+// individual faceted normals survive accepted nonplanar motion. A loop that is
+// already nonplanar in reference geometry must author one oriented
+// boundary-vertex disk. Cap winding is derived from an adjacent fabric edge
+// with the same region pair. No cap enters Structure or traction transfer.
 struct SceneFluidOpeningCapSet {
     std::uint32_t version = sceneFluidOpeningCapVersion;
     std::uint64_t fingerprint = 0;

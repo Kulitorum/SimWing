@@ -721,6 +721,47 @@ void testRejectionCorruptionAndLimits() {
             movedConcaveCaps.caps.front().centroidMeters.x,
             concaveCaps.caps.front().centroidMeters.x + 0.01, 1.0e-13,
             "concave virtual cap follows accepted opening motion");
+
+        Fixture flexedConcave(concaveOpeningScene());
+        const auto flexedNode =
+            flexedConcave.structureAssembly.mappings.nodeIndex(13);
+        check(flexedNode.has_value(),
+              "reference-triangulated opening flex vertex is structural");
+        if (flexedNode) {
+            const double mass = flexedConcave.structure.definition()
+                .nodes[*flexedNode].massKg;
+            flexedConcave.structure.addExternalForce(
+                *flexedNode, {10.0 * mass, 0.0, 0.0});
+            StructureStepSettings flex;
+            flex.timeStepSeconds = 0.1;
+            flex.substeps = 1;
+            flex.constraintIterations = 4;
+            flex.gravityMetersPerSecondSquared = {};
+            flex.velocityDampingPerSecond = 0.0;
+            const auto flexDiagnostics =
+                flexedConcave.structure.step(flex);
+            const auto flexedCaps = buildSceneFluidOpeningCaps(
+                flexedConcave.surface.definition,
+                flexedConcave.state());
+            const auto& firstNormal =
+                flexedCaps.triangles[0].unitNormalNegativeToPositive;
+            const auto& secondNormal =
+                flexedCaps.triangles[1].unitNormalNegativeToPositive;
+            const double normalDifference = std::hypot(
+                firstNormal.x - secondNormal.x,
+                firstNormal.y - secondNormal.y,
+                firstNormal.z - secondNormal.z);
+            check(flexDiagnostics.finite
+                      && flexedCaps.triangles[0].vertexIndices
+                          == concaveCaps.triangles[0].vertexIndices
+                      && flexedCaps.triangles[1].vertexIndices
+                          == concaveCaps.triangles[1].vertexIndices
+                      && normalDifference > 1.0e-8,
+                  "reference-planar cap retains its triangulation and faceted normals through nonplanar motion");
+            validateSceneFluidOpeningCaps(
+                flexedCaps, flexedConcave.surface.definition,
+                flexedConcave.state());
+        }
     }
 
     Fixture selfIntersecting(selfIntersectingOpeningScene());

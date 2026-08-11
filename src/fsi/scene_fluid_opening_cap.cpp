@@ -748,8 +748,6 @@ SceneFluidOpeningCapSet buildCaps(
         const auto referenceGeometry = loopGeometry(referencePositions);
         if (!authoredTriangulation) {
             validatePlanarity(
-                currentPositions, currentGeometry, settings);
-            validatePlanarity(
                 referencePositions, referenceGeometry, settings);
         }
         validateSimpleLoop(
@@ -807,39 +805,31 @@ SceneFluidOpeningCapSet buildCaps(
             const Vec3 areaVector = cross(
                 subtract(second, first), subtract(third, first));
             const double area = 0.5 * length(areaVector);
-            bool referenceValid = true;
-            double referenceArea = 0.0;
-            double referenceOrientation = 0.0;
-            double referenceTolerance = 0.0;
-            if (authoredTriangulation) {
-                const Vec3& referenceFirst =
-                    surface.vertices[vertices[0]].referencePositionMeters;
-                const Vec3& referenceSecond =
-                    surface.vertices[vertices[1]].referencePositionMeters;
-                const Vec3& referenceThird =
-                    surface.vertices[vertices[2]].referencePositionMeters;
-                const Vec3 referenceAreaVector = cross(
-                    subtract(referenceSecond, referenceFirst),
-                    subtract(referenceThird, referenceFirst));
-                referenceArea =
-                    0.5 * length(referenceAreaVector);
-                referenceTolerance =
-                    settings.convexityTolerance
-                    * referenceGeometry.scaleMeters
-                    * referenceGeometry.scaleMeters;
-                referenceOrientation = dot(
-                    referenceAreaVector, referenceGeometry.unitNormal);
-                referenceValid = std::isfinite(referenceArea)
-                    && referenceArea
-                        > settings.minimumTriangleAreaSquareMeters
-                    && referenceOrientation > referenceTolerance;
-            }
+            const Vec3& referenceFirst =
+                surface.vertices[vertices[0]].referencePositionMeters;
+            const Vec3& referenceSecond =
+                surface.vertices[vertices[1]].referencePositionMeters;
+            const Vec3& referenceThird =
+                surface.vertices[vertices[2]].referencePositionMeters;
+            const Vec3 referenceAreaVector = cross(
+                subtract(referenceSecond, referenceFirst),
+                subtract(referenceThird, referenceFirst));
+            const double referenceArea =
+                0.5 * length(referenceAreaVector);
+            const double referenceTolerance =
+                settings.convexityTolerance
+                * referenceGeometry.scaleMeters
+                * referenceGeometry.scaleMeters;
+            const double referenceOrientation = dot(
+                referenceAreaVector, referenceGeometry.unitNormal);
+            const bool referenceValid = std::isfinite(referenceArea)
+                && referenceArea
+                    > settings.minimumTriangleAreaSquareMeters
+                && referenceOrientation > referenceTolerance;
             const double currentOrientationTolerance =
-                authoredTriangulation
-                ? settings.convexityTolerance
-                    * currentGeometry.scaleMeters
-                    * currentGeometry.scaleMeters
-                : 0.0;
+                settings.convexityTolerance
+                * currentGeometry.scaleMeters
+                * currentGeometry.scaleMeters;
             const double currentOrientation = dot(areaVector, normal);
             if (!std::isfinite(area)
                 || !(area > settings.minimumTriangleAreaSquareMeters)
@@ -864,17 +854,13 @@ SceneFluidOpeningCapSet buildCaps(
                     << " orientation=" << currentOrientation
                     << " orientation-tolerance="
                     << currentOrientationTolerance;
-                if (authoredTriangulation) {
-                    message
-                        << " reference-area=" << referenceArea
-                        << " reference-orientation=" << referenceOrientation
-                        << " reference-tolerance=" << referenceTolerance;
-                }
+                message
+                    << " reference-area=" << referenceArea
+                    << " reference-orientation=" << referenceOrientation
+                    << " reference-tolerance=" << referenceTolerance;
                 throw std::invalid_argument(message.str());
             }
-            const Vec3 triangleNormal = authoredTriangulation
-                ? scaled(areaVector, 0.5 / area)
-                : normal;
+            const Vec3 triangleNormal = scaled(areaVector, 0.5 / area);
             const Vec3 centroid{
                 (first.x + second.x + third.x) / 3.0,
                 (first.y + second.y + third.y) / 3.0,
