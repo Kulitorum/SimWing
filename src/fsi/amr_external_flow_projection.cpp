@@ -20,6 +20,7 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <string>
 
 namespace simwing::fsi::amr {
 namespace {
@@ -45,7 +46,12 @@ void validateProjectionSettings(
         || !(settings.relativeTolerance < 1.0)
         || settings.maximumIterations == 0
         || settings.maximumIterations
-            > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+            > static_cast<std::size_t>(std::numeric_limits<int>::max())
+        || settings.staticWingForcingProjectionIterations == 0
+        || settings.staticWingForcingProjectionIterations > 100
+        || !std::isfinite(settings.staticWingDirectForcingRelaxation)
+        || !(settings.staticWingDirectForcingRelaxation > 0.0)
+        || settings.staticWingDirectForcingRelaxation > 2.0) {
         throw std::invalid_argument(
             "AMR wind-tunnel projection settings are invalid");
     }
@@ -150,16 +156,17 @@ Hierarchy makeHierarchy(const WindTunnelGridSettings& settings) {
     result.geometry.emplace_back(
         refinedDomain, &physicalDomain, amrex::CoordSys::cartesian,
         nonPeriodic.data());
-    const amrex::IntVect quarter(
-        static_cast<int>(settings.coarseCellCounts.x / 4),
-        static_cast<int>(settings.coarseCellCounts.y / 4),
-        static_cast<int>(settings.coarseCellCounts.z / 4));
-    const amrex::IntVect threeQuarter(
-        static_cast<int>(3 * settings.coarseCellCounts.x / 4 - 1),
-        static_cast<int>(3 * settings.coarseCellCounts.y / 4 - 1),
-        static_cast<int>(3 * settings.coarseCellCounts.z / 4 - 1));
+    const amrex::IntVect refinementLower(
+        static_cast<int>(settings.refinedCoarseCellLower[0]),
+        static_cast<int>(settings.refinedCoarseCellLower[1]),
+        static_cast<int>(settings.refinedCoarseCellLower[2]));
+    const amrex::IntVect refinementUpper(
+        static_cast<int>(settings.refinedCoarseCellUpperExclusive[0] - 1),
+        static_cast<int>(settings.refinedCoarseCellUpperExclusive[1] - 1),
+        static_cast<int>(settings.refinedCoarseCellUpperExclusive[2] - 1));
     result.boxes.emplace_back(
-        amrex::refine(amrex::Box(quarter, threeQuarter), ratio));
+        amrex::refine(
+            amrex::Box(refinementLower, refinementUpper), ratio));
     result.boxes[1].maxSize(
         static_cast<int>(settings.maximumGridSize
                          * settings.refinementRatio));
@@ -410,7 +417,7 @@ void fillFineVelocityGhosts(Hierarchy& hierarchy) {
         }
     }
     amrex::Array<amrex::PhysBCFunctNoOp, 3> physicalBoundaries;
-    amrex::Interpolater* interpolater = &amrex::face_divfree_interp;
+    amrex::Interpolater* interpolater = &amrex::face_cons_linear_interp;
     amrex::FillPatchTwoLevels(
         fine, 0.0, coarseData, times, fineData, times,
         0, 0, 1,
@@ -540,11 +547,39 @@ double advectMomentumPredictor(
                                 * (advectZ >= 0.0
                                        ? center - q(i, j, k - 1)
                                        : q(i, j, k + 1) - center);
-                            destination(i, j, k) = center
+                            const double predicted = center
                                 - settings.timeStepSeconds
                                     * (advectX * derivativeX
                                        + advectY * derivativeY
                                        + advectZ * derivativeZ);
+                            if (!std::isfinite(center)
+                                || !std::isfinite(advectX)
+                                || !std::isfinite(advectY)
+                                || !std::isfinite(advectZ)
+                                || !std::isfinite(derivativeX)
+                                || !std::isfinite(derivativeY)
+                                || !std::isfinite(derivativeZ)
+                                || !std::isfinite(predicted)) {
+                                throw std::runtime_error(
+                                    "AMR momentum predictor encountered a non-finite stencil at level "
+                                    + std::to_string(level)
+                                    + " component "
+                                    + std::to_string(component)
+                                    + " face ("
+                                    + std::to_string(i) + ","
+                                    + std::to_string(j) + ","
+                                    + std::to_string(k) + ") values center="
+                                    + std::to_string(center)
+                                    + " advect=("
+                                    + std::to_string(advectX) + ","
+                                    + std::to_string(advectY) + ","
+                                    + std::to_string(advectZ)
+                                    + ") derivatives=("
+                                    + std::to_string(derivativeX) + ","
+                                    + std::to_string(derivativeY) + ","
+                                    + std::to_string(derivativeZ) + ")");
+                            }
+                            destination(i, j, k) = predicted;
                             maximumCourant = std::max(
                                 maximumCourant,
                                 settings.timeStepSeconds
@@ -567,6 +602,224 @@ double advectMomentumPredictor(
         hierarchy, settings.grid.freestreamMetersPerSecond);
     synchronizeCoarseFaces(hierarchy);
     return maximumCourant;
+}
+
+std::size_t interfaceCellIndex(
+    const fluid::GridCellCounts counts,
+    const int i,
+    const int j,
+    const int k) {
+    return static_cast<std::size_t>(i)
+        + counts.x
+            * (static_cast<std::size_t>(j)
+               + counts.y * static_cast<std::size_t>(k));
+}
+
+fluid::Vector3 cellVelocity(
+    const amrex::Array4<const double>& xVelocity,
+    const amrex::Array4<const double>& yVelocity,
+    const amrex::Array4<const double>& zVelocity,
+    const int i,
+    const int j,
+    const int k) {
+    return {
+        0.5 * (xVelocity(i, j, k) + xVelocity(i + 1, j, k)),
+        0.5 * (yVelocity(i, j, k) + yVelocity(i, j + 1, k)),
+        0.5 * (zVelocity(i, j, k) + zVelocity(i, j, k + 1)),
+    };
+}
+
+fluid::Vector3 projectedNormalVelocity(
+    const StaticWingInterfaceCell& cell,
+    const fluid::Vector3 velocity) {
+    const auto& tensor = cell.normalProjectionTensor;
+    return {
+        tensor[0] * velocity.x + tensor[1] * velocity.y
+            + tensor[2] * velocity.z,
+        tensor[1] * velocity.x + tensor[3] * velocity.y
+            + tensor[4] * velocity.z,
+        tensor[2] * velocity.x + tensor[4] * velocity.y
+            + tensor[5] * velocity.z,
+    };
+}
+
+double normalSpeed(const StaticWingInterfaceCell& cell,
+                   const fluid::Vector3 velocity) {
+    const fluid::Vector3 normal = projectedNormalVelocity(cell, velocity);
+    const double squared = velocity.x * normal.x
+        + velocity.y * normal.y + velocity.z * normal.z;
+    return std::sqrt(std::max(0.0, squared));
+}
+
+double maximumStaticWingNormalSpeed(
+    const Hierarchy& hierarchy,
+    const StaticWingInterface& interface) {
+    const amrex::IntVect ratio(2);
+    const amrex::iMultiFab coarseMask = amrex::makeFineMask(
+        *hierarchy.divergence[0], hierarchy.boxes[1], ratio, 1, 0);
+    double maximum = 0.0;
+    for (std::size_t level = 0;
+         level < hierarchy.velocity.size(); ++level) {
+        const auto& interfaceLevel = interface.level(level);
+        const auto counts = interfaceLevel.cellCounts;
+        const amrex::MultiFab& cells = *hierarchy.divergence[level];
+        for (amrex::MFIter iterator(cells); iterator.isValid(); ++iterator) {
+            const amrex::Box box = iterator.validbox();
+            const auto xVelocity =
+                hierarchy.velocity[level][0]->const_array(iterator);
+            const auto yVelocity =
+                hierarchy.velocity[level][1]->const_array(iterator);
+            const auto zVelocity =
+                hierarchy.velocity[level][2]->const_array(iterator);
+            const auto mask = level == 0
+                ? coarseMask.const_array(iterator)
+                : amrex::Array4<const int>();
+            for (int k = box.smallEnd(2); k <= box.bigEnd(2); ++k) {
+                for (int j = box.smallEnd(1); j <= box.bigEnd(1); ++j) {
+                    for (int i = box.smallEnd(0); i <= box.bigEnd(0); ++i) {
+                        if (level == 0 && mask(i, j, k) == 0) {
+                            continue;
+                        }
+                        const auto& cell = interfaceLevel.cells.at(
+                            interfaceCellIndex(counts, i, j, k));
+                        if (!cell.active()) {
+                            continue;
+                        }
+                        maximum = std::max(
+                            maximum,
+                            normalSpeed(
+                                cell,
+                                cellVelocity(
+                                    xVelocity, yVelocity, zVelocity,
+                                    i, j, k)));
+                    }
+                }
+            }
+        }
+    }
+    return maximum;
+}
+
+WindTunnelMomentumStepDiagnostics::StaticWingDirectForcingDiagnostics
+applyStaticWingDirectForcing(
+    Hierarchy& hierarchy,
+    const WindTunnelProjectionSettings& settings,
+    const StaticWingInterface& interface) {
+    WindTunnelMomentumStepDiagnostics::StaticWingDirectForcingDiagnostics
+        diagnostics;
+    diagnostics.binding = interface.diagnostics();
+    diagnostics.active = true;
+    diagnostics.maximumSurfaceNormalSpeedBeforeMetersPerSecond =
+        maximumStaticWingNormalSpeed(hierarchy, interface);
+
+    for (std::size_t level = 0;
+         level < hierarchy.velocity.size(); ++level) {
+        const auto& interfaceLevel = interface.level(level);
+        const auto counts = interfaceLevel.cellCounts;
+        amrex::MultiFab correction(
+            hierarchy.boxes[level], hierarchy.distribution[level], 3, 1);
+        amrex::MultiFab active(
+            hierarchy.boxes[level], hierarchy.distribution[level], 1, 1);
+        correction.setVal(0.0);
+        active.setVal(0.0);
+        for (amrex::MFIter iterator(correction);
+             iterator.isValid(); ++iterator) {
+            const amrex::Box box = iterator.validbox();
+            const auto xVelocity =
+                hierarchy.velocity[level][0]->const_array(iterator);
+            const auto yVelocity =
+                hierarchy.velocity[level][1]->const_array(iterator);
+            const auto zVelocity =
+                hierarchy.velocity[level][2]->const_array(iterator);
+            auto delta = correction.array(iterator);
+            auto activeValues = active.array(iterator);
+            for (int k = box.smallEnd(2); k <= box.bigEnd(2); ++k) {
+                for (int j = box.smallEnd(1); j <= box.bigEnd(1); ++j) {
+                    for (int i = box.smallEnd(0); i <= box.bigEnd(0); ++i) {
+                        const auto& cell = interfaceLevel.cells.at(
+                            interfaceCellIndex(counts, i, j, k));
+                        if (!cell.active()) {
+                            continue;
+                        }
+                        const fluid::Vector3 projected =
+                            projectedNormalVelocity(
+                                cell,
+                                cellVelocity(
+                                    xVelocity, yVelocity, zVelocity,
+                                    i, j, k));
+                        delta(i, j, k, 0) =
+                            -settings.staticWingDirectForcingRelaxation
+                            * projected.x;
+                        delta(i, j, k, 1) =
+                            -settings.staticWingDirectForcingRelaxation
+                            * projected.y;
+                        delta(i, j, k, 2) =
+                            -settings.staticWingDirectForcingRelaxation
+                            * projected.z;
+                        activeValues(i, j, k) = 1.0;
+                    }
+                }
+            }
+        }
+        correction.FillBoundary(hierarchy.geometry[level].periodicity());
+        active.FillBoundary(hierarchy.geometry[level].periodicity());
+        const amrex::Box& domain = hierarchy.geometry[level].Domain();
+        for (int component = 0; component < 3; ++component) {
+            amrex::MultiFab& velocity =
+                *hierarchy.velocity[level][component];
+            for (amrex::MFIter iterator(velocity);
+                 iterator.isValid(); ++iterator) {
+                const amrex::Box box = iterator.validbox();
+                auto values = velocity.array(iterator);
+                const auto delta = correction.const_array(iterator);
+                const auto activeValues = active.const_array(iterator);
+                for (int k = box.smallEnd(2); k <= box.bigEnd(2); ++k) {
+                    for (int j = box.smallEnd(1); j <= box.bigEnd(1); ++j) {
+                        for (int i = box.smallEnd(0); i <= box.bigEnd(0); ++i) {
+                            amrex::IntVect upper(i, j, k);
+                            amrex::IntVect lower = upper;
+                            --lower[component];
+                            double summedDelta = 0.0;
+                            double weight = 0.0;
+                            if (domain.contains(lower)) {
+                                const double cellWeight = activeValues(
+                                    lower[0], lower[1], lower[2]);
+                                summedDelta += cellWeight * delta(
+                                    lower[0], lower[1], lower[2], component);
+                                weight += cellWeight;
+                            }
+                            if (domain.contains(upper)) {
+                                const double cellWeight = activeValues(
+                                    upper[0], upper[1], upper[2]);
+                                summedDelta += cellWeight * delta(
+                                    upper[0], upper[1], upper[2], component);
+                                weight += cellWeight;
+                            }
+                            if (weight > 0.0) {
+                                values(i, j, k) += summedDelta / weight;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    enforceCoarseNormalVelocityBoundaries(
+        hierarchy, settings.grid.freestreamMetersPerSecond);
+    synchronizeCoarseFaces(hierarchy);
+    diagnostics.maximumSurfaceNormalSpeedAfterForcingMetersPerSecond =
+        maximumStaticWingNormalSpeed(hierarchy, interface);
+    diagnostics.finite = diagnostics.binding.finite
+        && std::isfinite(
+            diagnostics.maximumSurfaceNormalSpeedBeforeMetersPerSecond)
+        && std::isfinite(
+            diagnostics.maximumSurfaceNormalSpeedAfterForcingMetersPerSecond);
+    diagnostics.accepted = diagnostics.binding.accepted
+        && diagnostics.finite
+        && diagnostics.maximumSurfaceNormalSpeedBeforeMetersPerSecond > 0.0
+        && diagnostics.maximumSurfaceNormalSpeedAfterForcingMetersPerSecond
+            < diagnostics.maximumSurfaceNormalSpeedBeforeMetersPerSecond;
+    return diagnostics;
 }
 
 double coarseKineticEnergy(
@@ -826,7 +1079,8 @@ WindTunnelMomentumStepResult evaluateWindTunnelMomentumAdvance(
         && std::isfinite(
             result.diagnostics.maximumCellVelocityChangeMetersPerSecond)
         && std::isfinite(result.diagnostics.kineticEnergyBeforeJoules)
-        && std::isfinite(result.diagnostics.kineticEnergyAfterJoules);
+        && std::isfinite(result.diagnostics.kineticEnergyAfterJoules)
+        && result.diagnostics.staticWing.finite;
     result.diagnostics.accepted =
         result.diagnostics.initialProjection.accepted
         && result.diagnostics.correctedProjection.accepted
@@ -877,7 +1131,8 @@ void finishMomentumDiagnostics(
         && std::isfinite(
             result.diagnostics.maximumCellVelocityChangeMetersPerSecond)
         && std::isfinite(result.diagnostics.kineticEnergyBeforeJoules)
-        && std::isfinite(result.diagnostics.kineticEnergyAfterJoules);
+        && std::isfinite(result.diagnostics.kineticEnergyAfterJoules)
+        && result.diagnostics.staticWing.finite;
     result.diagnostics.accepted =
         result.diagnostics.initialProjection.accepted
         && result.diagnostics.correctedProjection.accepted
@@ -886,7 +1141,8 @@ void finishMomentumDiagnostics(
         && result.diagnostics.maximumOutgoingCourantNumber <= 1.0
         && result.diagnostics.maximumCellVelocityChangeMetersPerSecond > 0.0
         && result.diagnostics.kineticEnergyBeforeJoules > 0.0
-        && result.diagnostics.kineticEnergyAfterJoules > 0.0;
+        && result.diagnostics.kineticEnergyAfterJoules > 0.0
+        && result.diagnostics.staticWing.accepted;
 }
 
 } // namespace
@@ -896,8 +1152,10 @@ struct WindTunnelMomentumState::Implementation {
     WindTunnelBoundaryDiagnostics hierarchyDiagnostics;
     Hierarchy hierarchy;
     WindTunnelProjectedCoarseGrid current;
+    std::unique_ptr<StaticWingInterface> staticWing;
 
-    explicit Implementation(WindTunnelProjectionSettings requestedSettings)
+    explicit Implementation(WindTunnelProjectionSettings requestedSettings,
+                            const Scene* requestedStaticWing)
         : settings(std::move(requestedSettings)) {
         validateProjectionSettings(settings);
         if (!amrex::Initialized()) {
@@ -905,6 +1163,10 @@ struct WindTunnelMomentumState::Implementation {
         }
         hierarchyDiagnostics =
             evaluateWindTunnelBoundaryInitialization(settings.grid);
+        if (requestedStaticWing != nullptr) {
+            staticWing = std::make_unique<StaticWingInterface>(
+                *requestedStaticWing, settings.grid);
+        }
         hierarchy = makeHierarchy(settings.grid);
         const auto initial = projectHierarchy(
             settings, hierarchy, hierarchyDiagnostics, &current, true);
@@ -922,9 +1184,96 @@ struct WindTunnelMomentumState::Implementation {
             result.diagnostics.initialProjection = before.diagnostics;
             result.diagnostics.maximumOutgoingCourantNumber =
                 advectMomentumPredictor(hierarchy, settings);
-            result.diagnostics.correctedProjection = projectHierarchy(
-                settings, hierarchy, hierarchyDiagnostics,
-                &result.projectedCoarseGrid, false);
+            if (staticWing) {
+                std::vector<double> accumulatedPressure;
+                std::size_t accumulatedProjectionIterations = 0;
+                for (std::size_t iteration = 0;
+                     iteration
+                         < settings.staticWingForcingProjectionIterations;
+                     ++iteration) {
+                    auto forcing = applyStaticWingDirectForcing(
+                        hierarchy, settings, *staticWing);
+                    if (!forcing.accepted) {
+                        throw std::runtime_error(
+                            "AMR static-wing direct forcing was rejected");
+                    }
+                    if (iteration == 0) {
+                        result.diagnostics.staticWing = forcing;
+                    } else {
+                        result.diagnostics.staticWing
+                            .maximumSurfaceNormalSpeedAfterForcingMetersPerSecond =
+                                forcing
+                                    .maximumSurfaceNormalSpeedAfterForcingMetersPerSecond;
+                    }
+                    result.diagnostics.correctedProjection = projectHierarchy(
+                        settings, hierarchy, hierarchyDiagnostics,
+                        &result.projectedCoarseGrid, false);
+                    if (accumulatedPressure.empty()) {
+                        accumulatedPressure.assign(
+                            result.projectedCoarseGrid.pressurePascals.size(),
+                            0.0);
+                    }
+                    if (accumulatedPressure.size()
+                        != result.projectedCoarseGrid
+                               .pressurePascals.size()) {
+                        throw std::logic_error(
+                            "AMR static-wing pressure snapshots changed shape");
+                    }
+                    for (std::size_t cell = 0;
+                         cell < accumulatedPressure.size(); ++cell) {
+                        accumulatedPressure[cell] +=
+                            result.projectedCoarseGrid
+                                .pressurePascals[cell];
+                    }
+                    accumulatedProjectionIterations +=
+                        result.diagnostics.correctedProjection
+                            .solverIterations;
+                    result.diagnostics.staticWing
+                        .maximumSurfaceNormalSpeedAfterProjectionMetersPerSecond =
+                            maximumStaticWingNormalSpeed(
+                                hierarchy, *staticWing);
+                    ++result.diagnostics.staticWing
+                          .forcingProjectionIterations;
+                }
+                result.projectedCoarseGrid.pressurePascals =
+                    std::move(accumulatedPressure);
+                result.diagnostics.correctedProjection.solverIterations =
+                    accumulatedProjectionIterations;
+                result.diagnostics.correctedProjection
+                    .maximumPressureCorrectionPascals = 0.0;
+                for (const double pressure :
+                     result.projectedCoarseGrid.pressurePascals) {
+                    result.diagnostics.correctedProjection
+                        .maximumPressureCorrectionPascals = std::max(
+                            result.diagnostics.correctedProjection
+                                .maximumPressureCorrectionPascals,
+                            std::abs(pressure));
+                }
+                result.projectedCoarseGrid.diagnostics =
+                    result.diagnostics.correctedProjection;
+                result.diagnostics.staticWing.finite =
+                    result.diagnostics.staticWing.finite
+                    && std::isfinite(
+                        result.diagnostics.correctedProjection
+                            .maximumPressureCorrectionPascals)
+                    && std::isfinite(
+                        result.diagnostics.staticWing
+                            .maximumSurfaceNormalSpeedAfterProjectionMetersPerSecond);
+                result.diagnostics.staticWing.accepted =
+                    result.diagnostics.staticWing.accepted
+                    && result.diagnostics.staticWing.finite
+                    && result.diagnostics.staticWing
+                           .forcingProjectionIterations
+                        == settings.staticWingForcingProjectionIterations
+                    && result.diagnostics.staticWing
+                           .maximumSurfaceNormalSpeedAfterProjectionMetersPerSecond
+                        < result.diagnostics.staticWing
+                              .maximumSurfaceNormalSpeedBeforeMetersPerSecond;
+            } else {
+                result.diagnostics.correctedProjection = projectHierarchy(
+                    settings, hierarchy, hierarchyDiagnostics,
+                    &result.projectedCoarseGrid, false);
+            }
             finishMomentumDiagnostics(settings, before, result);
             if (!result.diagnostics.accepted) {
                 throw std::runtime_error(
@@ -942,7 +1291,13 @@ struct WindTunnelMomentumState::Implementation {
 WindTunnelMomentumState::WindTunnelMomentumState(
     WindTunnelProjectionSettings settings)
     : implementation_(
-          std::make_unique<Implementation>(std::move(settings))) {}
+          std::make_unique<Implementation>(std::move(settings), nullptr)) {}
+
+WindTunnelMomentumState::WindTunnelMomentumState(
+    WindTunnelProjectionSettings settings,
+    const Scene& staticWingScene)
+    : implementation_(std::make_unique<Implementation>(
+          std::move(settings), &staticWingScene)) {}
 
 WindTunnelMomentumState::~WindTunnelMomentumState() = default;
 
@@ -953,6 +1308,11 @@ WindTunnelMomentumStepResult WindTunnelMomentumState::advance() {
 const WindTunnelProjectedCoarseGrid&
 WindTunnelMomentumState::projectedCoarseGrid() const noexcept {
     return implementation_->current;
+}
+
+const StaticWingInterface*
+WindTunnelMomentumState::staticWingInterface() const noexcept {
+    return implementation_->staticWing.get();
 }
 
 } // namespace simwing::fsi::amr

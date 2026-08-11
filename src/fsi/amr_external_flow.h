@@ -32,11 +32,16 @@ inline constexpr std::array<PhysicalBoundaryKind, 6>
 
 struct WindTunnelGridSettings {
     fluid::GridCellCounts coarseCellCounts{32, 48, 16};
-    fluid::Vector3 lowerMeters{-6.0, -4.0, -3.0};
-    fluid::Vector3 upperMeters{6.0, 8.0, 3.0};
+    fluid::Vector3 lowerMeters{-6.0, -4.0, -4.0};
+    fluid::Vector3 upperMeters{6.0, 8.0, 2.0};
     fluid::Vector3 freestreamMetersPerSecond{0.0, 10.0, 0.0};
     std::size_t maximumGridSize = 16;
     std::size_t refinementRatio = 2;
+    // Half-open coarse-cell box refined by refinementRatio. The default
+    // follows the complete authoritative gnuC2 canopy plus a local wake band,
+    // rather than refining an arbitrary cube around the domain centre.
+    std::array<std::size_t, 3> refinedCoarseCellLower{1, 12, 1};
+    std::array<std::size_t, 3> refinedCoarseCellUpperExclusive{31, 32, 12};
 
     bool operator==(const WindTunnelGridSettings&) const = default;
 };

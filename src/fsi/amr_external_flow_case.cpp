@@ -44,7 +44,9 @@ void validateSettings(const ExternalFlowTransportSettings& settings) {
         || !std::isfinite(settings.markerPulseDurationSeconds)
         || !(settings.markerPulseDurationSeconds > 0.0)
         || settings.markerPulseDurationSeconds
-            > settings.markerPulsePeriodSeconds) {
+            > settings.markerPulsePeriodSeconds
+        || settings.timeStepSeconds
+            != settings.projection.timeStepSeconds) {
         throw std::invalid_argument(
             "AMR external-flow transport settings are invalid");
     }
@@ -63,6 +65,10 @@ viewer::Vec3d toViewer(const fluid::Vector3 value) {
     return {value.x, value.y, value.z};
 }
 
+viewer::Vec3d toViewer(const Vec3 value) {
+    return {value.x, value.y, value.z};
+}
+
 } // namespace
 
 struct ExternalFlowTransportCase::Implementation {
@@ -71,12 +77,30 @@ struct ExternalFlowTransportCase::Implementation {
     WindTunnelProjectedCoarseGrid projected;
     std::vector<double> marker;
     ExternalFlowTransportDiagnostics diagnostics;
+    std::string sceneChecksum = externalFlowTransportCaseChecksum;
+    std::string solverCommit = externalFlowTransportCaseSolverId;
     std::uint64_t acceptedStepCount = 0;
     double simulationTimeSeconds = 0.0;
 
     explicit Implementation(ExternalFlowTransportSettings requestedSettings)
         : settings(std::move(requestedSettings)),
           momentum(settings.projection) {
+        initialize();
+    }
+
+    Implementation(const Scene& staticWingScene,
+                   ExternalFlowTransportSettings requestedSettings)
+        : settings(std::move(requestedSettings)),
+          momentum(settings.projection, staticWingScene),
+          sceneChecksum(staticWingScene.metadata.designChecksum),
+          solverCommit(staticWingExternalFlowSolverId) {
+        if (sceneChecksum.empty()) {
+            sceneChecksum = externalFlowTransportCaseChecksum;
+        }
+        initialize();
+    }
+
+    void initialize() {
         validateSettings(settings);
         projected = momentum.projectedCoarseGrid();
         if (!projected.diagnostics.accepted
@@ -211,8 +235,8 @@ struct ExternalFlowTransportCase::Implementation {
         const std::size_t count = cellCount(counts);
 
         viewer::DiagnosticFrame result;
-        result.sceneChecksum = externalFlowTransportCaseChecksum;
-        result.solverCommit = externalFlowTransportCaseSolverId;
+        result.sceneChecksum = sceneChecksum;
+        result.solverCommit = solverCommit;
         result.step = acceptedStepCount;
         result.simulationTimeSeconds = simulationTimeSeconds;
         result.timeStepSeconds = settings.timeStepSeconds;
@@ -228,7 +252,12 @@ struct ExternalFlowTransportCase::Implementation {
 
         std::vector<double> speed(count, 0.0);
         std::vector<double> refinementMask(count, 0.0);
-        result.vertices.reserve(count);
+        std::vector<double> interfaceMask(count, 0.0);
+        const StaticWingInterface* staticWing =
+            momentum.staticWingInterface();
+        const std::size_t surfaceVertexCount = staticWing == nullptr
+            ? 0 : staticWing->vertices().size();
+        result.vertices.reserve(count + surfaceVertexCount);
         double kineticEnergy = 0.0;
         fluid::Vector3 momentum;
         const double cellVolume = spacing.x * spacing.y * spacing.z;
@@ -240,12 +269,13 @@ struct ExternalFlowTransportCase::Implementation {
                         projected.velocityMetersPerSecond[index];
                     speed[index] = std::hypot(
                         velocity.x, velocity.y, velocity.z);
-                    const bool refined = i >= counts.x / 4
-                        && i < 3 * counts.x / 4
-                        && j >= counts.y / 4
-                        && j < 3 * counts.y / 4
-                        && k >= counts.z / 4
-                        && k < 3 * counts.z / 4;
+                    const auto& lower = settings.projection.grid
+                        .refinedCoarseCellLower;
+                    const auto& upper = settings.projection.grid
+                        .refinedCoarseCellUpperExclusive;
+                    const bool refined = i >= lower[0] && i < upper[0]
+                        && j >= lower[1] && j < upper[1]
+                        && k >= lower[2] && k < upper[2];
                     refinementMask[index] = refined ? 1.0 : 0.0;
                     const fluid::Vector3 center{
                         projected.lowerMeters.x
@@ -256,9 +286,14 @@ struct ExternalFlowTransportCase::Implementation {
                             + (static_cast<double>(k) + 0.5) * spacing.z,
                     };
                     result.vertices.push_back({
-                        static_cast<std::uint64_t>(index) + 1,
+                        0xf000000000000000ULL
+                            + static_cast<std::uint64_t>(index) + 1,
                         toViewer(center),
                     });
+                    if (staticWing != nullptr
+                        && staticWing->level(0).cells[index].active()) {
+                        interfaceMask[index] = 1.0;
+                    }
                     const double cellMass = density * cellVolume;
                     momentum.x += cellMass * velocity.x;
                     momentum.y += cellMass * velocity.y;
@@ -270,23 +305,60 @@ struct ExternalFlowTransportCase::Implementation {
                 }
             }
         }
+        if (staticWing != nullptr) {
+            const std::size_t firstSurfaceVertex = result.vertices.size();
+            for (const auto& vertex : staticWing->vertices()) {
+                result.vertices.push_back({
+                    vertex.id, toViewer(vertex.positionMeters)});
+            }
+            result.triangles.reserve(staticWing->triangles().size());
+            for (const auto& triangle : staticWing->triangles()) {
+                const auto vertexIndex = [&](const std::size_t index) {
+                    const std::size_t combined = firstSurfaceVertex + index;
+                    if (combined
+                        > std::numeric_limits<std::uint32_t>::max()) {
+                        throw std::length_error(
+                            "AMR static-wing frame vertex index overflowed");
+                    }
+                    return static_cast<std::uint32_t>(combined);
+                };
+                result.triangles.push_back({
+                    triangle.id,
+                    vertexIndex(triangle.vertexIndices[0]),
+                    vertexIndex(triangle.vertexIndices[1]),
+                    vertexIndex(triangle.vertexIndices[2]),
+                    triangle.negativeSideRegionId,
+                    triangle.positiveSideRegionId,
+                });
+            }
+        }
+        const std::size_t totalVertexCount = result.vertices.size();
+        auto padded = [totalVertexCount](std::vector<double> values) {
+            values.resize(totalVertexCount, 0.0);
+            return values;
+        };
         result.conservation.totalMomentumNewtonSeconds = toViewer(momentum);
         result.conservation.totalEnergyJoules = kineticEnergy;
         result.scalarFields.push_back({
             "external_flow.marker", "1",
-            viewer::FieldAssociation::Vertex, marker});
+            viewer::FieldAssociation::Vertex, padded(marker)});
         result.scalarFields.push_back({
             "pressure", "Pa", viewer::FieldAssociation::Vertex,
-            projected.pressurePascals});
+            padded(projected.pressurePascals)});
         result.scalarFields.push_back({
             "speed", "m/s", viewer::FieldAssociation::Vertex,
-            std::move(speed)});
+            padded(std::move(speed))});
         result.scalarFields.push_back({
             "divergence", "1/s", viewer::FieldAssociation::Vertex,
-            projected.divergencePerSecond});
+            padded(projected.divergencePerSecond)});
         result.scalarFields.push_back({
             "AMR refined coarse cell", "1",
-            viewer::FieldAssociation::Vertex, std::move(refinementMask)});
+            viewer::FieldAssociation::Vertex,
+            padded(std::move(refinementMask))});
+        result.scalarFields.push_back({
+            "static wing cut cell", "1",
+            viewer::FieldAssociation::Vertex,
+            padded(std::move(interfaceMask))});
         addGlobalScalar(
             result, std::string(viewer::cfdGridVertexBeginFieldName),
             "1", 0.0);
@@ -318,13 +390,42 @@ struct ExternalFlowTransportCase::Implementation {
         addGlobalScalar(
             result, "marker integral", "m^3",
             diagnostics.markerIntegralCubicMeters);
+        if (staticWing != nullptr) {
+            const auto& interface = staticWing->diagnostics();
+            addGlobalScalar(
+                result, "static wing triangles", "1",
+                static_cast<double>(interface.triangleCount));
+            addGlobalScalar(
+                result, "static wing active composite cut cells", "1",
+                static_cast<double>(
+                    interface.activeCompositeCutCellCount));
+            addGlobalScalar(
+                result, "static wing surface area", "m^2",
+                interface.surfaceAreaSquareMeters);
+            addGlobalScalar(
+                result, "static wing refined surface area", "m^2",
+                interface.refinedPatchSurfaceAreaSquareMeters);
+            addGlobalScalar(
+                result, "surface-normal speed before forcing", "m/s",
+                diagnostics.momentum.staticWing
+                    .maximumSurfaceNormalSpeedBeforeMetersPerSecond);
+            addGlobalScalar(
+                result, "surface-normal speed after forcing", "m/s",
+                diagnostics.momentum.staticWing
+                    .maximumSurfaceNormalSpeedAfterForcingMetersPerSecond);
+            addGlobalScalar(
+                result, "surface-normal speed after projection", "m/s",
+                diagnostics.momentum.staticWing
+                    .maximumSurfaceNormalSpeedAfterProjectionMetersPerSecond);
+        }
         result.vectorFields.push_back({
             "velocity", "m/s", viewer::FieldAssociation::Vertex, {}});
-        result.vectorFields.back().values.reserve(count);
+        result.vectorFields.back().values.reserve(totalVertexCount);
         for (const fluid::Vector3 value :
              projected.velocityMetersPerSecond) {
             result.vectorFields.back().values.push_back(toViewer(value));
         }
+        result.vectorFields.back().values.resize(totalVertexCount, {});
 
         viewer::ProtocolError error;
         if (!viewer::validateFrame(result, &error)) {
@@ -340,11 +441,17 @@ ExternalFlowTransportCase::ExternalFlowTransportCase(
     : implementation_(
           std::make_unique<Implementation>(std::move(settings))) {}
 
+ExternalFlowTransportCase::ExternalFlowTransportCase(
+    const Scene& staticWingScene,
+    ExternalFlowTransportSettings settings)
+    : implementation_(std::make_unique<Implementation>(
+          staticWingScene, std::move(settings))) {}
+
 ExternalFlowTransportCase::~ExternalFlowTransportCase() = default;
 
 viewer::TraceHeader ExternalFlowTransportCase::traceHeader() const {
-    return {externalFlowTransportCaseChecksum,
-            externalFlowTransportCaseSolverId};
+    return {implementation_->sceneChecksum,
+            implementation_->solverCommit};
 }
 
 viewer::DiagnosticFrame ExternalFlowTransportCase::advance() {

@@ -3776,50 +3776,68 @@ without moving Qt into the worker or solver targets.
 
 The first production-grid evaluation is now an opt-in AMReX 26.06 backend,
 pinned to commit `bf15fdce52093c715a1dd9a9da64ba66f0233be1`. It deliberately
-does not use AMReX embedded boundaries: the existing SimWing discrete-surface
-layer must remain capable of multivalued thin/folded interfaces. Its first
-canonical builds a non-periodic `32 x 48 x 16` coarse wind-tunnel domain split
-into six blocks plus one central factor-two refined patch with 24,576 valid
-fine cells. All three velocity components are face-centred with one ghost
-layer. The physical-face contract is X/Z far field, `-Y` prescribed inflow,
-and `+Y` pressure-outlet ownership with a zero normal velocity gradient. A
-bounded nonuniform interior wake makes the outflow check nontrivial; inflow,
-outflow-gradient, and far-field ghost errors close exactly on the Windows CPU
-backend. The separately enabled projection target then gives that wake a
-nonzero discrete divergence, synchronizes fine face fluxes onto the covered
-coarse faces, and solves one composite cell-centred pressure correction with
-homogeneous Neumann conditions at prescribed-normal-velocity boundaries and a
-homogeneous Dirichlet pressure reference at `+Y`. On the 46,080-cell composite
-hierarchy, ten multigrid iterations reduce maximum divergence from
-`6.9856873897208516e-2 s^-1` to `4.5793369096713832e-12 s^-1`, preserve the
-`-Y` normal inflow exactly, adjust outlet flux, and produce a finite maximum
-pressure correction of about `249.17 Pa` at `rho=1.225 kg/m^3`. The standard
-build remains independent of AMReX. This is a grid/boundary/projection gate;
-it still performs no advection, diffusion, interface coupling, or wing
-aerodynamics.
+does not use AMReX embedded boundaries: the SimWing discrete-surface layer
+must remain capable of multivalued thin/folded interfaces. Its first canonical
+builds a non-periodic `32 x 48 x 16` coarse wind tunnel split into six blocks.
+The factor-two refined coarse-cell box `[1,31) x [12,32) x [1,12)` follows the
+complete real gnuC2 canopy and a local wake band; its 52,800 valid fine cells
+give 70,776 active composite cells. The physical domain is
+`[-6,-4,-4]..[6,8,2] m`. All three velocity components are face-centred with
+one ghost layer. X/Z are far field, `-Y` is prescribed inflow, and `+Y` owns a
+pressure outlet with zero normal velocity gradient. A bounded nonuniform wake
+makes the outflow check nontrivial; physical ghost errors close exactly on the
+Windows CPU backend. Fine/coarse transport ghosts use conservative face-linear
+interpolation, because AMReX's divergence-free interpolater leaves transverse
+corner ghosts undefined for this anisotropic refined box; the following
+composite projection, not interpolation, owns divergence closure.
 
-`ExternalFlowTransportCase` is the first immutable-frame bridge from that
-backend to `simwing-viewer`. It averages the projected coarse diagnostic level
-into an X-fast `32 x 48 x 16` frame, publishes pressure, velocity, divergence,
-and the coarse footprint covered by the factor-two patch, and advances a
-bounded passive marker with first-order donor-cell transport. At `dt=0.01 s`
-the observed maximum outgoing CFL is `0.411081`; the marker remains in `[0,1]`
-and visibly moves in positive Y through the axis-selectable CFD slice. The
-worker opens the viewer by default and remains paced by simulation time. This
-bridge now also owns a persistent two-level momentum state. Before each step,
-coarse physical ghosts and divergence-preserving fine/coarse face ghosts are
-filled; all three staggered components receive a first-order donor-cell
-convective predictor; normal inflow/far-field velocity and outlet extrapolation
-are reapplied; fine faces are averaged down; and the predictor receives a fresh
-composite pressure projection. The first predictor has maximum outgoing CFL
-`0.800994`, changes the averaged coarse velocity by up to `0.01539 m/s`, and
-reduces predictor divergence from `8.04e-3 s^-1` to `7.90e-14 s^-1`. A 20-step
-worker smoke run ends with CFL `0.80206`, per-step coarse velocity change
-`3.89e-3 m/s`, and maximum divergence `3.81e-13 s^-1`. Failed or rejected
-advances restore all face velocities transactionally. The live marker remains
-the clearest direction visualization, but the velocity and pressure fields are
-now evolving momentum state. This is still an empty tunnel without viscosity,
-a turbulence model, a wing/interface boundary, or aerodynamic evidence.
+The projection target synchronizes fine fluxes onto covered coarse faces and
+solves one composite cell-centred pressure correction with homogeneous
+Neumann conditions at prescribed-normal-velocity boundaries and a homogeneous
+Dirichlet pressure reference at `+Y`. At `dt=0.005 s`, ten multigrid iterations
+reduce maximum divergence from `6.9457858153704422e-2 s^-1` to
+`4.5666725609350145e-12 s^-1`, preserve the `-Y` normal inflow exactly, adjust
+outlet flux, and produce a finite maximum pressure correction of about
+`498.28 Pa` at `rho=1.225 kg/m^3`. The standard build remains independent of
+AMReX.
+
+`ExternalFlowTransportCase` is the immutable-frame bridge from that backend to
+`simwing-viewer`. It averages the projected coarse level into an X-fast
+`32 x 48 x 16` frame, publishes pressure, velocity, divergence, refinement and
+cut-cell masks, and advances a bounded passive marker with first-order donor-
+cell transport. The worker opens the viewer by default and remains paced by
+simulation time. Before each step, coarse physical ghosts and conservative
+fine/coarse face ghosts are filled; all three staggered components receive a
+donor-cell convective predictor; normal inflow/far-field velocity and outlet
+extrapolation are reapplied; fine faces are averaged down; and the predictor
+receives a fresh composite projection. At `dt=0.005 s`, the empty-tunnel first
+predictor has maximum outgoing CFL `0.408275`, changes averaged coarse velocity
+by `7.70e-3 m/s`, and reduces predictor divergence from `6.69e-3 s^-1` to
+`5.46e-13 s^-1`. Failed advances restore all face velocities transactionally.
+
+Supplying `--scene` activates the first static material interface. The Qt-free
+`StaticWingInterface` validates scene-v2 and accepted Structure identity,
+retains authored stable IDs, winding, side regions and roles, clips every
+triangle exactly against the full coarse and fine Cartesian grids, and builds
+one area-normal tensor per positive-area cell clip. Fabric exactly coincident
+with a Cartesian face activates both adjacent cells for this symmetric direct-
+forcing checkpoint; unique face ownership remains required later for pressure
+traction and is not fabricated here. Each fluid step alternates twelve direct-
+forcing passes at relaxation `1.8` with composite projections, accumulates the
+incremental same-step pressure corrections, and publishes the actual scene
+triangles beside the CFD slice. The real gnuC2 surface bounds are
+`[-5.298268,-0.017544,-3.201637]..[5.298268,2.552989,0.291321] m`; all of it
+lies in the refined band. It contains 70,494 triangles, 94.1942 square metres
+of material, and activates 3,600 composite cut cells. On the first incident
+step the maximum area-tensor surface-normal speed changes
+`9.39558 -> 2.19013 -> 2.37044 m/s` across forcing and projection, with an
+accumulated `564.62 Pa` pressure correction. Twenty steps reach `t=0.1 s` at
+momentum CFL `0.568904`, `6.71e-12 s^-1` maximum divergence, and `0.527091 m/s`
+final maximum surface-normal speed. This is a one-way regularized cut-cell
+direct-forcing diagnostic, not the production sharp two-sided interface: it
+does not yet resolve per-region pressure jumps, viscosity, boundary layers,
+turbulence, permeability/leakage, intake flux, integrated aerodynamic loads,
+or structural coupling.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

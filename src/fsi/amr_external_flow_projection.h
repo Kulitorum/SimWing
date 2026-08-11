@@ -1,6 +1,6 @@
 #pragma once
 
-#include "amr_external_flow.h"
+#include "amr_static_wing_interface.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -11,13 +11,16 @@ namespace simwing::fsi::amr {
 
 inline constexpr std::uint32_t amrWindTunnelProjectionVersion = 1;
 inline constexpr std::uint32_t amrWindTunnelMomentumStepVersion = 1;
+inline constexpr std::uint32_t amrStaticWingDirectForcingVersion = 1;
 
 struct WindTunnelProjectionSettings {
     WindTunnelGridSettings grid;
-    double timeStepSeconds = 0.01;
+    double timeStepSeconds = 0.005;
     double airDensityKilogramsPerCubicMeter = 1.225;
     double relativeTolerance = 1.0e-10;
     std::size_t maximumIterations = 200;
+    std::size_t staticWingForcingProjectionIterations = 12;
+    double staticWingDirectForcingRelaxation = 1.8;
 
     bool operator==(const WindTunnelProjectionSettings&) const = default;
 };
@@ -63,6 +66,20 @@ struct WindTunnelMomentumStepDiagnostics {
     double maximumCellVelocityChangeMetersPerSecond = 0.0;
     double kineticEnergyBeforeJoules = 0.0;
     double kineticEnergyAfterJoules = 0.0;
+    struct StaticWingDirectForcingDiagnostics {
+        std::uint32_t version = amrStaticWingDirectForcingVersion;
+        StaticWingInterfaceDiagnostics binding;
+        double maximumSurfaceNormalSpeedBeforeMetersPerSecond = 0.0;
+        double maximumSurfaceNormalSpeedAfterForcingMetersPerSecond = 0.0;
+        double maximumSurfaceNormalSpeedAfterProjectionMetersPerSecond = 0.0;
+        std::size_t forcingProjectionIterations = 0;
+        bool active = false;
+        bool finite = true;
+        bool accepted = true;
+
+        bool operator==(const StaticWingDirectForcingDiagnostics&) const =
+            default;
+    } staticWing;
     bool finite = false;
     bool accepted = false;
 
@@ -101,6 +118,9 @@ class WindTunnelMomentumState final {
 public:
     explicit WindTunnelMomentumState(
         WindTunnelProjectionSettings settings = {});
+    WindTunnelMomentumState(
+        WindTunnelProjectionSettings settings,
+        const Scene& staticWingScene);
     ~WindTunnelMomentumState();
 
     WindTunnelMomentumState(const WindTunnelMomentumState&) = delete;
@@ -112,6 +132,8 @@ public:
     [[nodiscard]] WindTunnelMomentumStepResult advance();
     [[nodiscard]] const WindTunnelProjectedCoarseGrid&
     projectedCoarseGrid() const noexcept;
+    [[nodiscard]] const StaticWingInterface*
+    staticWingInterface() const noexcept;
 
 private:
     struct Implementation;

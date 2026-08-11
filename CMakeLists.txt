@@ -275,6 +275,18 @@ if(SIMWING_ENABLE_AMREX_BACKEND)
     )
 
     if(SIMWING_AMREX_ENABLE_LINEAR_SOLVERS)
+        add_library(simwing_amr_static_wing_interface STATIC
+            src/fsi/amr_static_wing_interface.cpp
+            src/fsi/amr_static_wing_interface.h
+        )
+        target_include_directories(simwing_amr_static_wing_interface PUBLIC
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+        )
+        target_link_libraries(simwing_amr_static_wing_interface PUBLIC
+            simwing_amr_external_flow
+            simwing_scene_fluid_geometry
+        )
+
         add_library(simwing_amr_external_flow_projection STATIC
             src/fsi/amr_external_flow_projection.cpp
             src/fsi/amr_external_flow_projection.h
@@ -284,6 +296,7 @@ if(SIMWING_ENABLE_AMREX_BACKEND)
         )
         target_link_libraries(simwing_amr_external_flow_projection PUBLIC
             simwing_amr_external_flow
+            simwing_amr_static_wing_interface
         )
         target_link_libraries(simwing_amr_external_flow_projection PRIVATE
             ${simwing_amrex_target}

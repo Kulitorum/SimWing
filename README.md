@@ -46,17 +46,26 @@ the viewer by default and streams accepted XPBD steps through a replayable
 growing trace. An opt-in AMReX 26.06 backend evaluation now owns the first
 non-periodic wind-tunnel grid and projection: a two-level block hierarchy with
 face-centred velocity, `-Y` prescribed inflow, `+Y` pressure-outlet ownership,
-and X/Z far-field boundaries. Its canonical initializes a bounded divergent
-wake, synchronizes coarse/fine face fluxes, and uses composite multigrid to
-reduce maximum divergence from `6.99e-2 s^-1` to `4.58e-12 s^-1` while keeping
-the inlet normal velocity exact. An opt-in worker exposes that projected
-coarse diagnostic grid as a 24,576-cell live CFD slice and transports a bounded
-passive marker pulse in positive Y at CFL 0.411. All three face-centred
-velocity components now receive a first-order donor-cell predictor on both AMR
-levels and a fresh composite projection every `0.01 s`; a 20-step run retained
-momentum CFL 0.802 and final maximum divergence `3.81e-13 s^-1`. Viscous and
-turbulence models, interface coupling, and wing aerodynamics do not yet use
-this backend. The first Qt-free fluid
+and X/Z far-field boundaries. Its wing-following refined box produces 70,776
+active composite cells while retaining a 24,576-cell coarse diagnostic slice.
+The empty-tunnel canonical reduces maximum divergence from `6.95e-2 s^-1` to
+`4.57e-12 s^-1`, keeps inlet normal velocity exact, and advances all three
+staggered components with a donor-cell predictor plus a fresh composite
+projection every `0.005 s`.
+
+`--case external-flow --scene <scene-v2>` now clips the authoritative static
+material surface onto both AMR levels, derives an area-weighted normal tensor
+for every positive-area cut cell, and alternates twelve over-relaxed direct-
+forcing passes with composite projections. The immutable frame retains the
+actual wing triangles beside pressure, velocity, divergence, refinement, and
+cut-cell slices. On the real gnuC2 export this binds 70,494 triangles and 94.19
+square metres of material to 3,600 active composite cut cells. A 20-step run
+completed at momentum CFL 0.569 and `6.71e-12 s^-1` maximum divergence while
+reducing the maximum surface-normal speed from 9.40 m/s on the first incident
+step to 0.527 m/s at `t=0.1 s`. This is an explicit one-way cut-cell direct-
+forcing diagnostic, not yet the production two-sided sharp pressure-jump
+method: it has no viscosity, turbulence model, leakage law, integrated
+aerodynamic validation, or structural coupling. The first Qt-free fluid
 kernel adds a periodic staggered-grid
 pressure projection with deterministic rollback behavior, exact discrete
 gradient/divergence pairing, Taylor-Green preservation, and manufactured
@@ -1542,10 +1551,18 @@ ctest --test-dir build-amrex -C Release --output-on-failure `
   -R simwing_amr_external_flow
 ```
 
-Run the live positive-Y transport diagnostic with:
+Run the live positive-Y empty-tunnel transport diagnostic with:
 
 ```powershell
 .\build-amrex\bin\Release\simwing-fsi.exe --case external-flow --steps 600
+```
+
+Run the static authoritative wing in the AMR tunnel with:
+
+```powershell
+.\build-amrex\bin\Release\simwing-fsi.exe --case external-flow `
+  --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin `
+  --steps 1000 --trace-every 10
 ```
 
 Run:

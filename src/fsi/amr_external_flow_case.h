@@ -12,10 +12,12 @@ inline constexpr char externalFlowTransportCaseChecksum[] =
     "sha256:simwing-amr-external-flow-transport-v1";
 inline constexpr char externalFlowTransportCaseSolverId[] =
     "simwing-amr-external-flow-transport-worker-v1";
+inline constexpr char staticWingExternalFlowSolverId[] =
+    "simwing-amr-static-wing-direct-forcing-worker-v1";
 
 struct ExternalFlowTransportSettings {
     WindTunnelProjectionSettings projection;
-    double timeStepSeconds = 0.01;
+    double timeStepSeconds = 0.005;
     double markerPulsePeriodSeconds = 1.2;
     double markerPulseDurationSeconds = 0.3;
 
@@ -35,14 +37,18 @@ struct ExternalFlowTransportDiagnostics {
     bool operator==(const ExternalFlowTransportDiagnostics&) const = default;
 };
 
-// A first visible production-grid bridge. The two-level AMR velocity is
-// projected once, then an explicitly labelled passive marker is advanced on
-// its averaged-down coarse diagnostic grid and published as immutable CFD
-// slices. Momentum advection/diffusion and wing coupling are deliberately not
-// claimed by this case.
+// Visible production-grid bridge. Persistent two-level momentum and a passive
+// marker are advanced and published on the averaged-down coarse diagnostic
+// grid. The scene overload additionally retains the fixed authoritative
+// surface and activates the explicitly labelled cut-cell direct-forcing
+// approximation; it does not claim sharp pressure jumps, viscosity,
+// turbulence, aerodynamic loads, or structural coupling.
 class ExternalFlowTransportCase final {
 public:
     explicit ExternalFlowTransportCase(
+        ExternalFlowTransportSettings settings = {});
+    ExternalFlowTransportCase(
+        const Scene& staticWingScene,
         ExternalFlowTransportSettings settings = {});
     ~ExternalFlowTransportCase();
 

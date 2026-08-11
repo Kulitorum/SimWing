@@ -209,6 +209,9 @@ void printUsage(FILE* stream) {
         "topology rebasing; consuming its resolved opening is rejected.\n"
         "'periodic-flow' advances the bounded Strang/SSPRK2 Taylor-Green CFD\n"
         "canonical and publishes cell-centred pressure/velocity points.\n"
+        "'external-flow' requires the opt-in AMReX projection build and advances\n"
+        "the non-periodic positive-Y tunnel; optional --scene enables the static\n"
+        "authoritative cut-cell direct-forcing diagnostic.\n"
         "'porous-flow' advances a pressure-driven Darcy-Forchheimer plug and\n"
         "publishes its porous and periodic gauge-closure planes.\n"
         "'moving-porous-flow' advances a prescribed translating porous plane\n"
@@ -721,9 +724,15 @@ bool parseOptions(int argc,
         error = "--steps exceeds the worker safety limit";
         return false;
     }
-    if ((options.workerCase == WorkerCase::FrozenScene)
-            != !options.scenePath.empty()) {
+    if (options.workerCase == WorkerCase::FrozenScene
+        && options.scenePath.empty()) {
         error = "--case frozen-scene requires exactly one --scene path";
+        return false;
+    }
+    if (!options.scenePath.empty()
+        && options.workerCase != WorkerCase::FrozenScene
+        && options.workerCase != WorkerCase::ExternalFlow) {
+        error = "--scene is supported by frozen-scene and external-flow";
         return false;
     }
     const bool frozenControlRequested =
@@ -2433,7 +2442,10 @@ int main(int argc, char* argv[]) {
                     "simwing-fsi completed %llu external-flow marker step(s), "
                     "t=%.9g s, momentum-CFL=%.6g, velocity-change=%.6g m/s, "
                     "marker-CFL=%.6g, projected-divergence=%.6g 1/s, "
-                    "marker=[%.6g, %.6g], trace=%s\n",
+                    "marker=[%.6g, %.6g], static-wing=%s, "
+                    "triangles=%zu, cut-cells=%zu, area=%.6g m^2, "
+                    "normal-speed=%.6g->%.6g->%.6g m/s, pressure=%.6g Pa, "
+                    "trace=%s\n",
                     static_cast<unsigned long long>(
                         simulation.acceptedStepCount()),
                     simulation.simulationTimeSeconds(),
@@ -2445,6 +2457,20 @@ int main(int argc, char* argv[]) {
                         .projectedMaximumDivergencePerSecond,
                     diagnostics.minimumMarker,
                     diagnostics.maximumMarker,
+                    diagnostics.momentum.staticWing.active ? "on" : "off",
+                    diagnostics.momentum.staticWing.binding.triangleCount,
+                    diagnostics.momentum.staticWing.binding
+                        .activeCompositeCutCellCount,
+                    diagnostics.momentum.staticWing.binding
+                        .surfaceAreaSquareMeters,
+                    diagnostics.momentum.staticWing
+                        .maximumSurfaceNormalSpeedBeforeMetersPerSecond,
+                    diagnostics.momentum.staticWing
+                        .maximumSurfaceNormalSpeedAfterForcingMetersPerSecond,
+                    diagnostics.momentum.staticWing
+                        .maximumSurfaceNormalSpeedAfterProjectionMetersPerSecond,
+                    diagnostics.momentum.correctedProjection
+                        .maximumPressureCorrectionPascals,
                     options.tracePath.string().c_str());
 #endif
             } else {
@@ -2559,6 +2585,11 @@ int main(int argc, char* argv[]) {
             char** amrexArguments = amrexArgumentsStorage;
             simwing::fsi::amr::Runtime runtime(
                 amrexArgumentCount, amrexArguments);
+            if (frozenScene) {
+                simwing::fsi::amr::ExternalFlowTransportCase simulation(
+                    *frozenScene);
+                return run(simulation);
+            }
             simwing::fsi::amr::ExternalFlowTransportCase simulation;
             return run(simulation);
 #else

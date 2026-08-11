@@ -38,7 +38,7 @@ int main(int argc, char* argv[]) {
         check(diagnostics.accepted && diagnostics.finite,
               "two-level open-boundary projection is accepted");
         check(diagnostics.hierarchy.accepted
-                  && diagnostics.activeCompositeCellCount == 46'080,
+                  && diagnostics.activeCompositeCellCount == 70'776,
               "projection retains the accepted two-level hierarchy and composite cell ownership");
         check(projected.cellCounts
                       == simwing::fsi::fluid::GridCellCounts{32, 48, 16}

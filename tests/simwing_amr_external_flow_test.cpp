@@ -37,7 +37,7 @@ int main(int argc, char* argv[]) {
         check(diagnostics.coarseBlockCount == 6
                   && diagnostics.refinedBlockCount > 0
                   && diagnostics.coarseValidCellCount == 24'576
-                  && diagnostics.refinedValidCellCount == 24'576
+                  && diagnostics.refinedValidCellCount == 52'800
                   && diagnostics.allocatedVelocityBytes > 0,
               "AMR hierarchy allocates bounded coarse and refined face fields");
         check(diagnostics.maximumInteriorWakePerturbationMetersPerSecond > 0.0

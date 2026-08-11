@@ -2,6 +2,7 @@
 #include "cfd_slice.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <exception>
 #include <vector>
@@ -26,6 +27,40 @@ const simwing::viewer::ScalarField* field(
             return candidate.name == name;
         });
     return found == frame.scalarFields.end() ? nullptr : &*found;
+}
+
+simwing::fsi::Scene staticPlateScene() {
+    using namespace simwing::fsi;
+    Scene scene;
+    scene.metadata.designChecksum = "sha256:amr-static-plate";
+    scene.metadata.exporterVersion = "amr-static-plate-test/1";
+    scene.regions = {
+        {1, RegionKind::Outside, "outside"},
+        {2, RegionKind::Cell, "inside"},
+    };
+    scene.vertices = {
+        {0x1000000000000010ULL, {-1.0, 0.93, -1.0}},
+        {0x1000000000000011ULL, {1.0, 0.93, -1.0}},
+        {0x1000000000000012ULL, {1.0, 0.93, 1.0}},
+        {0x1000000000000013ULL, {-1.0, 0.93, 1.0}},
+    };
+    scene.fabricMaterials = {
+        {100, "ripstop", 900.0, 650.0, 220.0, 0.015,
+         0.041, 0.02, 0.0125, 2.5e-12},
+    };
+    scene.triangles = {
+        {0x2000000000000500ULL,
+         {0x1000000000000010ULL, 0x1000000000000011ULL,
+          0x1000000000000012ULL},
+         {{{0.0, 0.0}, {2.0, 0.0}, {2.0, 2.0}}},
+         1, 2, 100, 900, SurfaceRole::Skin},
+        {0x2000000000000501ULL,
+         {0x1000000000000010ULL, 0x1000000000000012ULL,
+          0x1000000000000013ULL},
+         {{{0.0, 0.0}, {2.0, 2.0}, {0.0, 2.0}}},
+         1, 2, 100, 900, SurfaceRole::Skin},
+    };
+    return scene;
 }
 
 std::vector<std::uint8_t> serialized(
@@ -92,6 +127,59 @@ int main(int argc, char* argv[]) {
                       .projection.maximumDivergenceReductionRatio
                       < 1.0e-7,
               "visible transport retains the accepted two-level pressure projection");
+
+        simwing::fsi::amr::ExternalFlowTransportCase staticWing(
+            staticPlateScene());
+        const auto staticWingFrame = staticWing.advance();
+        const auto& staticWingDiagnostics =
+            staticWing.diagnostics().momentum.staticWing;
+        std::printf(
+            "AMR static wing: triangles=%zu cut-cells=%zu normal=%.17g->%.17g->%.17g m/s divergence=%.17g 1/s slice=%d\n",
+            staticWingDiagnostics.binding.triangleCount,
+            staticWingDiagnostics.binding.activeCompositeCutCellCount,
+            staticWingDiagnostics
+                .maximumSurfaceNormalSpeedBeforeMetersPerSecond,
+            staticWingDiagnostics
+                .maximumSurfaceNormalSpeedAfterForcingMetersPerSecond,
+            staticWingDiagnostics
+                .maximumSurfaceNormalSpeedAfterProjectionMetersPerSecond,
+            staticWing.diagnostics().projection
+                .projectedMaximumDivergencePerSecond,
+            simwing::viewer::describeCfdGrid(staticWingFrame).has_value()
+                ? 1 : 0);
+        check(staticWingDiagnostics.active
+                  && staticWingDiagnostics.accepted
+                  && staticWingDiagnostics.binding.accepted
+                  && staticWingDiagnostics.binding.triangleCount == 2
+                  && staticWingDiagnostics.binding
+                         .activeCompositeCutCellCount > 0,
+              "authoritative static scene triangles bind to positive-area cells on the AMR hierarchy");
+        check(staticWingDiagnostics
+                      .maximumSurfaceNormalSpeedBeforeMetersPerSecond > 0.0
+                  && staticWingDiagnostics
+                         .maximumSurfaceNormalSpeedAfterForcingMetersPerSecond
+                      < staticWingDiagnostics
+                            .maximumSurfaceNormalSpeedBeforeMetersPerSecond
+                  && std::isfinite(
+                      staticWingDiagnostics
+                          .maximumSurfaceNormalSpeedAfterProjectionMetersPerSecond)
+                  && staticWingDiagnostics.forcingProjectionIterations == 12
+                  && staticWingDiagnostics
+                         .maximumSurfaceNormalSpeedAfterProjectionMetersPerSecond
+                      < 0.05 * staticWingDiagnostics
+                                   .maximumSurfaceNormalSpeedBeforeMetersPerSecond,
+              "alternating static-wing forcing and projection strongly reduce incident normal velocity");
+        check(staticWingFrame.sceneChecksum == "sha256:amr-static-plate"
+                  && staticWingFrame.solverCommit
+                      == simwing::fsi::amr::staticWingExternalFlowSolverId
+                  && staticWingFrame.vertices.size() == 24'580
+                  && staticWingFrame.triangles.size() == 2
+                  && field(staticWingFrame, "static wing cut cell") != nullptr,
+              "static-wing frames retain the scene surface beside the CFD slice");
+        check(simwing::viewer::describeCfdGrid(staticWingFrame).has_value()
+                  && staticWing.diagnostics().projection
+                         .projectedMaximumDivergencePerSecond < 1.0e-9,
+              "surface geometry does not break the coarse CFD slice contract or composite projection");
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
         return 1;

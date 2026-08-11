@@ -42,6 +42,18 @@ void validateSettings(const WindTunnelGridSettings& settings) {
         || settings.maximumGridSize < 4
         || settings.maximumGridSize > 256
         || settings.refinementRatio != 2
+        || settings.refinedCoarseCellLower[0] == 0
+        || settings.refinedCoarseCellLower[1] == 0
+        || settings.refinedCoarseCellLower[2] == 0
+        || settings.refinedCoarseCellUpperExclusive[0] >= counts.x
+        || settings.refinedCoarseCellUpperExclusive[1] >= counts.y
+        || settings.refinedCoarseCellUpperExclusive[2] >= counts.z
+        || settings.refinedCoarseCellLower[0]
+            >= settings.refinedCoarseCellUpperExclusive[0]
+        || settings.refinedCoarseCellLower[1]
+            >= settings.refinedCoarseCellUpperExclusive[1]
+        || settings.refinedCoarseCellLower[2]
+            >= settings.refinedCoarseCellUpperExclusive[2]
         || !std::isfinite(settings.lowerMeters.x)
         || !std::isfinite(settings.lowerMeters.y)
         || !std::isfinite(settings.lowerMeters.z)
@@ -330,16 +342,17 @@ WindTunnelBoundaryDiagnostics evaluateWindTunnelBoundaryInitialization(
     const amrex::Geometry refinedGeometry(
         refinedDomain, &physicalDomain, amrex::CoordSys::cartesian,
         nonPeriodic.data());
-    const amrex::IntVect quarter(
-        static_cast<int>(settings.coarseCellCounts.x / 4),
-        static_cast<int>(settings.coarseCellCounts.y / 4),
-        static_cast<int>(settings.coarseCellCounts.z / 4));
-    const amrex::IntVect threeQuarter(
-        static_cast<int>(3 * settings.coarseCellCounts.x / 4 - 1),
-        static_cast<int>(3 * settings.coarseCellCounts.y / 4 - 1),
-        static_cast<int>(3 * settings.coarseCellCounts.z / 4 - 1));
+    const amrex::IntVect refinementLower(
+        static_cast<int>(settings.refinedCoarseCellLower[0]),
+        static_cast<int>(settings.refinedCoarseCellLower[1]),
+        static_cast<int>(settings.refinedCoarseCellLower[2]));
+    const amrex::IntVect refinementUpper(
+        static_cast<int>(settings.refinedCoarseCellUpperExclusive[0] - 1),
+        static_cast<int>(settings.refinedCoarseCellUpperExclusive[1] - 1),
+        static_cast<int>(settings.refinedCoarseCellUpperExclusive[2] - 1));
     amrex::BoxArray refinedBoxes(
-        amrex::refine(amrex::Box(quarter, threeQuarter), ratio));
+        amrex::refine(
+            amrex::Box(refinementLower, refinementUpper), ratio));
     refinedBoxes.maxSize(
         static_cast<int>(settings.maximumGridSize
                          * settings.refinementRatio));
