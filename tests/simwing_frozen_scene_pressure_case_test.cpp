@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <exception>
+#include <string>
 #include <stdexcept>
 #include <vector>
 
@@ -212,6 +213,24 @@ void testFrozenScenePressureCase() {
         scene, movingSettings);
     const auto frozenReferenceFrame = frozenReference.advance();
     movingSettings.useMovingGeometryFsi = true;
+    auto prestrainedScene = scene;
+    for (auto& triangle : prestrainedScene.triangles) {
+        for (auto& coordinate : triangle.materialCoordinates) {
+            coordinate.x *= 0.5;
+            coordinate.y *= 0.5;
+        }
+    }
+    bool prestrainedRejected = false;
+    try {
+        simwing::fsi::FrozenScenePressureCase rejected(
+            prestrainedScene, movingSettings);
+    } catch (const std::runtime_error& exception) {
+        prestrainedRejected = std::string(exception.what()).find(
+            "initial Structure rest audit rejected") != std::string::npos;
+    }
+    check(prestrainedRejected,
+          "moving scene FSI rejects a nonstationary imported rest state before CFD assembly");
+
     simwing::fsi::FrozenScenePressureCase movingFirst(
         scene, movingSettings);
     simwing::fsi::FrozenScenePressureCase movingSecond(

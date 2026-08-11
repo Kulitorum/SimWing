@@ -27,6 +27,7 @@
 #include "scene_fluid_surface_transfer.h"
 #include "scene_structure.h"
 #include "structure_frame.h"
+#include "structure_rest_audit.h"
 
 #include <algorithm>
 #include <cmath>
@@ -225,6 +226,26 @@ struct FluidLoadTransfers {
     ConservativeTransferResult total;
 };
 
+StructureStepSettings makeStructureStepSettings(
+    const StructureDefinition& definition,
+    const FrozenScenePressureCaseSettings& settings) {
+    StructureStepSettings result;
+    result.timeStepSeconds = settings.timeStepSeconds;
+    result.gravityMetersPerSecondSquared = {};
+    if (definition.suspension) {
+        result.constraintIterations =
+            definition.suspension->solverIterations;
+    }
+    if (settings.useMovingGeometryFsi) {
+        // The authoritative tessellation contains much smaller membrane
+        // charts than the analytic harnesses. Resolve their structural time
+        // scale explicitly instead of altering authored mass or stiffness at
+        // the scene boundary.
+        result.substeps = 8;
+    }
+    return result;
+}
+
 FluidLoadTransfers evaluateFluidLoads(
     const SceneFluidSurfaceDefinition& surface,
     const SceneFluidSurfaceState& state,
@@ -291,6 +312,38 @@ BuiltCase buildCase(
             + assemblyError(assembly));
     }
     Structure structure(assembly.definition);
+    if (settings.useMovingGeometryFsi) {
+        const auto restAudit = auditStructureRestState(
+            structure,
+            makeStructureStepSettings(assembly.definition, settings));
+        if (!restAudit.stationary) {
+            std::ostringstream message;
+            message.precision(17);
+            message
+                << "moving scene initial Structure rest audit rejected:"
+                << " node=" << restAudit.maximumDisplacementNode;
+            if (restAudit.maximumDisplacementNode
+                < assembly.mappings.nodeVertexIds.size()) {
+                message << " vertex-id="
+                        << assembly.mappings.nodeVertexIds[
+                               restAudit.maximumDisplacementNode];
+            }
+            message
+                << " dx=" << restAudit.maximumNodeDisplacementMeters
+                << " m rms-dx=" << restAudit.rmsNodeDisplacementMeters
+                << " m node-speed="
+                << restAudit.maximumNodeSpeedMetersPerSecond
+                << " m/s payload-dx="
+                << restAudit.payloadDisplacementMeters
+                << " m payload-rotation="
+                << restAudit.payloadRotationRadians
+                << " rad harness-dx="
+                << restAudit.maximumHarnessDisplacementMeters
+                << " m line-residual="
+                << restAudit.maximumSuspensionResidualMeters << " m";
+            throw std::runtime_error(message.str());
+        }
+    }
     auto state = captureSceneFluidSurfaceState(
         surface.definition, assembly.mappings, structure);
     SceneFluidSurfaceTransfer transfer(
@@ -1092,19 +1145,8 @@ struct FrozenScenePressureCase::Implementation {
         const FrozenScenePressureCaseSettings& settingsValue)
         : built(std::move(builtValue)), settings(settingsValue),
           diagnostics(makeDiagnostics(built)) {
-        stepSettings.timeStepSeconds = settings.timeStepSeconds;
-        stepSettings.gravityMetersPerSecondSquared = {};
-        if (built.assembly.definition.suspension) {
-            stepSettings.constraintIterations =
-                built.assembly.definition.suspension->solverIterations;
-        }
-        if (settings.useMovingGeometryFsi) {
-            // The authoritative tessellation contains much smaller membrane
-            // charts than the analytic harnesses. Resolve their structural
-            // time scale explicitly instead of altering authored mass or
-            // stiffness at the scene boundary.
-            stepSettings.substeps = 8;
-        }
+        stepSettings = makeStructureStepSettings(
+            built.assembly.definition, settings);
         diagnostics.backgroundWindMetersPerSecond =
             settings.backgroundWindMetersPerSecond;
         diagnostics.windRampSeconds = settings.windRampSeconds;

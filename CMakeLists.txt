@@ -224,6 +224,8 @@ add_library(simwing_structure STATIC
     src/fsi/structure.h
     src/fsi/structure_checkpoint_persistence.cpp
     src/fsi/structure_checkpoint_persistence.h
+    src/fsi/structure_rest_audit.cpp
+    src/fsi/structure_rest_audit.h
 )
 target_include_directories(simwing_structure PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
@@ -1228,6 +1230,12 @@ add_executable(simwing-structure-test
 )
 target_link_libraries(simwing-structure-test PRIVATE simwing_structure)
 
+add_executable(simwing-structure-rest-audit-test
+    tests/simwing_structure_rest_audit_test.cpp
+)
+target_link_libraries(simwing-structure-rest-audit-test
+    PRIVATE simwing_structure)
+
 add_executable(simwing-scene-structure-test
     tests/simwing_scene_structure_test.cpp
 )
@@ -2152,6 +2160,8 @@ add_test(NAME simwing_model_scene_real_export
         "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/3.28/leparagliding.txt"
         "${CMAKE_BINARY_DIR}/simwing-model-scene-real-export-output")
 add_test(NAME simwing_structure COMMAND simwing-structure-test)
+add_test(NAME simwing_structure_rest_audit
+    COMMAND simwing-structure-rest-audit-test)
 add_test(NAME simwing_scene_structure COMMAND simwing-scene-structure-test)
 add_test(NAME simwing_scene_fluid_surface
     COMMAND simwing-scene-fluid-surface-test)

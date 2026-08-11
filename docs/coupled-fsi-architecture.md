@@ -3500,18 +3500,22 @@ triangle/cell publication additionally requires a nonempty exact convex clip,
 and coordinate-ULP face traces remain point contacts rather than graph
 self-edges.
 
-Real-wing moving acceptance is still not claimed. A zero-wind gnuC2 fixture
-audit applies exactly zero resultant fluid force, completes the Structure step
-with a `4.37e-9 m` suspension residual, but moves the imported surface by
-`0.0298204 m` and correctly rejects an authored intake cap that is no longer
-planar. Raising diagnostic structural resolution to 32 substeps does not make
-that imported rest state stationary. The real-export fixture supplies
-synthetic physical properties and permits vertex-snapped terminal attachments,
-so its rest-state/material/attachment initialization must become authoritative
-before it is a moving-physics oracle. The production opt-in probe retains eight
-substeps, 16 coupled structural/line iterations, and the default `0.2 mm` line
-certification bound, then restores the pre-step Structure checkpoint on this
-gate.
+Real-wing moving acceptance is still not claimed. Moving mode now runs one
+transactional zero-load Structure step before it builds the CFD grid or any
+fluid geometry epoch, using the same production time step, eight substeps, 16
+coupled structural/line iterations, and default `0.2 mm` line certification
+bound as the later moving step. It requires zero pending loads and stationary
+node/payload/harness state, measures displacement and retained velocity, and
+restores the complete Structure checkpoint whether the probe accepts, rejects,
+or throws. The zero-wind gnuC2 fixture now fails this gate in about four seconds
+with `0.0103960 m` maximum node drift, `0.000342478 m` RMS drift,
+`0.406833 m/s` maximum node speed, and a `7.76e-8 m` final line residual. An
+earlier 32-substep diagnostic applied exactly zero resultant fluid force, moved
+the imported surface by `0.0298204 m`, and then correctly rejected an authored
+intake cap that was no longer planar. The real-export fixture supplies synthetic
+physical properties and permits vertex-snapped terminal attachments, so its
+rest-state/material/attachment initialization must become authoritative before
+it is a moving-physics oracle.
 Cartesian subfaces are conservatively area-collapsed into a bulk continuation
 MAC field; cell-owned intake traces remain explicit because they have no unique
 Cartesian face. The real gnuC2 developer export completes this path through 138
