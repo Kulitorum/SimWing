@@ -3806,9 +3806,20 @@ bounded passive marker with first-order donor-cell transport. At `dt=0.01 s`
 the observed maximum outgoing CFL is `0.411081`; the marker remains in `[0,1]`
 and visibly moves in positive Y through the axis-selectable CFD slice. The
 worker opens the viewer by default and remains paced by simulation time. This
-is intentionally a scalar transport/direction diagnostic over a frozen
-projected velocity: it is not momentum transport, a converged external flow,
-or aerodynamic evidence.
+bridge now also owns a persistent two-level momentum state. Before each step,
+coarse physical ghosts and divergence-preserving fine/coarse face ghosts are
+filled; all three staggered components receive a first-order donor-cell
+convective predictor; normal inflow/far-field velocity and outlet extrapolation
+are reapplied; fine faces are averaged down; and the predictor receives a fresh
+composite pressure projection. The first predictor has maximum outgoing CFL
+`0.800994`, changes the averaged coarse velocity by up to `0.01539 m/s`, and
+reduces predictor divergence from `8.04e-3 s^-1` to `7.90e-14 s^-1`. A 20-step
+worker smoke run ends with CFL `0.80206`, per-step coarse velocity change
+`3.89e-3 m/s`, and maximum divergence `3.81e-13 s^-1`. Failed or rejected
+advances restore all face velocities transactionally. The live marker remains
+the clearest direction visualization, but the velocity and pressure fields are
+now evolving momentum state. This is still an empty tunnel without viscosity,
+a turbulence model, a wing/interface boundary, or aerodynamic evidence.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

@@ -2431,11 +2431,15 @@ int main(int argc, char* argv[]) {
                 const auto& diagnostics = simulation.diagnostics();
                 std::printf(
                     "simwing-fsi completed %llu external-flow marker step(s), "
-                    "t=%.9g s, max-CFL=%.6g, projected-divergence=%.6g 1/s, "
+                    "t=%.9g s, momentum-CFL=%.6g, velocity-change=%.6g m/s, "
+                    "marker-CFL=%.6g, projected-divergence=%.6g 1/s, "
                     "marker=[%.6g, %.6g], trace=%s\n",
                     static_cast<unsigned long long>(
                         simulation.acceptedStepCount()),
                     simulation.simulationTimeSeconds(),
+                    diagnostics.momentum.maximumOutgoingCourantNumber,
+                    diagnostics.momentum
+                        .maximumCellVelocityChangeMetersPerSecond,
                     diagnostics.maximumOutgoingCourantNumber,
                     diagnostics.projection
                         .projectedMaximumDivergencePerSecond,

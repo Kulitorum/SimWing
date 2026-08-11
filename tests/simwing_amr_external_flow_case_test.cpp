@@ -81,10 +81,13 @@ int main(int argc, char* argv[]) {
         check(marker != nullptr && markerMovedDownstream,
               "passive flow marker visibly advances in positive Y");
         check(first.diagnostics().accepted
+                  && first.diagnostics().momentum.accepted
+                  && first.diagnostics().momentum
+                         .maximumCellVelocityChangeMetersPerSecond > 0.0
                   && first.diagnostics().maximumOutgoingCourantNumber < 1.0
                   && first.diagnostics().minimumMarker >= 0.0
                   && first.diagnostics().maximumMarker <= 1.0,
-              "passive marker transport remains within its donor-cell bound");
+              "projected momentum and passive marker transport remain within their donor-cell bounds");
         check(first.diagnostics()
                       .projection.maximumDivergenceReductionRatio
                       < 1.0e-7,

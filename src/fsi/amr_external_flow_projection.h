@@ -4,11 +4,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace simwing::fsi::amr {
 
 inline constexpr std::uint32_t amrWindTunnelProjectionVersion = 1;
+inline constexpr std::uint32_t amrWindTunnelMomentumStepVersion = 1;
 
 struct WindTunnelProjectionSettings {
     WindTunnelGridSettings grid;
@@ -53,6 +55,25 @@ struct WindTunnelProjectedCoarseGrid {
     std::vector<double> divergencePerSecond;
 };
 
+struct WindTunnelMomentumStepDiagnostics {
+    std::uint32_t version = amrWindTunnelMomentumStepVersion;
+    WindTunnelProjectionDiagnostics initialProjection;
+    WindTunnelProjectionDiagnostics correctedProjection;
+    double maximumOutgoingCourantNumber = 0.0;
+    double maximumCellVelocityChangeMetersPerSecond = 0.0;
+    double kineticEnergyBeforeJoules = 0.0;
+    double kineticEnergyAfterJoules = 0.0;
+    bool finite = false;
+    bool accepted = false;
+
+    bool operator==(const WindTunnelMomentumStepDiagnostics&) const = default;
+};
+
+struct WindTunnelMomentumStepResult {
+    WindTunnelMomentumStepDiagnostics diagnostics;
+    WindTunnelProjectedCoarseGrid projectedCoarseGrid;
+};
+
 // Projects a deliberately divergent, nonuniform positive-Y wake on the
 // two-level non-periodic hierarchy. Homogeneous pressure-correction Neumann
 // conditions preserve prescribed normal velocity at -Y and the X/Z far
@@ -66,5 +87,35 @@ evaluateWindTunnelPressureProjection(
 [[nodiscard]] WindTunnelProjectedCoarseGrid
 evaluateWindTunnelProjectedCoarseGrid(
     const WindTunnelProjectionSettings& settings = {});
+
+// Advances all face-centred velocity components through one first-order
+// donor-cell convective predictor on both AMR levels, reapplies the physical
+// velocity contract, synchronizes fine/coarse faces, and performs a fresh
+// composite pressure projection. This remains an empty wind-tunnel canonical:
+// no wing/interface force or turbulence model is present.
+[[nodiscard]] WindTunnelMomentumStepResult
+evaluateWindTunnelMomentumAdvance(
+    const WindTunnelProjectionSettings& settings = {});
+
+class WindTunnelMomentumState final {
+public:
+    explicit WindTunnelMomentumState(
+        WindTunnelProjectionSettings settings = {});
+    ~WindTunnelMomentumState();
+
+    WindTunnelMomentumState(const WindTunnelMomentumState&) = delete;
+    WindTunnelMomentumState& operator=(const WindTunnelMomentumState&) =
+        delete;
+    WindTunnelMomentumState(WindTunnelMomentumState&&) = delete;
+    WindTunnelMomentumState& operator=(WindTunnelMomentumState&&) = delete;
+
+    [[nodiscard]] WindTunnelMomentumStepResult advance();
+    [[nodiscard]] const WindTunnelProjectedCoarseGrid&
+    projectedCoarseGrid() const noexcept;
+
+private:
+    struct Implementation;
+    std::unique_ptr<Implementation> implementation_;
+};
 
 } // namespace simwing::fsi::amr

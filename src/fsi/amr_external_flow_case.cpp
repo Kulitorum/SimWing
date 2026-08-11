@@ -67,6 +67,7 @@ viewer::Vec3d toViewer(const fluid::Vector3 value) {
 
 struct ExternalFlowTransportCase::Implementation {
     ExternalFlowTransportSettings settings;
+    WindTunnelMomentumState momentum;
     WindTunnelProjectedCoarseGrid projected;
     std::vector<double> marker;
     ExternalFlowTransportDiagnostics diagnostics;
@@ -74,10 +75,10 @@ struct ExternalFlowTransportCase::Implementation {
     double simulationTimeSeconds = 0.0;
 
     explicit Implementation(ExternalFlowTransportSettings requestedSettings)
-        : settings(std::move(requestedSettings)) {
+        : settings(std::move(requestedSettings)),
+          momentum(settings.projection) {
         validateSettings(settings);
-        projected = evaluateWindTunnelProjectedCoarseGrid(
-            settings.projection);
+        projected = momentum.projectedCoarseGrid();
         if (!projected.diagnostics.accepted
             || projected.velocityMetersPerSecond.size()
                 != cellCount(projected.cellCounts)) {
@@ -115,7 +116,8 @@ struct ExternalFlowTransportCase::Implementation {
             static_cast<std::size_t>(j), static_cast<std::size_t>(k))];
     }
 
-    void advanceMarker() {
+    void advanceMarker(
+        const WindTunnelMomentumStepDiagnostics& momentumDiagnostics) {
         const auto counts = projected.cellCounts;
         const fluid::Vector3 spacing = cellSpacing(projected);
         const double phase = std::fmod(
@@ -170,6 +172,7 @@ struct ExternalFlowTransportCase::Implementation {
 
         ExternalFlowTransportDiagnostics nextDiagnostics;
         nextDiagnostics.projection = projected.diagnostics;
+        nextDiagnostics.momentum = momentumDiagnostics;
         nextDiagnostics.maximumOutgoingCourantNumber = maximumCourant;
         nextDiagnostics.minimumMarker =
             *std::ranges::min_element(next);
@@ -185,6 +188,7 @@ struct ExternalFlowTransportCase::Implementation {
             && std::isfinite(nextDiagnostics.maximumMarker)
             && std::isfinite(nextDiagnostics.markerIntegralCubicMeters);
         nextDiagnostics.accepted = nextDiagnostics.projection.accepted
+            && nextDiagnostics.momentum.accepted
             && nextDiagnostics.finite
             && nextDiagnostics.maximumOutgoingCourantNumber <= 1.0
             && nextDiagnostics.minimumMarker >= -1.0e-12
@@ -299,6 +303,13 @@ struct ExternalFlowTransportCase::Implementation {
             result, "maximum outgoing CFL", "1",
             diagnostics.maximumOutgoingCourantNumber);
         addGlobalScalar(
+            result, "momentum predictor maximum outgoing CFL", "1",
+            diagnostics.momentum.maximumOutgoingCourantNumber);
+        addGlobalScalar(
+            result, "momentum maximum velocity change", "m/s",
+            diagnostics.momentum
+                .maximumCellVelocityChangeMetersPerSecond);
+        addGlobalScalar(
             result, "projected divergence maximum", "1/s",
             diagnostics.projection.projectedMaximumDivergencePerSecond);
         addGlobalScalar(
@@ -337,7 +348,11 @@ viewer::TraceHeader ExternalFlowTransportCase::traceHeader() const {
 }
 
 viewer::DiagnosticFrame ExternalFlowTransportCase::advance() {
-    implementation_->advanceMarker();
+    WindTunnelMomentumStepResult momentum =
+        implementation_->momentum.advance();
+    implementation_->projected =
+        std::move(momentum.projectedCoarseGrid);
+    implementation_->advanceMarker(momentum.diagnostics);
     ++implementation_->acceptedStepCount;
     implementation_->simulationTimeSeconds +=
         implementation_->settings.timeStepSeconds;

@@ -24,6 +24,7 @@ struct ExternalFlowTransportSettings {
 
 struct ExternalFlowTransportDiagnostics {
     WindTunnelProjectionDiagnostics projection;
+    WindTunnelMomentumStepDiagnostics momentum;
     double maximumOutgoingCourantNumber = 0.0;
     double minimumMarker = 0.0;
     double maximumMarker = 0.0;

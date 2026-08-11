@@ -57,6 +57,50 @@ int main(int argc, char* argv[]) {
                   && diagnostics.upperYOutletNormalVelocityChangeMetersPerSecond
                       > 0.0,
               "projection preserves prescribed -Y normal inflow and adjusts +Y outlet flux");
+
+        const auto momentum =
+            simwing::fsi::amr::evaluateWindTunnelMomentumAdvance();
+        std::printf(
+            "AMR momentum: CFL=%.17g velocity-change=%.17g m/s, "
+            "energy %.17g -> %.17g J, predictor-divergence=%.17g 1/s, "
+            "projected-divergence=%.17g 1/s\n",
+            momentum.diagnostics.maximumOutgoingCourantNumber,
+            momentum.diagnostics.maximumCellVelocityChangeMetersPerSecond,
+            momentum.diagnostics.kineticEnergyBeforeJoules,
+            momentum.diagnostics.kineticEnergyAfterJoules,
+            momentum.diagnostics.correctedProjection
+                .initialMaximumDivergencePerSecond,
+            momentum.diagnostics.correctedProjection
+                .projectedMaximumDivergencePerSecond);
+        check(momentum.diagnostics.accepted
+                  && momentum.diagnostics.maximumOutgoingCourantNumber < 1.0
+                  && momentum.diagnostics
+                         .maximumCellVelocityChangeMetersPerSecond > 0.0,
+              "two-level donor-cell momentum predictor advances a nonuniform velocity within CFL");
+        check(momentum.diagnostics.correctedProjection.accepted
+                  && momentum.diagnostics.correctedProjection
+                         .maximumDivergenceReductionRatio < 1.0e-7,
+              "momentum predictor receives a fresh accepted open-boundary projection");
+
+        simwing::fsi::amr::WindTunnelMomentumState state;
+        simwing::fsi::fluid::Vector3 previousVelocity =
+            state.projectedCoarseGrid().velocityMetersPerSecond[12'288];
+        bool evolvedAcrossSteps = false;
+        for (std::size_t step = 0; step < 12; ++step) {
+            const auto advanced = state.advance();
+            check(advanced.diagnostics.accepted
+                      && advanced.diagnostics.correctedProjection
+                             .projectedMaximumDivergencePerSecond < 1.0e-9,
+                  "persistent AMR momentum state accepts each projected timestep");
+            const auto currentVelocity =
+                state.projectedCoarseGrid()
+                    .velocityMetersPerSecond[12'288];
+            evolvedAcrossSteps = evolvedAcrossSteps
+                || currentVelocity != previousVelocity;
+            previousVelocity = currentVelocity;
+        }
+        check(evolvedAcrossSteps,
+              "persistent AMR momentum state evolves rather than replaying one static projection");
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
         return 1;

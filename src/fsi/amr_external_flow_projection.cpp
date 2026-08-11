@@ -1,14 +1,18 @@
 #include "amr_external_flow_projection.h"
 
 #include <AMReX_Array.H>
+#include <AMReX_BCRec.H>
 #include <AMReX_BoxArray.H>
 #include <AMReX_DistributionMapping.H>
+#include <AMReX_FillPatchUtil.H>
 #include <AMReX_Geometry.H>
+#include <AMReX_Interpolater.H>
 #include <AMReX_MFIter.H>
 #include <AMReX_MLMG.H>
 #include <AMReX_MLPoisson.H>
 #include <AMReX_MultiFab.H>
 #include <AMReX_MultiFabUtil.H>
+#include <AMReX_PhysBCFunct.H>
 
 #include <algorithm>
 #include <array>
@@ -347,18 +351,280 @@ void copyProjectedCoarseGrid(
     }
 }
 
-WindTunnelProjectionDiagnostics evaluateProjection(
-    const WindTunnelProjectionSettings& settings,
-    WindTunnelProjectedCoarseGrid* projectedCoarseGrid) {
-    validateProjectionSettings(settings);
-    if (!amrex::Initialized()) {
-        throw std::logic_error("AMReX runtime is not initialized");
+void fillCoarsePhysicalGhosts(
+    Hierarchy& hierarchy,
+    const fluid::Vector3 freestream) {
+    const std::array<double, 3> prescribed{
+        freestream.x, freestream.y, freestream.z};
+    const amrex::Box& cellDomain = hierarchy.geometry[0].Domain();
+    for (int axis = 0; axis < 3; ++axis) {
+        amrex::MultiFab& field = *hierarchy.velocity[0][axis];
+        field.FillBoundary(hierarchy.geometry[0].periodicity());
+        const amrex::Box faceDomain = amrex::convert(
+            cellDomain, amrex::IntVect::TheDimensionVector(axis));
+        for (amrex::MFIter iterator(field); iterator.isValid(); ++iterator) {
+            const amrex::Box box = iterator.fabbox();
+            auto values = field.array(iterator);
+            for (int k = box.smallEnd(2); k <= box.bigEnd(2); ++k) {
+                for (int j = box.smallEnd(1); j <= box.bigEnd(1); ++j) {
+                    for (int i = box.smallEnd(0); i <= box.bigEnd(0); ++i) {
+                        const bool outsideX = i < faceDomain.smallEnd(0)
+                            || i > faceDomain.bigEnd(0);
+                        const bool outsideZ = k < faceDomain.smallEnd(2)
+                            || k > faceDomain.bigEnd(2);
+                        if (outsideX || outsideZ
+                            || j < faceDomain.smallEnd(1)) {
+                            values(i, j, k) = prescribed[axis];
+                        } else if (j > faceDomain.bigEnd(1)) {
+                            values(i, j, k) =
+                                values(i, faceDomain.bigEnd(1), k);
+                        }
+                    }
+                }
+            }
+        }
     }
+}
 
+void fillFineVelocityGhosts(Hierarchy& hierarchy) {
+    const amrex::IntVect ratio(2);
+    const amrex::Array<amrex::MultiFab*, 3> coarse{
+        hierarchy.velocity[0][0].get(),
+        hierarchy.velocity[0][1].get(),
+        hierarchy.velocity[0][2].get(),
+    };
+    const amrex::Array<amrex::MultiFab*, 3> fine{
+        hierarchy.velocity[1][0].get(),
+        hierarchy.velocity[1][1].get(),
+        hierarchy.velocity[1][2].get(),
+    };
+    amrex::Vector<amrex::Array<amrex::MultiFab*, 3>> coarseData{coarse};
+    amrex::Vector<amrex::Array<amrex::MultiFab*, 3>> fineData{fine};
+    const amrex::Vector<amrex::Real> times{0.0};
+    amrex::Array<amrex::Vector<amrex::BCRec>, 3> boundaryRecords;
+    for (auto& componentRecords : boundaryRecords) {
+        componentRecords.resize(1);
+        for (int axis = 0; axis < 3; ++axis) {
+            componentRecords[0].setLo(axis, amrex::BCType::int_dir);
+            componentRecords[0].setHi(axis, amrex::BCType::int_dir);
+        }
+    }
+    amrex::Array<amrex::PhysBCFunctNoOp, 3> physicalBoundaries;
+    amrex::Interpolater* interpolater = &amrex::face_divfree_interp;
+    amrex::FillPatchTwoLevels(
+        fine, 0.0, coarseData, times, fineData, times,
+        0, 0, 1,
+        hierarchy.geometry[0], hierarchy.geometry[1],
+        physicalBoundaries, 0, physicalBoundaries, 0,
+        ratio, interpolater, boundaryRecords, 0);
+}
+
+void fillVelocityGhosts(
+    Hierarchy& hierarchy,
+    const fluid::Vector3 freestream) {
+    fillCoarsePhysicalGhosts(hierarchy, freestream);
+    fillFineVelocityGhosts(hierarchy);
+}
+
+void enforceCoarseNormalVelocityBoundaries(
+    Hierarchy& hierarchy,
+    const fluid::Vector3 freestream) {
+    const amrex::Box& domain = hierarchy.geometry[0].Domain();
+    for (int axis = 0; axis < 3; ++axis) {
+        amrex::MultiFab& field = *hierarchy.velocity[0][axis];
+        for (amrex::MFIter iterator(field); iterator.isValid(); ++iterator) {
+            const amrex::Box box = iterator.validbox();
+            auto values = field.array(iterator);
+            for (int k = box.smallEnd(2); k <= box.bigEnd(2); ++k) {
+                for (int j = box.smallEnd(1); j <= box.bigEnd(1); ++j) {
+                    for (int i = box.smallEnd(0); i <= box.bigEnd(0); ++i) {
+                        if (axis == 0
+                            && (i == domain.smallEnd(0)
+                                || i == domain.bigEnd(0) + 1)) {
+                            values(i, j, k) = freestream.x;
+                        } else if (axis == 1
+                                   && j == domain.smallEnd(1)) {
+                            values(i, j, k) = freestream.y;
+                        } else if (axis == 1
+                                   && j == domain.bigEnd(1) + 1) {
+                            values(i, j, k) = values(i, j - 1, k);
+                        } else if (axis == 2
+                                   && (k == domain.smallEnd(2)
+                                       || k == domain.bigEnd(2) + 1)) {
+                            values(i, j, k) = freestream.z;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+double advectMomentumPredictor(
+    Hierarchy& hierarchy,
+    const WindTunnelProjectionSettings& settings) {
+    fillVelocityGhosts(
+        hierarchy, settings.grid.freestreamMetersPerSecond);
+    double maximumCourant = 0.0;
+    for (std::size_t level = 0;
+         level < hierarchy.velocity.size(); ++level) {
+        FaceFields next;
+        for (int component = 0; component < 3; ++component) {
+            const amrex::BoxArray faces = amrex::convert(
+                hierarchy.boxes[level],
+                amrex::IntVect::TheDimensionVector(component));
+            next[component] = std::make_unique<amrex::MultiFab>(
+                faces, hierarchy.distribution[level], 1, 1);
+            next[component]->setVal(0.0);
+        }
+        const auto inverseSpacing =
+            hierarchy.geometry[level].InvCellSizeArray();
+        for (int component = 0; component < 3; ++component) {
+            const amrex::MultiFab& source =
+                *hierarchy.velocity[level][component];
+            for (amrex::MFIter iterator(source);
+                 iterator.isValid(); ++iterator) {
+                const amrex::Box box = iterator.validbox();
+                const auto u =
+                    hierarchy.velocity[level][0]->const_array(iterator);
+                const auto v =
+                    hierarchy.velocity[level][1]->const_array(iterator);
+                const auto w =
+                    hierarchy.velocity[level][2]->const_array(iterator);
+                const auto q = source.const_array(iterator);
+                auto destination = next[component]->array(iterator);
+                for (int k = box.smallEnd(2); k <= box.bigEnd(2); ++k) {
+                    for (int j = box.smallEnd(1); j <= box.bigEnd(1); ++j) {
+                        for (int i = box.smallEnd(0); i <= box.bigEnd(0); ++i) {
+                            double advectX = 0.0;
+                            double advectY = 0.0;
+                            double advectZ = 0.0;
+                            if (component == 0) {
+                                advectX = u(i, j, k);
+                                advectY = 0.25
+                                    * (v(i - 1, j, k) + v(i, j, k)
+                                       + v(i - 1, j + 1, k)
+                                       + v(i, j + 1, k));
+                                advectZ = 0.25
+                                    * (w(i - 1, j, k) + w(i, j, k)
+                                       + w(i - 1, j, k + 1)
+                                       + w(i, j, k + 1));
+                            } else if (component == 1) {
+                                advectX = 0.25
+                                    * (u(i, j - 1, k) + u(i + 1, j - 1, k)
+                                       + u(i, j, k) + u(i + 1, j, k));
+                                advectY = v(i, j, k);
+                                advectZ = 0.25
+                                    * (w(i, j - 1, k) + w(i, j, k)
+                                       + w(i, j - 1, k + 1)
+                                       + w(i, j, k + 1));
+                            } else {
+                                advectX = 0.25
+                                    * (u(i, j, k - 1) + u(i + 1, j, k - 1)
+                                       + u(i, j, k) + u(i + 1, j, k));
+                                advectY = 0.25
+                                    * (v(i, j, k - 1) + v(i, j + 1, k - 1)
+                                       + v(i, j, k) + v(i, j + 1, k));
+                                advectZ = w(i, j, k);
+                            }
+                            const double center = q(i, j, k);
+                            const double derivativeX = inverseSpacing[0]
+                                * (advectX >= 0.0
+                                       ? center - q(i - 1, j, k)
+                                       : q(i + 1, j, k) - center);
+                            const double derivativeY = inverseSpacing[1]
+                                * (advectY >= 0.0
+                                       ? center - q(i, j - 1, k)
+                                       : q(i, j + 1, k) - center);
+                            const double derivativeZ = inverseSpacing[2]
+                                * (advectZ >= 0.0
+                                       ? center - q(i, j, k - 1)
+                                       : q(i, j, k + 1) - center);
+                            destination(i, j, k) = center
+                                - settings.timeStepSeconds
+                                    * (advectX * derivativeX
+                                       + advectY * derivativeY
+                                       + advectZ * derivativeZ);
+                            maximumCourant = std::max(
+                                maximumCourant,
+                                settings.timeStepSeconds
+                                    * (std::abs(advectX) * inverseSpacing[0]
+                                       + std::abs(advectY) * inverseSpacing[1]
+                                       + std::abs(advectZ)
+                                           * inverseSpacing[2]));
+                        }
+                    }
+                }
+            }
+        }
+        hierarchy.velocity[level] = std::move(next);
+    }
+    if (!std::isfinite(maximumCourant) || !(maximumCourant <= 1.0)) {
+        throw std::runtime_error(
+            "AMR momentum predictor exceeds the donor-cell CFL bound");
+    }
+    enforceCoarseNormalVelocityBoundaries(
+        hierarchy, settings.grid.freestreamMetersPerSecond);
+    synchronizeCoarseFaces(hierarchy);
+    return maximumCourant;
+}
+
+double coarseKineticEnergy(
+    const WindTunnelProjectedCoarseGrid& grid,
+    const double density) {
+    const fluid::Vector3 spacing = {
+        (grid.upperMeters.x - grid.lowerMeters.x)
+            / static_cast<double>(grid.cellCounts.x),
+        (grid.upperMeters.y - grid.lowerMeters.y)
+            / static_cast<double>(grid.cellCounts.y),
+        (grid.upperMeters.z - grid.lowerMeters.z)
+            / static_cast<double>(grid.cellCounts.z),
+    };
+    const double cellMass = density * spacing.x * spacing.y * spacing.z;
+    double result = 0.0;
+    for (const fluid::Vector3 velocity : grid.velocityMetersPerSecond) {
+        result += 0.5 * cellMass
+            * (velocity.x * velocity.x
+               + velocity.y * velocity.y
+               + velocity.z * velocity.z);
+    }
+    return result;
+}
+
+double maximumCellVelocityChange(
+    const WindTunnelProjectedCoarseGrid& before,
+    const WindTunnelProjectedCoarseGrid& after) {
+    if (before.velocityMetersPerSecond.size()
+        != after.velocityMetersPerSecond.size()) {
+        throw std::logic_error(
+            "AMR momentum snapshots have inconsistent velocity storage");
+    }
+    double result = 0.0;
+    for (std::size_t index = 0;
+         index < before.velocityMetersPerSecond.size(); ++index) {
+        const fluid::Vector3 difference{
+            after.velocityMetersPerSecond[index].x
+                - before.velocityMetersPerSecond[index].x,
+            after.velocityMetersPerSecond[index].y
+                - before.velocityMetersPerSecond[index].y,
+            after.velocityMetersPerSecond[index].z
+                - before.velocityMetersPerSecond[index].z,
+        };
+        result = std::max(
+            result,
+            std::hypot(difference.x, difference.y, difference.z));
+    }
+    return result;
+}
+
+WindTunnelProjectionDiagnostics projectHierarchy(
+    const WindTunnelProjectionSettings& settings,
+    Hierarchy& hierarchy,
+    const WindTunnelBoundaryDiagnostics& hierarchyDiagnostics,
+    WindTunnelProjectedCoarseGrid* projectedCoarseGrid,
+    const bool requireNontrivialProjection) {
     WindTunnelProjectionDiagnostics diagnostics;
-    diagnostics.hierarchy =
-        evaluateWindTunnelBoundaryInitialization(settings.grid);
-    Hierarchy hierarchy = makeHierarchy(settings.grid);
+    diagnostics.hierarchy = hierarchyDiagnostics;
     synchronizeCoarseFaces(hierarchy);
     computeDivergence(hierarchy);
     std::size_t initialActiveCells = 0;
@@ -480,9 +746,12 @@ WindTunnelProjectionDiagnostics evaluateProjection(
         && diagnostics.finite
         && diagnostics.activeCompositeCellCount == initialActiveCells
         && diagnostics.solverIterations > 0
-        && diagnostics.initialMaximumDivergencePerSecond > 0.0
-        && diagnostics.maximumPressureCorrectionPascals > 0.0
-        && diagnostics.maximumDivergenceReductionRatio < 1.0e-7
+        && (!requireNontrivialProjection
+            || (diagnostics.initialMaximumDivergencePerSecond > 0.0
+                && diagnostics.maximumPressureCorrectionPascals > 0.0))
+        && (diagnostics.initialMaximumDivergencePerSecond == 0.0
+            ? diagnostics.projectedMaximumDivergencePerSecond == 0.0
+            : diagnostics.maximumDivergenceReductionRatio < 1.0e-7)
         && diagnostics.lowerYInflowNormalVelocityErrorMetersPerSecond
             < 1.0e-11
         && diagnostics.upperYOutletNormalVelocityChangeMetersPerSecond
@@ -498,6 +767,20 @@ WindTunnelProjectionDiagnostics evaluateProjection(
     return diagnostics;
 }
 
+WindTunnelProjectionDiagnostics evaluateProjection(
+    const WindTunnelProjectionSettings& settings,
+    WindTunnelProjectedCoarseGrid* projectedCoarseGrid) {
+    validateProjectionSettings(settings);
+    if (!amrex::Initialized()) {
+        throw std::logic_error("AMReX runtime is not initialized");
+    }
+    const WindTunnelBoundaryDiagnostics hierarchyDiagnostics =
+        evaluateWindTunnelBoundaryInitialization(settings.grid);
+    Hierarchy hierarchy = makeHierarchy(settings.grid);
+    return projectHierarchy(
+        settings, hierarchy, hierarchyDiagnostics, projectedCoarseGrid, true);
+}
+
 } // namespace
 
 WindTunnelProjectionDiagnostics evaluateWindTunnelPressureProjection(
@@ -510,6 +793,166 @@ WindTunnelProjectedCoarseGrid evaluateWindTunnelProjectedCoarseGrid(
     WindTunnelProjectedCoarseGrid result;
     static_cast<void>(evaluateProjection(settings, &result));
     return result;
+}
+
+WindTunnelMomentumStepResult evaluateWindTunnelMomentumAdvance(
+    const WindTunnelProjectionSettings& settings) {
+    validateProjectionSettings(settings);
+    if (!amrex::Initialized()) {
+        throw std::logic_error("AMReX runtime is not initialized");
+    }
+    const WindTunnelBoundaryDiagnostics hierarchyDiagnostics =
+        evaluateWindTunnelBoundaryInitialization(settings.grid);
+    Hierarchy hierarchy = makeHierarchy(settings.grid);
+    WindTunnelProjectedCoarseGrid before;
+    WindTunnelMomentumStepResult result;
+    result.diagnostics.initialProjection = projectHierarchy(
+        settings, hierarchy, hierarchyDiagnostics, &before, true);
+    result.diagnostics.maximumOutgoingCourantNumber =
+        advectMomentumPredictor(hierarchy, settings);
+    result.diagnostics.correctedProjection = projectHierarchy(
+        settings, hierarchy, hierarchyDiagnostics,
+        &result.projectedCoarseGrid, false);
+    result.diagnostics.maximumCellVelocityChangeMetersPerSecond =
+        maximumCellVelocityChange(before, result.projectedCoarseGrid);
+    result.diagnostics.kineticEnergyBeforeJoules = coarseKineticEnergy(
+        before, settings.airDensityKilogramsPerCubicMeter);
+    result.diagnostics.kineticEnergyAfterJoules = coarseKineticEnergy(
+        result.projectedCoarseGrid,
+        settings.airDensityKilogramsPerCubicMeter);
+    result.diagnostics.finite =
+        std::isfinite(
+            result.diagnostics.maximumOutgoingCourantNumber)
+        && std::isfinite(
+            result.diagnostics.maximumCellVelocityChangeMetersPerSecond)
+        && std::isfinite(result.diagnostics.kineticEnergyBeforeJoules)
+        && std::isfinite(result.diagnostics.kineticEnergyAfterJoules);
+    result.diagnostics.accepted =
+        result.diagnostics.initialProjection.accepted
+        && result.diagnostics.correctedProjection.accepted
+        && result.diagnostics.finite
+        && result.diagnostics.maximumOutgoingCourantNumber > 0.0
+        && result.diagnostics.maximumOutgoingCourantNumber <= 1.0
+        && result.diagnostics.maximumCellVelocityChangeMetersPerSecond > 0.0
+        && result.diagnostics.kineticEnergyBeforeJoules > 0.0
+        && result.diagnostics.kineticEnergyAfterJoules > 0.0;
+    return result;
+}
+
+namespace {
+
+amrex::Vector<FaceFields> cloneVelocity(const Hierarchy& hierarchy) {
+    amrex::Vector<FaceFields> result;
+    result.resize(hierarchy.velocity.size());
+    for (std::size_t level = 0;
+         level < hierarchy.velocity.size(); ++level) {
+        for (int axis = 0; axis < 3; ++axis) {
+            const amrex::MultiFab& source =
+                *hierarchy.velocity[level][axis];
+            result[level][axis] = std::make_unique<amrex::MultiFab>(
+                source.boxArray(), source.DistributionMap(),
+                source.nComp(), source.nGrowVect());
+            amrex::MultiFab::Copy(
+                *result[level][axis], source,
+                0, 0, source.nComp(), source.nGrowVect());
+        }
+    }
+    return result;
+}
+
+void finishMomentumDiagnostics(
+    const WindTunnelProjectionSettings& settings,
+    const WindTunnelProjectedCoarseGrid& before,
+    WindTunnelMomentumStepResult& result) {
+    result.diagnostics.maximumCellVelocityChangeMetersPerSecond =
+        maximumCellVelocityChange(before, result.projectedCoarseGrid);
+    result.diagnostics.kineticEnergyBeforeJoules = coarseKineticEnergy(
+        before, settings.airDensityKilogramsPerCubicMeter);
+    result.diagnostics.kineticEnergyAfterJoules = coarseKineticEnergy(
+        result.projectedCoarseGrid,
+        settings.airDensityKilogramsPerCubicMeter);
+    result.diagnostics.finite =
+        std::isfinite(
+            result.diagnostics.maximumOutgoingCourantNumber)
+        && std::isfinite(
+            result.diagnostics.maximumCellVelocityChangeMetersPerSecond)
+        && std::isfinite(result.diagnostics.kineticEnergyBeforeJoules)
+        && std::isfinite(result.diagnostics.kineticEnergyAfterJoules);
+    result.diagnostics.accepted =
+        result.diagnostics.initialProjection.accepted
+        && result.diagnostics.correctedProjection.accepted
+        && result.diagnostics.finite
+        && result.diagnostics.maximumOutgoingCourantNumber > 0.0
+        && result.diagnostics.maximumOutgoingCourantNumber <= 1.0
+        && result.diagnostics.maximumCellVelocityChangeMetersPerSecond > 0.0
+        && result.diagnostics.kineticEnergyBeforeJoules > 0.0
+        && result.diagnostics.kineticEnergyAfterJoules > 0.0;
+}
+
+} // namespace
+
+struct WindTunnelMomentumState::Implementation {
+    WindTunnelProjectionSettings settings;
+    WindTunnelBoundaryDiagnostics hierarchyDiagnostics;
+    Hierarchy hierarchy;
+    WindTunnelProjectedCoarseGrid current;
+
+    explicit Implementation(WindTunnelProjectionSettings requestedSettings)
+        : settings(std::move(requestedSettings)) {
+        validateProjectionSettings(settings);
+        if (!amrex::Initialized()) {
+            throw std::logic_error("AMReX runtime is not initialized");
+        }
+        hierarchyDiagnostics =
+            evaluateWindTunnelBoundaryInitialization(settings.grid);
+        hierarchy = makeHierarchy(settings.grid);
+        const auto initial = projectHierarchy(
+            settings, hierarchy, hierarchyDiagnostics, &current, true);
+        if (!initial.accepted) {
+            throw std::runtime_error(
+                "AMR momentum state initial projection was rejected");
+        }
+    }
+
+    WindTunnelMomentumStepResult advance() {
+        amrex::Vector<FaceFields> savedVelocity = cloneVelocity(hierarchy);
+        const WindTunnelProjectedCoarseGrid before = current;
+        try {
+            WindTunnelMomentumStepResult result;
+            result.diagnostics.initialProjection = before.diagnostics;
+            result.diagnostics.maximumOutgoingCourantNumber =
+                advectMomentumPredictor(hierarchy, settings);
+            result.diagnostics.correctedProjection = projectHierarchy(
+                settings, hierarchy, hierarchyDiagnostics,
+                &result.projectedCoarseGrid, false);
+            finishMomentumDiagnostics(settings, before, result);
+            if (!result.diagnostics.accepted) {
+                throw std::runtime_error(
+                    "AMR momentum state advance was rejected");
+            }
+            current = result.projectedCoarseGrid;
+            return result;
+        } catch (...) {
+            hierarchy.velocity = std::move(savedVelocity);
+            throw;
+        }
+    }
+};
+
+WindTunnelMomentumState::WindTunnelMomentumState(
+    WindTunnelProjectionSettings settings)
+    : implementation_(
+          std::make_unique<Implementation>(std::move(settings))) {}
+
+WindTunnelMomentumState::~WindTunnelMomentumState() = default;
+
+WindTunnelMomentumStepResult WindTunnelMomentumState::advance() {
+    return implementation_->advance();
+}
+
+const WindTunnelProjectedCoarseGrid&
+WindTunnelMomentumState::projectedCoarseGrid() const noexcept {
+    return implementation_->current;
 }
 
 } // namespace simwing::fsi::amr

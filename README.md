@@ -51,9 +51,12 @@ wake, synchronizes coarse/fine face fluxes, and uses composite multigrid to
 reduce maximum divergence from `6.99e-2 s^-1` to `4.58e-12 s^-1` while keeping
 the inlet normal velocity exact. An opt-in worker exposes that projected
 coarse diagnostic grid as a 24,576-cell live CFD slice and transports a bounded
-passive marker pulse in positive Y at CFL 0.411. The changing marker is a flow-
-direction/transport diagnostic; momentum advection, diffusion, interface
-coupling, and wing aerodynamics do not yet use this backend. The first Qt-free fluid
+passive marker pulse in positive Y at CFL 0.411. All three face-centred
+velocity components now receive a first-order donor-cell predictor on both AMR
+levels and a fresh composite projection every `0.01 s`; a 20-step run retained
+momentum CFL 0.802 and final maximum divergence `3.81e-13 s^-1`. Viscous and
+turbulence models, interface coupling, and wing aerodynamics do not yet use
+this backend. The first Qt-free fluid
 kernel adds a periodic staggered-grid
 pressure projection with deterministic rollback behavior, exact discrete
 gradient/divergence pairing, Taylor-Green preservation, and manufactured
