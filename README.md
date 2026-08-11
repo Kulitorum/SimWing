@@ -1517,6 +1517,7 @@ Run:
 ```powershell
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --steps 2
+.\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --grid 4 --padding 1.0 --wind-x -0.85 --perturbation 0.25 --steps 2 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case hemisphere --steps 600
 .\build\bin\Release\simwing-fsi.exe --case flag --steps 600
 .\build\bin\Release\simwing-fsi.exe --case ram-cell --steps 600
@@ -1570,6 +1571,11 @@ polar are not physical validation results. The current reusable gnuC2
 payload is emitted by `simwing-model-scene-real-export-test` into its requested
 output directory; that developer fixture supplies explicit test material and
 pilot properties because the design format does not yet author them.
+The frozen-scene-only controls accept an isotropic grid from 2 through 16,
+positive padding up to 1000 m, signed X wind within 100 m/s, and a nonnegative
+initial perturbation up to 100 m/s. The 2-cell default is the fast geometry
+integration probe; larger grids are offline experiments whose runtime and
+memory rise sharply and do not by themselves make the periodic setup physical.
 The ram-cell command shows the same conservative complete-reaction path acting
 on a multi-panel open fabric shell; it is a deformation/inflation precursor,
 not a resolved moving-cavity or aerodynamic-wing result.

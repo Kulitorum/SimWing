@@ -3454,6 +3454,11 @@ from a zero warm field each frame, and the large absolute pressure/load
 magnitudes are not a wing polar, lift result, external wake, or aerodynamic
 validation. It therefore does not close the Phase 2 gate or begin the Phase 3
 validation gate.
+The worker exposes bounded experiment controls for an isotropic `2..16` grid,
+positive domain padding, signed streamwise wind, and initial deterministic
+perturbation. These make repeatable grid/domain/predictor studies possible
+without recompilation. They do not constitute a convergence study, and the
+upper bounds are safety limits rather than recommended interactive settings.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

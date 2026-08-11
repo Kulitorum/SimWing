@@ -27,6 +27,11 @@ struct FrozenScenePressureCaseSettings {
 };
 
 struct FrozenScenePressureCaseDiagnostics {
+    fluid::GridCellCounts gridCellCounts;
+    fluid::Vector3 gridLowerMeters;
+    fluid::Vector3 gridUpperMeters;
+    fluid::Vector3 backgroundWindMetersPerSecond;
+    double diagnosticPerturbationSpeedMetersPerSecond = 0.0;
     std::size_t pressureControlCount = 0;
     std::size_t sharedTraceCount = 0;
     std::size_t pressureIterationCount = 0;

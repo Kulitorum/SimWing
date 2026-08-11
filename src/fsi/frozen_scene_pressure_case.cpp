@@ -369,6 +369,9 @@ void advanceFixedGeometryFlow(
 FrozenScenePressureCaseDiagnostics makeDiagnostics(
     const BuiltCase& built) {
     FrozenScenePressureCaseDiagnostics result;
+    result.gridCellCounts = built.grid.cellCounts();
+    result.gridLowerMeters = built.grid.lowerMeters();
+    result.gridUpperMeters = built.grid.upperMeters();
     result.pressureControlCount =
         built.pressure.controlCells.controlCells.size();
     result.sharedTraceCount =
@@ -559,6 +562,10 @@ struct FrozenScenePressureCase::Implementation {
           diagnostics(makeDiagnostics(built)) {
         stepSettings.timeStepSeconds = settings.timeStepSeconds;
         stepSettings.gravityMetersPerSecondSquared = {};
+        diagnostics.backgroundWindMetersPerSecond =
+            settings.backgroundWindMetersPerSecond;
+        diagnostics.diagnosticPerturbationSpeedMetersPerSecond =
+            settings.diagnosticPerturbationSpeedMetersPerSecond;
         if (!diagnostics.finite) {
             throw std::runtime_error(
                 "frozen scene pressure diagnostics are non-finite");
@@ -597,6 +604,10 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
     if (state.acceptedStepCount > 0) {
         advanceFixedGeometryFlow(state.built, state.settings);
         state.diagnostics = makeDiagnostics(state.built);
+        state.diagnostics.backgroundWindMetersPerSecond =
+            state.settings.backgroundWindMetersPerSecond;
+        state.diagnostics.diagnosticPerturbationSpeedMetersPerSecond =
+            state.settings.diagnosticPerturbationSpeedMetersPerSecond;
     }
     const std::uint64_t nextStep = state.acceptedStepCount + 1;
     const double nextTime = state.simulationTimeSeconds
@@ -728,6 +739,20 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
         "frozen_scene.flow_advances", "1",
         viewer::FieldAssociation::Global,
         {static_cast<double>(state.diagnostics.flowAdvanceCount)},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.grid_cells", "1",
+        viewer::FieldAssociation::Global,
+        {static_cast<double>(
+             state.diagnostics.gridCellCounts.x
+             * state.diagnostics.gridCellCounts.y
+             * state.diagnostics.gridCellCounts.z)},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.initial_perturbation", "m/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics
+             .diagnosticPerturbationSpeedMetersPerSecond},
     });
     frame.scalarFields.push_back({
         "frozen_scene.bulk_substeps", "1",

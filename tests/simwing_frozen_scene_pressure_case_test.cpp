@@ -133,6 +133,8 @@ void testFrozenScenePressureCase() {
                   }),
           "frozen scene frame publishes complete pressure, nodal load, and fluid velocity fields");
     check(diagnostics.finite
+              && diagnostics.gridCellCounts
+                  == simwing::fsi::fluid::GridCellCounts{4, 4, 4}
               && diagnostics.pressureControlCount > 0
               && diagnostics.sharedTraceCount > 0
               && diagnostics.pressureIterationCount > 0

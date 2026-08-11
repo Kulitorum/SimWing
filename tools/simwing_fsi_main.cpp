@@ -89,6 +89,10 @@ struct Options {
     std::filesystem::path checkpointInputPath;
     std::filesystem::path checkpointOutputPath;
     std::filesystem::path scenePath;
+    std::optional<std::size_t> frozenGridCellsPerAxis;
+    std::optional<double> frozenDomainPaddingMeters;
+    std::optional<double> frozenWindXMetersPerSecond;
+    std::optional<double> frozenPerturbationMetersPerSecond;
     std::uint64_t checkpointEvery = 0;
     bool viewer = true;
     bool controlStdio = false;
@@ -102,6 +106,8 @@ void printUsage(FILE* stream) {
         stream,
         "Usage: simwing-fsi [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--scene PATH]\n"
+        "                   [--grid N] [--padding METERS]\n"
+        "                   [--wind-x MPS] [--perturbation MPS]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
         "                   [--checkpoint-in PATH]\n"
@@ -117,6 +123,8 @@ void printUsage(FILE* stream) {
         "'frozen-scene' loads --scene, holds its geometry fixed, and publishes\n"
         "an evolving bulk-flow/mixed-hybrid pressure projection and conservative\n"
         "load field; it is not a validated external wake or aerodynamic polar;\n"
+        "frozen-scene defaults to a 2^3 grid, 0.5 m padding, -0.85 m/s X wind,\n"
+        "and 1 m/s deterministic perturbation; N is bounded to 2..16;\n"
         "'flag' maps the complete reaction from a fixed-reference projected gust\n"
         "onto a one-edge-clamped XPBD fabric panel;\n"
         "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"
@@ -231,6 +239,16 @@ bool parseUnsigned(std::string_view text, std::uint64_t& value) {
     return error == std::errc{} && position == end;
 }
 
+bool parseFiniteDouble(const std::string_view text, double& value) {
+    if (text.empty()) {
+        return false;
+    }
+    const char* begin = text.data();
+    const char* end = begin + text.size();
+    const auto [position, error] = std::from_chars(begin, end, value);
+    return error == std::errc{} && position == end && std::isfinite(value);
+}
+
 bool parseOptions(int argc,
                   char* argv[],
                   Options& options,
@@ -309,6 +327,72 @@ bool parseOptions(int argc,
             }
             options.scenePath =
                 std::filesystem::path(argument.substr(8));
+        } else if (argument == "--grid") {
+            std::uint64_t value = 0;
+            if (++index >= argc || !parseUnsigned(argv[index], value)
+                || value < 2 || value > 16) {
+                error = "--grid requires an integer from 2 through 16";
+                return false;
+            }
+            options.frozenGridCellsPerAxis =
+                static_cast<std::size_t>(value);
+        } else if (argument.starts_with("--grid=")) {
+            std::uint64_t value = 0;
+            if (!parseUnsigned(argument.substr(7), value)
+                || value < 2 || value > 16) {
+                error = "--grid requires an integer from 2 through 16";
+                return false;
+            }
+            options.frozenGridCellsPerAxis =
+                static_cast<std::size_t>(value);
+        } else if (argument == "--padding") {
+            double value = 0.0;
+            if (++index >= argc || !parseFiniteDouble(argv[index], value)
+                || !(value > 0.0) || value > 1000.0) {
+                error = "--padding requires a positive value no larger than 1000 metres";
+                return false;
+            }
+            options.frozenDomainPaddingMeters = value;
+        } else if (argument.starts_with("--padding=")) {
+            double value = 0.0;
+            if (!parseFiniteDouble(argument.substr(10), value)
+                || !(value > 0.0) || value > 1000.0) {
+                error = "--padding requires a positive value no larger than 1000 metres";
+                return false;
+            }
+            options.frozenDomainPaddingMeters = value;
+        } else if (argument == "--wind-x") {
+            double value = 0.0;
+            if (++index >= argc || !parseFiniteDouble(argv[index], value)
+                || std::abs(value) > 100.0) {
+                error = "--wind-x requires a signed value within +/-100 m/s";
+                return false;
+            }
+            options.frozenWindXMetersPerSecond = value;
+        } else if (argument.starts_with("--wind-x=")) {
+            double value = 0.0;
+            if (!parseFiniteDouble(argument.substr(9), value)
+                || std::abs(value) > 100.0) {
+                error = "--wind-x requires a signed value within +/-100 m/s";
+                return false;
+            }
+            options.frozenWindXMetersPerSecond = value;
+        } else if (argument == "--perturbation") {
+            double value = 0.0;
+            if (++index >= argc || !parseFiniteDouble(argv[index], value)
+                || value < 0.0 || value > 100.0) {
+                error = "--perturbation requires a value from 0 through 100 m/s";
+                return false;
+            }
+            options.frozenPerturbationMetersPerSecond = value;
+        } else if (argument.starts_with("--perturbation=")) {
+            double value = 0.0;
+            if (!parseFiniteDouble(argument.substr(15), value)
+                || value < 0.0 || value > 100.0) {
+                error = "--perturbation requires a value from 0 through 100 m/s";
+                return false;
+            }
+            options.frozenPerturbationMetersPerSecond = value;
         } else if (argument == "--checkpoint-in") {
             if (++index >= argc || argv[index][0] == '\0') {
                 error = "--checkpoint-in requires a path";
@@ -366,6 +450,16 @@ bool parseOptions(int argc,
     if ((options.workerCase == WorkerCase::FrozenScene)
             != !options.scenePath.empty()) {
         error = "--case frozen-scene requires exactly one --scene path";
+        return false;
+    }
+    const bool frozenControlRequested =
+        options.frozenGridCellsPerAxis.has_value()
+        || options.frozenDomainPaddingMeters.has_value()
+        || options.frozenWindXMetersPerSecond.has_value()
+        || options.frozenPerturbationMetersPerSecond.has_value();
+    if (frozenControlRequested
+        && options.workerCase != WorkerCase::FrozenScene) {
+        error = "--grid, --padding, --wind-x, and --perturbation require --case frozen-scene";
         return false;
     }
     if (options.workerCase == WorkerCase::FrozenScene && !stepsRequested) {
@@ -1823,7 +1917,7 @@ int main(int argc, char* argv[]) {
                 const auto& diagnostics = simulation.diagnostics();
                 std::printf(
                     "simwing-fsi completed %llu frozen-scene sample(s), "
-                    "t=%.9g s, controls=%zu, traces=%zu, iterations=%zu, "
+                    "t=%.9g s, grid=%zux%zux%zu, controls=%zu, traces=%zu, iterations=%zu, "
                     "max-pressure-jump=%.6g Pa, pressure-force="
                     "[%.6g %.6g %.6g] N, corrected-continuity=%.3g m^3/s, "
                     "collapsed-speed=%.6g m/s, embedded-openings=%zu, "
@@ -1833,6 +1927,9 @@ int main(int argc, char* argv[]) {
                     static_cast<unsigned long long>(
                         simulation.acceptedStepCount()),
                     simulation.simulationTimeSeconds(),
+                    diagnostics.gridCellCounts.x,
+                    diagnostics.gridCellCounts.y,
+                    diagnostics.gridCellCounts.z,
                     diagnostics.pressureControlCount,
                     diagnostics.sharedTraceCount,
                     diagnostics.pressureIterationCount,
@@ -1933,8 +2030,26 @@ int main(int argc, char* argv[]) {
                 throw std::logic_error(
                     "frozen scene input disappeared before construction");
             }
+            simwing::fsi::FrozenScenePressureCaseSettings settings;
+            if (options.frozenGridCellsPerAxis) {
+                const std::size_t count =
+                    *options.frozenGridCellsPerAxis;
+                settings.cellCounts = {count, count, count};
+            }
+            if (options.frozenDomainPaddingMeters) {
+                settings.domainPaddingMeters =
+                    *options.frozenDomainPaddingMeters;
+            }
+            if (options.frozenWindXMetersPerSecond) {
+                settings.backgroundWindMetersPerSecond.x =
+                    *options.frozenWindXMetersPerSecond;
+            }
+            if (options.frozenPerturbationMetersPerSecond) {
+                settings.diagnosticPerturbationSpeedMetersPerSecond =
+                    *options.frozenPerturbationMetersPerSecond;
+            }
             simwing::fsi::FrozenScenePressureCase simulation(
-                std::move(*frozenScene));
+                std::move(*frozenScene), settings);
             return run(simulation);
         }
         if (options.workerCase == WorkerCase::StrongPiston) {
