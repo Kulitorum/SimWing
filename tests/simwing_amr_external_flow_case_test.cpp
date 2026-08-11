@@ -182,7 +182,25 @@ int main(int argc, char* argv[]) {
               "surface geometry does not break the coarse CFD slice contract or composite projection");
 
         const auto slabSettings =
-            simwing::fsi::amr::makeThreeSliceSpanwiseSlabSettings();
+            simwing::fsi::amr::makeSpanwiseSlabSettings();
+        const auto fineSlabSettings =
+            simwing::fsi::amr::makeSpanwiseSlabSettings(1.5, 4);
+        check(fineSlabSettings.projection.grid.coarseCellCounts
+                      == simwing::fsi::fluid::GridCellCounts{12, 192, 64}
+                  && fineSlabSettings.projection.grid.lowerMeters.x
+                      == 0.9375
+                  && fineSlabSettings.projection.grid.upperMeters.x
+                      == 2.0625
+                  && fineSlabSettings.projection.grid
+                         .refinedCoarseCellLower
+                      == std::array<std::size_t, 3>{4, 48, 4}
+                  && fineSlabSettings.projection.grid
+                         .refinedCoarseCellUpperExclusive
+                      == std::array<std::size_t, 3>{8, 128, 48}
+                  && fineSlabSettings.timeStepSeconds == 0.0003125
+                  && fineSlabSettings.projection.timeStepSeconds
+                      == fineSlabSettings.timeStepSeconds,
+              "slab resolution scale subdivides one physical domain and time step consistently");
         simwing::fsi::amr::ExternalFlowTransportCase slab(
             staticPlateScene(), slabSettings);
         const auto slabFrame = slab.advance();

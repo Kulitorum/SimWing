@@ -69,6 +69,7 @@ namespace {
 
 constexpr std::uint64_t defaultSteps = 600;
 constexpr std::uint64_t maximumSteps = 10'000'000;
+constexpr std::size_t maximumExternalResolutionScale = 4;
 
 enum class WorkerCase {
     Structural,
@@ -96,6 +97,7 @@ struct Options {
     std::filesystem::path checkpointOutputPath;
     std::filesystem::path scenePath;
     std::optional<double> externalSlabCentreXMeters;
+    std::optional<std::size_t> externalResolutionScale;
     std::optional<simwing::fsi::fluid::GridCellCounts>
         frozenGridCellCounts;
     std::optional<double> frozenDomainPaddingMeters;
@@ -128,6 +130,7 @@ void printUsage(FILE* stream) {
         "Usage: simwing-fsi [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|external-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--scene PATH]\n"
         "                   [--external-slab-x METERS]\n"
+        "                   [--external-resolution-scale 1..4]\n"
         "                   [--grid N|NXxNYxNZ] [--padding METERS]\n"
         "                   [--wind-y MPS|--wind-x MPS] [--ramp-seconds SECONDS]\n"
         "                   [--continue-corrected-trace-flow]\n"
@@ -214,7 +217,8 @@ void printUsage(FILE* stream) {
         "'external-flow' requires the opt-in AMReX projection build and advances\n"
         "the non-periodic positive-Y tunnel; optional --scene enables the static\n"
         "authoritative cut-cell direct-forcing diagnostic; --external-slab-x\n"
-        "selects a fast three-coarse-slice local X slab centred at METERS.\n"
+        "selects a fast local X slab centred at METERS, and the optional\n"
+        "resolution scale subdivides its fixed domain and timestep.\n"
         "'porous-flow' advances a pressure-driven Darcy-Forchheimer plug and\n"
         "publishes its porous and periodic gauge-closure planes.\n"
         "'moving-porous-flow' advances a prescribed translating porous plane\n"
@@ -470,6 +474,29 @@ bool parseOptions(int argc,
                 return false;
             }
             options.externalSlabCentreXMeters = value;
+        } else if (argument == "--external-resolution-scale") {
+            std::uint64_t value = 0;
+            if (++index >= argc || !parseUnsigned(argv[index], value)
+                || value == 0
+                || value
+                    > maximumExternalResolutionScale) {
+                error = "--external-resolution-scale requires an integer from 1 through 4";
+                return false;
+            }
+            options.externalResolutionScale =
+                static_cast<std::size_t>(value);
+        } else if (argument.starts_with(
+                       "--external-resolution-scale=")) {
+            std::uint64_t value = 0;
+            if (!parseUnsigned(argument.substr(28), value)
+                || value == 0
+                || value
+                    > maximumExternalResolutionScale) {
+                error = "--external-resolution-scale requires an integer from 1 through 4";
+                return false;
+            }
+            options.externalResolutionScale =
+                static_cast<std::size_t>(value);
         } else if (argument == "--grid") {
             simwing::fsi::fluid::GridCellCounts counts;
             if (++index >= argc
@@ -762,6 +789,11 @@ bool parseOptions(int argc,
     if (options.externalSlabCentreXMeters
         && options.scenePath.empty()) {
         error = "--external-slab-x requires an authoritative --scene";
+        return false;
+    }
+    if (options.externalResolutionScale
+        && !options.externalSlabCentreXMeters) {
+        error = "--external-resolution-scale requires --external-slab-x";
         return false;
     }
     const bool frozenControlRequested =
@@ -2469,6 +2501,7 @@ int main(int argc, char* argv[]) {
                 const auto& diagnostics = simulation.diagnostics();
                 std::printf(
                     "simwing-fsi completed %llu external-flow marker step(s), "
+                    "grid=%zux%zux%zu, "
                     "t=%.9g s, momentum-CFL=%.6g, velocity-change=%.6g m/s, "
                     "marker-CFL=%.6g, projected-divergence=%.6g 1/s, "
                     "marker=[%.6g, %.6g], static-wing=%s, "
@@ -2477,6 +2510,9 @@ int main(int argc, char* argv[]) {
                     "trace=%s\n",
                     static_cast<unsigned long long>(
                         simulation.acceptedStepCount()),
+                    diagnostics.projection.hierarchy.coarseCellCounts.x,
+                    diagnostics.projection.hierarchy.coarseCellCounts.y,
+                    diagnostics.projection.hierarchy.coarseCellCounts.z,
                     simulation.simulationTimeSeconds(),
                     diagnostics.momentum.maximumOutgoingCourantNumber,
                     diagnostics.momentum
@@ -2616,8 +2652,9 @@ int main(int argc, char* argv[]) {
                 amrexArgumentCount, amrexArguments);
             if (frozenScene) {
                 const auto settings = options.externalSlabCentreXMeters
-                    ? simwing::fsi::amr::makeThreeSliceSpanwiseSlabSettings(
-                          *options.externalSlabCentreXMeters)
+                    ? simwing::fsi::amr::makeSpanwiseSlabSettings(
+                          *options.externalSlabCentreXMeters,
+                          options.externalResolutionScale.value_or(1))
                     : simwing::fsi::amr::ExternalFlowTransportSettings{};
                 simwing::fsi::amr::ExternalFlowTransportCase simulation(
                     *frozenScene, settings);

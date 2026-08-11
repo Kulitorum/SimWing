@@ -3840,18 +3840,26 @@ turbulence, permeability/leakage, intake flux, integrated aerodynamic loads,
 or structural coupling.
 
 The opt-in `--external-slab-x X` checkpoint is the deliberately cheap local
-counterpart. It keeps the Y/Z tunnel contract and 0.375 m coarse X spacing but
-uses three coarse X cells in a 1.125 m box centred on the requested authored
-span station; only the middle coarse X cell participates in the existing
-factor-two refined patch. The static-interface binder clips source triangles
-exactly to the non-periodic tunnel box before cell ownership, retains only
-positive-area intersecting source triangles in the diagnostic frame, and does
-not invent periodic images or closing fabric. At gnuC2 X=0 it reduces the
-composite interface from 3,600 to 158 cut cells, retains 6,484 triangles and
-10.619 square metres of clipped material, and reduces an every-step immutable
-frame from about 11 MB to about 1 MB. Both X faces are intentionally nearby
-far-field boundaries; this is a rapid transport/interface/viewer probe and is
-excluded from aerodynamic, spanwise-flow, pressure, and load validation.
+counterpart. At resolution scale one it keeps the Y/Z tunnel contract and
+0.375 m coarse X spacing but uses three coarse X cells in a 1.125 m box centred
+on the requested authored span station; only the middle coarse X cell
+participates in the existing factor-two refined patch. The optional
+`--external-resolution-scale 1..4` proportionally subdivides that same physical
+domain and patch. Scale four publishes a `12 x 192 x 64` coarse diagnostic
+grid, reaches local factor-two spacings of `46.875 x 31.25 x 46.875 mm`, and
+uses `dt=0.0003125 s` for the sharper direct-forcing transient. The static-
+interface binder clips source triangles exactly to the non-periodic tunnel box
+before cell ownership, retains only positive-area intersecting source
+triangles in the diagnostic frame, and does not invent periodic images or
+closing fabric. At gnuC2 X=0, scale one reduces the composite interface from
+3,600 to 158 cut cells, retains 6,484 triangles and 10.619 square metres of
+clipped material, and reduces an every-step immutable frame from about 11 MB
+to about 1 MB. A scale-four frame is about 16 MB. The viewer publishes each
+hierarchy averaged down to this scaled coarse grid; AMReX's pressure-multigrid
+levels and separate AMR blocks are not yet rendered. Both X faces are
+intentionally nearby far-field boundaries; this is a rapid transport,
+interface, resolution, and viewer probe and is excluded from aerodynamic,
+spanwise-flow, pressure, and load validation.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

@@ -3,6 +3,7 @@
 #include "amr_external_flow_projection.h"
 #include "viewer_protocol.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 
@@ -27,12 +28,19 @@ struct ExternalFlowTransportSettings {
     bool operator==(const ExternalFlowTransportSettings&) const = default;
 };
 
-// Three coarse X cells at the production 0.375 m spacing, centred on one
-// authored span station. Only the middle X cell is refined. The X faces remain
-// explicit far-field boundaries, so this is a rapid local plumbing/interface
-// probe rather than an aerodynamic-load or spanwise-flow result.
+inline constexpr std::size_t maximumSpanwiseSlabResolutionScale = 4;
+
+// At scale one, three coarse X cells at the production 0.375 m spacing are
+// centred on one authored span station and only the middle X cell is refined.
+// Higher scales subdivide the same physical X/Y/Z domain and refinement box,
+// and conservatively reduce dt with scale squared for the sharper interface
+// forcing velocities. The X faces remain explicit far-field boundaries, so
+// this is a rapid local plumbing/interface probe rather than an aerodynamic-
+// load result.
 [[nodiscard]] ExternalFlowTransportSettings
-makeThreeSliceSpanwiseSlabSettings(double centreXMeters = 0.0);
+makeSpanwiseSlabSettings(
+    double centreXMeters = 0.0,
+    std::size_t resolutionScale = 1);
 
 struct ExternalFlowTransportDiagnostics {
     WindTunnelProjectionDiagnostics projection;

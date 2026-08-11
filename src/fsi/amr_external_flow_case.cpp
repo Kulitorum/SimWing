@@ -439,25 +439,43 @@ struct ExternalFlowTransportCase::Implementation {
     }
 };
 
-ExternalFlowTransportSettings makeThreeSliceSpanwiseSlabSettings(
-    const double centreXMeters) {
-    if (!std::isfinite(centreXMeters)) {
+ExternalFlowTransportSettings makeSpanwiseSlabSettings(
+    const double centreXMeters,
+    const std::size_t resolutionScale) {
+    if (!std::isfinite(centreXMeters)
+        || resolutionScale == 0
+        || resolutionScale > maximumSpanwiseSlabResolutionScale) {
         throw std::invalid_argument(
-            "AMR spanwise slab centre must be finite");
+            "AMR spanwise slab settings are invalid");
     }
     ExternalFlowTransportSettings settings;
     constexpr double coarseSpacingXMeters = 0.375;
-    constexpr std::size_t coarseSliceCount = 3;
+    constexpr std::size_t baseCoarseSliceCount = 3;
     constexpr double halfWidthMeters =
         0.5 * coarseSpacingXMeters
-        * static_cast<double>(coarseSliceCount);
-    settings.projection.grid.coarseCellCounts.x = coarseSliceCount;
+        * static_cast<double>(baseCoarseSliceCount);
+    settings.projection.grid.coarseCellCounts = {
+        baseCoarseSliceCount * resolutionScale,
+        48 * resolutionScale,
+        16 * resolutionScale,
+    };
     settings.projection.grid.lowerMeters.x =
         centreXMeters - halfWidthMeters;
     settings.projection.grid.upperMeters.x =
         centreXMeters + halfWidthMeters;
-    settings.projection.grid.refinedCoarseCellLower[0] = 1;
-    settings.projection.grid.refinedCoarseCellUpperExclusive[0] = 2;
+    settings.projection.grid.refinedCoarseCellLower = {
+        resolutionScale,
+        12 * resolutionScale,
+        resolutionScale,
+    };
+    settings.projection.grid.refinedCoarseCellUpperExclusive = {
+        2 * resolutionScale,
+        32 * resolutionScale,
+        12 * resolutionScale,
+    };
+    const double timeScale = static_cast<double>(resolutionScale);
+    settings.timeStepSeconds /= timeScale * timeScale;
+    settings.projection.timeStepSeconds = settings.timeStepSeconds;
     settings.clipStaticWingToWindTunnel = true;
     return settings;
 }

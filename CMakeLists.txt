@@ -191,6 +191,8 @@ option(SIMWING_ENABLE_AMREX_BACKEND
     "Build the opt-in AMReX external-flow/AMR evaluation backend" OFF)
 option(SIMWING_AMREX_ENABLE_LINEAR_SOLVERS
     "Build AMReX multigrid for the external-flow projection checkpoint" OFF)
+option(SIMWING_AMREX_ENABLE_OPENMP
+    "Enable OpenMP parallelism in the opt-in AMReX backend" OFF)
 set(SIMWING_AMREX_SOURCE_DIR "" CACHE PATH
     "Existing AMReX 26.06 source tree used by the opt-in backend")
 set(SIMWING_AMREX_ROOT "" CACHE PATH
@@ -214,10 +216,18 @@ add_library(simwing_scene STATIC
 )
 
 if(SIMWING_ENABLE_AMREX_BACKEND)
+    if(SIMWING_AMREX_ENABLE_OPENMP AND MSVC)
+        message(FATAL_ERROR
+            "AMReX 26.06 OpenMP is not compatible with the MSVC 19.44 "
+            "front end: required OpenMP threadprivate declarations are "
+            "rejected even with /openmp:llvm. Use a supported Clang/GCC "
+            "toolchain, MPI, or a GPU backend for parallel execution.")
+    endif()
     set(AMReX_SPACEDIM 3 CACHE STRING "AMReX spatial dimensions" FORCE)
     set(AMReX_PRECISION DOUBLE CACHE STRING "AMReX precision" FORCE)
     set(AMReX_MPI OFF CACHE BOOL "Disable MPI for the first CPU backend" FORCE)
-    set(AMReX_OMP OFF CACHE BOOL "Disable OpenMP for deterministic bring-up" FORCE)
+    set(AMReX_OMP ${SIMWING_AMREX_ENABLE_OPENMP} CACHE BOOL
+        "Enable OpenMP in the opt-in AMReX backend" FORCE)
     set(AMReX_GPU_BACKEND NONE CACHE STRING "AMReX GPU backend" FORCE)
     set(AMReX_FORTRAN OFF CACHE BOOL "Disable AMReX Fortran interfaces" FORCE)
     set(AMReX_LINEAR_SOLVERS ${SIMWING_AMREX_ENABLE_LINEAR_SOLVERS}

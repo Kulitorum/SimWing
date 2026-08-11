@@ -51,7 +51,9 @@ active composite cells while retaining a 24,576-cell coarse diagnostic slice.
 The empty-tunnel canonical reduces maximum divergence from `6.95e-2 s^-1` to
 `4.57e-12 s^-1`, keeps inlet normal velocity exact, and advances all three
 staggered components with a donor-cell predictor plus a fresh composite
-projection every `0.005 s`.
+projection every `0.005 s`. AMReX multigrid is the internal hierarchy used by
+that pressure solve; it is not a second visible geometry grid. The viewer
+currently publishes the AMR hierarchy averaged onto its owning coarse grid.
 
 `--case external-flow --scene <scene-v2>` now clips the authoritative static
 material surface onto both AMR levels, derives an area-weighted normal tensor
@@ -1540,6 +1542,12 @@ oracle builds do not download a CFD substrate. It pins AMReX 26.06 at commit
 `bf15fdce52093c715a1dd9a9da64ba66f0233be1`; an existing compatible install can
 instead be supplied through `-DSIMWING_AMREX_ROOT=<prefix>`.
 
+`SIMWING_AMREX_ENABLE_OPENMP=ON` is available with an OpenMP-compatible AMReX
+toolchain. AMReX 26.06's required `threadprivate` declarations are rejected by
+the MSVC 19.44 front end, including `/openmp:llvm`, so the native Visual Studio
+build remains serial. Use Clang/GCC, MPI, or a future GPU backend before
+expecting `OMP_NUM_THREADS` to change worker throughput.
+
 ```powershell
 cmake -S . -B build-amrex -G "Visual Studio 17 2022" -A x64 `
   -DSIMWING_ENABLE_AMREX_BACKEND=ON `
@@ -1565,22 +1573,32 @@ Run the static authoritative wing in the AMR tunnel with:
   --steps 1000 --trace-every 10
 ```
 
-For rapid local interface/transport work, run only a three-coarse-cell
-spanwise slab centred at the requested X station (X=0 is the wing centre):
+For rapid local interface/transport work, run a fixed-width spanwise slab
+centred at the requested X station (X=0 is the wing centre). Scale one is the
+original three-coarse-cell probe; scale four is the current finer maximum:
 
 ```powershell
 .\build-amrex\bin\Release\simwing-fsi.exe --case external-flow `
   --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin `
-  --external-slab-x 0 --steps 1000 --trace-every 1
+  --external-slab-x 0 --external-resolution-scale 4 `
+  --steps 30 --trace-every 1
 ```
 
-The slab is 1.125 m wide at the production coarse X spacing, refines its
-middle coarse slice, and exactly clips the authoritative material surface to
-the local box. Its X faces remain nearby far-field boundaries, so it is a fast
-plumbing, forcing, and visualization probe—not a spanwise-flow or aerodynamic-
-load result. On the gnuC2 centre section it retains 6,484 source triangles,
-10.619 square metres of clipped material, and 158 active composite cut cells;
-one immutable frame is about 1 MB instead of about 11 MB for the whole wing.
+Every scale retains the same `1.125 x 12 x 6 m` physical box and proportionally
+subdivides its coarse grid and refined patch. Scale four publishes
+`12 x 192 x 64` coarse cells and reaches local factor-two AMR spacings of
+`46.875 x 31.25 x 46.875 mm`; its conservative test step is `0.0003125 s`.
+The viewer therefore shows a finer slice, but still shows the refined data
+averaged down rather than drawing separate AMR blocks. Scale four frames are
+about 16 MB each, so keep `--steps` or `--trace-every` modest for visual tests.
+
+The binder exactly clips the authoritative material surface to the local box.
+Its X faces remain nearby far-field boundaries, so this is a plumbing,
+forcing, resolution, and visualization probe—not a spanwise-flow or
+aerodynamic-load result. At scale one, the gnuC2 centre section retains 6,484
+source triangles, 10.619 square metres of clipped material, and 158 active
+composite cut cells; one immutable frame is about 1 MB instead of about 11 MB
+for the whole wing.
 
 Run:
 
