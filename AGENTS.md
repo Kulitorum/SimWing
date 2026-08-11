@@ -1451,7 +1451,10 @@ makes this a certified aerodynamic solver.
    trace flow and adds only the bulk-MAC/opening-flux delta. Its first real
    `2^3` ramp comparison contracts the repeated pressure/load spike but remains
    nonphysical; keep it opt-in until region-resolved boundary transport is
-   validated.
+   validated. Accepted corrected traces now also reconstruct the existing
+   collocated region-momentum state directly, including explicit-normal fits
+   at embedded openings. The frozen worker publishes this state's speed,
+   link-normal residual, and energy read-only; it does not yet transport it.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
   loads/state, trusted constraint/membrane/bending assembly, explicit optional
   fabric self-contact, rigid-pilot suspension, diagnostics, and composite
@@ -1676,6 +1679,8 @@ makes this a certified aerodynamic solver.
   does not cure the pressure scale. The corrected-trace experiment reduces the
   corresponding final sample to `72176.4 Pa` and `24295.1 N`, confirming a
   repeated boundary-impulse loss without making that remaining load physical.
+  Exact corrected links additionally reconstruct one diagnostic collocated
+  momentum vector per positive region control without feeding the solver yet.
   The coarse periodic domain, pump, and
   pressure magnitude are not aerodynamic validation; no external-domain wake,
   polar/refinement study, or structural feedback is present.

@@ -11,6 +11,9 @@ namespace simwing::fsi {
 
 inline constexpr std::uint32_t sceneFluidRegionMomentumVersion = 2;
 
+struct SceneFluidMimeticControlCellSet;
+struct SceneFluidMimeticCorrectedTraceFlow;
+
 struct SceneFluidRegionMomentumLimits {
     std::size_t maximumControlVolumes = 50'000'000;
     std::size_t maximumMomentumBytes =
@@ -52,8 +55,9 @@ struct SceneFluidRegionMomentumDiagnostics {
         const SceneFluidRegionMomentumDiagnostics&) const = default;
 };
 
-// Accepted pressure-link flow reconstructed as one collocated momentum vector
-// per positive cell/region control volume. Controls incident only to Cartesian
+// Accepted graph-pressure links or mimetic corrected shared traces reconstructed
+// as one collocated momentum vector per positive cell/region control volume.
+// Controls incident only to Cartesian
 // links retain the exact component-wise area average. A control incident to an
 // embedded link instead uses a bounded three-dimensional normal-equation solve
 // over all its link normals, retaining the cell-centred MAC predictor in the
@@ -64,6 +68,9 @@ struct SceneFluidRegionMomentumDiagnostics {
 struct SceneFluidRegionMomentumState {
     std::uint32_t version = sceneFluidRegionMomentumVersion;
     std::uint64_t fingerprint = 0;
+    // Legacy field name retained for checkpoint compatibility. Strong source
+    // validation binds this to either the graph projection or the opt-in
+    // mimetic corrected-flow endpoint used to reconstruct the state.
     std::uint64_t pressureProjectionFingerprint = 0;
     std::uint64_t pressureControlVolumeFingerprint = 0;
     std::uint64_t pressureFaceLinkFingerprint = 0;
@@ -92,6 +99,20 @@ reconstructSceneFluidRegionMomentumState(
     const fluid::MacVelocityField& fallbackVelocityMetersPerSecond,
     const SceneFluidRegionMomentumLimits& limits = {});
 
+// Reconstructs the same collocated regional momentum owner directly from an
+// accepted mixed-hybrid corrected shared-trace flow. Exactly one source mode
+// is bound in the result: graph pressure projection or mimetic corrected flow.
+[[nodiscard]] SceneFluidRegionMomentumState
+reconstructSceneFluidRegionMomentumState(
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidMimeticControlCellSet& mimeticControlCells,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
+    const fluid::MacVelocityField& fallbackVelocityMetersPerSecond,
+    const SceneFluidRegionMomentumLimits& limits = {});
+
 void validateSceneFluidRegionMomentumStateIntegrity(
     const SceneFluidRegionMomentumState& momentum);
 
@@ -114,6 +135,16 @@ void validateSceneFluidRegionMomentumState(
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidOpeningGridPatchSet& openingPatches,
     const SceneFluidPressureProjection& projection,
+    const fluid::MacVelocityField& fallbackVelocityMetersPerSecond);
+
+void validateSceneFluidRegionMomentumState(
+    const SceneFluidRegionMomentumState& momentum,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidMimeticControlCellSet& mimeticControlCells,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
     const fluid::MacVelocityField& fallbackVelocityMetersPerSecond);
 
 } // namespace simwing::fsi

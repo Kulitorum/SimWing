@@ -1588,6 +1588,12 @@ previous and current bulk predictors before re-solving pressure. It preserves
 embedded intake flow and mixed-subface differences that the MAC collapse cannot
 represent. The default remains the older resampling path while this continuation
 is assessed; neither path supplies region-resolved cut-cell advection.
+Every accepted frozen-scene pressure result also reconstructs a read-only
+collocated velocity and momentum vector for each positive cell/region control
+directly from the exact corrected links. Its maximum speed, link-normal fit
+residual, and kinetic energy are published as diagnostics; this state is the
+input boundary for future conservative regional transport and currently does
+not alter either continuation path.
 The ram-cell command shows the same conservative complete-reaction path acting
 on a multi-panel open fabric shell; it is a deformation/inflation precursor,
 not a resolved moving-cavity or aerodynamic-wing result.

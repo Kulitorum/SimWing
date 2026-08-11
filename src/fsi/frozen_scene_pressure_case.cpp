@@ -15,6 +15,7 @@
 #include "scene_fluid_pressure_control_volume.h"
 #include "scene_fluid_pressure_face_link.h"
 #include "scene_fluid_region_connectivity.h"
+#include "scene_fluid_region_momentum.h"
 #include "scene_fluid_surface.h"
 #include "scene_fluid_surface_transfer.h"
 #include "scene_structure.h"
@@ -186,6 +187,7 @@ struct BuiltCase {
     SceneFluidMimeticPressureAuditEndpoint pressure;
     SceneFluidMimeticCorrectedTraceFlow correctedFlow;
     SceneFluidMimeticMacVelocityCollapse correctedMac;
+    SceneFluidRegionMomentumState regionalMomentum;
     ConservativeTransferResult pressureTransfer;
     viewer::StructureFrameMapping frameMapping;
     std::optional<SceneFluidMimeticTraceFlowContinuation>
@@ -284,6 +286,10 @@ BuiltCase buildCase(
     }
     auto correctedMac = collapseSceneFluidMimeticCorrectedMacVelocity(
         correctedFlow, pressureFaceLinks, openingPatches, grid);
+    auto regionalMomentum = reconstructSceneFluidRegionMomentumState(
+        grid, pressureVolumes, pressureFaceLinks, openingPatches,
+        pressure.controlCells, correctedFlow,
+        correctedMac.velocityMetersPerSecond);
     auto pressureTransfer = evaluateSceneFluidMimeticPressureQuadrature(
         surface.definition, state, transfer, gridEpoch.quadrature,
         pressure.pressureEpoch.acceptedPressureSamples);
@@ -297,6 +303,7 @@ BuiltCase buildCase(
         std::move(pressureVolumes), std::move(pressureFaceLinks),
         std::move(pressureSettings), std::move(pressure),
         std::move(correctedFlow), std::move(correctedMac),
+        std::move(regionalMomentum),
         std::move(pressureTransfer), std::move(frameMapping),
     };
     result.windRampFraction = initialRampFraction;
@@ -409,6 +416,12 @@ void advanceFixedGeometryFlow(
         collapseSceneFluidMimeticCorrectedMacVelocity(
             candidateCorrectedFlow, built.pressureFaceLinks,
             built.openingPatches, built.grid);
+    auto candidateRegionalMomentum =
+        reconstructSceneFluidRegionMomentumState(
+            built.grid, built.pressureVolumes, built.pressureFaceLinks,
+            built.openingPatches, candidatePressure.controlCells,
+            candidateCorrectedFlow,
+            candidateCorrectedMac.velocityMetersPerSecond);
     auto candidatePressureTransfer =
         evaluateSceneFluidMimeticPressureQuadrature(
             built.surface.definition, built.surfaceState, built.transfer,
@@ -422,6 +435,7 @@ void advanceFixedGeometryFlow(
     built.pressure = std::move(candidatePressure);
     built.correctedFlow = std::move(candidateCorrectedFlow);
     built.correctedMac = std::move(candidateCorrectedMac);
+    built.regionalMomentum = std::move(candidateRegionalMomentum);
     built.pressureTransfer = std::move(candidatePressureTransfer);
     built.traceFlowContinuation =
         std::move(candidateTraceFlowContinuation);
@@ -482,6 +496,14 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
             .maximumSubfaceVelocityDeviationMetersPerSecond;
     result.embeddedOpeningTraceCount =
         built.correctedMac.diagnostics.embeddedOpeningTraceCount;
+    result.maximumRegionalVelocityMetersPerSecond =
+        built.regionalMomentum.diagnostics
+            .maximumAbsoluteVelocityMetersPerSecond;
+    result.maximumRegionalLinkVelocityResidualMetersPerSecond =
+        built.regionalMomentum.diagnostics
+            .maximumLinkNormalVelocityResidualMetersPerSecond;
+    result.regionalKineticEnergyJoules =
+        built.regionalMomentum.diagnostics.kineticEnergyJoules;
     result.flowAdvanceCount = built.flowAdvanceCount;
     result.meanStreamwiseVelocityBeforePumpMetersPerSecond =
         built.meanStreamwiseVelocityBeforePumpMetersPerSecond;
@@ -525,6 +547,11 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         && std::isfinite(result.maximumCollapsedMacVelocityMetersPerSecond)
         && std::isfinite(
             result.maximumCollapsedSubfaceVelocityDeviationMetersPerSecond)
+        && built.regionalMomentum.diagnostics.finite
+        && std::isfinite(result.maximumRegionalVelocityMetersPerSecond)
+        && std::isfinite(
+            result.maximumRegionalLinkVelocityResidualMetersPerSecond)
+        && std::isfinite(result.regionalKineticEnergyJoules)
         && std::isfinite(
             result.maximumCarriedTraceCorrectionCubicMetersPerSecond)
         && std::isfinite(
@@ -825,6 +852,22 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
         viewer::FieldAssociation::Global,
         {state.diagnostics
              .maximumCollapsedSubfaceVelocityDeviationMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.maximum_regional_velocity", "m/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.maximumRegionalVelocityMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.maximum_regional_link_velocity_residual", "m/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics
+             .maximumRegionalLinkVelocityResidualMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.regional_kinetic_energy", "J",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.regionalKineticEnergyJoules},
     });
     frame.scalarFields.push_back({
         "frozen_scene.embedded_opening_traces", "1",

@@ -3483,6 +3483,14 @@ that lossy resampling was repeatedly reapplying most of the boundary impulse.
 The remaining magnitude is still nonphysical, and the bulk transport still
 lacks region-resolved immersed-boundary advection, so the experiment remains
 opt-in and does not change the default worker arithmetic.
+The frozen worker now also reconstructs the existing collocated regional
+momentum state directly from an accepted mimetic corrected-flow endpoint. Each
+positive pressure control receives Cartesian area averages, while controls
+incident to embedded openings use the bounded three-dimensional normal-equation
+fit with the collapsed MAC velocity only in unconstrained directions. The
+state is deterministic and read-only in this checkpoint; reported regional
+speed, link-normal residual, and kinetic energy quantify the next transport
+input without changing pressure or load arithmetic.
 The first uniform, explicitly zero-ramp `4^3` real-wing run accepts 358 controls
 after 1,472 PCG iterations. It resolves all material loads using 240 bounded
 zero-volume-side

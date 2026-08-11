@@ -163,6 +163,11 @@ void testFrozenScenePressureCase() {
                      .maximumAbsoluteCorrectedContinuityResidualCubicMetersPerSecond
                   <= diagnostics.correctedContinuityToleranceCubicMetersPerSecond
               && diagnostics.maximumCollapsedMacVelocityMetersPerSecond > 0.0
+              && diagnostics.maximumRegionalVelocityMetersPerSecond > 0.0
+              && diagnostics
+                     .maximumRegionalLinkVelocityResidualMetersPerSecond
+                  >= 0.0
+              && diagnostics.regionalKineticEnergyJoules > 0.0
               && diagnostics.bulkFlowSubstepCount > 0
               && diagnostics.bulkProjectionDivergenceAfterPerSecond
                   < diagnostics.bulkProjectionDivergenceBeforePerSecond

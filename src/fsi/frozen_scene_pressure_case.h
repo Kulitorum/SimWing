@@ -52,6 +52,9 @@ struct FrozenScenePressureCaseDiagnostics {
     double correctedContinuityToleranceCubicMetersPerSecond = 0.0;
     double maximumCollapsedMacVelocityMetersPerSecond = 0.0;
     double maximumCollapsedSubfaceVelocityDeviationMetersPerSecond = 0.0;
+    double maximumRegionalVelocityMetersPerSecond = 0.0;
+    double maximumRegionalLinkVelocityResidualMetersPerSecond = 0.0;
+    double regionalKineticEnergyJoules = 0.0;
     std::size_t embeddedOpeningTraceCount = 0;
     std::size_t flowAdvanceCount = 0;
     std::size_t bulkFlowSubstepCount = 0;

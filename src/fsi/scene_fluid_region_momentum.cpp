@@ -1,5 +1,8 @@
 #include "scene_fluid_region_momentum.h"
 
+#include "scene_fluid_mimetic_control_cell.h"
+#include "scene_fluid_mimetic_pressure_flow.h"
+
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -336,66 +339,18 @@ double absoluteLinkFlow(
         + orientation * patch.surfaceSweepRateCubicMetersPerSecond;
 }
 
-} // namespace
-
-SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
+SceneFluidRegionMomentumState reconstructFromAbsoluteLinkVelocities(
     const fluid::PeriodicCartesianGrid& grid,
     const SceneFluidPressureControlVolumeSet& pressureVolumes,
     const SceneFluidPressureFaceLinkSet& faceLinks,
     const SceneFluidOpeningGridPatchSet& openingPatches,
-    const SceneFluidPressureProjection& projection,
+    const std::vector<double>& absoluteVelocities,
     const fluid::MacVelocityField& fallbackVelocityMetersPerSecond,
+    const std::uint64_t pressureProjectionFingerprint,
+    const std::uint64_t acceptedStepCount,
+    const double simulationTimeSeconds,
+    const double densityKgPerCubicMeter,
     const SceneFluidRegionMomentumLimits& limits) {
-    validateSceneFluidPressureControlVolumeIntegrity(pressureVolumes);
-    validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
-    validateSceneFluidPressureProjectionIntegrity(projection);
-    if (!fallbackVelocityMetersPerSecond.matches(grid)
-        || !fluid::isFinite(fallbackVelocityMetersPerSecond)) {
-        throw std::invalid_argument(
-            "scene fluid region momentum fallback velocity is invalid");
-    }
-    validateGridIdentity(
-        grid, pressureVolumes.cellCounts,
-        pressureVolumes.lowerMeters, pressureVolumes.upperMeters,
-        "scene fluid region momentum pressure grid is foreign");
-    validateGridIdentity(
-        grid, faceLinks.cellCounts,
-        faceLinks.lowerMeters, faceLinks.upperMeters,
-        "scene fluid region momentum face grid is foreign");
-    validateGridIdentity(
-        grid, openingPatches.cellCounts,
-        openingPatches.lowerMeters, openingPatches.upperMeters,
-        "scene fluid region momentum opening grid is foreign");
-    const std::uint64_t fallbackFingerprint =
-        sceneFluidOpeningFluxVelocityFingerprint(
-            grid, fallbackVelocityMetersPerSecond);
-    if (faceLinks.version != sceneFluidPressureFaceLinkVersion
-        || faceLinks.fingerprint == 0
-        || openingPatches.version != sceneFluidOpeningGridPatchVersion
-        || openingPatches.fingerprint == 0
-        || !projection.diagnostics.accepted
-        || projection.pressureControlVolumeFingerprint
-            != pressureVolumes.fingerprint
-        || projection.pressureFaceLinkFingerprint != faceLinks.fingerprint
-        || projection.velocityFingerprint != fallbackFingerprint
-        || faceLinks.pressureControlVolumeFingerprint
-            != pressureVolumes.fingerprint
-        || faceLinks.openingPatchFingerprint != openingPatches.fingerprint
-        || projection.acceptedStepCount != pressureVolumes.acceptedStepCount
-        || projection.acceptedStepCount != faceLinks.acceptedStepCount
-        || projection.acceptedStepCount != openingPatches.acceptedStepCount
-        || projection.simulationTimeSeconds
-            != pressureVolumes.simulationTimeSeconds
-        || projection.simulationTimeSeconds
-            != faceLinks.simulationTimeSeconds
-        || projection.simulationTimeSeconds
-            != openingPatches.simulationTimeSeconds
-        || projection.controlVolumes.size()
-            != pressureVolumes.controlVolumes.size()
-        || projection.links.size() != faceLinks.links.size()) {
-        throw std::invalid_argument(
-            "scene fluid region momentum identity is invalid");
-    }
     const std::size_t storageBytes = storageBytesForControlVolumes(
         pressureVolumes.controlVolumes.size());
     if (pressureVolumes.controlVolumes.size() > limits.maximumControlVolumes
@@ -403,14 +358,9 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
         throw std::length_error(
             "scene fluid region momentum exceeds its limits");
     }
-
-    std::map<std::uint64_t, const SceneFluidOpeningGridPatch*> patchById;
-    for (const auto& patch : openingPatches.patches) {
-        if (patch.stableId == 0
-            || !patchById.emplace(patch.stableId, &patch).second) {
-            throw std::invalid_argument(
-                "scene fluid region momentum opening identity is invalid");
-        }
+    if (absoluteVelocities.size() != faceLinks.links.size()) {
+        throw std::invalid_argument(
+            "scene fluid region momentum link velocity count is invalid");
     }
 
     struct Accumulator {
@@ -423,16 +373,15 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
     };
     std::vector<Accumulator> accumulators(
         pressureVolumes.controlVolumes.size());
-    std::vector<double> absoluteVelocities(faceLinks.links.size(), 0.0);
     std::size_t openingLinkCount = 0;
     std::size_t embeddedOpeningLinkCount = 0;
     for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
         const auto& source = faceLinks.links[index];
-        const auto& projected = projection.links[index];
         const bool cartesian = source.geometryKind
             == SceneFluidPressureLinkGeometryKind::CartesianFace;
         const bool embedded = source.geometryKind
             == SceneFluidPressureLinkGeometryKind::EmbeddedOpening;
+        const double velocity = absoluteVelocities[index];
         if (source.linkIndex != index
             || (cartesian && source.faceIndex >= faceLinks.faces.size())
             || (embedded
@@ -444,28 +393,11 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
             || source.plusControlVolumeIndex >= accumulators.size()
             || source.minusControlVolumeIndex
                 == source.plusControlVolumeIndex
-            || projected.linkIndex != index
-            || projected.stableId != source.stableId
-            || projected.faceIndex != source.faceIndex
-            || projected.kind != source.kind
-            || projected.minusControlVolumeIndex
-                != source.minusControlVolumeIndex
-            || projected.plusControlVolumeIndex
-                != source.plusControlVolumeIndex
-            || projected.openingPatchStableId
-                != source.openingPatchStableId
-            || !(source.areaSquareMeters > 0.0)) {
+            || !(source.areaSquareMeters > 0.0)
+            || !std::isfinite(velocity)) {
             throw std::invalid_argument(
                 "scene fluid region momentum link binding is invalid");
         }
-        const double velocity = absoluteLinkFlow(
-            source, projected, patchById)
-            / source.areaSquareMeters;
-        if (!std::isfinite(velocity)) {
-            throw std::overflow_error(
-                "scene fluid region momentum link velocity is non-finite");
-        }
-        absoluteVelocities[index] = velocity;
         const std::array<double, 3> normal{
             source.unitNormalMinusToPlus.x,
             source.unitNormalMinusToPlus.y,
@@ -504,14 +436,16 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
     }
 
     SceneFluidRegionMomentumState result;
-    result.pressureProjectionFingerprint = projection.fingerprint;
+    result.pressureProjectionFingerprint = pressureProjectionFingerprint;
     result.pressureControlVolumeFingerprint = pressureVolumes.fingerprint;
     result.pressureFaceLinkFingerprint = faceLinks.fingerprint;
     result.openingPatchFingerprint = openingPatches.fingerprint;
-    result.fallbackVelocityFingerprint = fallbackFingerprint;
-    result.acceptedStepCount = projection.acceptedStepCount;
-    result.simulationTimeSeconds = projection.simulationTimeSeconds;
-    result.densityKgPerCubicMeter = projection.settings.densityKgPerCubicMeter;
+    result.fallbackVelocityFingerprint =
+        sceneFluidOpeningFluxVelocityFingerprint(
+            grid, fallbackVelocityMetersPerSecond);
+    result.acceptedStepCount = acceptedStepCount;
+    result.simulationTimeSeconds = simulationTimeSeconds;
+    result.densityKgPerCubicMeter = densityKgPerCubicMeter;
     result.cellCounts = grid.cellCounts();
     result.lowerMeters = grid.lowerMeters();
     result.upperMeters = grid.upperMeters();
@@ -648,9 +582,276 @@ SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
             "scene fluid region momentum diagnostics are non-finite");
     }
     result.fingerprint = momentumFingerprint(result);
+    return result;
+}
+
+} // namespace
+
+SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidPressureProjection& projection,
+    const fluid::MacVelocityField& fallbackVelocityMetersPerSecond,
+    const SceneFluidRegionMomentumLimits& limits) {
+    validateSceneFluidPressureControlVolumeIntegrity(pressureVolumes);
+    validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
+    validateSceneFluidPressureProjectionIntegrity(projection);
+    if (!fallbackVelocityMetersPerSecond.matches(grid)
+        || !fluid::isFinite(fallbackVelocityMetersPerSecond)) {
+        throw std::invalid_argument(
+            "scene fluid region momentum fallback velocity is invalid");
+    }
+    validateGridIdentity(
+        grid, pressureVolumes.cellCounts,
+        pressureVolumes.lowerMeters, pressureVolumes.upperMeters,
+        "scene fluid region momentum pressure grid is foreign");
+    validateGridIdentity(
+        grid, faceLinks.cellCounts,
+        faceLinks.lowerMeters, faceLinks.upperMeters,
+        "scene fluid region momentum face grid is foreign");
+    validateGridIdentity(
+        grid, openingPatches.cellCounts,
+        openingPatches.lowerMeters, openingPatches.upperMeters,
+        "scene fluid region momentum opening grid is foreign");
+    const std::uint64_t fallbackFingerprint =
+        sceneFluidOpeningFluxVelocityFingerprint(
+            grid, fallbackVelocityMetersPerSecond);
+    if (faceLinks.version != sceneFluidPressureFaceLinkVersion
+        || faceLinks.fingerprint == 0
+        || openingPatches.version != sceneFluidOpeningGridPatchVersion
+        || openingPatches.fingerprint == 0
+        || !projection.diagnostics.accepted
+        || projection.pressureControlVolumeFingerprint
+            != pressureVolumes.fingerprint
+        || projection.pressureFaceLinkFingerprint != faceLinks.fingerprint
+        || projection.velocityFingerprint != fallbackFingerprint
+        || faceLinks.pressureControlVolumeFingerprint
+            != pressureVolumes.fingerprint
+        || faceLinks.openingPatchFingerprint != openingPatches.fingerprint
+        || projection.acceptedStepCount != pressureVolumes.acceptedStepCount
+        || projection.acceptedStepCount != faceLinks.acceptedStepCount
+        || projection.acceptedStepCount != openingPatches.acceptedStepCount
+        || projection.simulationTimeSeconds
+            != pressureVolumes.simulationTimeSeconds
+        || projection.simulationTimeSeconds
+            != faceLinks.simulationTimeSeconds
+        || projection.simulationTimeSeconds
+            != openingPatches.simulationTimeSeconds
+        || projection.controlVolumes.size()
+            != pressureVolumes.controlVolumes.size()
+        || projection.links.size() != faceLinks.links.size()) {
+        throw std::invalid_argument(
+            "scene fluid region momentum identity is invalid");
+    }
+    std::map<std::uint64_t, const SceneFluidOpeningGridPatch*> patchById;
+    for (const auto& patch : openingPatches.patches) {
+        if (patch.stableId == 0
+            || !patchById.emplace(patch.stableId, &patch).second) {
+            throw std::invalid_argument(
+                "scene fluid region momentum opening identity is invalid");
+        }
+    }
+    std::vector<double> absoluteVelocities(faceLinks.links.size(), 0.0);
+    for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
+        const auto& source = faceLinks.links[index];
+        const auto& projected = projection.links[index];
+        if (projected.linkIndex != index
+            || projected.stableId != source.stableId
+            || projected.faceIndex != source.faceIndex
+            || projected.kind != source.kind
+            || projected.minusControlVolumeIndex
+                != source.minusControlVolumeIndex
+            || projected.plusControlVolumeIndex
+                != source.plusControlVolumeIndex
+            || projected.openingPatchStableId
+                != source.openingPatchStableId) {
+            throw std::invalid_argument(
+                "scene fluid region momentum projected link is foreign");
+        }
+        absoluteVelocities[index] = absoluteLinkFlow(
+            source, projected, patchById) / source.areaSquareMeters;
+    }
+    auto result = reconstructFromAbsoluteLinkVelocities(
+        grid, pressureVolumes, faceLinks, openingPatches,
+        absoluteVelocities, fallbackVelocityMetersPerSecond,
+        projection.fingerprint, projection.acceptedStepCount,
+        projection.simulationTimeSeconds,
+        projection.settings.densityKgPerCubicMeter, limits);
     validateSceneFluidRegionMomentumState(
         result, grid, pressureVolumes, faceLinks, openingPatches,
         projection, fallbackVelocityMetersPerSecond);
+    return result;
+}
+
+SceneFluidRegionMomentumState reconstructSceneFluidRegionMomentumState(
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidMimeticControlCellSet& mimeticControlCells,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
+    const fluid::MacVelocityField& fallbackVelocityMetersPerSecond,
+    const SceneFluidRegionMomentumLimits& limits) {
+    validateSceneFluidPressureControlVolumeIntegrity(pressureVolumes);
+    validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
+    validateSceneFluidOpeningGridPatchIntegrity(openingPatches);
+    validateSceneFluidMimeticControlCellIntegrity(mimeticControlCells);
+    validateSceneFluidMimeticCorrectedTraceFlowIntegrity(correctedFlow);
+    if (!fallbackVelocityMetersPerSecond.matches(grid)
+        || !fluid::isFinite(fallbackVelocityMetersPerSecond)) {
+        throw std::invalid_argument(
+            "scene fluid mimetic region momentum fallback velocity is invalid");
+    }
+    validateGridIdentity(
+        grid, pressureVolumes.cellCounts,
+        pressureVolumes.lowerMeters, pressureVolumes.upperMeters,
+        "scene fluid mimetic region momentum pressure grid is foreign");
+    validateGridIdentity(
+        grid, faceLinks.cellCounts,
+        faceLinks.lowerMeters, faceLinks.upperMeters,
+        "scene fluid mimetic region momentum face grid is foreign");
+    validateGridIdentity(
+        grid, openingPatches.cellCounts,
+        openingPatches.lowerMeters, openingPatches.upperMeters,
+        "scene fluid mimetic region momentum opening grid is foreign");
+    if (!correctedFlow.accepted
+        || mimeticControlCells.pressureControlVolumeFingerprint
+            != pressureVolumes.fingerprint
+        || mimeticControlCells.pressureFaceLinkFingerprint
+            != faceLinks.fingerprint
+        || mimeticControlCells.openingPatchFingerprint
+            != openingPatches.fingerprint
+        || correctedFlow.mimeticControlCellFingerprint
+            != mimeticControlCells.fingerprint
+        || correctedFlow.pressureFaceLinkFingerprint
+            != faceLinks.fingerprint
+        || correctedFlow.openingPatchFingerprint
+            != openingPatches.fingerprint
+        || correctedFlow.structureDefinitionFingerprint
+            != pressureVolumes.structureDefinitionFingerprint
+        || correctedFlow.acceptedStepCount
+            != pressureVolumes.acceptedStepCount
+        || correctedFlow.acceptedStepCount != faceLinks.acceptedStepCount
+        || correctedFlow.acceptedStepCount
+            != openingPatches.acceptedStepCount
+        || correctedFlow.simulationTimeSeconds
+            != pressureVolumes.simulationTimeSeconds
+        || correctedFlow.simulationTimeSeconds
+            != faceLinks.simulationTimeSeconds
+        || correctedFlow.simulationTimeSeconds
+            != openingPatches.simulationTimeSeconds
+        || mimeticControlCells.controlCells.size()
+            != pressureVolumes.controlVolumes.size()
+        || correctedFlow.traces.size() != faceLinks.links.size()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic region momentum identity is invalid");
+    }
+    for (std::size_t index = 0;
+         index < mimeticControlCells.controlCells.size(); ++index) {
+        const auto& mimetic = mimeticControlCells.controlCells[index];
+        const auto& pressure = pressureVolumes.controlVolumes[index];
+        if (mimetic.controlCellIndex != index
+            || mimetic.controlVolumeIndex != index
+            || mimetic.stableId != pressure.stableId
+            || mimetic.cellIndex != pressure.cellIndex
+            || mimetic.regionId != pressure.regionId
+            || mimetic.componentIndex != pressure.componentIndex
+            || mimetic.volumeCubicMeters != pressure.volumeCubicMeters) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region momentum control binding is invalid");
+        }
+    }
+
+    std::map<std::uint64_t, const SceneFluidOpeningGridPatch*> patchById;
+    std::map<std::uint64_t, std::size_t> embeddedLinkByPatchId;
+    for (const auto& patch : openingPatches.patches) {
+        if (patch.stableId == 0
+            || !patchById.emplace(patch.stableId, &patch).second) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region momentum opening identity is invalid");
+        }
+    }
+    for (const auto& link : faceLinks.links) {
+        if (link.geometryKind
+            == SceneFluidPressureLinkGeometryKind::EmbeddedOpening
+            && (link.openingPatchStableId == 0
+                || !embeddedLinkByPatchId.emplace(
+                        link.openingPatchStableId,
+                        link.linkIndex).second)) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region momentum embedded identity is invalid");
+        }
+    }
+    std::vector<const SceneFluidMimeticCorrectedTrace*> traceByLink(
+        faceLinks.links.size(), nullptr);
+    for (const auto& trace : correctedFlow.traces) {
+        std::size_t linkIndex = 0;
+        if (trace.kind
+            == SceneFluidMimeticHalfFaceKind::CartesianTrace) {
+            linkIndex = trace.sourceIndex;
+        } else if (trace.kind
+                   == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace) {
+            const auto found = embeddedLinkByPatchId.find(
+                trace.sourceStableId);
+            if (found == embeddedLinkByPatchId.end()) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region momentum embedded trace is missing");
+            }
+            linkIndex = found->second;
+        } else {
+            throw std::invalid_argument(
+                "scene fluid mimetic region momentum trace kind is invalid");
+        }
+        if (linkIndex >= traceByLink.size()
+            || traceByLink[linkIndex] != nullptr) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region momentum trace ownership is invalid");
+        }
+        const auto& link = faceLinks.links[linkIndex];
+        if (link.linkIndex != linkIndex
+            || (trace.kind
+                    == SceneFluidMimeticHalfFaceKind::CartesianTrace
+                && (link.geometryKind
+                        != SceneFluidPressureLinkGeometryKind::CartesianFace
+                    || trace.sourceStableId != link.stableId))
+            || (trace.kind
+                    == SceneFluidMimeticHalfFaceKind::AuthoredOpeningTrace
+                && (link.geometryKind
+                        != SceneFluidPressureLinkGeometryKind::EmbeddedOpening
+                    || trace.sourceStableId
+                        != link.openingPatchStableId))) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region momentum trace binding is invalid");
+        }
+        traceByLink[linkIndex] = &trace;
+    }
+
+    std::vector<double> absoluteVelocities(faceLinks.links.size(), 0.0);
+    for (std::size_t index = 0; index < faceLinks.links.size(); ++index) {
+        if (traceByLink[index] == nullptr) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region momentum missed a link");
+        }
+        SceneFluidPressureProjectedLink projected;
+        projected.correctedRelativeVolumeFlowRateCubicMetersPerSecond =
+            traceByLink[index]
+                ->correctedRelativeVolumeFlowRateCubicMetersPerSecond;
+        absoluteVelocities[index] = absoluteLinkFlow(
+            faceLinks.links[index], projected, patchById)
+            / faceLinks.links[index].areaSquareMeters;
+    }
+    auto result = reconstructFromAbsoluteLinkVelocities(
+        grid, pressureVolumes, faceLinks, openingPatches,
+        absoluteVelocities, fallbackVelocityMetersPerSecond,
+        correctedFlow.fingerprint, correctedFlow.acceptedStepCount,
+        correctedFlow.simulationTimeSeconds,
+        correctedFlow.densityKgPerCubicMeter, limits);
+    validateSceneFluidRegionMomentumState(
+        result, grid, pressureVolumes, faceLinks, openingPatches,
+        mimeticControlCells, correctedFlow,
+        fallbackVelocityMetersPerSecond);
     return result;
 }
 
@@ -853,6 +1054,105 @@ void validateSceneFluidRegionMomentumStateBinding(
             || control.volumeCubicMeters != source.volumeCubicMeters) {
             throw std::invalid_argument(
                 "scene fluid region momentum control binding is invalid");
+        }
+    }
+}
+
+void validateSceneFluidRegionMomentumState(
+    const SceneFluidRegionMomentumState& momentum,
+    const fluid::PeriodicCartesianGrid& grid,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& faceLinks,
+    const SceneFluidOpeningGridPatchSet& openingPatches,
+    const SceneFluidMimeticControlCellSet& mimeticControlCells,
+    const SceneFluidMimeticCorrectedTraceFlow& correctedFlow,
+    const fluid::MacVelocityField& fallbackVelocityMetersPerSecond) {
+    validateSceneFluidRegionMomentumStateIntegrity(momentum);
+    validateSceneFluidPressureControlVolumeIntegrity(pressureVolumes);
+    validateSceneFluidPressureFaceLinkIntegrity(faceLinks);
+    validateSceneFluidOpeningGridPatchIntegrity(openingPatches);
+    validateSceneFluidMimeticControlCellIntegrity(mimeticControlCells);
+    validateSceneFluidMimeticCorrectedTraceFlowIntegrity(correctedFlow);
+    validateGridIdentity(
+        grid, momentum.cellCounts, momentum.lowerMeters,
+        momentum.upperMeters,
+        "scene fluid mimetic region momentum grid is foreign");
+    if (!fallbackVelocityMetersPerSecond.matches(grid)
+        || !fluid::isFinite(fallbackVelocityMetersPerSecond)
+        || momentum.fallbackVelocityFingerprint
+            != sceneFluidOpeningFluxVelocityFingerprint(
+                grid, fallbackVelocityMetersPerSecond)
+        || momentum.pressureProjectionFingerprint
+            != correctedFlow.fingerprint
+        || momentum.pressureControlVolumeFingerprint
+            != pressureVolumes.fingerprint
+        || momentum.pressureFaceLinkFingerprint != faceLinks.fingerprint
+        || momentum.openingPatchFingerprint != openingPatches.fingerprint
+        || correctedFlow.mimeticControlCellFingerprint
+            != mimeticControlCells.fingerprint
+        || momentum.acceptedStepCount != correctedFlow.acceptedStepCount
+        || momentum.simulationTimeSeconds
+            != correctedFlow.simulationTimeSeconds
+        || momentum.densityKgPerCubicMeter
+            != correctedFlow.densityKgPerCubicMeter
+        || momentum.controlVolumes.size()
+            != pressureVolumes.controlVolumes.size()
+        || momentum.controlVolumes.size()
+            != mimeticControlCells.controlCells.size()
+        || momentum.diagnostics.linkCount != faceLinks.links.size()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic region momentum binding is invalid");
+    }
+    std::size_t openingLinkCount = 0;
+    std::size_t embeddedOpeningLinkCount = 0;
+    std::vector<bool> normalEquationControls(
+        pressureVolumes.controlVolumes.size(), false);
+    for (const auto& link : faceLinks.links) {
+        if (link.kind
+            == SceneFluidPressureFaceLinkKind::AuthoredOpening) {
+            ++openingLinkCount;
+        }
+        if (link.geometryKind
+            == SceneFluidPressureLinkGeometryKind::EmbeddedOpening) {
+            if (link.minusControlVolumeIndex
+                    >= normalEquationControls.size()
+                || link.plusControlVolumeIndex
+                    >= normalEquationControls.size()) {
+                throw std::invalid_argument(
+                    "scene fluid mimetic region momentum embedded binding is invalid");
+            }
+            ++embeddedOpeningLinkCount;
+            normalEquationControls[link.minusControlVolumeIndex] = true;
+            normalEquationControls[link.plusControlVolumeIndex] = true;
+        }
+    }
+    if (momentum.diagnostics.openingLinkCount != openingLinkCount
+        || momentum.diagnostics.embeddedOpeningLinkCount
+            != embeddedOpeningLinkCount
+        || momentum.diagnostics.normalEquationControlCount
+            != static_cast<std::size_t>(std::count(
+                normalEquationControls.begin(),
+                normalEquationControls.end(), true))) {
+        throw std::invalid_argument(
+            "scene fluid mimetic region momentum diagnostics changed");
+    }
+    for (std::size_t index = 0;
+         index < momentum.controlVolumes.size(); ++index) {
+        const auto& control = momentum.controlVolumes[index];
+        const auto& pressure = pressureVolumes.controlVolumes[index];
+        const auto& mimetic = mimeticControlCells.controlCells[index];
+        if (control.controlVolumeIndex != pressure.controlVolumeIndex
+            || control.stableId != pressure.stableId
+            || control.cellIndex != pressure.cellIndex
+            || control.regionIndex != pressure.regionIndex
+            || control.regionId != pressure.regionId
+            || control.componentIndex != pressure.componentIndex
+            || control.volumeCubicMeters != pressure.volumeCubicMeters
+            || mimetic.controlCellIndex != index
+            || mimetic.controlVolumeIndex != pressure.controlVolumeIndex
+            || mimetic.stableId != pressure.stableId) {
+            throw std::invalid_argument(
+                "scene fluid mimetic region momentum control changed");
         }
     }
 }
