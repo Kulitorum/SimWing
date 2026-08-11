@@ -1576,6 +1576,8 @@ positive padding up to 1000 m, signed X wind within 100 m/s, and a nonnegative
 initial perturbation up to 100 m/s. The 2-cell default is the fast geometry
 integration probe; larger grids are offline experiments whose runtime and
 memory rise sharply and do not by themselves make the periodic setup physical.
+The perturbation defaults to zero. A nonzero value is deterministic diagnostic
+forcing only; it does not represent turbulence or an aerodynamic inflow model.
 The ram-cell command shows the same conservative complete-reaction path acting
 on a multi-panel open fabric shell; it is a deformation/inflation precursor,
 not a resolved moving-cavity or aerodynamic-wing result.

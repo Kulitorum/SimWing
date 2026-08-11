@@ -3459,6 +3459,10 @@ positive domain padding, signed streamwise wind, and initial deterministic
 perturbation. These make repeatable grid/domain/predictor studies possible
 without recompilation. They do not constitute a convergence study, and the
 upper bounds are safety limits rather than recommended interactive settings.
+Uniform streamwise flow is the default. The optional deterministic perturbation
+is an integration probe, not physical turbulence. On the coarse real-wing grid,
+removing it restores near-symmetric transverse loads but leaves the unphysical
+pressure magnitude, isolating that scale error from the old test pattern.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

@@ -124,7 +124,7 @@ void printUsage(FILE* stream) {
         "an evolving bulk-flow/mixed-hybrid pressure projection and conservative\n"
         "load field; it is not a validated external wake or aerodynamic polar;\n"
         "frozen-scene defaults to a 2^3 grid, 0.5 m padding, -0.85 m/s X wind,\n"
-        "and 1 m/s deterministic perturbation; N is bounded to 2..16;\n"
+        "and zero deterministic perturbation; N is bounded to 2..16;\n"
         "'flag' maps the complete reaction from a fixed-reference projected gust\n"
         "onto a one-edge-clamped XPBD fabric panel;\n"
         "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"

@@ -21,7 +21,7 @@ struct FrozenScenePressureCaseSettings {
     fluid::Vector3 lowerMeters;
     fluid::Vector3 upperMeters;
     fluid::Vector3 backgroundWindMetersPerSecond{-0.85, 0.0, 0.0};
-    double diagnosticPerturbationSpeedMetersPerSecond = 1.0;
+    double diagnosticPerturbationSpeedMetersPerSecond = 0.0;
     double timeStepSeconds = 1.0 / 60.0;
     double densityKgPerCubicMeter = 1.225;
 };

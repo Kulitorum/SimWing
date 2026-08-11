@@ -284,7 +284,9 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   never enter solver state. It is not a validated external-flow wake, polar,
   or two-way solver. Frozen-scene-only CLI controls select an isotropic `2..16`
   grid, positive domain padding, signed X wind, and nonnegative deterministic
-  perturbation; defaults remain `2`, `0.5 m`, `-0.85 m/s`, and `1 m/s`.
+  perturbation; defaults remain `2`, `0.5 m`, `-0.85 m/s`, and `0 m/s`.
+  The perturbation default is zero; nonzero values are explicit diagnostic
+  forcing, not turbulence or an aerodynamic boundary condition.
 - `simwing_scene_fluid_surface`: deterministic compact ownership of the
   authoritative scene-v2 fluid regions, porous fabric, oriented surface
   triangles, and openings, plus immutable capture of accepted Structure
