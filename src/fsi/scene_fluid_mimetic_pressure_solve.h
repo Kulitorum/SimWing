@@ -23,8 +23,9 @@ struct SceneFluidMimeticPressureSolveDiagnostics {
 
 // One atomic source-to-pressure audit result. State fields remain empty unless
 // the reduced solve converges and the reconstructed full trace equations close
-// inside the larger of the declared RMS and admitted component-compatibility
-// tolerances. The caller-supplied reduced field is a read-only warm start; no
+// inside the largest declared reduced-relative, reconstructed-absolute, and
+// admitted component-compatibility RMS tolerances. The caller-supplied
+// reduced field is a read-only warm start; no
 // partial candidate can escape on failure.
 struct SceneFluidMimeticPressureSolveResult {
     std::uint64_t fullTraceSystemFingerprint = 0;

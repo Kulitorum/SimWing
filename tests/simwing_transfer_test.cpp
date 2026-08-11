@@ -308,6 +308,20 @@ void testLoadApplicationAndBinding() {
     checkVectorNear(structure.diagnostics().pendingExternalForceNewtons,
                     {13.0, -18.0, 30.0}, 2.0e-14,
                     "application: structural pending-force ledger includes the transfer");
+
+    Structure scaled(rectangleDefinition());
+    transfer.addLoadsTo(scaled, result, 0.25);
+    checkVectorNear(
+        scaled.diagnostics().pendingExternalForceNewtons,
+        {3.0, -4.5, 7.5}, 2.0e-14,
+        "application: bounded activation scales every transferred nodal load");
+    const auto beforeInvalidScale = scaled.checkpoint();
+    expectRejected(
+        [&] { transfer.addLoadsTo(scaled, result, -0.01); },
+        "application: invalid activation is rejected before mutation");
+    check(scaled.checkpoint().pendingExternalForcesNewtons
+              == beforeInvalidScale.pendingExternalForcesNewtons,
+          "application: rejected activation preserves pending loads");
     StructureStepSettings stepSettings;
     stepSettings.timeStepSeconds = 0.5;
     stepSettings.substeps = 1;

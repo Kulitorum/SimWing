@@ -97,7 +97,7 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
-.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-y MPS|--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--moving-fsi] [--wall-trace-pressure-load] [--aggregate-opening-traces] [--preflow-bootstrap|--preflow-steps N] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
+.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-y MPS|--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--moving-fsi] [--structure-substeps N] [--load-ramp-seconds SECONDS] [--moving-pressure-relative-tolerance VALUE] [--moving-pressure-reconstruction-tolerance VALUE] [--wall-trace-pressure-load] [--aggregate-opening-traces] [--preflow-bootstrap|--preflow-steps N] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
 .\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
@@ -295,6 +295,12 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   chordwise/fore-aft, and Z up, so the defaults are `2`, `0.5 m`, `+0.85 m/s`
   Y, `0.5 s`, and `0 m/s`; `--wind-x` is an explicit spanwise diagnostic.
   Continuation restores the complete target wind vector, not an X-only mean.
+  Moving-only diagnostic overrides can select `1..64` structural substeps,
+  ramp the conservative fluid load delivered to XPBD over `0..60 s`, tighten
+  the consecutive reduced pressure solve, or declare a separate absolute RMS
+  floor for full wall-trace reconstruction. Defaults remain eight substeps,
+  immediate full load, `1e-5` relative pressure convergence, and no separate
+  reconstruction floor, preserving the established worker arithmetic.
   The perturbation default is zero; nonzero values are explicit diagnostic
   forcing, not turbulence or an aerodynamic boundary condition. Refined grids
   may omit zero-volume material sides from the local operator; their retained
@@ -336,6 +342,13 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   `4.00706e16 Pa` reconstructed wall-trace jump remain explicitly nonphysical;
   this gate proves coupled topology/provenance/publication only and is not an
   aerodynamic-direction result.
+  The first accepted chordwise transaction uses `+0.0001 m/s` Y, two preflow
+  epochs, a `1 s` load ramp, and a `2e-6 Pa*m` opt-in reconstructed-full-space
+  RMS floor. Its first moving frame applies `1/60` load, advances Structure by
+  `0.000149 m`, and closes suspension residual to `2.09e-6 m`. The resulting
+  moving pressure endpoint is still nonphysical (`8.34328e19 Pa` maximum
+  wall-trace jump and `1.56546e7 N` integrated absolute wall load); the next
+  gate is moving-volume/source conditioning before a longer trace is credible.
 - `simwing_scene_fluid_surface`: deterministic compact ownership of the
   authoritative scene-v2 fluid regions, porous fabric, oriented surface
   triangles, and openings, plus immutable capture of accepted Structure

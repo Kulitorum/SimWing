@@ -13,6 +13,10 @@ namespace simwing::fsi {
 struct SceneFluidMimeticTraceSolveSettings {
     double absoluteResidualTolerancePascalsMeters = 1.0e-12;
     double relativeResidualTolerance = 1.0e-10;
+    // An optional absolute RMS floor used only when the condensed solution is
+    // reconstructed into the full material-wall trace system. It never
+    // relaxes the reduced PCG convergence threshold.
+    double absoluteReconstructedResidualTolerancePascalsMeters = 0.0;
     double absoluteComponentCompatibilityTolerancePascalsMeters = 1.0e-12;
     std::size_t maximumIterations = 4000;
 

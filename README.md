@@ -1520,6 +1520,7 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --ramp-seconds 0.1 --continue-corrected-trace-flow --steps 6 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --ramp-seconds 0.1 --transport-corrected-region-flow --steps 6 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --grid 4 --padding 1.0 --wind-y 0.85 --ramp-seconds 0 --perturbation 0.25 --steps 2 --no-viewer
+.\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --wind-y 0.0001 --moving-fsi --load-ramp-seconds 1 --moving-pressure-reconstruction-tolerance 2e-6 --wall-trace-pressure-load --preflow-steps 2 --aggregate-opening-traces --steps 3
 .\build\bin\Release\simwing-fsi.exe --case hemisphere --steps 600
 .\build\bin\Release\simwing-fsi.exe --case flag --steps 600
 .\build\bin\Release\simwing-fsi.exe --case ram-cell --steps 600
@@ -1576,6 +1577,11 @@ pilot properties because the design format does not yet author them.
 The imported wing is X spanwise, Y chordwise/fore-aft, and Z up. The
 frozen-scene default is therefore `+0.85 m/s` Y wind; `--wind-x` remains an
 explicit spanwise diagnostic, and the two CLI axis selectors are exclusive.
+Moving-only diagnostic controls can select `1..64` XPBD substeps, ramp the
+conservative load delivered to XPBD over `0..60 s`, independently tighten the
+consecutive reduced solve, and declare an absolute RMS floor for reconstructed
+full wall traces. Their defaults preserve the existing full-load/eight-substep/
+`1e-5` pressure arithmetic with no extra reconstruction floor.
 The frozen-scene-only controls accept an isotropic grid from 2 through 16,
 positive padding up to 1000 m, signed single-axis wind within 100 m/s, and a nonnegative
 initial perturbation up to 100 m/s. Wind reaches its target through a bounded

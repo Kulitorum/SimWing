@@ -3737,6 +3737,20 @@ physics-scale result: its `306926 N` streamwise pressure force, `397.175 m/s`
 maximum regional speed, and `4.00706e16 Pa` reconstructed material-wall trace
 jump make the remaining pressure/flow conditioning failure explicit.
 
+The corrected chordwise moving gate uses `+0.0001 m/s` Y wind. Full immediate
+load folds a tiny reference-triangulated intake-cap facet after `8.76 mm` of
+motion; 16 structural substeps reduce suspension error but still fold a
+different facet. A bounded opt-in load ramp now scales every validated
+conservative nodal load uniformly before XPBD without changing CFD load
+arithmetic; the default remains immediate full load. A separate opt-in full-
+space reconstruction RMS floor does not relax condensed PCG convergence. With
+two preflow epochs, a `1 s` load ramp, and `2e-6 Pa*m` reconstruction floor,
+the first `1/60`-load moving frame commits at `0.149 mm` displacement and
+`2.09e-6 m` suspension residual. Its new pressure endpoint nevertheless jumps
+to `8.34328e19 Pa` locally with `1.56546e7 N` integrated absolute wall load.
+This proves staged structure/geometry/pressure publication but is not suitable
+for extension; moving-volume/source conditioning is the next gate.
+
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written
 budgets; folded-interface and unresolved-gap cases do not leak or change fluid

@@ -144,9 +144,11 @@ public:
         const ConservativeTransferSettings& settings = {}) const;
 
     // Adds the immutable result to existing pending structural loads. All
-    // topology/result bindings are checked before the first load is mutated.
+    // topology/result bindings and the bounded activation scale are checked
+    // before the first load is mutated.
     void addLoadsTo(Structure& target,
-                    const ConservativeTransferResult& result) const;
+                    const ConservativeTransferResult& result,
+                    double activationScale = 1.0) const;
 
 private:
     std::uint64_t targetDefinitionFingerprint_ = 0;

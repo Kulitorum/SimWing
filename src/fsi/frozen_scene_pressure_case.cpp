@@ -74,6 +74,23 @@ void validateSettings(const FrozenScenePressureCaseSettings& settings) {
         || settings.preflowBootstrapSteps > 16
         || (settings.preflowBootstrapSteps != 0
             && !settings.useMovingGeometryFsi)
+        || settings.movingStructureSubsteps == 0
+        || settings.movingStructureSubsteps > 64
+        || !std::isfinite(settings.movingLoadRampSeconds)
+        || settings.movingLoadRampSeconds < 0.0
+        || settings.movingLoadRampSeconds > 60.0
+        || !std::isfinite(
+            settings.movingPressureRelativeResidualTolerance)
+        || settings.movingPressureRelativeResidualTolerance < 1.0e-12
+        || settings.movingPressureRelativeResidualTolerance > 1.0e-2
+        || !std::isfinite(settings
+            .movingPressureReconstructedResidualTolerancePascalsMeters)
+        || settings
+                .movingPressureReconstructedResidualTolerancePascalsMeters
+            < 0.0
+        || settings
+                .movingPressureReconstructedResidualTolerancePascalsMeters
+            > 1.0
         || !std::isfinite(
             settings.diagnosticPerturbationSpeedMetersPerSecond)
         || settings.diagnosticPerturbationSpeedMetersPerSecond < 0.0
@@ -207,6 +224,18 @@ double windRampFraction(
         1.0);
 }
 
+double movingLoadActivationFraction(
+    const FrozenScenePressureCaseSettings& settings,
+    const std::size_t movingStepNumber) {
+    if (settings.movingLoadRampSeconds == 0.0) {
+        return 1.0;
+    }
+    return std::min(
+        static_cast<double>(movingStepNumber) * settings.timeStepSeconds
+            / settings.movingLoadRampSeconds,
+        1.0);
+}
+
 fluid::Vector3 meanVelocity(
     const fluid::MacVelocityField& velocity) {
     const auto mean = [](const std::span<const double> values) {
@@ -301,6 +330,7 @@ struct BuiltCase {
     std::size_t completedPreflowBootstrapStepCount = 0;
     std::size_t flowAdvanceCount = 0;
     std::size_t geometryAdvanceCount = 0;
+    double movingLoadActivationFraction = 0.0;
     struct MaterialWallTracePressureTransfer {
         std::size_t reconstructedSideCount = 0;
         std::size_t fallbackSideCount = 0;
@@ -353,7 +383,7 @@ StructureStepSettings makeStructureStepSettings(
         // charts than the analytic harnesses. Resolve their structural time
         // scale explicitly instead of altering authored mass or stiffness at
         // the scene boundary.
-        result.substeps = 8;
+        result.substeps = settings.movingStructureSubsteps;
     }
     return result;
 }
@@ -1099,8 +1129,10 @@ void advanceMovingGeometryFsi(
         preStepForce.x, preStepForce.y, preStepForce.z);
     const auto structureCheckpoint = built.structure.checkpoint();
     try {
+        const double loadActivation = movingLoadActivationFraction(
+            settings, built.geometryAdvanceCount + 1);
         built.transfer.addLoadsTo(
-            built.structure, built.totalFluidTransfer);
+            built.structure, built.totalFluidTransfer, loadActivation);
         auto structureStep = built.structure.step(structureSettings);
         if (!structureStep.finite) {
             throw std::runtime_error(
@@ -1171,7 +1203,8 @@ void advanceMovingGeometryFsi(
                     << " line-residual="
                     << structureStep.maximumSuspensionResidualMeters
                     << " m fluid-resultant=" << preStepForceNormNewtons
-                    << " N: " << exception.what();
+                    << " N load-activation=" << loadActivation
+                    << ": " << exception.what();
                 throw std::runtime_error(message.str());
             }
         }();
@@ -1191,7 +1224,8 @@ void advanceMovingGeometryFsi(
                     << " line-residual="
                     << structureStep.maximumSuspensionResidualMeters
                     << " m fluid-resultant=" << preStepForceNormNewtons
-                    << " N: " << exception.what();
+                    << " N load-activation=" << loadActivation
+                    << ": " << exception.what();
                 throw std::runtime_error(message.str());
             }
         }();
@@ -1223,13 +1257,19 @@ void advanceMovingGeometryFsi(
             throw std::runtime_error(
                 "moving scene material-wall exchange was not accepted");
         }
+        auto movingPressureSettings = built.pressureSettings;
+        movingPressureSettings.pressureSolve.relativeResidualTolerance =
+            settings.movingPressureRelativeResidualTolerance;
+        movingPressureSettings.pressureSolve
+            .absoluteReconstructedResidualTolerancePascalsMeters = settings
+                .movingPressureReconstructedResidualTolerancePascalsMeters;
         auto candidatePressure =
             buildSceneFluidMimeticPressureAuditEndpoint(
                 built.surface.definition, currentSurfaceState, built.grid,
                 geometryTransition.currentGeometryEpoch, openingFlux,
                 regionWall, volumeRates,
                 geometryTransition.topologyTransition, built.pressure,
-                built.pressureSettings);
+                movingPressureSettings);
         if (!candidatePressure.pressureEpoch.diagnostics.accepted) {
             throw std::runtime_error(
                 "moving scene continued pressure solve was not accepted");
@@ -1330,6 +1370,7 @@ void advanceMovingGeometryFsi(
             settings.backgroundWindMetersPerSecond);
         built.windRampFraction = candidateRampFraction;
         built.maximumGeometryDisplacementMeters = maximumDisplacement;
+        built.movingLoadActivationFraction = loadActivation;
         ++built.flowAdvanceCount;
         ++built.geometryAdvanceCount;
     } catch (...) {
@@ -1366,6 +1407,8 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.pressureControlTopologyStable =
         built.pressureControlTopologyStable;
     result.geometryAdvanceCount = built.geometryAdvanceCount;
+    result.movingLoadActivationFraction =
+        built.movingLoadActivationFraction;
     result.maximumGeometryDisplacementMeters =
         built.maximumGeometryDisplacementMeters;
     if (built.structureStep) {
@@ -1606,6 +1649,9 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         && std::isfinite(
             result.materialWallTracePressureTransferMomentResidualNewtonMeters)
         && std::isfinite(result.maximumGeometryDisplacementMeters)
+        && std::isfinite(result.movingLoadActivationFraction)
+        && result.movingLoadActivationFraction >= 0.0
+        && result.movingLoadActivationFraction <= 1.0
         && std::isfinite(result.maximumSuspensionResidualMeters)
         && std::isfinite(
             result.wallMomentumResidualKilogramMetersPerSecond)
@@ -2134,6 +2180,11 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
             "moving_scene.maximum_geometry_displacement", "m",
             viewer::FieldAssociation::Global,
             {state.diagnostics.maximumGeometryDisplacementMeters},
+        });
+        frame.scalarFields.push_back({
+            "moving_scene.load_activation", "1",
+            viewer::FieldAssociation::Global,
+            {state.diagnostics.movingLoadActivationFraction},
         });
         frame.scalarFields.push_back({
             "moving_scene.maximum_suspension_residual", "m",

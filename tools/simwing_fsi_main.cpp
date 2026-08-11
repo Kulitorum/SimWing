@@ -101,6 +101,10 @@ struct Options {
     bool frozenMaterialWallTracePressureLoads = false;
     bool frozenAggregateOpeningTraces = false;
     std::size_t frozenPreflowBootstrapSteps = 0;
+    std::optional<std::size_t> frozenMovingStructureSubsteps;
+    std::optional<double> frozenMovingLoadRampSeconds;
+    std::optional<double> frozenMovingPressureRelativeTolerance;
+    std::optional<double> frozenMovingPressureReconstructionTolerance;
     std::uint64_t checkpointEvery = 0;
     bool viewer = true;
     bool controlStdio = false;
@@ -123,6 +127,10 @@ void printUsage(FILE* stream) {
         "                   [--aggregate-opening-traces]\n"
         "                   [--preflow-bootstrap]\n"
         "                   [--preflow-steps N]\n"
+        "                   [--structure-substeps N]\n"
+        "                   [--load-ramp-seconds SECONDS]\n"
+        "                   [--moving-pressure-relative-tolerance VALUE]\n"
+        "                   [--moving-pressure-reconstruction-tolerance VALUE]\n"
         "                   [--perturbation MPS]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
@@ -158,6 +166,14 @@ void printUsage(FILE* stream) {
         "per cap triangle;\n"
         "--preflow-bootstrap is shorthand for one frozen corrected-flow epoch;\n"
         "--preflow-steps N selects 1..16 such epochs before XPBD receives load;\n"
+        "--structure-substeps N selects 1..64 XPBD substeps per moving interval;\n"
+        "the verified default remains 8 and the override requires --moving-fsi;\n"
+        "--load-ramp-seconds stages the fluid load delivered to XPBD from zero\n"
+        "to one over accepted moving frames; zero keeps full-load activation;\n"
+        "--moving-pressure-relative-tolerance selects 1e-12..1e-2 for each\n"
+        "consecutive moving solve; the verified default remains 1e-5;\n"
+        "--moving-pressure-reconstruction-tolerance declares a separate 0..1\n"
+        "Pa*m absolute RMS floor for full wall-trace reconstruction only;\n"
         "'flag' maps the complete reaction from a fixed-reference projected gust\n"
         "onto a one-edge-clamped XPBD fabric panel;\n"
         "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"
@@ -493,6 +509,75 @@ bool parseOptions(int argc,
             }
             options.frozenPreflowBootstrapSteps =
                 static_cast<std::size_t>(value);
+        } else if (argument == "--structure-substeps") {
+            std::uint64_t value = 0;
+            if (++index >= argc || !parseUnsigned(argv[index], value)
+                || value == 0 || value > 64) {
+                error = "--structure-substeps requires an integer from 1 through 64";
+                return false;
+            }
+            options.frozenMovingStructureSubsteps =
+                static_cast<std::size_t>(value);
+        } else if (argument.starts_with("--structure-substeps=")) {
+            std::uint64_t value = 0;
+            if (!parseUnsigned(argument.substr(21), value)
+                || value == 0 || value > 64) {
+                error = "--structure-substeps requires an integer from 1 through 64";
+                return false;
+            }
+            options.frozenMovingStructureSubsteps =
+                static_cast<std::size_t>(value);
+        } else if (argument == "--load-ramp-seconds") {
+            double value = 0.0;
+            if (++index >= argc || !parseFiniteDouble(argv[index], value)
+                || value < 0.0 || value > 60.0) {
+                error = "--load-ramp-seconds requires a value from 0 through 60";
+                return false;
+            }
+            options.frozenMovingLoadRampSeconds = value;
+        } else if (argument.starts_with("--load-ramp-seconds=")) {
+            double value = 0.0;
+            if (!parseFiniteDouble(argument.substr(20), value)
+                || value < 0.0 || value > 60.0) {
+                error = "--load-ramp-seconds requires a value from 0 through 60";
+                return false;
+            }
+            options.frozenMovingLoadRampSeconds = value;
+        } else if (argument == "--moving-pressure-relative-tolerance") {
+            double value = 0.0;
+            if (++index >= argc || !parseFiniteDouble(argv[index], value)
+                || value < 1.0e-12 || value > 1.0e-2) {
+                error = "--moving-pressure-relative-tolerance requires a value from 1e-12 through 1e-2";
+                return false;
+            }
+            options.frozenMovingPressureRelativeTolerance = value;
+        } else if (argument
+                       == "--moving-pressure-reconstruction-tolerance") {
+            double value = 0.0;
+            if (++index >= argc || !parseFiniteDouble(argv[index], value)
+                || value < 0.0 || value > 1.0) {
+                error = "--moving-pressure-reconstruction-tolerance requires a value from 0 through 1 Pa*m";
+                return false;
+            }
+            options.frozenMovingPressureReconstructionTolerance = value;
+        } else if (argument.starts_with(
+                       "--moving-pressure-reconstruction-tolerance=")) {
+            double value = 0.0;
+            if (!parseFiniteDouble(argument.substr(43), value)
+                || value < 0.0 || value > 1.0) {
+                error = "--moving-pressure-reconstruction-tolerance requires a value from 0 through 1 Pa*m";
+                return false;
+            }
+            options.frozenMovingPressureReconstructionTolerance = value;
+        } else if (argument.starts_with(
+                       "--moving-pressure-relative-tolerance=")) {
+            double value = 0.0;
+            if (!parseFiniteDouble(argument.substr(37), value)
+                || value < 1.0e-12 || value > 1.0e-2) {
+                error = "--moving-pressure-relative-tolerance requires a value from 1e-12 through 1e-2";
+                return false;
+            }
+            options.frozenMovingPressureRelativeTolerance = value;
         } else if (argument == "--perturbation") {
             double value = 0.0;
             if (++index >= argc || !parseFiniteDouble(argv[index], value)
@@ -579,7 +664,11 @@ bool parseOptions(int argc,
         || options.frozenMovingGeometryFsi
         || options.frozenMaterialWallTracePressureLoads
         || options.frozenAggregateOpeningTraces
-        || options.frozenPreflowBootstrapSteps != 0;
+        || options.frozenPreflowBootstrapSteps != 0
+        || options.frozenMovingStructureSubsteps.has_value()
+        || options.frozenMovingLoadRampSeconds.has_value()
+        || options.frozenMovingPressureRelativeTolerance.has_value()
+        || options.frozenMovingPressureReconstructionTolerance.has_value();
     if (frozenControlRequested
         && options.workerCase != WorkerCase::FrozenScene) {
         error = "frozen-scene flow controls require --case frozen-scene";
@@ -604,6 +693,26 @@ bool parseOptions(int argc,
     if (options.frozenPreflowBootstrapSteps != 0
         && !options.frozenMovingGeometryFsi) {
         error = "preflow bootstrap requires --moving-fsi";
+        return false;
+    }
+    if (options.frozenMovingStructureSubsteps
+        && !options.frozenMovingGeometryFsi) {
+        error = "--structure-substeps requires --moving-fsi";
+        return false;
+    }
+    if (options.frozenMovingLoadRampSeconds
+        && !options.frozenMovingGeometryFsi) {
+        error = "--load-ramp-seconds requires --moving-fsi";
+        return false;
+    }
+    if (options.frozenMovingPressureRelativeTolerance
+        && !options.frozenMovingGeometryFsi) {
+        error = "--moving-pressure-relative-tolerance requires --moving-fsi";
+        return false;
+    }
+    if (options.frozenMovingPressureReconstructionTolerance
+        && !options.frozenMovingGeometryFsi) {
+        error = "--moving-pressure-reconstruction-tolerance requires --moving-fsi";
         return false;
     }
     if (options.workerCase == WorkerCase::FrozenScene && !stepsRequested) {
@@ -2260,6 +2369,23 @@ int main(int argc, char* argv[]) {
                 options.frozenAggregateOpeningTraces;
             settings.preflowBootstrapSteps =
                 options.frozenPreflowBootstrapSteps;
+            if (options.frozenMovingStructureSubsteps) {
+                settings.movingStructureSubsteps =
+                    *options.frozenMovingStructureSubsteps;
+            }
+            if (options.frozenMovingLoadRampSeconds) {
+                settings.movingLoadRampSeconds =
+                    *options.frozenMovingLoadRampSeconds;
+            }
+            if (options.frozenMovingPressureRelativeTolerance) {
+                settings.movingPressureRelativeResidualTolerance =
+                    *options.frozenMovingPressureRelativeTolerance;
+            }
+            if (options.frozenMovingPressureReconstructionTolerance) {
+                settings
+                    .movingPressureReconstructedResidualTolerancePascalsMeters =
+                    *options.frozenMovingPressureReconstructionTolerance;
+            }
             if (options.frozenPerturbationMetersPerSecond) {
                 settings.diagnosticPerturbationSpeedMetersPerSecond =
                     *options.frozenPerturbationMetersPerSecond;

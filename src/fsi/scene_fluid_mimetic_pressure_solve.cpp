@@ -97,6 +97,8 @@ solveSceneFluidMimeticPressureSystem(
                 * result.diagnostics.reducedTraceSolve
                     .initialResidualL2PascalsMeters,
             settings
+                .absoluteReconstructedResidualTolerancePascalsMeters,
+            settings
                 .absoluteComponentCompatibilityTolerancePascalsMeters});
     result.diagnostics.reconstructedFullResidualConverged =
         std::isfinite(result.diagnostics

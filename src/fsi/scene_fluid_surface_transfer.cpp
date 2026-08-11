@@ -139,8 +139,9 @@ ConservativeTransferResult SceneFluidSurfaceTransfer::evaluateQuadrature(
 
 void SceneFluidSurfaceTransfer::addLoadsTo(
     Structure& target,
-    const ConservativeTransferResult& result) const {
-    transfer_.addLoadsTo(target, result);
+    const ConservativeTransferResult& result,
+    const double activationScale) const {
+    transfer_.addLoadsTo(target, result, activationScale);
 }
 
 } // namespace simwing::fsi

@@ -596,8 +596,11 @@ ConservativeTransferResult ConservativeSurfaceTransfer::evaluateQuadrature(
 
 void ConservativeSurfaceTransfer::addLoadsTo(
     Structure& target,
-    const ConservativeTransferResult& result) const {
-    if (target.definitionFingerprint() != targetDefinitionFingerprint_
+    const ConservativeTransferResult& result,
+    const double activationScale) const {
+    if (!std::isfinite(activationScale)
+        || activationScale < 0.0 || activationScale > 1.0
+        || target.definitionFingerprint() != targetDefinitionFingerprint_
         || result.targetDefinitionFingerprint_ != targetDefinitionFingerprint_
         || result.surfaceFingerprint_ != fingerprint_
         || result.nodeLoads_.size() != nodes_.size()) {
@@ -614,7 +617,11 @@ void ConservativeSurfaceTransfer::addLoadsTo(
         }
     }
     for (const auto& load : result.nodeLoads_) {
-        target.addExternalForce(load.structureNode, load.forceNewtons);
+        target.addExternalForce(
+            load.structureNode,
+            {activationScale * load.forceNewtons.x,
+             activationScale * load.forceNewtons.y,
+             activationScale * load.forceNewtons.z});
     }
 }
 

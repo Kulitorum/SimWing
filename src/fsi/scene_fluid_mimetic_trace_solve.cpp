@@ -38,6 +38,10 @@ void validateSettings(
         || settings.relativeResidualTolerance < 0.0
         || (settings.absoluteResidualTolerancePascalsMeters == 0.0
             && settings.relativeResidualTolerance == 0.0)
+        || !std::isfinite(settings
+            .absoluteReconstructedResidualTolerancePascalsMeters)
+        || settings.absoluteReconstructedResidualTolerancePascalsMeters
+            < 0.0
         || !std::isfinite(
             settings.absoluteComponentCompatibilityTolerancePascalsMeters)
         || settings.absoluteComponentCompatibilityTolerancePascalsMeters

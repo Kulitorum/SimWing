@@ -44,7 +44,8 @@ public:
         const ConservativeTransferSettings& settings = {}) const;
 
     void addLoadsTo(Structure& target,
-                    const ConservativeTransferResult& result) const;
+                    const ConservativeTransferResult& result,
+                    double activationScale = 1.0) const;
 
 private:
     struct Topology {

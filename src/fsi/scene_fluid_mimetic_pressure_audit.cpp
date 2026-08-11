@@ -73,6 +73,8 @@ std::uint64_t settingsFingerprint(
         .absoluteResidualTolerancePascalsMeters);
     fingerprint.real(settings.pressureSolve.relativeResidualTolerance);
     fingerprint.real(settings.pressureSolve
+        .absoluteReconstructedResidualTolerancePascalsMeters);
+    fingerprint.real(settings.pressureSolve
         .absoluteComponentCompatibilityTolerancePascalsMeters);
     fingerprint.integer(static_cast<std::uint64_t>(
         settings.pressureSolve.maximumIterations));
@@ -378,6 +380,8 @@ SceneFluidMimeticPressureAuditEndpoint finishEndpoint(
                 << trace.initialResidualL2PascalsMeters
                 << ", final-l2="
                 << trace.finalResidualL2PascalsMeters
+                << ", reconstructed-l2="
+                << pressure.reconstructedFullResidualL2PascalsMeters
                 << ", reconstructed-max="
                 << pressure.reconstructedFullResidualMaximumPascalsMeters
                 << ", reconstructed-tolerance="

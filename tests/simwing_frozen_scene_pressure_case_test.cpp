@@ -92,6 +92,16 @@ void testFrozenScenePressureCase() {
     check(settings.backgroundWindMetersPerSecond
               == simwing::fsi::fluid::Vector3{0.0, 0.85, 0.0},
           "frozen scene default wind follows the wing's positive-Y chord");
+    check(settings.movingStructureSubsteps == 8,
+          "moving scene keeps eight structural substeps by default");
+    check(settings.movingLoadRampSeconds == 0.0,
+          "moving scene keeps full-load activation by default");
+    check(settings.movingPressureRelativeResidualTolerance == 1.0e-5,
+          "moving scene keeps the established pressure tolerance by default");
+    check(settings
+              .movingPressureReconstructedResidualTolerancePascalsMeters
+              == 0.0,
+          "moving scene keeps a separate reconstruction floor disabled by default");
     // Preserve the established pressure-cell fixture's X-normal load oracle;
     // the imported-wing default and vector pump are checked separately.
     settings.backgroundWindMetersPerSecond = {-0.85, 0.0, 0.0};
@@ -301,6 +311,11 @@ void testFrozenScenePressureCase() {
     movingSettings.backgroundWindMetersPerSecond = {0.1, 0.0, 0.0};
     movingSettings.windRampSeconds = 0.0;
     movingSettings.timeStepSeconds = 0.01;
+    movingSettings.movingStructureSubsteps = 16;
+    movingSettings.movingLoadRampSeconds = 0.04;
+    movingSettings.movingPressureRelativeResidualTolerance = 1.0e-8;
+    movingSettings
+        .movingPressureReconstructedResidualTolerancePascalsMeters = 1.0e-6;
     simwing::fsi::FrozenScenePressureCase frozenReference(
         scene, movingSettings);
     const auto frozenReferenceFrame = frozenReference.advance();
@@ -340,6 +355,7 @@ void testFrozenScenePressureCase() {
     check(movingDiagnostics.finite
               && movingDiagnostics.usesMovingGeometryFsi
               && movingDiagnostics.geometryAdvanceCount == 1
+              && movingDiagnostics.movingLoadActivationFraction == 0.25
               && movingDiagnostics.maximumGeometryDisplacementMeters > 0.0,
           "moving scene FSI accepts one finite XPBD geometry advance");
     check(movingDiagnostics.usesConsecutivePressureWarmStart

@@ -49,6 +49,10 @@ struct FrozenScenePressureCaseSettings {
     bool useMaterialWallTracePressureLoads = false;
     bool aggregateCoplanarOpeningPatches = false;
     std::size_t preflowBootstrapSteps = 0;
+    std::size_t movingStructureSubsteps = 8;
+    double movingLoadRampSeconds = 0.0;
+    double movingPressureRelativeResidualTolerance = 1.0e-5;
+    double movingPressureReconstructedResidualTolerancePascalsMeters = 0.0;
     double diagnosticPerturbationSpeedMetersPerSecond = 0.0;
     double timeStepSeconds = 1.0 / 60.0;
     double densityKgPerCubicMeter = 1.225;
@@ -73,6 +77,7 @@ struct FrozenScenePressureCaseDiagnostics {
     bool usesRegionWallPrediction = false;
     bool pressureControlTopologyStable = false;
     std::size_t geometryAdvanceCount = 0;
+    double movingLoadActivationFraction = 0.0;
     double maximumGeometryDisplacementMeters = 0.0;
     double maximumSuspensionResidualMeters = 0.0;
     double maximumCarriedTraceCorrectionCubicMetersPerSecond = 0.0;
