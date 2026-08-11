@@ -41,6 +41,7 @@ enum class StructureConstraintKind : std::uint8_t {
     Distance = 1,
     Cable = 2,
     SuspensionTie = 3,
+    SeamStitch = 4,
 };
 
 struct StructureConstraintDefinition {

@@ -516,7 +516,7 @@ void assembleSeams(
                 continue;
             }
             assembly.definition.constraints.push_back(
-                {StructureConstraintKind::Distance,
+                {StructureConstraintKind::SeamStitch,
                  nodeIndices.at(seam->firstOrderedVertexIds[index]),
                  nodeIndices.at(seam->secondOrderedVertexIds[index]),
                  0.0,

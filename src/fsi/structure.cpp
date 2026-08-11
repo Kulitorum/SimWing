@@ -138,6 +138,13 @@ void validateDefinition(const StructureDefinition& definition) {
         case StructureConstraintKind::Cable:
         case StructureConstraintKind::SuspensionTie:
             break;
+        case StructureConstraintKind::SeamStitch:
+            if (constraint.restLengthMeters != 0.0
+                || constraint.complianceMetersPerNewton != 0.0) {
+                throw std::invalid_argument(
+                    "Seam stitch must be rigid and zero-rest");
+            }
+            break;
         default:
             throw std::invalid_argument("Unknown structure constraint kind");
         }
@@ -581,6 +588,11 @@ private:
                 constraint.secondNode,
                 constraint.restLengthMeters,
                 constraint.complianceMetersPerNewton);
+            break;
+        case StructureConstraintKind::SeamStitch:
+            body.addSeamStitchConstraint(
+                constraint.firstNode,
+                constraint.secondNode);
             break;
         }
     }

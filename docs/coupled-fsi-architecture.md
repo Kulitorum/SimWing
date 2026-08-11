@@ -3534,10 +3534,15 @@ default remains exactly one trace per cap triangle. On the seamed gnuC2 `2^3`
 case with two frozen preflow epochs and wall-trace loading, the option reduces
 the first loaded displacement from `5.56742 mm` to `2.61949 mm` and clears the
 former reversed tiny-cap-facet rejection. Rebuild then reaches a stricter
-material-plus-cap cycle failure at moved intake edge `(7260, 7261)`, with a
-`0.338 um` suspension residual and `0.000482757 N` fluid resultant. This makes
-moving cap incidence the next acceptance gate; it does not justify weakening
-the closed-region-cycle check.
+material-plus-cap cycle failure at moved wingtip edge `(7260, 7261)`, with a
+`0.338 um` suspension residual, `0.000482757 N` fluid resultant, and `71.4 um`
+maximum paired-seam gap. The gap came from solve order: membrane, bending, and
+suspension stages could move seam nodes after their ordinary distance sweep.
+Paired seam constraints are now explicitly typed as rigid zero-rest stitches
+and receive one final deterministic projection per structural substep. This
+closes the moved fluid boundary without welding Structure nodes or weakening
+the closed-region-cycle check. The real run now completes that geometry
+transition and reaches the later region-wall sample-ownership gate.
 The frozen bootstrap explicitly carries the accepted corrected trace flow, so
 its next pressure solve sees only the new bulk predictor increment. Repeating
 the ordinary absolute-velocity fixed path is not a viable pre-roll: on gnuC2 at

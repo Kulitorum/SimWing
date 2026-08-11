@@ -475,7 +475,7 @@ void testSeamAssemblyAndBendingTopologyRejections() {
             seamRange->firstConstraint];
         const auto& firstRail = seamAssembly.definition.constraints[
             seamRange->firstConstraint + 2];
-        check(firstPair.kind == StructureConstraintKind::Distance
+        check(firstPair.kind == StructureConstraintKind::SeamStitch
                   && firstPair.firstNode
                          == *seamAssembly.mappings.nodeIndex(11)
                   && firstPair.secondNode

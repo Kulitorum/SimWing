@@ -394,6 +394,33 @@ void testCableCascadeSweeps() {
     }
 }
 
+void testClosingSeamStitch() {
+    softwing::SoftBody body;
+    body.addNode({0.0, 0.0, 0.0}, 1.0);
+    body.addNode({0.0, 0.0, 0.0}, 1.0);
+    body.addFixedNode({1.0, 0.0, 0.0});
+    body.addSeamStitchConstraint(0, 1);
+    body.addDistanceConstraint(1, 2, 0.5, 0.0);
+
+    softwing::StepPerformanceProfile profile;
+    softwing::StepSettings settings;
+    settings.timeStep = 1.0 / 60.0;
+    settings.substeps = 1;
+    settings.constraintIterations = 1;
+    settings.gravity = {};
+    settings.velocityDampingPerSecond = 0.0;
+    settings.performanceProfile = &profile;
+    body.step(settings);
+
+    check(length(body.nodes()[1].position - body.nodes()[0].position)
+              <= 1.0e-15,
+          "seam stitch: final projection closes movement from later constraints");
+    check(body.constraints().front().kind
+              == softwing::ConstraintKind::SeamStitch
+              && profile.distanceConstraintVisits == 3,
+          "seam stitch: typed closing visit is explicit in diagnostics");
+}
+
 } // namespace
 
 int main() {
@@ -405,6 +432,7 @@ int main() {
     testDihedralStateRoundTrip();
     testDihedralGradientAndProjectionSigns();
     testCableCascadeSweeps();
+    testClosingSeamStitch();
     if (failures != 0) {
         std::fprintf(stderr, "%d softwing material check(s) failed\n", failures);
         return 1;

@@ -1061,6 +1061,29 @@ void advanceMovingGeometryFsi(
                 maximumDisplacement,
                 std::sqrt(dx * dx + dy * dy + dz * dz));
         }
+        double maximumSeamPairSeparation = 0.0;
+        for (const auto& seam : built.scene.seams) {
+            for (std::size_t index = 0;
+                 index < seam.firstOrderedVertexIds.size(); ++index) {
+                const auto first = built.surface.definition.mappings
+                    .vertexIndex(seam.firstOrderedVertexIds[index]);
+                const auto second = built.surface.definition.mappings
+                    .vertexIndex(seam.secondOrderedVertexIds[index]);
+                if (!first || !second) {
+                    continue;
+                }
+                const auto& firstPosition =
+                    currentSurfaceState.vertices[*first].positionMeters;
+                const auto& secondPosition =
+                    currentSurfaceState.vertices[*second].positionMeters;
+                const double dx = firstPosition.x - secondPosition.x;
+                const double dy = firstPosition.y - secondPosition.y;
+                const double dz = firstPosition.z - secondPosition.z;
+                maximumSeamPairSeparation = std::max(
+                    maximumSeamPairSeparation,
+                    std::sqrt(dx * dx + dy * dy + dz * dz));
+            }
+        }
         const auto acceptedGridEpoch = [&] {
             try {
                 return buildSceneFluidGridEpoch(
@@ -1072,6 +1095,7 @@ void advanceMovingGeometryFsi(
                 message
                     << "moving scene geometry rebuild rejected after"
                     << " structure-dx=" << maximumDisplacement << " m"
+                    << " seam-gap=" << maximumSeamPairSeparation << " m"
                     << " line-residual="
                     << structureStep.maximumSuspensionResidualMeters
                     << " m fluid-resultant=" << preStepForceNormNewtons
@@ -1091,6 +1115,7 @@ void advanceMovingGeometryFsi(
                 message
                     << "moving scene geometry transition rejected after"
                     << " structure-dx=" << maximumDisplacement << " m"
+                    << " seam-gap=" << maximumSeamPairSeparation << " m"
                     << " line-residual="
                     << structureStep.maximumSuspensionResidualMeters
                     << " m fluid-resultant=" << preStepForceNormNewtons

@@ -1790,9 +1790,14 @@ makes this a certified aerodynamic solver.
   remains bit-for-bit patch-owned. On the seamed gnuC2 `2^3`, two preflow
   epochs plus wall-trace loading reduce the first loaded displacement from
   `5.56742 mm` to `2.61949 mm` and clear the reversed tiny-cap-facet gate. The
-  next rejection is a material-plus-cap region-cycle break at moved intake edge
-  `(7260, 7261)` with a `0.338 um` line residual; moving cap incidence is the
-  next gate, not a reason to weaken topology validation.
+  first release initially left a `71.4 um` gap across a rigid paired wingtip
+  seam because membrane/bending/suspension stages moved its nodes after the
+  general distance sweep. Seam pair constraints are now explicitly typed and
+  receive one deterministic final zero-rest projection per structural
+  substep. That clears the material-plus-cap region-cycle break at edge
+  `(7260, 7261)` without loosening the topology validator. The same real run
+  now reaches the later region-wall sample-ownership transition; it remains
+  the next moving-FSI gate.
   Its
   `--continue-corrected-trace-flow` experiment preserves exact fixed-topology
   trace corrections across frames without changing default arithmetic. The

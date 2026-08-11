@@ -512,6 +512,19 @@ std::size_t SoftBody::addSuspensionTieConstraint(
     return constraints_.size() - 1;
 }
 
+std::size_t SoftBody::addSeamStitchConstraint(
+    const std::size_t a,
+    const std::size_t b) {
+    requireNodeIndex(a, nodes_.size());
+    requireNodeIndex(b, nodes_.size());
+    if (a == b) {
+        throw std::invalid_argument("Invalid seam stitch constraint");
+    }
+    constraints_.push_back(
+        {a, b, 0.0, 0.0, 0.0, ConstraintKind::SeamStitch});
+    return constraints_.size() - 1;
+}
+
 const std::vector<std::size_t>& SoftBody::loadPathConstraintOrder() const {
     if (loadPathOrdering_.builtForConstraintCount == constraints_.size()
         && loadPathOrdering_.builtForNodeCount == nodes_.size()
@@ -539,7 +552,8 @@ const std::vector<std::size_t>& SoftBody::loadPathConstraintOrder() const {
     }
     for (std::size_t index = 0; index < constraints_.size(); ++index) {
         const DistanceConstraint& constraint = constraints_[index];
-        if (constraint.kind == ConstraintKind::Distance) {
+        if (constraint.kind == ConstraintKind::Distance
+            || constraint.kind == ConstraintKind::SeamStitch) {
             structuralNode[constraint.a] = true;
             structuralNode[constraint.b] = true;
             continue;
@@ -1370,6 +1384,23 @@ void SoftBody::integrateSubstepTrial(double dt,
     } else if (settings.constraintIterations == 0) {
         for (int pair = 0; pair < settings.cableConstraintSweepPairs; ++pair) {
             solveCablePair();
+        }
+    }
+    if (settings.constraintIterations > 0) {
+        PerformanceScope distance(profileField(
+            profile, &StepPerformanceProfile::distanceConstraintNanoseconds));
+        for (DistanceConstraint& constraint : constraints_) {
+            if (constraint.kind != ConstraintKind::SeamStitch) {
+                continue;
+            }
+            if (packedConstraints) {
+                solveConstraintPacked(constraint, inverseTimeStepSquared);
+            } else {
+                solveConstraint(constraint, inverseTimeStepSquared);
+            }
+            if (profile != nullptr) {
+                ++profile->distanceConstraintVisits;
+            }
         }
     }
     if (packedConstraints) {

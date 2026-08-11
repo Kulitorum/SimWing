@@ -55,6 +55,11 @@ count; `workerThreads == 0` still selects the untouched serial sweep):
   and harness ties, conditioning deep load propagation without paying for
   extra cloth iterations. Zero bypasses the path exactly and preserves
   historical arithmetic; Playground free flight currently requests 96 pairs.
+- `ConstraintKind::SeamStitch` — a rigid zero-rest authored seam pair. It uses
+  the ordinary distance projection during structural iterations, then receives
+  one deterministic closing projection after membrane, bending, suspension,
+  contact, and targeted cable movement so a sewn fluid boundary cannot be left
+  numerically open by solve order.
 - `OrthotropicMembraneMaterial::compressionStiffnessRatio` — an SPD-safe
   `D*K*D` compression reduction. The default `1.0` bypasses the new branch and
   preserves the original bilateral stiffness matrix exactly; the shear scale

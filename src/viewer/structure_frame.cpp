@@ -64,6 +64,7 @@ void requireUniqueNonzeroIds(
     switch (constraint.kind) {
     case fsi::StructureConstraintKind::Distance:
     case fsi::StructureConstraintKind::SuspensionTie:
+    case fsi::StructureConstraintKind::SeamStitch:
         return std::abs(extension);
     case fsi::StructureConstraintKind::Cable:
         return std::max(0.0, extension);

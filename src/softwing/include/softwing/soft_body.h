@@ -94,6 +94,10 @@ enum class ConstraintKind {
     // ordinary distance physics, but participates in the targeted
     // reverse/forward load-path sweeps together with unilateral cables.
     SuspensionTie,
+    // Rigid zero-rest pairing for two authored seam-chain vertices. It joins
+    // the general distance sweep and receives one final projection after all
+    // membrane, bending, suspension, and load-path movement.
+    SeamStitch,
 };
 
 struct DistanceConstraint {
@@ -306,6 +310,8 @@ public:
                                            std::size_t b,
                                            double restLength,
                                            double compliance = 0.0);
+    std::size_t addSeamStitchConstraint(std::size_t a,
+                                        std::size_t b);
     std::size_t addDihedralBendingConstraint(
         std::size_t a,
         std::size_t b,
