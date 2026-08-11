@@ -49,8 +49,11 @@ face-centred velocity, `-Y` prescribed inflow, `+Y` pressure-outlet ownership,
 and X/Z far-field boundaries. Its canonical initializes a bounded divergent
 wake, synchronizes coarse/fine face fluxes, and uses composite multigrid to
 reduce maximum divergence from `6.99e-2 s^-1` to `4.58e-12 s^-1` while keeping
-the inlet normal velocity exact. Advection, diffusion, interface coupling, and
-wing aerodynamics do not yet use this backend. The first Qt-free fluid
+the inlet normal velocity exact. An opt-in worker exposes that projected
+coarse diagnostic grid as a 24,576-cell live CFD slice and transports a bounded
+passive marker pulse in positive Y at CFL 0.411. The changing marker is a flow-
+direction/transport diagnostic; momentum advection, diffusion, interface
+coupling, and wing aerodynamics do not yet use this backend. The first Qt-free fluid
 kernel adds a periodic staggered-grid
 pressure projection with deterministic rollback behavior, exact discrete
 gradient/divergence pairing, Taylor-Green preservation, and manufactured
@@ -1530,9 +1533,16 @@ cmake -S . -B build-amrex -G "Visual Studio 17 2022" -A x64 `
   -DSIMWING_ENABLE_AMREX_BACKEND=ON `
   -DSIMWING_AMREX_ENABLE_LINEAR_SOLVERS=ON
 cmake --build build-amrex --config Release `
-  --target simwing-amr-external-flow-projection-test --parallel
+  --target simwing-amr-external-flow-case-test simwing-fsi simwing-viewer `
+  --parallel
 ctest --test-dir build-amrex -C Release --output-on-failure `
   -R simwing_amr_external_flow
+```
+
+Run the live positive-Y transport diagnostic with:
+
+```powershell
+.\build-amrex\bin\Release\simwing-fsi.exe --case external-flow --steps 600
 ```
 
 Run:

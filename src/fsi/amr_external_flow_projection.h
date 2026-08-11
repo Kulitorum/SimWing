@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace simwing::fsi::amr {
 
@@ -38,6 +39,20 @@ struct WindTunnelProjectionDiagnostics {
     bool operator==(const WindTunnelProjectionDiagnostics&) const = default;
 };
 
+// Owning X-fast diagnostic copy of the projected coarse level. The complete
+// two-level solve remains represented by diagnostics; covered coarse pressure
+// cells and faces are averaged down from the refined patch before publication.
+// Face storage is intentionally not exposed through this visualization DTO.
+struct WindTunnelProjectedCoarseGrid {
+    WindTunnelProjectionDiagnostics diagnostics;
+    fluid::GridCellCounts cellCounts;
+    fluid::Vector3 lowerMeters;
+    fluid::Vector3 upperMeters;
+    std::vector<fluid::Vector3> velocityMetersPerSecond;
+    std::vector<double> pressurePascals;
+    std::vector<double> divergencePerSecond;
+};
+
 // Projects a deliberately divergent, nonuniform positive-Y wake on the
 // two-level non-periodic hierarchy. Homogeneous pressure-correction Neumann
 // conditions preserve prescribed normal velocity at -Y and the X/Z far
@@ -46,6 +61,10 @@ struct WindTunnelProjectionDiagnostics {
 // advective Navier-Stokes step or a wing-aerodynamics result.
 [[nodiscard]] WindTunnelProjectionDiagnostics
 evaluateWindTunnelPressureProjection(
+    const WindTunnelProjectionSettings& settings = {});
+
+[[nodiscard]] WindTunnelProjectedCoarseGrid
+evaluateWindTunnelProjectedCoarseGrid(
     const WindTunnelProjectionSettings& settings = {});
 
 } // namespace simwing::fsi::amr

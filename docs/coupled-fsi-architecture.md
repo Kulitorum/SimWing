@@ -3798,6 +3798,18 @@ build remains independent of AMReX. This is a grid/boundary/projection gate;
 it still performs no advection, diffusion, interface coupling, or wing
 aerodynamics.
 
+`ExternalFlowTransportCase` is the first immutable-frame bridge from that
+backend to `simwing-viewer`. It averages the projected coarse diagnostic level
+into an X-fast `32 x 48 x 16` frame, publishes pressure, velocity, divergence,
+and the coarse footprint covered by the factor-two patch, and advances a
+bounded passive marker with first-order donor-cell transport. At `dt=0.01 s`
+the observed maximum outgoing CFL is `0.411081`; the marker remains in `[0,1]`
+and visibly moves in positive Y through the axis-selectable CFD slice. The
+worker opens the viewer by default and remains paced by simulation time. This
+is intentionally a scalar transport/direction diagnostic over a frozen
+projected velocity: it is not momentum transport, a converged external flow,
+or aerodynamic evidence.
+
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written
 budgets; folded-interface and unresolved-gap cases do not leak or change fluid

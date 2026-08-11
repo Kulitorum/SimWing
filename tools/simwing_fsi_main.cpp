@@ -24,6 +24,10 @@
 #include "viewer_protocol.h"
 #include "worker_control_stream.h"
 
+#ifdef SIMWING_HAS_AMREX_EXTERNAL_FLOW
+#include "amr_external_flow_case.h"
+#endif
+
 #include <algorithm>
 #include <charconv>
 #include <chrono>
@@ -77,6 +81,7 @@ enum class WorkerCase {
     StrongPiston,
     OpenPiston,
     PeriodicFlow,
+    ExternalFlow,
     PorousFlow,
     MovingPorousFlow,
     PorousSheet,
@@ -119,7 +124,7 @@ struct Options {
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: simwing-fsi [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
+        "Usage: simwing-fsi [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|external-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--scene PATH]\n"
         "                   [--grid N|NXxNYxNZ] [--padding METERS]\n"
         "                   [--wind-y MPS|--wind-x MPS] [--ramp-seconds SECONDS]\n"
@@ -271,6 +276,10 @@ bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
         workerCase = WorkerCase::PeriodicFlow;
         return true;
     }
+    if (text == "external-flow") {
+        workerCase = WorkerCase::ExternalFlow;
+        return true;
+    }
     if (text == "porous-flow") {
         workerCase = WorkerCase::PorousFlow;
         return true;
@@ -373,7 +382,7 @@ bool parseOptions(int argc,
             if (++index >= argc
                 || !parseWorkerCase(argv[index], options.workerCase)) {
                 error = "--case requires 'structural', 'frozen-scene', 'hemisphere', 'flag', 'ram-cell', 'pressure-cell', 'piston', "
-                    "'strong-piston', 'open-piston', 'periodic-flow', 'porous-flow', "
+                    "'strong-piston', 'open-piston', 'periodic-flow', 'external-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
                     "'pressure-jump'";
@@ -382,7 +391,7 @@ bool parseOptions(int argc,
         } else if (argument.starts_with("--case=")) {
             if (!parseWorkerCase(argument.substr(7), options.workerCase)) {
                 error = "--case requires 'structural', 'frozen-scene', 'hemisphere', 'flag', 'ram-cell', 'pressure-cell', 'piston', "
-                    "'strong-piston', 'open-piston', 'periodic-flow', 'porous-flow', "
+                    "'strong-piston', 'open-piston', 'periodic-flow', 'external-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
                     "'pressure-jump'";
@@ -2415,6 +2424,25 @@ int main(int argc, char* argv[]) {
                     plug.porousDissipationJoules,
                     plug.energyResidualJoules,
                     options.tracePath.string().c_str());
+#ifdef SIMWING_HAS_AMREX_EXTERNAL_FLOW
+            } else if constexpr (std::is_same_v<
+                                     Simulation,
+                                     simwing::fsi::amr::ExternalFlowTransportCase>) {
+                const auto& diagnostics = simulation.diagnostics();
+                std::printf(
+                    "simwing-fsi completed %llu external-flow marker step(s), "
+                    "t=%.9g s, max-CFL=%.6g, projected-divergence=%.6g 1/s, "
+                    "marker=[%.6g, %.6g], trace=%s\n",
+                    static_cast<unsigned long long>(
+                        simulation.acceptedStepCount()),
+                    simulation.simulationTimeSeconds(),
+                    diagnostics.maximumOutgoingCourantNumber,
+                    diagnostics.projection
+                        .projectedMaximumDivergencePerSecond,
+                    diagnostics.minimumMarker,
+                    diagnostics.maximumMarker,
+                    options.tracePath.string().c_str());
+#endif
             } else {
                 const auto& diagnostics = simulation.diagnostics();
                 std::printf(
@@ -2519,6 +2547,20 @@ int main(int argc, char* argv[]) {
                 simulation.restore(*restoredPeriodicFlowCheckpoint);
             }
             return run(simulation);
+        }
+        if (options.workerCase == WorkerCase::ExternalFlow) {
+#ifdef SIMWING_HAS_AMREX_EXTERNAL_FLOW
+            int amrexArgumentCount = 1;
+            char* amrexArgumentsStorage[2]{argv[0], nullptr};
+            char** amrexArguments = amrexArgumentsStorage;
+            simwing::fsi::amr::Runtime runtime(
+                amrexArgumentCount, amrexArguments);
+            simwing::fsi::amr::ExternalFlowTransportCase simulation;
+            return run(simulation);
+#else
+            throw std::invalid_argument(
+                "--case external-flow requires an AMReX projection build");
+#endif
         }
         if (options.workerCase == WorkerCase::PressureJump) {
             simwing::fsi::PressureJumpCase simulation;

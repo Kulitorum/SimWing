@@ -1455,7 +1455,8 @@ private:
             const auto preferred = std::ranges::find_if(
                 fields,
                 [](const ScalarField* field) {
-                    return field->name == "frozen_scene.fluid_speed"
+                    return field->name == "external_flow.marker"
+                        || field->name == "frozen_scene.fluid_speed"
                         || field->name == "speed";
                 });
             if (preferred != fields.end()) {

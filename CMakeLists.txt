@@ -288,6 +288,18 @@ if(SIMWING_ENABLE_AMREX_BACKEND)
         target_link_libraries(simwing_amr_external_flow_projection PRIVATE
             ${simwing_amrex_target}
         )
+
+        add_library(simwing_amr_external_flow_case STATIC
+            src/fsi/amr_external_flow_case.cpp
+            src/fsi/amr_external_flow_case.h
+        )
+        target_include_directories(simwing_amr_external_flow_case PUBLIC
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+        )
+        target_link_libraries(simwing_amr_external_flow_case PUBLIC
+            simwing_amr_external_flow_projection
+            simwing_viewer_protocol
+        )
     endif()
 endif()
 target_include_directories(simwing_scene PUBLIC
@@ -1588,6 +1600,13 @@ if(SIMWING_ENABLE_AMREX_BACKEND)
         target_link_libraries(simwing-amr-external-flow-projection-test
             PRIVATE simwing_amr_external_flow_projection
         )
+        add_executable(simwing-amr-external-flow-case-test
+            tests/simwing_amr_external_flow_case_test.cpp
+        )
+        target_link_libraries(simwing-amr-external-flow-case-test PRIVATE
+            simwing_amr_external_flow_case
+            simwing_viewer_geometry
+        )
     endif()
 endif()
 
@@ -1895,6 +1914,12 @@ target_link_libraries(simwing-fsi PRIVATE
     simwing_pressure_jump_case
     simwing_worker_control_stream
 )
+if(SIMWING_ENABLE_AMREX_BACKEND AND SIMWING_AMREX_ENABLE_LINEAR_SOLVERS)
+    target_compile_definitions(simwing-fsi PRIVATE
+        SIMWING_HAS_AMREX_EXTERNAL_FLOW=1)
+    target_link_libraries(simwing-fsi PRIVATE
+        simwing_amr_external_flow_case)
+endif()
 
 add_executable(simwing-mimetic-conductance-audit
     tools/simwing_mimetic_conductance_audit_main.cpp
@@ -2361,6 +2386,8 @@ if(SIMWING_ENABLE_AMREX_BACKEND)
     if(SIMWING_AMREX_ENABLE_LINEAR_SOLVERS)
         add_test(NAME simwing_amr_external_flow_projection
             COMMAND simwing-amr-external-flow-projection-test)
+        add_test(NAME simwing_amr_external_flow_case
+            COMMAND simwing-amr-external-flow-case-test)
     endif()
 endif()
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)

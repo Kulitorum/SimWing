@@ -297,8 +297,59 @@ void auditBoundaryNormalVelocity(
 
 } // namespace
 
-WindTunnelProjectionDiagnostics evaluateWindTunnelPressureProjection(
-    const WindTunnelProjectionSettings& settings) {
+namespace {
+
+void copyProjectedCoarseGrid(
+    const WindTunnelProjectionSettings& settings,
+    const Hierarchy& hierarchy,
+    const amrex::MultiFab& potential,
+    WindTunnelProjectedCoarseGrid& output) {
+    const auto counts = settings.grid.coarseCellCounts;
+    const std::size_t cellCount = counts.x * counts.y * counts.z;
+    output.cellCounts = counts;
+    output.lowerMeters = settings.grid.lowerMeters;
+    output.upperMeters = settings.grid.upperMeters;
+    output.velocityMetersPerSecond.assign(cellCount, {});
+    output.pressurePascals.assign(cellCount, 0.0);
+    output.divergencePerSecond.assign(cellCount, 0.0);
+
+    const amrex::MultiFab& divergence = *hierarchy.divergence[0];
+    for (amrex::MFIter iterator(divergence); iterator.isValid(); ++iterator) {
+        const amrex::Box box = iterator.validbox();
+        const auto xVelocity = hierarchy.velocity[0][0]->const_array(iterator);
+        const auto yVelocity = hierarchy.velocity[0][1]->const_array(iterator);
+        const auto zVelocity = hierarchy.velocity[0][2]->const_array(iterator);
+        const auto pressurePotential = potential.const_array(iterator);
+        const auto divergenceValues = divergence.const_array(iterator);
+        for (int k = box.smallEnd(2); k <= box.bigEnd(2); ++k) {
+            for (int j = box.smallEnd(1); j <= box.bigEnd(1); ++j) {
+                for (int i = box.smallEnd(0); i <= box.bigEnd(0); ++i) {
+                    const std::size_t index = static_cast<std::size_t>(i)
+                        + counts.x
+                            * (static_cast<std::size_t>(j)
+                               + counts.y * static_cast<std::size_t>(k));
+                    output.velocityMetersPerSecond[index] = {
+                        0.5 * (xVelocity(i, j, k)
+                               + xVelocity(i + 1, j, k)),
+                        0.5 * (yVelocity(i, j, k)
+                               + yVelocity(i, j + 1, k)),
+                        0.5 * (zVelocity(i, j, k)
+                               + zVelocity(i, j, k + 1)),
+                    };
+                    output.pressurePascals[index] =
+                        settings.airDensityKilogramsPerCubicMeter
+                        * pressurePotential(i, j, k);
+                    output.divergencePerSecond[index] =
+                        divergenceValues(i, j, k);
+                }
+            }
+        }
+    }
+}
+
+WindTunnelProjectionDiagnostics evaluateProjection(
+    const WindTunnelProjectionSettings& settings,
+    WindTunnelProjectedCoarseGrid* projectedCoarseGrid) {
     validateProjectionSettings(settings);
     if (!amrex::Initialized()) {
         throw std::logic_error("AMReX runtime is not initialized");
@@ -437,7 +488,28 @@ WindTunnelProjectionDiagnostics evaluateWindTunnelPressureProjection(
         && diagnostics.upperYOutletNormalVelocityChangeMetersPerSecond
             > 0.0
         && diagnostics.pressureOutletReferenceOwned;
+    if (projectedCoarseGrid != nullptr) {
+        amrex::average_down(
+            *potential[1], *potential[0], 0, 1, amrex::IntVect(2));
+        copyProjectedCoarseGrid(
+            settings, hierarchy, *potential[0], *projectedCoarseGrid);
+        projectedCoarseGrid->diagnostics = diagnostics;
+    }
     return diagnostics;
+}
+
+} // namespace
+
+WindTunnelProjectionDiagnostics evaluateWindTunnelPressureProjection(
+    const WindTunnelProjectionSettings& settings) {
+    return evaluateProjection(settings, nullptr);
+}
+
+WindTunnelProjectedCoarseGrid evaluateWindTunnelProjectedCoarseGrid(
+    const WindTunnelProjectionSettings& settings) {
+    WindTunnelProjectedCoarseGrid result;
+    static_cast<void>(evaluateProjection(settings, &result));
+    return result;
 }
 
 } // namespace simwing::fsi::amr

@@ -19,8 +19,9 @@ void check(const bool condition, const char* message) {
 int main(int argc, char* argv[]) {
     try {
         simwing::fsi::amr::Runtime runtime(argc, argv);
-        const auto diagnostics =
-            simwing::fsi::amr::evaluateWindTunnelPressureProjection();
+        const auto projected =
+            simwing::fsi::amr::evaluateWindTunnelProjectedCoarseGrid();
+        const auto& diagnostics = projected.diagnostics;
         std::printf(
             "AMR projection: active=%zu iterations=%zu residual=%.17g "
             "divergence %.17g -> %.17g (ratio %.17g), pressure=%.17g Pa, "
@@ -39,6 +40,12 @@ int main(int argc, char* argv[]) {
         check(diagnostics.hierarchy.accepted
                   && diagnostics.activeCompositeCellCount == 46'080,
               "projection retains the accepted two-level hierarchy and composite cell ownership");
+        check(projected.cellCounts
+                      == simwing::fsi::fluid::GridCellCounts{32, 48, 16}
+                  && projected.velocityMetersPerSecond.size() == 24'576
+                  && projected.pressurePascals.size() == 24'576
+                  && projected.divergencePerSecond.size() == 24'576,
+              "projection publishes one owning X-fast coarse diagnostic sample per cell");
         check(diagnostics.initialMaximumDivergencePerSecond > 0.0
                   && diagnostics.maximumDivergenceReductionRatio < 1.0e-7,
               "multigrid pressure correction strongly contracts composite divergence");
