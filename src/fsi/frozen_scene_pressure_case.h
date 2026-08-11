@@ -34,7 +34,7 @@ struct FrozenScenePressureCaseSettings {
     bool useRegionalTransportFlowPrediction = false;
     bool useMovingGeometryFsi = false;
     bool useMaterialWallTracePressureLoads = false;
-    bool usePreflowBootstrap = false;
+    std::size_t preflowBootstrapSteps = 0;
     double diagnosticPerturbationSpeedMetersPerSecond = 0.0;
     double timeStepSeconds = 1.0 / 60.0;
     double densityKgPerCubicMeter = 1.225;
@@ -52,6 +52,8 @@ struct FrozenScenePressureCaseDiagnostics {
     bool usesMovingGeometryFsi = false;
     bool usesMaterialWallTracePressureLoads = false;
     bool usesPreflowBootstrap = false;
+    std::size_t preflowBootstrapStepCount = 0;
+    std::size_t completedPreflowBootstrapStepCount = 0;
     bool usesConsecutivePressureWarmStart = false;
     bool usesRegionWallPrediction = false;
     bool pressureControlTopologyStable = false;

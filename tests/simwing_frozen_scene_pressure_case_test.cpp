@@ -97,7 +97,7 @@ void testFrozenScenePressureCase() {
           "moving geometry FSI remains opt-in");
     check(!settings.useMaterialWallTracePressureLoads,
           "material-wall trace pressure loads remain opt-in");
-    check(!settings.usePreflowBootstrap,
+    check(settings.preflowBootstrapSteps == 0,
           "moving preflow bootstrap remains opt-in");
     settings.useRegionalTransportFlowPrediction = true;
     simwing::fsi::FrozenScenePressureCase first(scene, settings);
@@ -312,23 +312,28 @@ void testFrozenScenePressureCase() {
           "moving scene wall-trace pressure load remains an explicit distinct solver path");
 
     movingSettings.useMaterialWallTracePressureLoads = false;
-    movingSettings.usePreflowBootstrap = true;
+    movingSettings.preflowBootstrapSteps = 2;
     simwing::fsi::FrozenScenePressureCase preflowMoving(
         scene, movingSettings);
     const auto preflowFrame = preflowMoving.advance();
+    const auto secondPreflowFrame = preflowMoving.advance();
     const auto& preflowDiagnostics = preflowMoving.diagnostics();
     check(preflowMoving.traceHeader().solverCommit
                   == simwing::fsi::movingScenePreflowBootstrapSolverId
               && preflowFrame.step == 1
+              && secondPreflowFrame.step == 2
               && preflowDiagnostics.finite
               && preflowDiagnostics.usesMovingGeometryFsi
               && preflowDiagnostics.usesPreflowBootstrap
+              && preflowDiagnostics.preflowBootstrapStepCount == 2
+              && preflowDiagnostics.completedPreflowBootstrapStepCount == 2
               && !preflowDiagnostics.usesMaterialWallTracePressureLoads
               && preflowDiagnostics.geometryAdvanceCount == 0
-              && preflowDiagnostics.flowAdvanceCount == 1
+              && preflowDiagnostics.flowAdvanceCount == 2
               && preflowDiagnostics.usesCorrectedTraceFlowContinuation
               && preflowDiagnostics.maximumGeometryDisplacementMeters == 0.0
-              && sameGeometry(frozenReferenceFrame, preflowFrame),
+              && sameGeometry(frozenReferenceFrame, preflowFrame)
+              && sameGeometry(preflowFrame, secondPreflowFrame),
           "moving scene preflow accepts corrected flow before exposing Structure to pressure load");
 }
 

@@ -97,7 +97,7 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
-.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--moving-fsi] [--wall-trace-pressure-load] [--preflow-bootstrap] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
+.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--grid N] [--padding METERS] [--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--moving-fsi] [--wall-trace-pressure-load] [--preflow-bootstrap|--preflow-steps N] [--steps N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
 .\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
@@ -1752,9 +1752,10 @@ makes this a certified aerodynamic solver.
   and force. It remains diagnostic unless the moving-only
   `--wall-trace-pressure-load` experiment explicitly selects that conservative
   transfer; the default still supplies the control-cell load. The independent
-  moving-only `--preflow-bootstrap` experiment suppresses just the initial
-  projection load, accepts one genuinely frozen corrected-flow/mimetic epoch
-  without calling XPBD, then exposes later accepted pressure loads. Skipping
+  moving-only `--preflow-bootstrap` experiment is the one-epoch shorthand for
+  bounded `--preflow-steps N` (`1..16`). Each selected epoch suppresses the
+  projection load and accepts genuinely frozen corrected-flow/mimetic state
+  without calling XPBD; later epochs expose accepted pressure loads. Skipping
   the zero-load structural solve is load-bearing: roundoff motion of a point on
   a grid plane can otherwise change sparse material-side ownership. The frozen
   epoch uses exact corrected-trace continuation so it solves only the new bulk
@@ -1762,10 +1763,11 @@ makes this a certified aerodynamic solver.
   absolute load by only `1485.91 -> 1429.54 N` in one epoch. Exact continuation
   instead reaches `42.4227 N` absolute load, `0.475433 N` control resultant,
   and `0.0142197 N` maximum wall-trace nodal load with bit-identical geometry.
-  Applying that next control load moves gnuC2 `6.43212 mm`; the opening-cap
-  rebuild now accepts ordinary nonplanarity but correctly rejects one retained
-  facet whose orientation reverses. One preflow epoch is therefore not yet
-  enough to release XPBD.
+  Two epochs reach `1.21109 N` absolute load and a `0.0135725 N` resultant;
+  releasing XPBD then moves gnuC2 only `0.184893 mm` with a `38.8 nm` line
+  residual. The fluid rebuild correctly rejects a previously
+  reference-collapsed material boundary edge opened by that motion. This is a
+  missing structural-stitch gate, not permission to weaken fluid topology.
   Combined wall-trace/preflow selection has a distinct solver identity. Its
   `--continue-corrected-trace-flow` experiment preserves exact fixed-topology
   trace corrections across frames without changing default arithmetic. The

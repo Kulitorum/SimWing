@@ -98,7 +98,7 @@ struct Options {
     bool frozenRegionalTransportFlowPrediction = false;
     bool frozenMovingGeometryFsi = false;
     bool frozenMaterialWallTracePressureLoads = false;
-    bool frozenPreflowBootstrap = false;
+    std::size_t frozenPreflowBootstrapSteps = 0;
     std::uint64_t checkpointEvery = 0;
     bool viewer = true;
     bool controlStdio = false;
@@ -119,6 +119,7 @@ void printUsage(FILE* stream) {
         "                   [--moving-fsi]\n"
         "                   [--wall-trace-pressure-load]\n"
         "                   [--preflow-bootstrap]\n"
+        "                   [--preflow-steps N]\n"
         "                   [--perturbation MPS]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
@@ -147,8 +148,8 @@ void printUsage(FILE* stream) {
         "--wall-trace-pressure-load is a moving-FSI-only experiment that uses\n"
         "reconstructed material-wall trace pressure for Structure loads while\n"
         "retaining the default control-cell load as a diagnostic;\n"
-        "--preflow-bootstrap suppresses the initial projection load for one\n"
-        "moving epoch so corrected flow is accepted before XPBD receives load;\n"
+        "--preflow-bootstrap is shorthand for one frozen corrected-flow epoch;\n"
+        "--preflow-steps N selects 1..16 such epochs before XPBD receives load;\n"
         "'flag' maps the complete reaction from a fixed-reference projected gust\n"
         "onto a one-edge-clamped XPBD fabric panel;\n"
         "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"
@@ -426,7 +427,26 @@ bool parseOptions(int argc,
         } else if (argument == "--wall-trace-pressure-load") {
             options.frozenMaterialWallTracePressureLoads = true;
         } else if (argument == "--preflow-bootstrap") {
-            options.frozenPreflowBootstrap = true;
+            options.frozenPreflowBootstrapSteps = std::max<std::size_t>(
+                options.frozenPreflowBootstrapSteps, 1);
+        } else if (argument == "--preflow-steps") {
+            std::uint64_t value = 0;
+            if (++index >= argc || !parseUnsigned(argv[index], value)
+                || value == 0 || value > 16) {
+                error = "--preflow-steps requires an integer from 1 through 16";
+                return false;
+            }
+            options.frozenPreflowBootstrapSteps =
+                static_cast<std::size_t>(value);
+        } else if (argument.starts_with("--preflow-steps=")) {
+            std::uint64_t value = 0;
+            if (!parseUnsigned(argument.substr(16), value)
+                || value == 0 || value > 16) {
+                error = "--preflow-steps requires an integer from 1 through 16";
+                return false;
+            }
+            options.frozenPreflowBootstrapSteps =
+                static_cast<std::size_t>(value);
         } else if (argument == "--perturbation") {
             double value = 0.0;
             if (++index >= argc || !parseFiniteDouble(argv[index], value)
@@ -512,7 +532,7 @@ bool parseOptions(int argc,
         || options.frozenRegionalTransportFlowPrediction
         || options.frozenMovingGeometryFsi
         || options.frozenMaterialWallTracePressureLoads
-        || options.frozenPreflowBootstrap;
+        || options.frozenPreflowBootstrapSteps != 0;
     if (frozenControlRequested
         && options.workerCase != WorkerCase::FrozenScene) {
         error = "frozen-scene flow controls require --case frozen-scene";
@@ -534,9 +554,9 @@ bool parseOptions(int argc,
         error = "--wall-trace-pressure-load requires --moving-fsi";
         return false;
     }
-    if (options.frozenPreflowBootstrap
+    if (options.frozenPreflowBootstrapSteps != 0
         && !options.frozenMovingGeometryFsi) {
-        error = "--preflow-bootstrap requires --moving-fsi";
+        error = "preflow bootstrap requires --moving-fsi";
         return false;
     }
     if (options.workerCase == WorkerCase::FrozenScene && !stepsRequested) {
@@ -2000,7 +2020,7 @@ int main(int argc, char* argv[]) {
                     "[%.6g %.6g %.6g] N, wall-trace-sides=%zu+%zu, "
                     "wall-trace-jump=%.6g Pa, wall-trace-delta=%.6g Pa, "
                     "wall-trace-force=[%.6g %.6g %.6g] N, "
-                    "wall-trace-load=%u, preflow-bootstrap=%u, "
+                    "wall-trace-load=%u, preflow-bootstrap=%zu/%zu, "
                     "control-abs-load=%.6g N, "
                     "wall-abs-load=%.6g N, wall-max-patch=%.6g N, "
                     "wall-max-node=%.6g N, "
@@ -2040,7 +2060,8 @@ int main(int argc, char* argv[]) {
                     diagnostics.materialWallTracePressureForceNewtons.y,
                     diagnostics.materialWallTracePressureForceNewtons.z,
                     diagnostics.usesMaterialWallTracePressureLoads ? 1U : 0U,
-                    diagnostics.usesPreflowBootstrap ? 1U : 0U,
+                    diagnostics.completedPreflowBootstrapStepCount,
+                    diagnostics.preflowBootstrapStepCount,
                     diagnostics
                         .controlSampleIntegratedAbsolutePressureForceNewtons,
                     diagnostics
@@ -2187,8 +2208,8 @@ int main(int argc, char* argv[]) {
                 options.frozenMovingGeometryFsi;
             settings.useMaterialWallTracePressureLoads =
                 options.frozenMaterialWallTracePressureLoads;
-            settings.usePreflowBootstrap =
-                options.frozenPreflowBootstrap;
+            settings.preflowBootstrapSteps =
+                options.frozenPreflowBootstrapSteps;
             if (options.frozenPerturbationMetersPerSecond) {
                 settings.diagnosticPerturbationSpeedMetersPerSecond =
                     *options.frozenPerturbationMetersPerSecond;

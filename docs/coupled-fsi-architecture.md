@@ -3499,10 +3499,10 @@ pressure samples or alter the default load applied to Structure. The separate
 moving-only `--wall-trace-pressure-load` experiment selects its conservative
 transfer for the structural step, retains both diagnostic ledgers, and uses a
 distinct solver identity.
-The separate `--preflow-bootstrap` experiment addresses startup ownership
-rather than sample location. Its first moving epoch does not call XPBD; the
-initial projection is retained solely to correct and seed fluid flow on the
-exact frozen geometry. This avoids letting zero-load structural roundoff move
+The separate `--preflow-bootstrap` experiment is shorthand for one bounded
+`--preflow-steps N` epoch (`1..16`) and addresses startup ownership rather than
+sample location. Every selected moving epoch avoids XPBD and retains projection
+only to correct and seed fluid flow on exact frozen geometry. This avoids letting zero-load structural roundoff move
 a grid-aligned material point across sparse control ownership. Subsequent
 epochs use the selected accepted
 pressure ledger normally. Preflow and preflow-plus-wall-trace combinations
@@ -3518,11 +3518,18 @@ ledger falls to `43.0314 N` absolute load, `0.000434748 N` resultant, and
 `0.0142197 N` maximum nodal load. Geometry remains bit-identical. This is a
 credible kick-start endpoint, but a subsequent loaded XPBD step is still the
 acceptance gate.
-That next control-loaded step moves gnuC2 `6.43212 mm`. Reference-planar caps
-now retain their deterministic faceted disks through ordinary nonplanarity,
-clearing the former blanket planarity rejection, but opening 476 contains a
-facet whose orientation genuinely reverses. Fold rejection remains intact;
-the result calls for additional bounded preflow, not weaker cap topology.
+Two epochs reduce the control absolute load further to `1.21109 N`, with a
+`0.0135725 N` resultant, `1.22847 N` wall-ledger absolute load, and
+`0.000409936 N` maximum wall-trace nodal load. Geometry remains bit-identical.
+Releasing that state moves gnuC2 only `0.184893 mm` with a `38.8 nm` maximum
+line residual. The fluid rebuild then correctly rejects a previously
+reference-collapsed material boundary edge that has opened under motion. The
+earlier one-epoch release moved `6.43212 mm` and reversed an intake-cap facet.
+Reference-planar caps now retain their deterministic faceted disks through
+ordinary nonplanarity, but fold and open-boundary rejection remain intact. The
+two-epoch result moves the next gate from startup magnitude to missing
+structural stitching at the collapsed boundary; weakening fluid topology is
+not an acceptable substitute.
 The focused authored-intake case deterministically deforms on its first frame
 and accepts a real pressure-control topology change. This closes the first
 input-driven two-way plumbing loop, not aerodynamic validity: the coarse

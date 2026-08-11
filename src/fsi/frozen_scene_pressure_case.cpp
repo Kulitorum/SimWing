@@ -71,7 +71,8 @@ void validateSettings(const FrozenScenePressureCaseSettings& settings) {
                 || settings.useRegionalTransportFlowPrediction))
         || (settings.useMaterialWallTracePressureLoads
             && !settings.useMovingGeometryFsi)
-        || (settings.usePreflowBootstrap
+        || settings.preflowBootstrapSteps > 16
+        || (settings.preflowBootstrapSteps != 0
             && !settings.useMovingGeometryFsi)
         || !std::isfinite(
             settings.diagnosticPerturbationSpeedMetersPerSecond)
@@ -87,7 +88,7 @@ void validateSettings(const FrozenScenePressureCaseSettings& settings) {
 
 const char* solverId(
     const FrozenScenePressureCaseSettings& settings) noexcept {
-    if (settings.usePreflowBootstrap) {
+    if (settings.preflowBootstrapSteps != 0) {
         return settings.useMaterialWallTracePressureLoads
             ? movingScenePreflowWallTraceSolverId
             : movingScenePreflowBootstrapSolverId;
@@ -237,6 +238,8 @@ struct BuiltCase {
     bool pressureControlTopologyStable = false;
     bool usesMaterialWallTracePressureLoads = false;
     bool usesPreflowBootstrap = false;
+    std::size_t preflowBootstrapStepCount = 0;
+    std::size_t completedPreflowBootstrapStepCount = 0;
     std::size_t flowAdvanceCount = 0;
     std::size_t geometryAdvanceCount = 0;
     struct MaterialWallTracePressureTransfer {
@@ -735,10 +738,11 @@ BuiltCase buildCase(
     result.windRampFraction = initialRampFraction;
     result.usesMaterialWallTracePressureLoads =
         settings.useMaterialWallTracePressureLoads;
-    result.usesPreflowBootstrap = settings.usePreflowBootstrap;
+    result.usesPreflowBootstrap = settings.preflowBootstrapSteps != 0;
+    result.preflowBootstrapStepCount = settings.preflowBootstrapSteps;
     result.materialWallTracePressure =
         std::move(materialWallTracePressure);
-    if (settings.usePreflowBootstrap) {
+    if (settings.preflowBootstrapSteps != 0) {
         result.totalFluidTransfer = evaluateZeroPressureLoad(
             result.surface.definition, result.surfaceState,
             result.transfer,
@@ -1229,6 +1233,9 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.usesMaterialWallTracePressureLoads =
         built.usesMaterialWallTracePressureLoads;
     result.usesPreflowBootstrap = built.usesPreflowBootstrap;
+    result.preflowBootstrapStepCount = built.preflowBootstrapStepCount;
+    result.completedPreflowBootstrapStepCount =
+        built.completedPreflowBootstrapStepCount;
     result.usesConsecutivePressureWarmStart =
         built.pressure.usesConsecutiveWarmStart;
     result.usesRegionWallPrediction =
@@ -1633,8 +1640,8 @@ viewer::TraceHeader FrozenScenePressureCase::traceHeader() const {
 viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
     auto& state = *implementation_;
     if (state.settings.useMovingGeometryFsi) {
-        if (state.settings.usePreflowBootstrap
-            && state.acceptedStepCount == 0) {
+        if (state.acceptedStepCount
+            < state.settings.preflowBootstrapSteps) {
             // The bootstrap epoch is genuinely frozen. Even a zero-load XPBD
             // solve may move grid-aligned vertices by roundoff and thereby
             // change sparse cut-cell ownership before flow is initialized.
@@ -1645,6 +1652,7 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
             preflowSettings.useMovingGeometryFsi = false;
             preflowSettings.useCorrectedTraceFlowContinuation = true;
             advanceFixedGeometryFlow(state.built, preflowSettings);
+            ++state.built.completedPreflowBootstrapStepCount;
         } else {
             advanceMovingGeometryFsi(
                 state.built, state.settings, state.stepSettings);
