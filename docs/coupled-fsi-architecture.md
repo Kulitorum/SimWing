@@ -3839,6 +3839,20 @@ does not yet resolve per-region pressure jumps, viscosity, boundary layers,
 turbulence, permeability/leakage, intake flux, integrated aerodynamic loads,
 or structural coupling.
 
+The opt-in `--external-slab-x X` checkpoint is the deliberately cheap local
+counterpart. It keeps the Y/Z tunnel contract and 0.375 m coarse X spacing but
+uses three coarse X cells in a 1.125 m box centred on the requested authored
+span station; only the middle coarse X cell participates in the existing
+factor-two refined patch. The static-interface binder clips source triangles
+exactly to the non-periodic tunnel box before cell ownership, retains only
+positive-area intersecting source triangles in the diagnostic frame, and does
+not invent periodic images or closing fabric. At gnuC2 X=0 it reduces the
+composite interface from 3,600 to 158 cut cells, retains 6,484 triangles and
+10.619 square metres of clipped material, and reduces an every-step immutable
+frame from about 11 MB to about 1 MB. Both X faces are intentionally nearby
+far-field boundaries; this is a rapid transport/interface/viewer probe and is
+excluded from aerodynamic, spanwise-flow, pressure, and load validation.
+
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written
 budgets; folded-interface and unresolved-gap cases do not leak or change fluid

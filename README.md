@@ -1565,6 +1565,23 @@ Run the static authoritative wing in the AMR tunnel with:
   --steps 1000 --trace-every 10
 ```
 
+For rapid local interface/transport work, run only a three-coarse-cell
+spanwise slab centred at the requested X station (X=0 is the wing centre):
+
+```powershell
+.\build-amrex\bin\Release\simwing-fsi.exe --case external-flow `
+  --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin `
+  --external-slab-x 0 --steps 1000 --trace-every 1
+```
+
+The slab is 1.125 m wide at the production coarse X spacing, refines its
+middle coarse slice, and exactly clips the authoritative material surface to
+the local box. Its X faces remain nearby far-field boundaries, so it is a fast
+plumbing, forcing, and visualization probe—not a spanwise-flow or aerodynamic-
+load result. On the gnuC2 centre section it retains 6,484 source triangles,
+10.619 square metres of clipped material, and 158 active composite cut cells;
+one immutable frame is about 1 MB instead of about 11 MB for the whole wing.
+
 Run:
 
 ```powershell

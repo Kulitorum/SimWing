@@ -95,6 +95,7 @@ struct Options {
     std::filesystem::path checkpointInputPath;
     std::filesystem::path checkpointOutputPath;
     std::filesystem::path scenePath;
+    std::optional<double> externalSlabCentreXMeters;
     std::optional<simwing::fsi::fluid::GridCellCounts>
         frozenGridCellCounts;
     std::optional<double> frozenDomainPaddingMeters;
@@ -126,6 +127,7 @@ void printUsage(FILE* stream) {
         stream,
         "Usage: simwing-fsi [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|external-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--scene PATH]\n"
+        "                   [--external-slab-x METERS]\n"
         "                   [--grid N|NXxNYxNZ] [--padding METERS]\n"
         "                   [--wind-y MPS|--wind-x MPS] [--ramp-seconds SECONDS]\n"
         "                   [--continue-corrected-trace-flow]\n"
@@ -211,7 +213,8 @@ void printUsage(FILE* stream) {
         "canonical and publishes cell-centred pressure/velocity points.\n"
         "'external-flow' requires the opt-in AMReX projection build and advances\n"
         "the non-periodic positive-Y tunnel; optional --scene enables the static\n"
-        "authoritative cut-cell direct-forcing diagnostic.\n"
+        "authoritative cut-cell direct-forcing diagnostic; --external-slab-x\n"
+        "selects a fast three-coarse-slice local X slab centred at METERS.\n"
         "'porous-flow' advances a pressure-driven Darcy-Forchheimer plug and\n"
         "publishes its porous and periodic gauge-closure planes.\n"
         "'moving-porous-flow' advances a prescribed translating porous plane\n"
@@ -451,6 +454,22 @@ bool parseOptions(int argc,
             }
             options.scenePath =
                 std::filesystem::path(argument.substr(8));
+        } else if (argument == "--external-slab-x") {
+            double value = 0.0;
+            if (++index >= argc || !parseFiniteDouble(argv[index], value)
+                || std::abs(value) > 5.0) {
+                error = "--external-slab-x requires a finite span station within +/-5 metres";
+                return false;
+            }
+            options.externalSlabCentreXMeters = value;
+        } else if (argument.starts_with("--external-slab-x=")) {
+            double value = 0.0;
+            if (!parseFiniteDouble(argument.substr(18), value)
+                || std::abs(value) > 5.0) {
+                error = "--external-slab-x requires a finite span station within +/-5 metres";
+                return false;
+            }
+            options.externalSlabCentreXMeters = value;
         } else if (argument == "--grid") {
             simwing::fsi::fluid::GridCellCounts counts;
             if (++index >= argc
@@ -733,6 +752,16 @@ bool parseOptions(int argc,
         && options.workerCase != WorkerCase::FrozenScene
         && options.workerCase != WorkerCase::ExternalFlow) {
         error = "--scene is supported by frozen-scene and external-flow";
+        return false;
+    }
+    if (options.externalSlabCentreXMeters
+        && options.workerCase != WorkerCase::ExternalFlow) {
+        error = "--external-slab-x requires --case external-flow";
+        return false;
+    }
+    if (options.externalSlabCentreXMeters
+        && options.scenePath.empty()) {
+        error = "--external-slab-x requires an authoritative --scene";
         return false;
     }
     const bool frozenControlRequested =
@@ -2586,8 +2615,12 @@ int main(int argc, char* argv[]) {
             simwing::fsi::amr::Runtime runtime(
                 amrexArgumentCount, amrexArguments);
             if (frozenScene) {
+                const auto settings = options.externalSlabCentreXMeters
+                    ? simwing::fsi::amr::makeThreeSliceSpanwiseSlabSettings(
+                          *options.externalSlabCentreXMeters)
+                    : simwing::fsi::amr::ExternalFlowTransportSettings{};
                 simwing::fsi::amr::ExternalFlowTransportCase simulation(
-                    *frozenScene);
+                    *frozenScene, settings);
                 return run(simulation);
             }
             simwing::fsi::amr::ExternalFlowTransportCase simulation;

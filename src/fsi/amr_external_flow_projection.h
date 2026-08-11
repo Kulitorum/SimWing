@@ -120,7 +120,8 @@ public:
         WindTunnelProjectionSettings settings = {});
     WindTunnelMomentumState(
         WindTunnelProjectionSettings settings,
-        const Scene& staticWingScene);
+        const Scene& staticWingScene,
+        bool clipStaticWingToWindTunnel = false);
     ~WindTunnelMomentumState();
 
     WindTunnelMomentumState(const WindTunnelMomentumState&) = delete;

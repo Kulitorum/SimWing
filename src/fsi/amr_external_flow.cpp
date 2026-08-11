@@ -35,7 +35,7 @@ void validateSettings(const WindTunnelGridSettings& settings) {
     const auto counts = settings.coarseCellCounts;
     std::size_t xy = 0;
     std::size_t xyz = 0;
-    if (counts.x < 8 || counts.y < 8 || counts.z < 8
+    if (counts.x < 3 || counts.y < 8 || counts.z < 8
         || !multiplyBounded(counts.x, counts.y, xy)
         || !multiplyBounded(xy, counts.z, xyz)
         || xyz > 16'777'216

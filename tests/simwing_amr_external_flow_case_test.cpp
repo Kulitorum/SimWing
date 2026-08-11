@@ -180,6 +180,34 @@ int main(int argc, char* argv[]) {
                   && staticWing.diagnostics().projection
                          .projectedMaximumDivergencePerSecond < 1.0e-9,
               "surface geometry does not break the coarse CFD slice contract or composite projection");
+
+        const auto slabSettings =
+            simwing::fsi::amr::makeThreeSliceSpanwiseSlabSettings();
+        simwing::fsi::amr::ExternalFlowTransportCase slab(
+            staticPlateScene(), slabSettings);
+        const auto slabFrame = slab.advance();
+        const auto slabGrid = simwing::viewer::describeCfdGrid(slabFrame);
+        const auto& slabInterface =
+            slab.diagnostics().momentum.staticWing.binding;
+        check(slabGrid
+                  && slabGrid->cellCounts
+                      == std::array<std::size_t, 3>{3, 48, 16}
+                  && slabFrame.vertices.size() == 2'308,
+              "three-slice spanwise slab publishes only its compact CFD volume and retained local surface");
+        check(slabInterface.accepted
+                  && slabInterface.clippedToWindTunnel
+                  && !slabInterface.entirelyInsideWindTunnel
+                  && slabInterface.triangleCount == 2
+                  && std::abs(slabInterface.surfaceAreaSquareMeters - 2.25)
+                      < 1.0e-12
+                  && slabInterface.activeCompositeCutCellCount > 0,
+              "spanwise slab clips authoritative material area without periodic images or invented closing faces");
+        check(slabFrame.solverCommit
+                      == simwing::fsi::amr::staticWingSlabExternalFlowSolverId
+                  && slab.diagnostics().accepted
+                  && slab.diagnostics().projection
+                         .projectedMaximumDivergencePerSecond < 1.0e-9,
+              "three-slice slab retains separate provenance and an accepted projected advance");
     } catch (const std::exception& exception) {
         std::fprintf(stderr, "unexpected exception: %s\n", exception.what());
         return 1;

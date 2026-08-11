@@ -91,9 +91,12 @@ struct ExternalFlowTransportCase::Implementation {
     Implementation(const Scene& staticWingScene,
                    ExternalFlowTransportSettings requestedSettings)
         : settings(std::move(requestedSettings)),
-          momentum(settings.projection, staticWingScene),
+          momentum(settings.projection, staticWingScene,
+                   settings.clipStaticWingToWindTunnel),
           sceneChecksum(staticWingScene.metadata.designChecksum),
-          solverCommit(staticWingExternalFlowSolverId) {
+          solverCommit(settings.clipStaticWingToWindTunnel
+                           ? staticWingSlabExternalFlowSolverId
+                           : staticWingExternalFlowSolverId) {
         if (sceneChecksum.empty()) {
             sceneChecksum = externalFlowTransportCaseChecksum;
         }
@@ -435,6 +438,29 @@ struct ExternalFlowTransportCase::Implementation {
         return result;
     }
 };
+
+ExternalFlowTransportSettings makeThreeSliceSpanwiseSlabSettings(
+    const double centreXMeters) {
+    if (!std::isfinite(centreXMeters)) {
+        throw std::invalid_argument(
+            "AMR spanwise slab centre must be finite");
+    }
+    ExternalFlowTransportSettings settings;
+    constexpr double coarseSpacingXMeters = 0.375;
+    constexpr std::size_t coarseSliceCount = 3;
+    constexpr double halfWidthMeters =
+        0.5 * coarseSpacingXMeters
+        * static_cast<double>(coarseSliceCount);
+    settings.projection.grid.coarseCellCounts.x = coarseSliceCount;
+    settings.projection.grid.lowerMeters.x =
+        centreXMeters - halfWidthMeters;
+    settings.projection.grid.upperMeters.x =
+        centreXMeters + halfWidthMeters;
+    settings.projection.grid.refinedCoarseCellLower[0] = 1;
+    settings.projection.grid.refinedCoarseCellUpperExclusive[0] = 2;
+    settings.clipStaticWingToWindTunnel = true;
+    return settings;
+}
 
 ExternalFlowTransportCase::ExternalFlowTransportCase(
     ExternalFlowTransportSettings settings)

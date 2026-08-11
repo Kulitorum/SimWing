@@ -1155,7 +1155,8 @@ struct WindTunnelMomentumState::Implementation {
     std::unique_ptr<StaticWingInterface> staticWing;
 
     explicit Implementation(WindTunnelProjectionSettings requestedSettings,
-                            const Scene* requestedStaticWing)
+                            const Scene* requestedStaticWing,
+                            const bool clipStaticWingToWindTunnel = false)
         : settings(std::move(requestedSettings)) {
         validateProjectionSettings(settings);
         if (!amrex::Initialized()) {
@@ -1165,7 +1166,8 @@ struct WindTunnelMomentumState::Implementation {
             evaluateWindTunnelBoundaryInitialization(settings.grid);
         if (requestedStaticWing != nullptr) {
             staticWing = std::make_unique<StaticWingInterface>(
-                *requestedStaticWing, settings.grid);
+                *requestedStaticWing, settings.grid,
+                clipStaticWingToWindTunnel);
         }
         hierarchy = makeHierarchy(settings.grid);
         const auto initial = projectHierarchy(
@@ -1295,9 +1297,11 @@ WindTunnelMomentumState::WindTunnelMomentumState(
 
 WindTunnelMomentumState::WindTunnelMomentumState(
     WindTunnelProjectionSettings settings,
-    const Scene& staticWingScene)
+    const Scene& staticWingScene,
+    const bool clipStaticWingToWindTunnel)
     : implementation_(std::make_unique<Implementation>(
-          std::move(settings), &staticWingScene)) {}
+          std::move(settings), &staticWingScene,
+          clipStaticWingToWindTunnel)) {}
 
 WindTunnelMomentumState::~WindTunnelMomentumState() = default;
 

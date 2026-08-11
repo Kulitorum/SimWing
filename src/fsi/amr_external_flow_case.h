@@ -14,15 +14,25 @@ inline constexpr char externalFlowTransportCaseSolverId[] =
     "simwing-amr-external-flow-transport-worker-v1";
 inline constexpr char staticWingExternalFlowSolverId[] =
     "simwing-amr-static-wing-direct-forcing-worker-v1";
+inline constexpr char staticWingSlabExternalFlowSolverId[] =
+    "simwing-amr-static-wing-slab-direct-forcing-worker-v1";
 
 struct ExternalFlowTransportSettings {
     WindTunnelProjectionSettings projection;
     double timeStepSeconds = 0.005;
     double markerPulsePeriodSeconds = 1.2;
     double markerPulseDurationSeconds = 0.3;
+    bool clipStaticWingToWindTunnel = false;
 
     bool operator==(const ExternalFlowTransportSettings&) const = default;
 };
+
+// Three coarse X cells at the production 0.375 m spacing, centred on one
+// authored span station. Only the middle X cell is refined. The X faces remain
+// explicit far-field boundaries, so this is a rapid local plumbing/interface
+// probe rather than an aerodynamic-load or spanwise-flow result.
+[[nodiscard]] ExternalFlowTransportSettings
+makeThreeSliceSpanwiseSlabSettings(double centreXMeters = 0.0);
 
 struct ExternalFlowTransportDiagnostics {
     WindTunnelProjectionDiagnostics projection;

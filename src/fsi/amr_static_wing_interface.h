@@ -55,6 +55,9 @@ struct StaticWingInterfaceDiagnostics {
     Vec3 lowerMeters;
     Vec3 upperMeters;
     bool entirelyInsideWindTunnel = false;
+    // Fast local-slab probes may deliberately retain only the positive-area
+    // part of the authoritative surface inside the requested tunnel box.
+    bool clippedToWindTunnel = false;
     bool finite = false;
     bool accepted = false;
 };
@@ -68,7 +71,8 @@ class StaticWingInterface final {
 public:
     StaticWingInterface(
         const Scene& scene,
-        const WindTunnelGridSettings& gridSettings = {});
+        const WindTunnelGridSettings& gridSettings = {},
+        bool clipToWindTunnel = false);
 
     [[nodiscard]] const StaticWingInterfaceDiagnostics&
     diagnostics() const noexcept;
