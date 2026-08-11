@@ -4,6 +4,7 @@
 #include "scene_fluid_wall_exchange_kernel.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <limits>
@@ -323,6 +324,108 @@ fluid::Vector3 triangleNormal(
     return scale(cross, 1.0 / length);
 }
 
+double periodicSquaredDistance(
+    const fluid::Vector3& point,
+    const Vec3& controlCentroid,
+    const fluid::Vector3& lower,
+    const fluid::Vector3& upper) {
+    double squared = 0.0;
+    const std::array<double, 3> pointValues{
+        point.x, point.y, point.z};
+    const std::array<double, 3> controlValues{
+        controlCentroid.x, controlCentroid.y, controlCentroid.z};
+    const std::array<double, 3> lowerValues{
+        lower.x, lower.y, lower.z};
+    const std::array<double, 3> upperValues{
+        upper.x, upper.y, upper.z};
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        const double length = upperValues[axis] - lowerValues[axis];
+        double delta = std::abs(pointValues[axis] - controlValues[axis]);
+        delta = std::fmod(delta, length);
+        delta = std::min(delta, length - delta);
+        squared += delta * delta;
+    }
+    return squared;
+}
+
+std::size_t resolveWallControl(
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const std::map<std::pair<std::size_t, StableId>, std::size_t>&
+        controlByOwner,
+    const std::size_t cellIndex,
+    const StableId regionId,
+    const fluid::Vector3& sampleCentroidMeters,
+    const SceneFluidQuadraturePoint& point,
+    const char* const side) {
+    if (const auto exact = controlByOwner.find({cellIndex, regionId});
+        exact != controlByOwner.end()) {
+        return exact->second;
+    }
+    if (cellIndex >= pressureVolumes.cells.size()) {
+        throw std::invalid_argument(
+            "scene fluid region wall sample is outside the pressure grid");
+    }
+
+    const auto counts = pressureVolumes.cellCounts;
+    const auto& cell = pressureVolumes.cells[cellIndex].cell;
+    const std::array<std::size_t, 6> neighborCells{
+        (cell.i + counts.x - 1) % counts.x
+            + counts.x * (cell.j + counts.y * cell.k),
+        (cell.i + 1) % counts.x
+            + counts.x * (cell.j + counts.y * cell.k),
+        cell.i + counts.x
+            * ((cell.j + counts.y - 1) % counts.y + counts.y * cell.k),
+        cell.i + counts.x
+            * ((cell.j + 1) % counts.y + counts.y * cell.k),
+        cell.i + counts.x
+            * (cell.j + counts.y * ((cell.k + counts.z - 1) % counts.z)),
+        cell.i + counts.x
+            * (cell.j + counts.y * ((cell.k + 1) % counts.z)),
+    };
+    const SceneFluidPressureControlVolume* nearest = nullptr;
+    double nearestSquaredDistance =
+        std::numeric_limits<double>::infinity();
+    std::array<std::size_t, 6> visited{};
+    std::size_t visitedCount = 0;
+    for (const std::size_t neighborCell : neighborCells) {
+        if (neighborCell == cellIndex
+            || std::find(
+                   visited.begin(), visited.begin() + visitedCount,
+                   neighborCell)
+                != visited.begin() + visitedCount) {
+            continue;
+        }
+        visited[visitedCount++] = neighborCell;
+        const auto candidateOwner = controlByOwner.find(
+            {neighborCell, regionId});
+        if (candidateOwner == controlByOwner.end()) {
+            continue;
+        }
+        const auto& candidate = pressureVolumes.controlVolumes[
+            candidateOwner->second];
+        const double squaredDistance = periodicSquaredDistance(
+            sampleCentroidMeters, candidate.centroidMeters,
+            pressureVolumes.lowerMeters, pressureVolumes.upperMeters);
+        if (squaredDistance < nearestSquaredDistance
+            || (squaredDistance == nearestSquaredDistance
+                && nearest != nullptr
+                && candidate.stableId < nearest->stableId)) {
+            nearest = &candidate;
+            nearestSquaredDistance = squaredDistance;
+        }
+    }
+    if (nearest == nullptr || !std::isfinite(nearestSquaredDistance)) {
+        throw std::invalid_argument(
+            "scene fluid region wall sample has no matching "
+            + std::string(side) + " control in its cell or immediate "
+              "neighbors: sample=" + std::to_string(point.stableId)
+            + ", triangle=" + std::to_string(point.triangleId)
+            + ", cell=" + std::to_string(cellIndex)
+            + ", region=" + std::to_string(regionId));
+    }
+    return nearest->controlVolumeIndex;
+}
+
 } // namespace
 
 static SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentumImpl(
@@ -461,25 +564,32 @@ static SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentumImpl(
     for (std::size_t index = 0; index < quadrature.points.size(); ++index) {
         const auto& point = quadrature.points[index];
         const auto& motion = kinematics[index];
-        const auto negative = controlByOwner.find(
-            {point.negativeSideCellIndex, point.negativeSideRegionId});
-        const auto positive = controlByOwner.find(
-            {point.positiveSideCellIndex, point.positiveSideRegionId});
         if (motion.stableId != point.stableId
-            || negative == controlByOwner.end()
-            || positive == controlByOwner.end()
             || !(point.areaSquareMeters > 0.0)) {
             throw std::invalid_argument(
                 "scene fluid region wall sample ownership is invalid");
         }
+        const fluid::Vector3 sampleCentroidMeters{
+            motion.positionMeters.x,
+            motion.positionMeters.y,
+            motion.positionMeters.z,
+        };
+        const std::size_t negative = resolveWallControl(
+            currentPressureVolumes, controlByOwner,
+            point.negativeSideCellIndex, point.negativeSideRegionId,
+            sampleCentroidMeters, point, "negative-side");
+        const std::size_t positive = resolveWallControl(
+            currentPressureVolumes, controlByOwner,
+            point.positiveSideCellIndex, point.positiveSideRegionId,
+            sampleCentroidMeters, point, "positive-side");
         const auto normal = triangleNormal(
             surface, currentState, point.triangleId);
         SceneFluidRegionWallSample sample;
         sample.sampleIndex = index;
         sample.stableId = point.stableId;
         sample.triangleId = point.triangleId;
-        sample.negativeSideControlVolumeIndex = negative->second;
-        sample.positiveSideControlVolumeIndex = positive->second;
+        sample.negativeSideControlVolumeIndex = negative;
+        sample.positiveSideControlVolumeIndex = positive;
         sample.areaSquareMeters = point.areaSquareMeters;
         sample.unitNormalNegativeToPositive = normal;
         sample.wallVelocityMetersPerSecond = {
@@ -489,9 +599,9 @@ static SceneFluidRegionWallExchange exchangeSceneFluidRegionWallMomentumImpl(
         };
         sample.structureTraction.stableId = point.stableId;
         samples.push_back(sample);
-        controls[negative->second].incidentWallAreaSquareMeters +=
+        controls[negative].incidentWallAreaSquareMeters +=
             point.areaSquareMeters;
-        controls[positive->second].incidentWallAreaSquareMeters +=
+        controls[positive].incidentWallAreaSquareMeters +=
             point.areaSquareMeters;
     }
 

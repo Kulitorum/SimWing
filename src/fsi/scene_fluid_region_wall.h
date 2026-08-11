@@ -99,11 +99,14 @@ struct SceneFluidRegionWallDiagnostics {
 
 // Two-sided tangential exchange between a transported (optionally explicitly
 // rebased) cell/region state and the current material surface. Each
-// quadrature side uses its exact authored
-// cell/region owner. Explicit subcycling bounds the aggregate viscous row per
-// control volume. Fluid impulse and the equal-and-opposite structure traction
-// are published together, with wall work separated from nonnegative viscous
-// dissipation. Normal exchange remains owned by pressure projection.
+// quadrature side normally uses its exact authored cell/region owner. If that
+// side's cut-cell region is absent because it has zero volume, the wall row
+// follows the mimetic pressure-sampling contract and uses the nearest
+// same-region control in an immediately adjacent periodic cell. Explicit
+// subcycling bounds the aggregate viscous row per control volume. Fluid
+// impulse and the equal-and-opposite structure traction are published
+// together, with wall work separated from nonnegative viscous dissipation.
+// Normal exchange remains owned by pressure projection.
 struct SceneFluidRegionWallExchange {
     std::uint32_t version = sceneFluidRegionWallExchangeVersion;
     std::uint64_t fingerprint = 0;

@@ -277,6 +277,20 @@ struct FluidLoadTransfers {
     ConservativeTransferResult total;
 };
 
+ConservativeTransferSettings transferSettingsFor(
+    const SceneFluidQuadratureDefinition& quadrature) {
+    ConservativeTransferSettings result;
+    for (const auto& point : quadrature.points) {
+        if (std::isfinite(point.areaSquareMeters)
+            && point.areaSquareMeters > 0.0) {
+            result.minimumQuadratureAreaSquareMeters = std::min(
+                result.minimumQuadratureAreaSquareMeters,
+                point.areaSquareMeters);
+        }
+    }
+    return result;
+}
+
 StructureStepSettings makeStructureStepSettings(
     const StructureDefinition& definition,
     const FrozenScenePressureCaseSettings& settings) {
@@ -304,8 +318,9 @@ FluidLoadTransfers evaluateFluidLoads(
     const SceneFluidQuadratureDefinition& quadrature,
     const SceneFluidMimeticPressureSampleSet& pressureSamples,
     const SceneFluidAcceptedWallTractionSet* wallTractions = nullptr) {
+    const auto settings = transferSettingsFor(quadrature);
     auto pressure = evaluateSceneFluidMimeticPressureQuadrature(
-        surface, state, transfer, quadrature, pressureSamples);
+        surface, state, transfer, quadrature, pressureSamples, settings);
     if (wallTractions == nullptr) {
         return {pressure, std::nullopt, std::move(pressure)};
     }
@@ -330,9 +345,9 @@ FluidLoadTransfers evaluateFluidLoads(
         combined.tractionPascals.z += wall.tractionPascals.z;
     }
     auto wall = evaluateSceneFluidQuadrature(
-        transfer, state, quadrature, wallTractions->tractions);
+        transfer, state, quadrature, wallTractions->tractions, settings);
     auto total = evaluateSceneFluidQuadrature(
-        transfer, state, quadrature, pressureTractions);
+        transfer, state, quadrature, pressureTractions, settings);
     return {std::move(pressure), std::move(wall), std::move(total)};
 }
 
@@ -343,6 +358,7 @@ ConservativeTransferResult evaluatePressureAndWallLoads(
     const SceneFluidQuadratureDefinition& quadrature,
     const std::span<const SceneFluidQuadraturePressure> pressures,
     const SceneFluidAcceptedWallTractionSet* wallTractions) {
+    const auto settings = transferSettingsFor(quadrature);
     auto combined = buildSceneFluidPressureTractions(
         surface, state, quadrature, pressures);
     if (wallTractions != nullptr) {
@@ -366,7 +382,7 @@ ConservativeTransferResult evaluatePressureAndWallLoads(
         }
     }
     return evaluateSceneFluidQuadrature(
-        transfer, state, quadrature, combined);
+        transfer, state, quadrature, combined, settings);
 }
 
 ConservativeTransferResult evaluateZeroPressureLoad(
@@ -380,7 +396,8 @@ ConservativeTransferResult evaluateZeroPressureLoad(
         zeroPressure.push_back({point.stableId, 0.0, 0.0});
     }
     auto result = evaluateSceneFluidPressureQuadrature(
-        surface, state, transfer, quadrature, zeroPressure);
+        surface, state, transfer, quadrature, zeroPressure,
+        transferSettingsFor(quadrature));
     if (!result.diagnostics().finite
         || result.diagnostics().transferredNodalForceNewtons
             != StructureVector3{}
@@ -556,7 +573,8 @@ evaluateMaterialWallTracePressure(
             "material-wall trace pressure fallback count is invalid");
     }
     auto wallTransfer = evaluateSceneFluidPressureQuadrature(
-        surface, state, transfer, quadrature, wallPressures);
+        surface, state, transfer, quadrature, wallPressures,
+        transferSettingsFor(quadrature));
     if (!wallTransfer.diagnostics().finite) {
         throw std::runtime_error(
             "material-wall trace pressure transfer was not accepted");

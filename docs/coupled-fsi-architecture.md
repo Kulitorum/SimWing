@@ -924,10 +924,18 @@ consumes that fingerprinted first-order predictor together with its dV/dt produc
 verifies every predicted link flow exactly. A downstream material-wall product
 now remaps the immutable transport to each current nonlinear geometry and
 exchanges tangential momentum on both sides of every authoritative material
-quadrature point. It uses a local half-volume/incident-area distance, bounded
+quadrature point. A side normally retains its exact cell/region pressure
+control. If that sparse control is absent because the side has zero volume,
+the row uses the same deterministic nearest same-region, one-face-neighbour
+cell-constant extrapolation as mimetic pressure sampling; a missing one-ring
+control rejects. It uses a local half-volume/incident-area distance, bounded
 explicit subcycling, and separate wall-work/dissipation ledgers. The fluid
 impulse and equal-and-opposite Structure traction close before publication;
-normal traction remains pressure-owned. A bounded first one-ring crossing
+normal traction remains pressure-owned. The moving worker lowers only the
+quadrature-area transfer floor to the minimum positive area already accepted
+by the current geometry epoch; topology-retained clipping slivers therefore
+contribute finite vanishing loads without relaxing the structural triangle
+floor or other transfer checks. A bounded first one-ring crossing
 adapter sits immediately upstream. Its shared transition pairs retained rows,
 records current same-region donors for every appearance, and records the unique
 previous same-region recipient for every supported disappearance. Retained
@@ -945,9 +953,9 @@ transfer applies the combined pressure-plus-shear load to XPBD. This is a
 local cut-region wall closure, not a resolved immersed-boundary boundary
 layer. The tangential impulse, energy, and action/reaction arithmetic now
 lives in one source-neutral internal kernel. `scene_fluid_region_wall.*`
-continues to prove the existing cell/region or rebase ownership before calling
-it, so this refactor neither changes the legacy product nor authorizes another
-topology to bypass its own exact mapping contract. The
+continues to prove the existing cell/region or bounded zero-volume-side
+one-ring ownership before calling it, so this refactor does not authorize
+another topology to bypass its own mapping contract. The
 first composite in-memory checkpoint stores Structure and the accepted sparse
 pressure projection. Restore uses a temporary Structure, rebuilds the entire
 pressure epoch, resamples the validated projection, and reconstructs the
@@ -3710,6 +3718,16 @@ converged trend. A separate six-frame `0.1 s` ramp reaches full target wind at
 `397123 Pa` maximum jump and `130287 N` streamwise pressure load. The modest
 reduction from impulsive startup shows that ramping is useful conditioning for
 future structural activation, not a remedy for the periodic pressure scale.
+The first accepted moving real-wing transaction combines the `2^3`,
+`-0.0001 m/s` load-scale probe with two frozen preflow epochs, coplanar opening
+aggregation, wall-trace pressure loading, final seam-stitch projection, and
+the bounded zero-volume wall-owner continuation. The third frame advances the
+Structure by `0.00261949 m`, resolves 318 current omitted pressure sides,
+closes wall momentum to `4.44e-17 kg*m/s`, and closes conservative transfer to
+`8.66e-9 N`. This is the first end-to-end accepted moving publication, not a
+physics-scale result: its `306926 N` streamwise pressure force, `397.175 m/s`
+maximum regional speed, and `4.00706e16 Pa` reconstructed material-wall trace
+jump make the remaining pressure/flow conditioning failure explicit.
 
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written

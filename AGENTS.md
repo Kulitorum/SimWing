@@ -298,11 +298,15 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   may omit zero-volume material sides from the local operator; their retained
   quadrature centroids drive a bounded nearest same-region adjacent-cell
   pressure extrapolation, reported separately in diagnostics.
+  Moving load transfer lowers only its quadrature-area acceptance floor to
+  the minimum positive area in that already validated geometry epoch, so
+  topology-retained clipping slivers contribute their finite vanishing load.
+  The production triangle-area floor and all other transfer checks remain.
   The scaled SPD membrane fallback now clears the imported tiny-chart solve
   gate without changing arithmetic for previously accepted systems. Exact
   zero-tolerance clipping also screens SAT-only false positives, and
   coordinate-ULP face traces remain point contacts instead of graph
-  self-edges. Real-wing moving acceptance is still not claimed. Before any
+  self-edges. General real-wing moving stability is still not claimed. Before any
   CFD grid or geometry epoch is built, moving mode transactionally probes one
   zero-load Structure step with its production settings and rejects a
   nonstationary import. Scene export now constructs every material chart from
@@ -320,6 +324,14 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   substeps, 16 coupled structural/line iterations, and the default `0.2 mm`
   suspension certification bound. Both the preflight and moving step restore
   their complete Structure checkpoint on rejection.
+  The first accepted real-wing moving transaction uses `2^3`, `-0.0001 m/s`,
+  two frozen preflow epochs, wall-trace pressure loading, and coplanar opening
+  aggregation. It resolves 318 current zero-volume material sides, advances
+  Structure by `0.00261949 m`, closes wall momentum to `4.44e-17 kg*m/s` and
+  load transfer to `8.66e-9 N`, and publishes the third trace frame. Its
+  `306926 N` streamwise pressure force, `397.175 m/s` regional speed, and
+  `4.00706e16 Pa` reconstructed wall-trace jump remain explicitly nonphysical;
+  this gate proves coupled topology/provenance/publication only.
 - `simwing_scene_fluid_surface`: deterministic compact ownership of the
   authoritative scene-v2 fluid regions, porous fabric, oriented surface
   triangles, and openings, plus immutable capture of accepted Structure
@@ -922,7 +934,11 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
 - `scene_fluid_region_wall.{h,cpp}` remaps one immutable accepted transport to
   each current strong-coupling geometry, or consumes the explicit current-
   topology region rebase, and applies two-sided tangential
-  viscous exchange at the authoritative material quadrature. Its local wall
+  viscous exchange at the authoritative material quadrature. An exact
+  cell/region owner is used when present; a deliberately absent zero-volume
+  side follows mimetic pressure sampling to the nearest same-region control
+  in one face-adjacent periodic cell. A missing one-ring owner still rejects.
+  Its local wall
   distance is the greater of a configured floor and half control-volume
   volume per incident wall area. Deterministic explicit subcycling bounds each
   aggregate viscous row. Fluid impulse, equal-and-opposite Structure traction,
