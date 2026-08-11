@@ -47,6 +47,7 @@ struct FrozenScenePressureCaseDiagnostics {
     bool pressureControlTopologyStable = false;
     std::size_t geometryAdvanceCount = 0;
     double maximumGeometryDisplacementMeters = 0.0;
+    double maximumSuspensionResidualMeters = 0.0;
     double maximumCarriedTraceCorrectionCubicMetersPerSecond = 0.0;
     double maximumTraceBulkIncrementCubicMetersPerSecond = 0.0;
     double maximumRegionalTransportFlowDifferenceFromBulkBaselineCubicMetersPerSecond =

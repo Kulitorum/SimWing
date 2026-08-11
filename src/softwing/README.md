@@ -59,6 +59,11 @@ count; `workerThreads == 0` still selects the untouched serial sweep):
   `D*K*D` compression reduction. The default `1.0` bypasses the new branch and
   preserves the original bilateral stiffness matrix exactly; the shear scale
   is the geometric mean of the two normal-direction scales.
+- `checkedSolve(SymmetricMatrix3, Vec3)` — preserves the historical explicit-
+  inverse arithmetic for every previously accepted system, then uses diagonal
+  equilibration plus a residual-certified Cholesky solve only for previously
+  rejected SPD systems. This admits tiny authoritative fabric charts without
+  weakening `checkedInverse` or accepting singular constraints.
 - `DihedralBendingConstraint` — a true signed four-node hinge on two adjacent
   membrane triangles. It is solved serially in deterministic insertion order,
   included in rollback/state persistence, and deliberately omitted at skin

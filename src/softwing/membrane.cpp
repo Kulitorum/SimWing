@@ -28,6 +28,104 @@ double maximumMagnitude(const SymmetricMatrix3& matrix) {
                      std::abs(matrix.yz)});
 }
 
+Vec3 solveScaledPositiveDefinite(
+    const SymmetricMatrix3& matrix,
+    const Vec3& rightHandSide) {
+    const double scaleX = std::sqrt(matrix.xx);
+    const double scaleY = std::sqrt(matrix.yy);
+    const double scaleZ = std::sqrt(matrix.zz);
+    if (!(scaleX > 0.0) || !(scaleY > 0.0) || !(scaleZ > 0.0)
+        || !std::isfinite(scaleX) || !std::isfinite(scaleY)
+        || !std::isfinite(scaleZ)) {
+        throw std::invalid_argument(
+            "SymmetricMatrix3 is singular or ill-conditioned");
+    }
+
+    const double l10 = matrix.xy / scaleX / scaleY;
+    const double l20 = matrix.xz / scaleX / scaleZ;
+    const double firstPivotSquared = 1.0 - l10 * l10;
+    constexpr double minimumScaledPivotSquared =
+        4096.0 * std::numeric_limits<double>::epsilon();
+    if (!std::isfinite(firstPivotSquared)
+        || !(firstPivotSquared > minimumScaledPivotSquared)) {
+        throw std::invalid_argument(
+            "SymmetricMatrix3 is singular or ill-conditioned");
+    }
+    const double l11 = std::sqrt(firstPivotSquared);
+    const double l21 =
+        (matrix.yz / scaleY / scaleZ - l20 * l10) / l11;
+    const double secondPivotSquared =
+        1.0 - l20 * l20 - l21 * l21;
+    if (!std::isfinite(l21) || !std::isfinite(secondPivotSquared)
+        || !(secondPivotSquared > minimumScaledPivotSquared)) {
+        throw std::invalid_argument(
+            "SymmetricMatrix3 is singular or ill-conditioned");
+    }
+    const double l22 = std::sqrt(secondPivotSquared);
+
+    const Vec3 scaledRightHandSide{
+        rightHandSide.x / scaleX,
+        rightHandSide.y / scaleY,
+        rightHandSide.z / scaleZ,
+    };
+    const double forward0 = scaledRightHandSide.x;
+    const double forward1 =
+        (scaledRightHandSide.y - l10 * forward0) / l11;
+    const double forward2 =
+        (scaledRightHandSide.z - l20 * forward0 - l21 * forward1)
+        / l22;
+    const double scaledResultZ = forward2 / l22;
+    const double scaledResultY =
+        (forward1 - l21 * scaledResultZ) / l11;
+    const double scaledResultX =
+        forward0 - l10 * scaledResultY - l20 * scaledResultZ;
+    const Vec3 result{
+        scaledResultX / scaleX,
+        scaledResultY / scaleY,
+        scaledResultZ / scaleZ,
+    };
+    if (!std::isfinite(result.x) || !std::isfinite(result.y)
+        || !std::isfinite(result.z)) {
+        throw std::invalid_argument(
+            "SymmetricMatrix3 solve result is non-finite");
+    }
+    const Vec3 residual = matrix * result - rightHandSide;
+    const double rowScaleX =
+        std::abs(matrix.xx * result.x)
+        + std::abs(matrix.xy * result.y)
+        + std::abs(matrix.xz * result.z)
+        + std::abs(rightHandSide.x);
+    const double rowScaleY =
+        std::abs(matrix.xy * result.x)
+        + std::abs(matrix.yy * result.y)
+        + std::abs(matrix.yz * result.z)
+        + std::abs(rightHandSide.y);
+    const double rowScaleZ =
+        std::abs(matrix.xz * result.x)
+        + std::abs(matrix.yz * result.y)
+        + std::abs(matrix.zz * result.z)
+        + std::abs(rightHandSide.z);
+    constexpr double maximumRelativeResidual =
+        4096.0 * std::numeric_limits<double>::epsilon();
+    if (!std::isfinite(residual.x) || !std::isfinite(residual.y)
+        || !std::isfinite(residual.z)
+        || !std::isfinite(rowScaleX) || !std::isfinite(rowScaleY)
+        || !std::isfinite(rowScaleZ)
+        || (rowScaleX == 0.0 ? residual.x != 0.0
+                             : std::abs(residual.x)
+                                 > maximumRelativeResidual * rowScaleX)
+        || (rowScaleY == 0.0 ? residual.y != 0.0
+                             : std::abs(residual.y)
+                                 > maximumRelativeResidual * rowScaleY)
+        || (rowScaleZ == 0.0 ? residual.z != 0.0
+                             : std::abs(residual.z)
+                                 > maximumRelativeResidual * rowScaleZ)) {
+        throw std::invalid_argument(
+            "SymmetricMatrix3 is singular or ill-conditioned");
+    }
+    return result;
+}
+
 } // namespace
 
 Matrix2 checkedInverse(const Matrix2& matrix) {
@@ -84,12 +182,27 @@ SymmetricMatrix3 operator*(double scalar, const SymmetricMatrix3& matrix) {
 }
 
 bool isPositiveDefinite(const SymmetricMatrix3& matrix) {
-    if (!finite(matrix)) {
+    if (!finite(matrix) || !(matrix.xx > 0.0)
+        || !(matrix.yy > 0.0) || !(matrix.zz > 0.0)) {
         return false;
     }
-    const double leadingTwo = matrix.xx * matrix.yy - matrix.xy * matrix.xy;
-    return matrix.xx > 0.0 && leadingTwo > 0.0 &&
-           matrix.determinant() > 0.0;
+    const double scaleX = std::sqrt(matrix.xx);
+    const double scaleY = std::sqrt(matrix.yy);
+    const double scaleZ = std::sqrt(matrix.zz);
+    const double l10 = matrix.xy / scaleX / scaleY;
+    const double l20 = matrix.xz / scaleX / scaleZ;
+    const double firstPivotSquared = 1.0 - l10 * l10;
+    if (!std::isfinite(firstPivotSquared)
+        || !(firstPivotSquared > 0.0)) {
+        return false;
+    }
+    const double l11 = std::sqrt(firstPivotSquared);
+    const double l21 =
+        (matrix.yz / scaleY / scaleZ - l20 * l10) / l11;
+    const double secondPivotSquared =
+        1.0 - l20 * l20 - l21 * l21;
+    return std::isfinite(secondPivotSquared)
+        && secondPivotSquared > 0.0;
 }
 
 SymmetricMatrix3 checkedInverse(const SymmetricMatrix3& matrix) {
@@ -127,7 +240,20 @@ Vec3 checkedSolve(const SymmetricMatrix3& matrix,
         !std::isfinite(rightHandSide.z)) {
         throw std::invalid_argument("Symmetric solve right-hand side must be finite");
     }
-    return checkedInverse(matrix) * rightHandSide;
+    try {
+        // Preserve the historical arithmetic exactly for every system that
+        // the explicit inverse already accepts.
+        return checkedInverse(matrix) * rightHandSide;
+    } catch (const std::invalid_argument&) {
+        if (!finite(matrix) || !isPositiveDefinite(matrix)) {
+            throw;
+        }
+        // Tiny authored membrane charts can create a large unscaled dynamic
+        // range while the normalized SPD system remains well conditioned.
+        // Diagonal equilibration followed by Cholesky solves that rejected
+        // subset without weakening the inverse API or perturbing old solves.
+        return solveScaledPositiveDefinite(matrix, rightHandSide);
+    }
 }
 
 SymmetricMatrix3 OrthotropicMembraneMaterial::stiffnessMatrix() const {

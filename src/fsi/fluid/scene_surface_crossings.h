@@ -85,8 +85,10 @@ struct SceneFluidFaceCrossingSet {
     bool operator==(const SceneFluidFaceCrossingSet&) const = default;
 };
 
-// Extracts positive-length intersections between ordinary owned triangle
-// patches and internal Cartesian faces. A true transverse crossing appears as
+// Extracts intersections longer than a fixed coordinate-ULP envelope between
+// ordinary owned triangle patches and internal Cartesian faces. Exact point
+// contacts and roundoff-sized boundary traces remain represented upstream and
+// do not activate a face edge. A true transverse crossing appears as
 // one segment from each adjacent cell and becomes one canonical lower-cell
 // crossing after their independently clipped positions agree within a fixed
 // machine-roundoff envelope and their barycentric zero/nonzero provenance

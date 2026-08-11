@@ -297,12 +297,22 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   may omit zero-volume material sides from the local operator; their retained
   quadrature centroids drive a bounded nearest same-region adjacent-cell
   pressure extrapolation, reported separately in diagnostics.
-  The first low-load real gnuC2 `--moving-fsi` probe currently rejects in the
-  XPBD step because imported membrane triangle 18459 produces an
-  ill-conditioned 3-by-3 orthotropic solve; the outer worker restores the
-  pre-step Structure checkpoint. Do not claim real-wing moving acceptance
-  until that mesh/material conditioning gate is resolved in the structural
-  boundary.
+  The scaled SPD membrane fallback now clears the imported tiny-chart solve
+  gate without changing arithmetic for previously accepted systems. Exact
+  zero-tolerance clipping also screens SAT-only false positives, and
+  coordinate-ULP face traces remain point contacts instead of graph
+  self-edges. Real-wing moving acceptance is still not claimed: a gnuC2
+  fixture audit with zero wind and zero resultant fluid force moves the
+  imported Structure by `0.0298204 m` and then correctly rejects a
+  no-longer-planar authored intake
+  cap, even with 32 diagnostic structural substeps and a
+  `4.37e-9 m` final line residual. The real-export fixture deliberately uses
+  synthetic physical properties and vertex-snapped terminal attachments; its
+  imported XPBD rest-state/material/attachment initialization must be made
+  authoritative before it can be a moving-physics oracle. The production
+  opt-in probe keeps eight structural substeps, 16 coupled structural/line
+  iterations, and the default `0.2 mm` suspension certification bound; it
+  restores its checkpoint on rejection.
 - `simwing_scene_fluid_surface`: deterministic compact ownership of the
   authoritative scene-v2 fluid regions, porous fabric, oriented surface
   triangles, and openings, plus immutable capture of accepted Structure
@@ -312,15 +322,20 @@ keeps the UI responsive and contains legacy parser aborts/access violations.
   traction transfer without weakening scene, Structure, or topology identity.
 - `simwing_scene_fluid_geometry`: builds a bounded deterministic cell-major
   broad phase from the fingerprinted accepted surface state and one uniform
-  grid, applies an exact normalized-SAT triangle/cell narrow phase, and clips
-  barycentric surface polygons into each exact cell. It then resolves internal
+  grid, applies a normalized-SAT triangle/cell narrow phase, requires a
+  nonempty exact convex clip before publishing a zero-tolerance intersection,
+  and clips barycentric surface polygons into each exact cell. It then resolves
+  internal
   shared-plane duplicates into one oriented face owner and pairs transverse
   clipped-polygon segments into unique oriented internal-face crossings. A
   bounded sparse face-local index retains multiple crossing and coplanar-sheet
   references without treating their summed measures as unions. A provenance-
   keyed graph then stitches adjacent triangle segments through stable authored
   vertices/edges and explicitly marks opening and grid-edge endpoints. Its
-  segments become winding-directed open chains or closed loops independently
+  crossing boundary keeps only lengths above a fixed coordinate-ULP envelope;
+  exact and roundoff-sized point contacts remain upstream and cannot become
+  self-loop graph edges. Graph segments become winding-directed open chains or
+  closed loops independently
   per authored region pair. Valid multi-region junctions may terminate several
   pair-specific chains at one physical higher-degree node; branching within
   one region pair still rejects. Simple closed loops then gain
@@ -1457,6 +1472,14 @@ makes this a certified aerodynamic solver.
    the next pressure, wall traction, geometry, regional state, and viewer loads
    publish together. The default fixed-geometry path and solver identity remain
    unchanged.
+   Imported tiny-chart membrane systems now use a diagonally equilibrated,
+   residual-certified Cholesky fallback only after the historical explicit
+   inverse rejects an otherwise SPD matrix. The exact old arithmetic remains
+   the first path. A zero-wind gnuC2 moving audit consequently reaches the
+   post-Structure geometry handoff, but the synthetic real-export fixture
+   drifts `0.0298204 m` with zero resultant fluid force and invalidates an
+   authored intake cap. This is an explicit imported-rest-state gate, not
+   real-wing moving acceptance; all outer state rolls back.
    The coarse real-wing system has 191,579 trace unknowns and 13,132,336 bytes
    of compact local factors. Its component-constant action is roundoff-null.
    The bounded gauge-fixed Jacobi-PCG solve now recovers manufactured fields

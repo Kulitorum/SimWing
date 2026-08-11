@@ -99,6 +99,18 @@ Scene coplanarScene() {
     return scene;
 }
 
+Scene roundoffPointContactScene() {
+    Scene scene = transverseScene();
+    scene.metadata.designChecksum =
+        "sha256:scene-surface-crossings-roundoff-point-contact";
+    scene.vertices = {
+        {10, {std::nextafter(2.0, 3.0), 1.5, 1.5}},
+        {11, {1.2, 1.2, 1.2}},
+        {12, {1.2, 1.8, 1.8}},
+    };
+    return scene;
+}
+
 PeriodicCartesianGrid grid() {
     return PeriodicCartesianGrid({4, 4, 4}, {}, {4.0, 4.0, 4.0});
 }
@@ -313,6 +325,14 @@ void testWindingAndContactClassification() {
               && coplanarCrossings.unpairedContactSegmentCount == 0
               && coplanarCrossings.coplanarAreaPatchCount == 1,
           "scene face crossings: face-owned triangle area is not converted to a line");
+
+    Pipeline roundoffPointContact(roundoffPointContactScene());
+    const auto firstRoundoff = crossings(roundoffPointContact);
+    const auto secondRoundoff = crossings(roundoffPointContact);
+    check(firstRoundoff == secondRoundoff
+              && firstRoundoff.crossings.empty()
+              && firstRoundoff.crossingLengthMeters == 0.0,
+          "scene face crossings: a one-ULP vertex contact does not become a face edge");
 }
 
 void testLimitsAndTransactionalValidation() {

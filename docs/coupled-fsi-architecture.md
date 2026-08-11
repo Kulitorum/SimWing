@@ -3492,12 +3492,26 @@ and accepts a real pressure-control topology change. This closes the first
 input-driven two-way plumbing loop, not aerodynamic validity: the coarse
 periodic predictor, first-step pressure-only bootstrap, explicit staggering,
 and absent external-wake boundary treatment remain diagnostic limitations.
-The first low-load gnuC2 moving probe reaches the XPBD handoff but rejects
-transactionally on imported membrane triangle 18459: its tiny chart produces
-an ill-conditioned orthotropic 3-by-3 constraint solve. The worker restores
-the pre-step Structure checkpoint, so this is now an explicit structural
-conditioning gate rather than a partial FSI commit. Real-wing moving
-acceptance is not yet claimed.
+Imported tiny-chart membrane systems now retain the historical explicit-
+inverse arithmetic whenever it was previously accepted, with a diagonally
+equilibrated and residual-certified Cholesky fallback only for rejected SPD
+systems. That clears the original triangle-18459 gate. Zero-tolerance
+triangle/cell publication additionally requires a nonempty exact convex clip,
+and coordinate-ULP face traces remain point contacts rather than graph
+self-edges.
+
+Real-wing moving acceptance is still not claimed. A zero-wind gnuC2 fixture
+audit applies exactly zero resultant fluid force, completes the Structure step
+with a `4.37e-9 m` suspension residual, but moves the imported surface by
+`0.0298204 m` and correctly rejects an authored intake cap that is no longer
+planar. Raising diagnostic structural resolution to 32 substeps does not make
+that imported rest state stationary. The real-export fixture supplies
+synthetic physical properties and permits vertex-snapped terminal attachments,
+so its rest-state/material/attachment initialization must become authoritative
+before it is a moving-physics oracle. The production opt-in probe retains eight
+substeps, 16 coupled structural/line iterations, and the default `0.2 mm` line
+certification bound, then restores the pre-step Structure checkpoint on this
+gate.
 Cartesian subfaces are conservatively area-collapsed into a bulk continuation
 MAC field; cell-owned intake traces remain explicit because they have no unique
 Cartesian face. The real gnuC2 developer export completes this path through 138

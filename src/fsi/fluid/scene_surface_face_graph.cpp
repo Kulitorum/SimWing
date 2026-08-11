@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <sstream>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -621,8 +622,35 @@ SceneFluidFaceGraph buildGraph(
                 surface, state, grid, face, activeFaceIndex, crossing,
                 crossing.second, authoredOpenings, settings);
             if (first.key == second.key) {
-                throw std::invalid_argument(
-                    "scene fluid face-graph segment collapses to one node");
+                std::ostringstream message;
+                message.precision(17);
+                message
+                    << "scene fluid face-graph segment collapses to one node"
+                    << ": crossing=" << crossingIndex
+                    << " triangle-id=" << crossing.triangleId
+                    << " face=(" << static_cast<unsigned>(face.axis)
+                    << ',' << face.i << ',' << face.j << ',' << face.k << ')'
+                    << " length=" << crossing.lengthMeters
+                    << " endpoint-distance="
+                    << distance(crossing.first.positionMeters,
+                                crossing.second.positionMeters)
+                    << " first-position=("
+                    << crossing.first.positionMeters.x << ','
+                    << crossing.first.positionMeters.y << ','
+                    << crossing.first.positionMeters.z << ')'
+                    << " second-position=("
+                    << crossing.second.positionMeters.x << ','
+                    << crossing.second.positionMeters.y << ','
+                    << crossing.second.positionMeters.z << ')'
+                    << " first-barycentric=("
+                    << crossing.first.barycentricCoordinates[0] << ','
+                    << crossing.first.barycentricCoordinates[1] << ','
+                    << crossing.first.barycentricCoordinates[2] << ')'
+                    << " second-barycentric=("
+                    << crossing.second.barycentricCoordinates[0] << ','
+                    << crossing.second.barycentricCoordinates[1] << ','
+                    << crossing.second.barycentricCoordinates[2] << ')';
+                throw std::invalid_argument(message.str());
             }
             for (auto* endpoint : {&first, &second}) {
                 const auto [found, inserted] = nodes.emplace(

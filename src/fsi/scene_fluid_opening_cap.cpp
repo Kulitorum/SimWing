@@ -808,6 +808,9 @@ SceneFluidOpeningCapSet buildCaps(
                 subtract(second, first), subtract(third, first));
             const double area = 0.5 * length(areaVector);
             bool referenceValid = true;
+            double referenceArea = 0.0;
+            double referenceOrientation = 0.0;
+            double referenceTolerance = 0.0;
             if (authoredTriangulation) {
                 const Vec3& referenceFirst =
                     surface.vertices[vertices[0]].referencePositionMeters;
@@ -818,18 +821,18 @@ SceneFluidOpeningCapSet buildCaps(
                 const Vec3 referenceAreaVector = cross(
                     subtract(referenceSecond, referenceFirst),
                     subtract(referenceThird, referenceFirst));
-                const double referenceArea =
+                referenceArea =
                     0.5 * length(referenceAreaVector);
-                const double referenceTolerance =
+                referenceTolerance =
                     settings.convexityTolerance
                     * referenceGeometry.scaleMeters
                     * referenceGeometry.scaleMeters;
+                referenceOrientation = dot(
+                    referenceAreaVector, referenceGeometry.unitNormal);
                 referenceValid = std::isfinite(referenceArea)
                     && referenceArea
                         > settings.minimumTriangleAreaSquareMeters
-                    && dot(referenceAreaVector,
-                           referenceGeometry.unitNormal)
-                        > referenceTolerance;
+                    && referenceOrientation > referenceTolerance;
             }
             const double currentOrientationTolerance =
                 authoredTriangulation
@@ -837,13 +840,37 @@ SceneFluidOpeningCapSet buildCaps(
                     * currentGeometry.scaleMeters
                     * currentGeometry.scaleMeters
                 : 0.0;
+            const double currentOrientation = dot(areaVector, normal);
             if (!std::isfinite(area)
                 || !(area > settings.minimumTriangleAreaSquareMeters)
-                || !(dot(areaVector, normal)
-                     > currentOrientationTolerance)
+                || !(currentOrientation > currentOrientationTolerance)
                 || !referenceValid) {
-                throw std::invalid_argument(
-                    "scene fluid opening-cap triangle is invalid");
+                std::ostringstream message;
+                message.precision(17);
+                message
+                    << "scene fluid opening-cap triangle is invalid"
+                    << ": opening-id=" << opening.id
+                    << " opening-index=" << openingIndex
+                    << " ordinal=" << ordinal
+                    << " vertices=(" << vertices[0] << ',' << vertices[1]
+                    << ',' << vertices[2] << ')'
+                    << " vertex-ids=(" << surface.vertices[vertices[0]].id
+                    << ',' << surface.vertices[vertices[1]].id << ','
+                    << surface.vertices[vertices[2]].id << ')'
+                    << " authored=" << (authoredTriangulation ? 1 : 0)
+                    << " area=" << area
+                    << " minimum-area="
+                    << settings.minimumTriangleAreaSquareMeters
+                    << " orientation=" << currentOrientation
+                    << " orientation-tolerance="
+                    << currentOrientationTolerance;
+                if (authoredTriangulation) {
+                    message
+                        << " reference-area=" << referenceArea
+                        << " reference-orientation=" << referenceOrientation
+                        << " reference-tolerance=" << referenceTolerance;
+                }
+                throw std::invalid_argument(message.str());
             }
             const Vec3 triangleNormal = authoredTriangulation
                 ? scaled(areaVector, 0.5 / area)

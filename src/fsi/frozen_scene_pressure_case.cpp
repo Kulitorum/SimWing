@@ -34,6 +34,7 @@
 #include <map>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -278,7 +279,12 @@ BuiltCase buildCase(
             "frozen scene pressure surface failed: "
             + surfaceError(surface));
     }
-    auto assembly = assembleSceneStructure(scene);
+    SceneStructureSettings structureAssemblySettings;
+    if (settings.useMovingGeometryFsi) {
+        structureAssemblySettings.suspensionSolverIterations = 16;
+    }
+    auto assembly = assembleSceneStructure(
+        scene, {}, structureAssemblySettings);
     if (!assembly.ok()) {
         throw std::invalid_argument(
             "frozen scene pressure structure failed: "
@@ -590,6 +596,10 @@ void advanceMovingGeometryFsi(
             "moving scene regional momentum transport was not accepted");
     }
 
+    const auto preStepForce = built.totalFluidTransfer.diagnostics()
+        .transferredNodalForceNewtons;
+    const double preStepForceNormNewtons = std::hypot(
+        preStepForce.x, preStepForce.y, preStepForce.z);
     const auto structureCheckpoint = built.structure.checkpoint();
     try {
         built.transfer.addLoadsTo(
@@ -626,14 +636,43 @@ void advanceMovingGeometryFsi(
                 maximumDisplacement,
                 std::sqrt(dx * dx + dy * dy + dz * dz));
         }
-        const auto acceptedGridEpoch = buildSceneFluidGridEpoch(
-            built.surface.definition, currentSurfaceState, built.grid,
-            built.transfer);
-        auto geometryTransition =
-            buildSceneFluidMimeticGeometryEpochTransition(
-                built.geometryEpoch, built.surface.definition,
-                built.surfaceState, currentSurfaceState, built.grid,
-                built.transfer, built.connectivity, acceptedGridEpoch);
+        const auto acceptedGridEpoch = [&] {
+            try {
+                return buildSceneFluidGridEpoch(
+                    built.surface.definition, currentSurfaceState,
+                    built.grid, built.transfer);
+            } catch (const std::exception& exception) {
+                std::ostringstream message;
+                message.precision(17);
+                message
+                    << "moving scene geometry rebuild rejected after"
+                    << " structure-dx=" << maximumDisplacement << " m"
+                    << " line-residual="
+                    << structureStep.maximumSuspensionResidualMeters
+                    << " m fluid-resultant=" << preStepForceNormNewtons
+                    << " N: " << exception.what();
+                throw std::runtime_error(message.str());
+            }
+        }();
+        auto geometryTransition = [&] {
+            try {
+                return buildSceneFluidMimeticGeometryEpochTransition(
+                    built.geometryEpoch, built.surface.definition,
+                    built.surfaceState, currentSurfaceState, built.grid,
+                    built.transfer, built.connectivity, acceptedGridEpoch);
+            } catch (const std::exception& exception) {
+                std::ostringstream message;
+                message.precision(17);
+                message
+                    << "moving scene geometry transition rejected after"
+                    << " structure-dx=" << maximumDisplacement << " m"
+                    << " line-residual="
+                    << structureStep.maximumSuspensionResidualMeters
+                    << " m fluid-resultant=" << preStepForceNormNewtons
+                    << " N: " << exception.what();
+                throw std::runtime_error(message.str());
+            }
+        }();
         auto volumeRates = buildSceneFluidPressureVolumeRates(
             built.geometryEpoch.cellVolumes,
             geometryTransition.currentGeometryEpoch.cellVolumes,
@@ -761,6 +800,10 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.geometryAdvanceCount = built.geometryAdvanceCount;
     result.maximumGeometryDisplacementMeters =
         built.maximumGeometryDisplacementMeters;
+    if (built.structureStep) {
+        result.maximumSuspensionResidualMeters =
+            built.structureStep->maximumSuspensionResidualMeters;
+    }
     if (built.traceFlowContinuation) {
         result.maximumCarriedTraceCorrectionCubicMetersPerSecond =
             built.traceFlowContinuation
@@ -927,6 +970,7 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         && std::isfinite(result.transferForceResidualNewtons)
         && std::isfinite(result.transferMomentResidualNewtonMeters)
         && std::isfinite(result.maximumGeometryDisplacementMeters)
+        && std::isfinite(result.maximumSuspensionResidualMeters)
         && std::isfinite(
             result.wallMomentumResidualKilogramMetersPerSecond)
         && std::isfinite(
@@ -1050,6 +1094,17 @@ struct FrozenScenePressureCase::Implementation {
           diagnostics(makeDiagnostics(built)) {
         stepSettings.timeStepSeconds = settings.timeStepSeconds;
         stepSettings.gravityMetersPerSecondSquared = {};
+        if (built.assembly.definition.suspension) {
+            stepSettings.constraintIterations =
+                built.assembly.definition.suspension->solverIterations;
+        }
+        if (settings.useMovingGeometryFsi) {
+            // The authoritative tessellation contains much smaller membrane
+            // charts than the analytic harnesses. Resolve their structural
+            // time scale explicitly instead of altering authored mass or
+            // stiffness at the scene boundary.
+            stepSettings.substeps = 8;
+        }
         diagnostics.backgroundWindMetersPerSecond =
             settings.backgroundWindMetersPerSecond;
         diagnostics.windRampSeconds = settings.windRampSeconds;
@@ -1429,6 +1484,11 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
             "moving_scene.maximum_geometry_displacement", "m",
             viewer::FieldAssociation::Global,
             {state.diagnostics.maximumGeometryDisplacementMeters},
+        });
+        frame.scalarFields.push_back({
+            "moving_scene.maximum_suspension_residual", "m",
+            viewer::FieldAssociation::Global,
+            {state.diagnostics.maximumSuspensionResidualMeters},
         });
         frame.scalarFields.push_back({
             "moving_scene.consecutive_pressure_warm_start", "1",

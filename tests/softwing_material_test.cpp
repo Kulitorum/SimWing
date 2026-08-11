@@ -8,6 +8,7 @@
 #include <limits>
 #include <locale>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -99,6 +100,43 @@ void testCompressedMembraneSolve() {
     check(std::isfinite(diagnostics.elasticEnergy)
               && diagnostics.elasticEnergy >= 0.0,
           "compression: softened membrane energy is finite and nonnegative");
+}
+
+void testScaledPositiveDefiniteSolveFallback() {
+    const softwing::SymmetricMatrix3 matrix{
+        1142073149580.1038,
+        1120688499298.2637,
+        4525457275171.2705,
+        1131329711941.3347,
+        -2273411949066.2319,
+        -2252027224717.6011,
+    };
+    const softwing::Vec3 rightHandSide{
+        -320.41963472999794,
+        -312.79216908430806,
+        633.17625888635678,
+    };
+    bool historicalInverseRejected = false;
+    try {
+        static_cast<void>(softwing::checkedInverse(matrix));
+    } catch (const std::invalid_argument&) {
+        historicalInverseRejected = true;
+    }
+    const softwing::Vec3 first = softwing::checkedSolve(
+        matrix, rightHandSide);
+    const softwing::Vec3 second = softwing::checkedSolve(
+        matrix, rightHandSide);
+    const softwing::Vec3 zero = softwing::checkedSolve(matrix, {});
+    const softwing::Vec3 residual = matrix * first - rightHandSide;
+    check(historicalInverseRejected
+              && softwing::isPositiveDefinite(matrix),
+          "scaled SPD solve: real-scene membrane matrix reaches only the rejected-system fallback");
+    check(finite(first) && first.x == second.x && first.y == second.y
+              && first.z == second.z && zero.x == 0.0 && zero.y == 0.0
+              && zero.z == 0.0,
+          "scaled SPD solve: fallback is finite and deterministic");
+    check(length(residual) < 1.0e-6,
+          "scaled SPD solve: equilibrated Cholesky closes the original unscaled system");
 }
 
 struct HingeBody {
@@ -361,6 +399,7 @@ void testCableCascadeSweeps() {
 int main() {
     testCompressionScaling();
     testCompressedMembraneSolve();
+    testScaledPositiveDefiniteSolveFallback();
     testDihedralFlatAndFolded();
     testDihedralRigidInPlaneMirrorAndDegenerate();
     testDihedralStateRoundTrip();

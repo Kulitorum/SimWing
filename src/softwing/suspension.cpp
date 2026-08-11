@@ -2348,8 +2348,14 @@ void SuspensionSystem::certifySubstep(const SoftBody& body, double dt) {
     }
     diagnostics_.maximumResidual = maximumResidual;
     if (maximumResidual > definition_.solver.maximumLineResidual) {
+        std::ostringstream message;
+        message.imbue(std::locale::classic());
+        message << std::setprecision(17)
+                << "maximum line residual " << maximumResidual
+                << " m exceeds configured bound "
+                << definition_.solver.maximumLineResidual << " m";
         fail(SuspensionPhase::Certification, "line-residual",
-             "maximum line residual exceeds configured bound");
+             message.str());
     }
     if (definition_.ground.mode == PayloadGroundMode::SupportPlane) {
         double maximumPenetration = 0.0;

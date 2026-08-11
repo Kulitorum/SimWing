@@ -80,6 +80,9 @@ struct SymmetricMatrix3 {
                                          const SymmetricMatrix3& matrix);
 [[nodiscard]] bool isPositiveDefinite(const SymmetricMatrix3& matrix);
 [[nodiscard]] SymmetricMatrix3 checkedInverse(const SymmetricMatrix3& matrix);
+// Retains checkedInverse arithmetic for historically accepted systems and
+// uses an equilibrated, residual-certified SPD solve only for matrices that
+// the explicit inverse rejects as ill-conditioned.
 [[nodiscard]] Vec3 checkedSolve(const SymmetricMatrix3& matrix,
                                 const Vec3& rightHandSide);
 

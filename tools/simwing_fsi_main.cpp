@@ -1978,7 +1978,7 @@ int main(int argc, char* argv[]) {
                     "regional-transport-substeps=%zu, regional-transport-residual=%.3g kg*m/s, "
                     "flow-advances=%zu, trace-continuation=%u, trace-carry=%.3g m^3/s, trace-delta=%.3g m^3/s, "
                     "regional-predictor=%u, regional-flow-delta=%.3g m^3/s, "
-                    "moving-fsi=%u, geometry-advances=%zu, geometry-dx=%.3g m, wall-residual=%.3g kg*m/s, "
+                    "moving-fsi=%u, geometry-advances=%zu, geometry-dx=%.3g m, line-residual=%.3g m, wall-residual=%.3g kg*m/s, "
                     "bulk-substeps=%zu, bulk-dv=%.3g m/s, "
                     "transfer-residual=%.3g N, "
                     "trace=%s\n",
@@ -2020,6 +2020,7 @@ int main(int argc, char* argv[]) {
                     diagnostics.usesMovingGeometryFsi ? 1U : 0U,
                     diagnostics.geometryAdvanceCount,
                     diagnostics.maximumGeometryDisplacementMeters,
+                    diagnostics.maximumSuspensionResidualMeters,
                     diagnostics.wallMomentumResidualKilogramMetersPerSecond,
                     diagnostics.bulkFlowSubstepCount,
                     diagnostics.bulkFlowMaximumVelocityChangeMetersPerSecond,

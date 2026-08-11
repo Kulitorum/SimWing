@@ -1,4 +1,5 @@
 #include "fluid/scene_surface_intersection.h"
+#include "fluid/scene_surface_clipping.h"
 
 #include <algorithm>
 #include <array>
@@ -203,6 +204,32 @@ bool triangleIntersectsCell(
                 return false;
             }
         }
+    }
+    if (tolerance == 0.0) {
+        std::array<Vec3, 3> exactTriangle;
+        for (std::size_t corner = 0; corner < 3; ++corner) {
+            exactTriangle[corner] = state.vertices[
+                triangle.vertexIndices[corner]].positionMeters;
+        }
+        const Vector3 gridLower = grid.lowerMeters();
+        const Vec3 exactLower{
+            gridLower.x
+                + static_cast<double>(candidate.cell.i) * spacing.x,
+            gridLower.y
+                + static_cast<double>(candidate.cell.j) * spacing.y,
+            gridLower.z
+                + static_cast<double>(candidate.cell.k) * spacing.z,
+        };
+        const Vec3 exactUpper{
+            gridLower.x
+                + static_cast<double>(candidate.cell.i + 1) * spacing.x,
+            gridLower.y
+                + static_cast<double>(candidate.cell.j + 1) * spacing.y,
+            gridLower.z
+                + static_cast<double>(candidate.cell.k + 1) * spacing.z,
+        };
+        return clipSceneFluidTriangleToAxisAlignedBox(
+            exactTriangle, exactLower, exactUpper).has_value();
     }
     return true;
 }

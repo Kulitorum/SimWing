@@ -56,8 +56,11 @@ struct SceneFluidGridIntersectionSet {
 };
 
 // Applies a normalized separating-axis triangle/AABB test to every validated
-// broad-phase pair. Touching counts as intersection. The result still does not
-// assign regions, construct clipped polygons, or estimate cut-cell volume.
+// broad-phase pair. At exact zero tolerance, an SAT survivor must also produce
+// a nonempty exact convex clip, preventing roundoff-only false positives from
+// entering the one-intersection/one-patch contract. Touching counts as
+// intersection. The result still does not assign regions, publish clipped
+// polygons, or estimate cut-cell volume.
 [[nodiscard]] SceneFluidGridIntersectionSet
 intersectSceneFluidSurfaceWithGrid(
     const SceneFluidSurfaceDefinition& surface,

@@ -203,6 +203,25 @@ std::optional<CandidateSegment> candidateSegment(
         || !std::isfinite(greatestDistanceSquared)) {
         return std::nullopt;
     }
+    double coordinateScale = 1.0;
+    for (const auto& vertex : onPlane) {
+        coordinateScale = std::max({
+            coordinateScale,
+            std::abs(vertex.positionMeters.x),
+            std::abs(vertex.positionMeters.y),
+            std::abs(vertex.positionMeters.z),
+        });
+    }
+    const double roundoffLength =
+        512.0 * std::numeric_limits<double>::epsilon() * coordinateScale;
+    if (!(std::sqrt(greatestDistanceSquared) > roundoffLength)) {
+        // Exact clipping can leave two adjacent-cell copies of a mathematical
+        // point contact one representable coordinate apart. Promoting that
+        // roundoff sliver to a face edge creates a self-loop after canonical
+        // authored-vertex stitching. Keep it as contact in the upstream
+        // patch/intersection records instead.
+        return std::nullopt;
+    }
 
     CandidateSegment result;
     result.location = plane.location;
