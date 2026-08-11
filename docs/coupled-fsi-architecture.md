@@ -3774,6 +3774,23 @@ ownership. Interactive batch launch creates the trace and opens the follow-
 viewer before expensive case construction, making initialization visible
 without moving Qt into the worker or solver targets.
 
+The first production-grid evaluation is now an opt-in AMReX 26.06 backend,
+pinned to commit `bf15fdce52093c715a1dd9a9da64ba66f0233be1`. It deliberately
+does not use AMReX embedded boundaries: the existing SimWing discrete-surface
+layer must remain capable of multivalued thin/folded interfaces. Its first
+canonical builds a non-periodic `32 x 48 x 16` coarse wind-tunnel domain split
+into six blocks plus one central factor-two refined patch with 24,576 valid
+fine cells. All three velocity components are face-centred with one ghost
+layer. The physical-face contract is X/Z far field, `-Y` prescribed inflow,
+and `+Y` pressure-outlet ownership with a zero normal velocity gradient. A
+bounded nonuniform interior wake makes the outflow check nontrivial; inflow,
+outflow-gradient, and far-field ghost errors close exactly on the Windows CPU
+backend. The standard build remains independent of AMReX. This is an AMR
+layout, allocation, coordinate, and boundary-ownership gate only: it performs
+no pressure projection, advection, diffusion, interface coupling, or wing
+aerodynamics. AMReX multigrid remains a separately enabled next checkpoint so
+dependency build cost cannot be mistaken for a completed fluid operator.
+
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written
 budgets; folded-interface and unresolved-gap cases do not leak or change fluid

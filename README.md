@@ -43,7 +43,14 @@ suspension/payload/contact checkpoints, rigid-pilot/harness assembly, immutable
 structural diagnostic frames, a
 standalone Qt/OpenGL trace viewer, and a canonical Qt-free worker that opens
 the viewer by default and streams accepted XPBD steps through a replayable
-growing trace. The first Qt-free fluid kernel adds a periodic staggered-grid
+growing trace. An opt-in AMReX 26.06 backend evaluation now owns the first
+non-periodic wind-tunnel grid boundary: a two-level block hierarchy with
+face-centred velocity, `-Y` prescribed inflow, `+Y` pressure-outlet velocity
+gradient, and X/Z far-field ghost values. Its canonical initializes a bounded
+interior wake and verifies every physical ghost contract exactly. It is an AMR
+layout/boundary gate only; pressure projection, transport, interface coupling,
+and wing aerodynamics do not yet use this backend. The first Qt-free fluid
+kernel adds a periodic staggered-grid
 pressure projection with deterministic rollback behavior, exact discrete
 gradient/divergence pairing, Taylor-Green preservation, and manufactured
 second-order pressure convergence. Its first velocity-evolution operator adds
@@ -1510,6 +1517,20 @@ that OCCT installation. A different compatible build can be selected with
 cmake --preset windows
 cmake --build --preset release --parallel
 ctest --preset release
+```
+
+The production-grid evaluation is opt-in so ordinary Studio and periodic-
+oracle builds do not download a CFD substrate. It pins AMReX 26.06 at commit
+`bf15fdce52093c715a1dd9a9da64ba66f0233be1`; an existing compatible install can
+instead be supplied through `-DSIMWING_AMREX_ROOT=<prefix>`.
+
+```powershell
+cmake -S . -B build-amrex -G "Visual Studio 17 2022" -A x64 `
+  -DSIMWING_ENABLE_AMREX_BACKEND=ON
+cmake --build build-amrex --config Release `
+  --target simwing-amr-external-flow-test --parallel
+ctest --test-dir build-amrex -C Release --output-on-failure `
+  -R simwing_amr_external_flow
 ```
 
 Run:

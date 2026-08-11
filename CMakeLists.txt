@@ -186,6 +186,15 @@ add_library(softwing_core STATIC
     src/softwing/suspension.cpp
     src/softwing/suspension_checkpoint_persistence.cpp
 )
+
+option(SIMWING_ENABLE_AMREX_BACKEND
+    "Build the opt-in AMReX external-flow/AMR evaluation backend" OFF)
+option(SIMWING_AMREX_ENABLE_LINEAR_SOLVERS
+    "Build AMReX multigrid for the external-flow projection checkpoint" OFF)
+set(SIMWING_AMREX_SOURCE_DIR "" CACHE PATH
+    "Existing AMReX 26.06 source tree used by the opt-in backend")
+set(SIMWING_AMREX_ROOT "" CACHE PATH
+    "Existing AMReX 26.06 installation used by the opt-in backend")
 target_include_directories(softwing_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/softwing/include"
 )
@@ -203,6 +212,68 @@ add_library(simwing_scene STATIC
     src/fsi/scene.cpp
     src/fsi/scene.h
 )
+
+if(SIMWING_ENABLE_AMREX_BACKEND)
+    set(AMReX_SPACEDIM 3 CACHE STRING "AMReX spatial dimensions" FORCE)
+    set(AMReX_PRECISION DOUBLE CACHE STRING "AMReX precision" FORCE)
+    set(AMReX_MPI OFF CACHE BOOL "Disable MPI for the first CPU backend" FORCE)
+    set(AMReX_OMP OFF CACHE BOOL "Disable OpenMP for deterministic bring-up" FORCE)
+    set(AMReX_GPU_BACKEND NONE CACHE STRING "AMReX GPU backend" FORCE)
+    set(AMReX_FORTRAN OFF CACHE BOOL "Disable AMReX Fortran interfaces" FORCE)
+    set(AMReX_LINEAR_SOLVERS ${SIMWING_AMREX_ENABLE_LINEAR_SOLVERS}
+        CACHE BOOL "Enable AMReX linear solvers" FORCE)
+    set(AMReX_LINEAR_SOLVERS_INCFLO OFF CACHE BOOL
+        "Use SimWing's staggered projection rather than AMReX nodal INCFLO" FORCE)
+    set(AMReX_LINEAR_SOLVERS_EM OFF CACHE BOOL
+        "Disable unrelated electromagnetic linear solvers" FORCE)
+    set(AMReX_EB OFF CACHE BOOL
+        "SimWing supplies its own multivalued thin-interface layer" FORCE)
+    set(AMReX_PARTICLES OFF CACHE BOOL "Disable AMReX particles" FORCE)
+    set(AMReX_AMRLEVEL OFF CACHE BOOL
+        "Use AmrCore primitives without the legacy AmrLevel driver" FORCE)
+
+    if(SIMWING_AMREX_ROOT)
+        find_package(AMReX 26.06 CONFIG REQUIRED
+            PATHS "${SIMWING_AMREX_ROOT}"
+            NO_DEFAULT_PATH)
+    elseif(SIMWING_AMREX_SOURCE_DIR)
+        if(NOT EXISTS "${SIMWING_AMREX_SOURCE_DIR}/CMakeLists.txt")
+            message(FATAL_ERROR
+                "SIMWING_AMREX_SOURCE_DIR is not an AMReX source tree: "
+                "${SIMWING_AMREX_SOURCE_DIR}")
+        endif()
+        add_subdirectory(
+            "${SIMWING_AMREX_SOURCE_DIR}"
+            "${CMAKE_BINARY_DIR}/_deps/amrex-build"
+            EXCLUDE_FROM_ALL)
+    else()
+        include(FetchContent)
+        FetchContent_Declare(amrex
+            GIT_REPOSITORY https://github.com/AMReX-Codes/amrex.git
+            GIT_TAG bf15fdce52093c715a1dd9a9da64ba66f0233be1
+            GIT_SHALLOW TRUE)
+        FetchContent_MakeAvailable(amrex)
+    endif()
+
+    if(TARGET amrex_3d)
+        set(simwing_amrex_target amrex_3d)
+    elseif(TARGET AMReX::amrex_3d)
+        set(simwing_amrex_target AMReX::amrex_3d)
+    else()
+        message(FATAL_ERROR "AMReX 3D target was not created")
+    endif()
+
+    add_library(simwing_amr_external_flow STATIC
+        src/fsi/amr_external_flow.cpp
+        src/fsi/amr_external_flow.h
+    )
+    target_include_directories(simwing_amr_external_flow PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+    )
+    target_link_libraries(simwing_amr_external_flow PRIVATE
+        ${simwing_amrex_target}
+    )
+endif()
 target_include_directories(simwing_scene PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
 )
@@ -1487,6 +1558,15 @@ add_executable(simwing-cfd-slice-test
 target_link_libraries(simwing-cfd-slice-test
     PRIVATE simwing_viewer_geometry)
 
+if(SIMWING_ENABLE_AMREX_BACKEND)
+    add_executable(simwing-amr-external-flow-test
+        tests/simwing_amr_external_flow_test.cpp
+    )
+    target_link_libraries(simwing-amr-external-flow-test
+        PRIVATE simwing_amr_external_flow
+    )
+endif()
+
 add_executable(simwing-structure-frame-test
     tests/simwing_structure_frame_test.cpp
 )
@@ -2251,6 +2331,10 @@ add_test(NAME simwing_viewer_protocol COMMAND simwing-viewer-protocol-test)
 add_test(NAME simwing_vector_glyphs COMMAND simwing-vector-glyphs-test)
 add_test(NAME simwing_viewer_camera COMMAND simwing-viewer-camera-test)
 add_test(NAME simwing_cfd_slice COMMAND simwing-cfd-slice-test)
+if(SIMWING_ENABLE_AMREX_BACKEND)
+    add_test(NAME simwing_amr_external_flow
+        COMMAND simwing-amr-external-flow-test)
+endif()
 add_test(NAME simwing_structure_frame COMMAND simwing-structure-frame-test)
 add_test(NAME simwing_fsi_worker COMMAND simwing-fsi-worker-test)
 add_test(NAME simwing_hemisphere_case COMMAND simwing-hemisphere-case-test)
