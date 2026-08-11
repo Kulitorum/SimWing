@@ -94,6 +94,7 @@ struct Options {
     std::optional<double> frozenWindXMetersPerSecond;
     std::optional<double> frozenWindRampSeconds;
     std::optional<double> frozenPerturbationMetersPerSecond;
+    bool frozenCorrectedTraceFlowContinuation = false;
     std::uint64_t checkpointEvery = 0;
     bool viewer = true;
     bool controlStdio = false;
@@ -109,6 +110,7 @@ void printUsage(FILE* stream) {
         "                   [--scene PATH]\n"
         "                   [--grid N] [--padding METERS]\n"
         "                   [--wind-x MPS] [--ramp-seconds SECONDS]\n"
+        "                   [--continue-corrected-trace-flow]\n"
         "                   [--perturbation MPS]\n"
         "                   [--steps N]\n"
         "                   [--trace PATH]\n"
@@ -128,6 +130,8 @@ void printUsage(FILE* stream) {
         "frozen-scene defaults to a 2^3 grid, 0.5 m padding, -0.85 m/s X wind,\n"
         "a 0.5 s startup ramp, and zero deterministic perturbation; N is bounded\n"
         "to 2..16; a zero ramp explicitly restores impulsive startup;\n"
+        "--continue-corrected-trace-flow enables the fixed-topology exact-trace\n"
+        "continuation experiment without changing the default worker path;\n"
         "'flag' maps the complete reaction from a fixed-reference projected gust\n"
         "onto a one-edge-clamped XPBD fabric panel;\n"
         "'ram-cell' maps five fixed-reference cavity-wall reactions onto one\n"
@@ -396,6 +400,8 @@ bool parseOptions(int argc,
                 return false;
             }
             options.frozenWindRampSeconds = value;
+        } else if (argument == "--continue-corrected-trace-flow") {
+            options.frozenCorrectedTraceFlowContinuation = true;
         } else if (argument == "--perturbation") {
             double value = 0.0;
             if (++index >= argc || !parseFiniteDouble(argv[index], value)
@@ -476,10 +482,11 @@ bool parseOptions(int argc,
         || options.frozenDomainPaddingMeters.has_value()
         || options.frozenWindXMetersPerSecond.has_value()
         || options.frozenWindRampSeconds.has_value()
-        || options.frozenPerturbationMetersPerSecond.has_value();
+        || options.frozenPerturbationMetersPerSecond.has_value()
+        || options.frozenCorrectedTraceFlowContinuation;
     if (frozenControlRequested
         && options.workerCase != WorkerCase::FrozenScene) {
-        error = "--grid, --padding, --wind-x, --ramp-seconds, and --perturbation require --case frozen-scene";
+        error = "--grid, --padding, --wind-x, --ramp-seconds, --continue-corrected-trace-flow, and --perturbation require --case frozen-scene";
         return false;
     }
     if (options.workerCase == WorkerCase::FrozenScene && !stepsRequested) {
@@ -1942,7 +1949,8 @@ int main(int argc, char* argv[]) {
                     "max-pressure-jump=%.6g Pa, pressure-force="
                     "[%.6g %.6g %.6g] N, corrected-continuity=%.3g m^3/s, "
                     "collapsed-speed=%.6g m/s, embedded-openings=%zu, "
-                    "flow-advances=%zu, bulk-substeps=%zu, bulk-dv=%.3g m/s, "
+                    "flow-advances=%zu, trace-continuation=%u, trace-carry=%.3g m^3/s, trace-delta=%.3g m^3/s, "
+                    "bulk-substeps=%zu, bulk-dv=%.3g m/s, "
                     "transfer-residual=%.3g N, "
                     "trace=%s\n",
                     static_cast<unsigned long long>(
@@ -1966,6 +1974,10 @@ int main(int argc, char* argv[]) {
                     diagnostics.maximumCollapsedMacVelocityMetersPerSecond,
                     diagnostics.embeddedOpeningTraceCount,
                     diagnostics.flowAdvanceCount,
+                    diagnostics.usesCorrectedTraceFlowContinuation ? 1U : 0U,
+                    diagnostics
+                        .maximumCarriedTraceCorrectionCubicMetersPerSecond,
+                    diagnostics.maximumTraceBulkIncrementCubicMetersPerSecond,
                     diagnostics.bulkFlowSubstepCount,
                     diagnostics.bulkFlowMaximumVelocityChangeMetersPerSecond,
                     diagnostics.transferForceResidualNewtons,
@@ -2072,6 +2084,8 @@ int main(int argc, char* argv[]) {
                 settings.windRampSeconds =
                     *options.frozenWindRampSeconds;
             }
+            settings.useCorrectedTraceFlowContinuation =
+                options.frozenCorrectedTraceFlowContinuation;
             if (options.frozenPerturbationMetersPerSecond) {
                 settings.diagnosticPerturbationSpeedMetersPerSecond =
                     *options.frozenPerturbationMetersPerSecond;

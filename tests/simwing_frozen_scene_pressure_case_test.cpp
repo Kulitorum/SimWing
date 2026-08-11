@@ -88,12 +88,16 @@ void testFrozenScenePressureCase() {
     settings.useExplicitDomain = true;
     settings.lowerMeters = {};
     settings.upperMeters = {4.0, 4.0, 4.0};
+    check(!settings.useCorrectedTraceFlowContinuation,
+          "corrected trace-flow continuation remains opt-in");
+    settings.useCorrectedTraceFlowContinuation = true;
     simwing::fsi::FrozenScenePressureCase first(scene, settings);
     simwing::fsi::FrozenScenePressureCase second(scene, settings);
     const auto firstFrame = first.advance();
     const auto repeatedFrame = second.advance();
     const auto firstDiagnostics = first.diagnostics();
     const auto secondFrame = first.advance();
+    const auto repeatedSecondFrame = second.advance();
     const auto* pressure = scalarField(
         firstFrame, "frozen_scene.pressure_jump");
     const auto* nodalForce = vectorField(
@@ -104,6 +108,7 @@ void testFrozenScenePressureCase() {
         secondFrame, "frozen_scene.pressure_jump");
     const auto& diagnostics = first.diagnostics();
     check(serialized(firstFrame) == serialized(repeatedFrame)
+              && serialized(secondFrame) == serialized(repeatedSecondFrame)
               && firstFrame.step == 1
               && secondFrame.step == 2
               && sameGeometry(firstFrame, secondFrame)
@@ -117,7 +122,13 @@ void testFrozenScenePressureCase() {
               && diagnostics.windRampFraction
                   > firstDiagnostics.windRampFraction
               && diagnostics.windRampFraction <= 1.0
-              && diagnostics.flowAdvanceCount == 1,
+              && diagnostics.flowAdvanceCount == 1
+              && diagnostics.usesCorrectedTraceFlowContinuation
+              && diagnostics
+                     .maximumCarriedTraceCorrectionCubicMetersPerSecond
+                  > 0.0
+              && diagnostics.maximumTraceBulkIncrementCubicMetersPerSecond
+                  > 0.0,
           "frozen scene flow evolves deterministically while leaving geometry unchanged");
     check(pressure != nullptr
               && pressure->association

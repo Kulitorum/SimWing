@@ -1,5 +1,7 @@
 #include "scene_fluid_mimetic_trace_flow.h"
 
+#include "scene_fluid_mimetic_pressure_flow.h"
+
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -133,6 +135,33 @@ std::uint64_t productFingerprint(
          prediction.componentBalanceResidualsCubicMetersPerSecond) {
         fingerprint.real(value);
     }
+    return fingerprint.value();
+}
+
+std::uint64_t continuationFingerprint(
+    const SceneFluidMimeticTraceFlowContinuation& continuation) {
+    Fingerprint fingerprint;
+    fingerprint.integer(continuation.version);
+    fingerprint.integer(
+        continuation.previousCorrectedTraceFlowFingerprint);
+    fingerprint.integer(
+        continuation.previousBaselinePredictionFingerprint);
+    fingerprint.integer(
+        continuation.currentBaselinePredictionFingerprint);
+    fingerprint.integer(continuation.mimeticControlCellFingerprint);
+    fingerprint.integer(continuation.mimeticTraceSystemFingerprint);
+    fingerprint.integer(continuation.pressureFaceLinkFingerprint);
+    fingerprint.integer(continuation.structureDefinitionFingerprint);
+    fingerprint.integer(continuation.acceptedStepCount);
+    fingerprint.real(continuation.simulationTimeSeconds);
+    fingerprint.integer(static_cast<std::uint64_t>(
+        continuation.ownedStorageBytes));
+    fingerprint.real(
+        continuation.maximumAbsoluteCarriedCorrectionCubicMetersPerSecond);
+    fingerprint.real(
+        continuation.maximumAbsoluteBulkIncrementCubicMetersPerSecond);
+    fingerprint.integer(static_cast<std::uint8_t>(continuation.finite));
+    fingerprint.integer(continuation.prediction.fingerprint);
     return fingerprint.value();
 }
 
@@ -745,6 +774,174 @@ SceneFluidMimeticTraceFlowPrediction sampleSceneFluidMimeticTraceFlows(
     return result;
 }
 
+SceneFluidMimeticTraceFlowContinuation
+continueSceneFluidMimeticTraceFlowsFixedTopology(
+    const SceneFluidMimeticCorrectedTraceFlow& previousCorrectedFlow,
+    const SceneFluidMimeticTraceFlowPrediction& previousBulkBaseline,
+    const SceneFluidMimeticTraceFlowPrediction& currentBulkBaseline,
+    const SceneFluidMimeticTraceFlowLimits& limits) {
+    validateSceneFluidMimeticCorrectedTraceFlowIntegrity(
+        previousCorrectedFlow);
+    validateSceneFluidMimeticTraceFlowPredictionIntegrity(
+        previousBulkBaseline);
+    validateSceneFluidMimeticTraceFlowPredictionIntegrity(
+        currentBulkBaseline);
+    const std::size_t traceCount = previousCorrectedFlow.traces.size();
+    if (!previousCorrectedFlow.accepted
+        || previousBulkBaseline.regionWallExchangeFingerprint != 0
+        || currentBulkBaseline.regionWallExchangeFingerprint != 0
+        || previousBulkBaseline.sourceDensityKgPerCubicMeter != 0.0
+        || currentBulkBaseline.sourceDensityKgPerCubicMeter != 0.0
+        || previousCorrectedFlow.mimeticControlCellFingerprint
+            != previousBulkBaseline.mimeticControlCellFingerprint
+        || previousCorrectedFlow.mimeticControlCellFingerprint
+            != currentBulkBaseline.mimeticControlCellFingerprint
+        || previousCorrectedFlow.fullTraceSystemFingerprint
+            != previousBulkBaseline.mimeticTraceSystemFingerprint
+        || previousCorrectedFlow.fullTraceSystemFingerprint
+            != currentBulkBaseline.mimeticTraceSystemFingerprint
+        || previousCorrectedFlow.pressureFaceLinkFingerprint
+            != previousBulkBaseline.pressureFaceLinkFingerprint
+        || previousCorrectedFlow.pressureFaceLinkFingerprint
+            != currentBulkBaseline.pressureFaceLinkFingerprint
+        || previousCorrectedFlow.structureDefinitionFingerprint
+            != previousBulkBaseline.structureDefinitionFingerprint
+        || previousCorrectedFlow.structureDefinitionFingerprint
+            != currentBulkBaseline.structureDefinitionFingerprint
+        || previousCorrectedFlow.acceptedStepCount
+            != previousBulkBaseline.acceptedStepCount
+        || previousCorrectedFlow.acceptedStepCount
+            != currentBulkBaseline.acceptedStepCount
+        || previousCorrectedFlow.simulationTimeSeconds
+            != previousBulkBaseline.simulationTimeSeconds
+        || previousCorrectedFlow.simulationTimeSeconds
+            != currentBulkBaseline.simulationTimeSeconds
+        || traceCount != previousBulkBaseline.traces.size()
+        || traceCount != currentBulkBaseline.traces.size()
+        || previousBulkBaseline.componentCount
+            != currentBulkBaseline.componentCount) {
+        throw std::invalid_argument(
+            "scene fluid mimetic trace-flow continuation is foreign");
+    }
+    if (traceCount > limits.maximumSharedTraces
+        || currentBulkBaseline.componentCount > limits.maximumComponents
+        || currentBulkBaseline.ownedStorageBytes > limits.maximumOwnedBytes) {
+        throw std::length_error(
+            "scene fluid mimetic trace-flow continuation exceeds its limits");
+    }
+
+    SceneFluidMimeticTraceFlowContinuation result;
+    result.previousCorrectedTraceFlowFingerprint =
+        previousCorrectedFlow.fingerprint;
+    result.previousBaselinePredictionFingerprint =
+        previousBulkBaseline.fingerprint;
+    result.currentBaselinePredictionFingerprint =
+        currentBulkBaseline.fingerprint;
+    result.mimeticControlCellFingerprint =
+        currentBulkBaseline.mimeticControlCellFingerprint;
+    result.mimeticTraceSystemFingerprint =
+        currentBulkBaseline.mimeticTraceSystemFingerprint;
+    result.pressureFaceLinkFingerprint =
+        currentBulkBaseline.pressureFaceLinkFingerprint;
+    result.structureDefinitionFingerprint =
+        currentBulkBaseline.structureDefinitionFingerprint;
+    result.acceptedStepCount = currentBulkBaseline.acceptedStepCount;
+    result.simulationTimeSeconds = currentBulkBaseline.simulationTimeSeconds;
+    result.prediction = currentBulkBaseline;
+    result.prediction.maximumAbsolutePredictedRelativeVolumeFlowRateCubicMetersPerSecond =
+        0.0;
+    std::vector<CompensatedSum> componentBalances(
+        result.prediction.componentCount);
+    for (std::size_t index = 0; index < traceCount; ++index) {
+        const auto& corrected = previousCorrectedFlow.traces[index];
+        const auto& previous = previousBulkBaseline.traces[index];
+        const auto& current = currentBulkBaseline.traces[index];
+        auto& continued = result.prediction.traces[index];
+        if (corrected.sharedTraceOrdinal != index
+            || previous.sharedTraceOrdinal != index
+            || current.sharedTraceOrdinal != index
+            || corrected.traceIndex != previous.traceIndex
+            || corrected.traceIndex != current.traceIndex
+            || corrected.stableId != previous.stableId
+            || corrected.stableId != current.stableId
+            || corrected.kind != previous.kind
+            || corrected.kind != current.kind
+            || corrected.sourceStableId != previous.sourceStableId
+            || corrected.sourceStableId != current.sourceStableId
+            || corrected.componentIndex != previous.componentIndex
+            || corrected.componentIndex != current.componentIndex
+            || corrected.minusControlCellIndex
+                != previous.minusControlCellIndex
+            || corrected.minusControlCellIndex
+                != current.minusControlCellIndex
+            || corrected.plusControlCellIndex
+                != previous.plusControlCellIndex
+            || corrected.plusControlCellIndex
+                != current.plusControlCellIndex) {
+            throw std::invalid_argument(
+                "scene fluid mimetic trace-flow continuation topology changed");
+        }
+        const double carriedCorrection =
+            corrected.correctedRelativeVolumeFlowRateCubicMetersPerSecond
+            - previous.predictedRelativeVolumeFlowRateCubicMetersPerSecond;
+        const double bulkIncrement =
+            current.predictedRelativeVolumeFlowRateCubicMetersPerSecond
+            - previous.predictedRelativeVolumeFlowRateCubicMetersPerSecond;
+        const double predicted =
+            corrected.correctedRelativeVolumeFlowRateCubicMetersPerSecond
+            + bulkIncrement;
+        if (!std::isfinite(carriedCorrection)
+            || !std::isfinite(bulkIncrement) || !std::isfinite(predicted)) {
+            throw std::overflow_error(
+                "scene fluid mimetic trace-flow continuation is non-finite");
+        }
+        continued.predictedRelativeVolumeFlowRateCubicMetersPerSecond =
+            predicted;
+        result.maximumAbsoluteCarriedCorrectionCubicMetersPerSecond =
+            std::max(
+                result.maximumAbsoluteCarriedCorrectionCubicMetersPerSecond,
+                std::abs(carriedCorrection));
+        result.maximumAbsoluteBulkIncrementCubicMetersPerSecond = std::max(
+            result.maximumAbsoluteBulkIncrementCubicMetersPerSecond,
+            std::abs(bulkIncrement));
+        result.prediction
+            .maximumAbsolutePredictedRelativeVolumeFlowRateCubicMetersPerSecond =
+            std::max(
+                result.prediction
+                    .maximumAbsolutePredictedRelativeVolumeFlowRateCubicMetersPerSecond,
+                std::abs(predicted));
+        componentBalances[continued.componentIndex].add(predicted);
+        componentBalances[continued.componentIndex].add(-predicted);
+    }
+    result.prediction.maximumAbsoluteComponentBalanceResidualCubicMetersPerSecond =
+        0.0;
+    for (std::size_t component = 0;
+         component < result.prediction.componentCount; ++component) {
+        const double balance = componentBalances[component].value();
+        result.prediction
+            .componentBalanceResidualsCubicMetersPerSecond[component] =
+            balance;
+        result.prediction
+            .maximumAbsoluteComponentBalanceResidualCubicMetersPerSecond =
+            std::max(
+                result.prediction
+                    .maximumAbsoluteComponentBalanceResidualCubicMetersPerSecond,
+                std::abs(balance));
+    }
+    result.prediction.fingerprint = productFingerprint(result.prediction);
+    validateSceneFluidMimeticTraceFlowPredictionIntegrity(result.prediction);
+    result.ownedStorageBytes = result.prediction.ownedStorageBytes;
+    result.finite = std::isfinite(
+            result.maximumAbsoluteCarriedCorrectionCubicMetersPerSecond)
+        && std::isfinite(
+            result.maximumAbsoluteBulkIncrementCubicMetersPerSecond);
+    result.fingerprint = continuationFingerprint(result);
+    validateSceneFluidMimeticTraceFlowContinuation(
+        result, previousCorrectedFlow, previousBulkBaseline,
+        currentBulkBaseline);
+    return result;
+}
+
 void validateSceneFluidMimeticTraceFlowPredictionIntegrity(
     const SceneFluidMimeticTraceFlowPrediction& prediction) {
     const bool fixedEpochSource = prediction.regionWallExchangeFingerprint == 0
@@ -835,6 +1032,123 @@ void validateSceneFluidMimeticTraceFlowPredictionIntegrity(
         || productFingerprint(prediction) != prediction.fingerprint) {
         throw std::invalid_argument(
             "scene fluid mimetic trace-flow summary is invalid");
+    }
+}
+
+void validateSceneFluidMimeticTraceFlowContinuationIntegrity(
+    const SceneFluidMimeticTraceFlowContinuation& continuation) {
+    validateSceneFluidMimeticTraceFlowPredictionIntegrity(
+        continuation.prediction);
+    if (continuation.version
+            != sceneFluidMimeticTraceFlowContinuationVersion
+        || continuation.fingerprint == 0
+        || continuation.previousCorrectedTraceFlowFingerprint == 0
+        || continuation.previousBaselinePredictionFingerprint == 0
+        || continuation.currentBaselinePredictionFingerprint == 0
+        || continuation.mimeticControlCellFingerprint == 0
+        || continuation.mimeticTraceSystemFingerprint == 0
+        || continuation.pressureFaceLinkFingerprint == 0
+        || continuation.structureDefinitionFingerprint == 0
+        || !std::isfinite(continuation.simulationTimeSeconds)
+        || continuation.ownedStorageBytes
+            != continuation.prediction.ownedStorageBytes
+        || !std::isfinite(
+            continuation.maximumAbsoluteCarriedCorrectionCubicMetersPerSecond)
+        || continuation.maximumAbsoluteCarriedCorrectionCubicMetersPerSecond
+            < 0.0
+        || !std::isfinite(
+            continuation.maximumAbsoluteBulkIncrementCubicMetersPerSecond)
+        || continuation.maximumAbsoluteBulkIncrementCubicMetersPerSecond
+            < 0.0
+        || !continuation.finite
+        || continuation.mimeticControlCellFingerprint
+            != continuation.prediction.mimeticControlCellFingerprint
+        || continuation.mimeticTraceSystemFingerprint
+            != continuation.prediction.mimeticTraceSystemFingerprint
+        || continuation.pressureFaceLinkFingerprint
+            != continuation.prediction.pressureFaceLinkFingerprint
+        || continuation.structureDefinitionFingerprint
+            != continuation.prediction.structureDefinitionFingerprint
+        || continuation.acceptedStepCount
+            != continuation.prediction.acceptedStepCount
+        || continuation.simulationTimeSeconds
+            != continuation.prediction.simulationTimeSeconds
+        || continuation.fingerprint
+            != continuationFingerprint(continuation)) {
+        throw std::invalid_argument(
+            "scene fluid mimetic trace-flow continuation integrity is invalid");
+    }
+}
+
+void validateSceneFluidMimeticTraceFlowContinuation(
+    const SceneFluidMimeticTraceFlowContinuation& continuation,
+    const SceneFluidMimeticCorrectedTraceFlow& previousCorrectedFlow,
+    const SceneFluidMimeticTraceFlowPrediction& previousBulkBaseline,
+    const SceneFluidMimeticTraceFlowPrediction& currentBulkBaseline) {
+    validateSceneFluidMimeticTraceFlowContinuationIntegrity(continuation);
+    validateSceneFluidMimeticCorrectedTraceFlowIntegrity(
+        previousCorrectedFlow);
+    validateSceneFluidMimeticTraceFlowPredictionIntegrity(
+        previousBulkBaseline);
+    validateSceneFluidMimeticTraceFlowPredictionIntegrity(
+        currentBulkBaseline);
+    if (continuation.previousCorrectedTraceFlowFingerprint
+            != previousCorrectedFlow.fingerprint
+        || continuation.previousBaselinePredictionFingerprint
+            != previousBulkBaseline.fingerprint
+        || continuation.currentBaselinePredictionFingerprint
+            != currentBulkBaseline.fingerprint
+        || continuation.prediction.traces.size()
+            != previousCorrectedFlow.traces.size()
+        || continuation.prediction.traces.size()
+            != previousBulkBaseline.traces.size()
+        || continuation.prediction.traces.size()
+            != currentBulkBaseline.traces.size()) {
+        throw std::invalid_argument(
+            "scene fluid mimetic trace-flow continuation binding is invalid");
+    }
+    double maximumCorrection = 0.0;
+    double maximumIncrement = 0.0;
+    for (std::size_t index = 0;
+         index < continuation.prediction.traces.size(); ++index) {
+        const auto& corrected = previousCorrectedFlow.traces[index];
+        const auto& previous = previousBulkBaseline.traces[index];
+        const auto& current = currentBulkBaseline.traces[index];
+        const auto& continued = continuation.prediction.traces[index];
+        const double carriedCorrection =
+            corrected.correctedRelativeVolumeFlowRateCubicMetersPerSecond
+            - previous.predictedRelativeVolumeFlowRateCubicMetersPerSecond;
+        const double bulkIncrement =
+            current.predictedRelativeVolumeFlowRateCubicMetersPerSecond
+            - previous.predictedRelativeVolumeFlowRateCubicMetersPerSecond;
+        if (continued.sharedTraceOrdinal != index
+            || continued.traceIndex != corrected.traceIndex
+            || continued.stableId != corrected.stableId
+            || continued.kind != corrected.kind
+            || continued.sourceStableId != corrected.sourceStableId
+            || continued.componentIndex != corrected.componentIndex
+            || continued.minusControlCellIndex
+                != corrected.minusControlCellIndex
+            || continued.plusControlCellIndex
+                != corrected.plusControlCellIndex
+            || continued.predictedRelativeVolumeFlowRateCubicMetersPerSecond
+                != corrected
+                        .correctedRelativeVolumeFlowRateCubicMetersPerSecond
+                    + bulkIncrement) {
+            throw std::invalid_argument(
+                "scene fluid mimetic trace-flow continuation value changed");
+        }
+        maximumCorrection = std::max(
+            maximumCorrection, std::abs(carriedCorrection));
+        maximumIncrement = std::max(
+            maximumIncrement, std::abs(bulkIncrement));
+    }
+    if (continuation.maximumAbsoluteCarriedCorrectionCubicMetersPerSecond
+            != maximumCorrection
+        || continuation.maximumAbsoluteBulkIncrementCubicMetersPerSecond
+            != maximumIncrement) {
+        throw std::invalid_argument(
+            "scene fluid mimetic trace-flow continuation summary changed");
     }
 }
 

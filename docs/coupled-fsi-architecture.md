@@ -3471,6 +3471,18 @@ optional deterministic perturbation is an integration probe, not physical
 turbulence. On the coarse real-wing grid, removing it restores near-symmetric
 transverse loads but leaves the unphysical pressure magnitude, isolating that
 scale error from the old test pattern.
+An opt-in `--continue-corrected-trace-flow` path now retains every accepted
+shared-trace correction and applies only the difference between two complete
+bulk-MAC/opening-flux samples. This preserves mixed Cartesian subface flow and
+cell-owned intake flow across a fixed-topology frame without pretending the MAC
+collapse is an invertible state. It is provenance-bound, bounded, and still
+uses a fresh zero-warm pressure solve. A six-frame `2^3`, `0.1 s` ramp run at
+`-0.85 m/s` reduces the final jump from the resampling path's `397123 Pa` to
+`72176.4 Pa` and streamwise load from `130287 N` to `24295.1 N`, confirming
+that lossy resampling was repeatedly reapplying most of the boundary impulse.
+The remaining magnitude is still nonphysical, and the bulk transport still
+lacks region-resolved immersed-boundary advection, so the experiment remains
+opt-in and does not change the default worker arithmetic.
 The first uniform, explicitly zero-ramp `4^3` real-wing run accepts 358 controls
 after 1,472 PCG iterations. It resolves all material loads using 240 bounded
 zero-volume-side

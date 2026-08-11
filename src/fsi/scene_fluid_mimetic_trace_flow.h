@@ -11,6 +11,10 @@
 namespace simwing::fsi {
 
 inline constexpr std::uint32_t sceneFluidMimeticTraceFlowVersion = 2;
+inline constexpr std::uint32_t
+    sceneFluidMimeticTraceFlowContinuationVersion = 1;
+
+struct SceneFluidMimeticCorrectedTraceFlow;
 
 struct SceneFluidMimeticTraceFlowLimits {
     std::size_t maximumSharedTraces = 200'000'000;
@@ -69,6 +73,36 @@ struct SceneFluidMimeticTraceFlowPrediction {
         const SceneFluidMimeticTraceFlowPrediction&) const = default;
 };
 
+// Fixed-topology continuation which preserves the last accepted corrected
+// shared-trace flow and applies only the change between two complete bulk-MAC
+// predictor samples. This keeps Cartesian subface differences and embedded
+// opening flow explicit instead of reconstructing the next predictor from a
+// lossy one-velocity-per-face collapse. It is a diagnostic continuation
+// model: transport still owns the bulk increment and this product neither
+// advects subface residuals nor supplies a pressure warm start.
+struct SceneFluidMimeticTraceFlowContinuation {
+    std::uint32_t version =
+        sceneFluidMimeticTraceFlowContinuationVersion;
+    std::uint64_t fingerprint = 0;
+    std::uint64_t previousCorrectedTraceFlowFingerprint = 0;
+    std::uint64_t previousBaselinePredictionFingerprint = 0;
+    std::uint64_t currentBaselinePredictionFingerprint = 0;
+    std::uint64_t mimeticControlCellFingerprint = 0;
+    std::uint64_t mimeticTraceSystemFingerprint = 0;
+    std::uint64_t pressureFaceLinkFingerprint = 0;
+    std::uint64_t structureDefinitionFingerprint = 0;
+    std::uint64_t acceptedStepCount = 0;
+    double simulationTimeSeconds = 0.0;
+    std::size_t ownedStorageBytes = 0;
+    double maximumAbsoluteCarriedCorrectionCubicMetersPerSecond = 0.0;
+    double maximumAbsoluteBulkIncrementCubicMetersPerSecond = 0.0;
+    bool finite = false;
+    SceneFluidMimeticTraceFlowPrediction prediction;
+
+    bool operator==(
+        const SceneFluidMimeticTraceFlowContinuation&) const = default;
+};
+
 [[nodiscard]] SceneFluidMimeticTraceFlowPrediction
 sampleSceneFluidMimeticTraceFlows(
     const SceneFluidMimeticControlCellSet& controlCells,
@@ -77,6 +111,13 @@ sampleSceneFluidMimeticTraceFlows(
     const SceneFluidOpeningFluxSet& openingFlux,
     const fluid::PeriodicCartesianGrid& grid,
     const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidMimeticTraceFlowLimits& limits = {});
+
+[[nodiscard]] SceneFluidMimeticTraceFlowContinuation
+continueSceneFluidMimeticTraceFlowsFixedTopology(
+    const SceneFluidMimeticCorrectedTraceFlow& previousCorrectedFlow,
+    const SceneFluidMimeticTraceFlowPrediction& previousBulkBaseline,
+    const SceneFluidMimeticTraceFlowPrediction& currentBulkBaseline,
     const SceneFluidMimeticTraceFlowLimits& limits = {});
 
 [[nodiscard]] SceneFluidMimeticTraceFlowPrediction
@@ -90,6 +131,15 @@ sampleSceneFluidMimeticTraceFlows(
 
 void validateSceneFluidMimeticTraceFlowPredictionIntegrity(
     const SceneFluidMimeticTraceFlowPrediction& prediction);
+
+void validateSceneFluidMimeticTraceFlowContinuationIntegrity(
+    const SceneFluidMimeticTraceFlowContinuation& continuation);
+
+void validateSceneFluidMimeticTraceFlowContinuation(
+    const SceneFluidMimeticTraceFlowContinuation& continuation,
+    const SceneFluidMimeticCorrectedTraceFlow& previousCorrectedFlow,
+    const SceneFluidMimeticTraceFlowPrediction& previousBulkBaseline,
+    const SceneFluidMimeticTraceFlowPrediction& currentBulkBaseline);
 
 void validateSceneFluidMimeticTraceFlowPrediction(
     const SceneFluidMimeticTraceFlowPrediction& prediction,

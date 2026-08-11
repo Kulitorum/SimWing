@@ -1517,6 +1517,7 @@ Run:
 ```powershell
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --steps 2
+.\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --ramp-seconds 0.1 --continue-corrected-trace-flow --steps 6 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --grid 4 --padding 1.0 --wind-x -0.85 --ramp-seconds 0 --perturbation 0.25 --steps 2 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case hemisphere --steps 600
 .\build\bin\Release\simwing-fsi.exe --case flag --steps 600
@@ -1581,6 +1582,12 @@ integration probe; larger grids are offline experiments whose runtime and
 memory rise sharply and do not by themselves make the periodic setup physical.
 The perturbation defaults to zero. A nonzero value is deterministic diagnostic
 forcing only; it does not represent turbulence or an aerodynamic inflow model.
+`--continue-corrected-trace-flow` is a fixed-topology experiment which retains
+the exact last corrected shared-trace flow and adds only the change between the
+previous and current bulk predictors before re-solving pressure. It preserves
+embedded intake flow and mixed-subface differences that the MAC collapse cannot
+represent. The default remains the older resampling path while this continuation
+is assessed; neither path supplies region-resolved cut-cell advection.
 The ram-cell command shows the same conservative complete-reaction path acting
 on a multi-panel open fabric shell; it is a deformation/inflation precursor,
 not a resolved moving-cavity or aerodynamic-wing result.

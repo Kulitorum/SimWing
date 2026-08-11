@@ -9,7 +9,7 @@
 
 namespace simwing::fsi {
 
-inline constexpr std::uint32_t sceneFluidMimeticPressureAuditVersion = 1;
+inline constexpr std::uint32_t sceneFluidMimeticPressureAuditVersion = 2;
 inline constexpr std::uint32_t
     sceneFluidMimeticPressureAuditTopologyVersion = 1;
 inline constexpr std::uint32_t
@@ -83,6 +83,7 @@ struct SceneFluidMimeticPressureAuditEndpoint {
     std::uint64_t fingerprint = 0;
     std::uint64_t scenePressureEpochFingerprint = 0;
     std::uint64_t pressureTopologyTransitionFingerprint = 0;
+    std::uint64_t traceFlowContinuationFingerprint = 0;
     std::uint64_t structureDefinitionFingerprint = 0;
     std::uint64_t acceptedStepCount = 0;
     double simulationTimeSeconds = 0.0;
@@ -155,6 +156,19 @@ advanceSceneFluidMimeticPressureAuditFixedTopology(
     const SceneFluidOpeningFluxSet& openingFlux,
     const fluid::PeriodicCartesianGrid& grid,
     const fluid::MacVelocityField& predictedVelocityMetersPerSecond,
+    const SceneFluidMimeticPressureAuditSettings& settings = {},
+    const SceneFluidMimeticPressureAuditLimits& limits = {});
+
+// Reuses the same accepted geometry/operator topology but assembles the next
+// zero-warm pressure solve from an explicitly provenance-bound corrected-flow
+// continuation. The continuation must retain this exact topology and epoch.
+[[nodiscard]] SceneFluidMimeticPressureAuditEndpoint
+advanceSceneFluidMimeticPressureAuditFixedTopology(
+    const SceneFluidMimeticPressureAuditEndpoint& acceptedTopology,
+    const SceneFluidQuadratureDefinition& quadrature,
+    const SceneFluidPressureControlVolumeSet& pressureVolumes,
+    const SceneFluidPressureFaceLinkSet& pressureFaceLinks,
+    const SceneFluidMimeticTraceFlowContinuation& traceFlowContinuation,
     const SceneFluidMimeticPressureAuditSettings& settings = {},
     const SceneFluidMimeticPressureAuditLimits& limits = {});
 

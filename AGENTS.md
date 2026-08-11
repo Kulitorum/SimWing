@@ -1447,7 +1447,11 @@ makes this a certified aerodynamic solver.
    pump, and re-solves pressure on the unchanged topology. The fixed topology
    is reused but each pressure solve currently starts from zero; this remains
    an offline coarse diagnostic rather than an interactive or validated wing
-   flow.
+   flow. An opt-in corrected-trace continuation carries the exact accepted
+   trace flow and adds only the bulk-MAC/opening-flux delta. Its first real
+   `2^3` ramp comparison contracts the repeated pressure/load spike but remains
+   nonphysical; keep it opt-in until region-resolved boundary transport is
+   validated.
 - `src/fsi/structure.{h,cpp}` is the new Qt-free XPBD boundary. It owns nodal
   loads/state, trusted constraint/membrane/bending assembly, explicit optional
   fabric self-contact, rigid-pilot suspension, diagnostics, and composite
@@ -1660,6 +1664,8 @@ makes this a certified aerodynamic solver.
   --scene <scene-v2.bin>` freezes Structure geometry, retains a projected bulk
   continuation velocity, advances periodic viscosity/advection, re-solves the
   mimetic pressure boundary, and publishes accepted diagnostic frames. Its
+  `--continue-corrected-trace-flow` experiment preserves exact fixed-topology
+  trace corrections across frames without changing default arithmetic. Its
   fluid cell centres appear as unreferenced viewer points with scalar and arrow
   fields alongside the frozen wing. The real `4^3` probe accepts in 1,472 PCG
   iterations and reports 240 bounded extrapolated zero-volume sides; its
@@ -1667,7 +1673,10 @@ makes this a certified aerodynamic solver.
   convergence. The ramp advances its target once per accepted frame and a zero
   duration explicitly restores impulsive startup. A six-frame `0.1 s` real
   ramp still reaches `397123 Pa` and `130287 N`, so it conditions startup but
-  does not cure the pressure scale. The coarse periodic domain, pump, and
+  does not cure the pressure scale. The corrected-trace experiment reduces the
+  corresponding final sample to `72176.4 Pa` and `24295.1 N`, confirming a
+  repeated boundary-impulse loss without making that remaining load physical.
+  The coarse periodic domain, pump, and
   pressure magnitude are not aerodynamic validation; no external-domain wake,
   polar/refinement study, or structural feedback is present.
 - `tools/simwing_mimetic_conductance_audit_main.cpp` is the opt-in Qt-free

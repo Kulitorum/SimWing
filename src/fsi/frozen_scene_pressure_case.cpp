@@ -188,6 +188,8 @@ struct BuiltCase {
     SceneFluidMimeticMacVelocityCollapse correctedMac;
     ConservativeTransferResult pressureTransfer;
     viewer::StructureFrameMapping frameMapping;
+    std::optional<SceneFluidMimeticTraceFlowContinuation>
+        traceFlowContinuation;
     std::optional<fluid::PeriodicFlowStrangSubcyclingDiagnostics> bulkFlow;
     std::optional<fluid::ProjectionDiagnostics> bulkProjection;
     double meanStreamwiseVelocityBeforePumpMetersPerSecond = 0.0;
@@ -305,6 +307,19 @@ void advanceFixedGeometryFlow(
     BuiltCase& built,
     const FrozenScenePressureCaseSettings& settings) {
     auto candidateVelocity = built.correctedMac.velocityMetersPerSecond;
+    std::optional<SceneFluidMimeticTraceFlowPrediction> previousBulkBaseline;
+    if (settings.useCorrectedTraceFlowContinuation) {
+        const auto previousOpeningFlux = evaluateSceneFluidOpeningFlux(
+            built.surface.definition, built.surfaceState,
+            built.openingCaps, built.openingQuadrature,
+            built.openingPatches, built.grid,
+            built.correctedMac.velocityMetersPerSecond);
+        previousBulkBaseline = sampleSceneFluidMimeticTraceFlows(
+            built.pressure.controlCells,
+            built.pressure.fullTraceSystem,
+            built.pressureFaceLinks, previousOpeningFlux, built.grid,
+            built.correctedMac.velocityMetersPerSecond);
+    }
     const double meanBeforePump = meanXVelocity(candidateVelocity);
     const double candidateRampFraction = windRampFraction(
         settings, built.flowAdvanceCount + 2);
@@ -353,12 +368,33 @@ void advanceFixedGeometryFlow(
         built.surface.definition, built.surfaceState,
         built.openingCaps, built.openingQuadrature,
         built.openingPatches, built.grid, candidateVelocity);
-    auto candidatePressure =
-        advanceSceneFluidMimeticPressureAuditFixedTopology(
-            built.pressure, built.gridEpoch.quadrature,
-            built.pressureVolumes, built.pressureFaceLinks,
-            candidateOpeningFlux, built.grid, candidateVelocity,
-            built.pressureSettings);
+    std::optional<SceneFluidMimeticTraceFlowContinuation>
+        candidateTraceFlowContinuation;
+    SceneFluidMimeticPressureAuditEndpoint candidatePressure;
+    if (settings.useCorrectedTraceFlowContinuation) {
+        const auto currentBulkBaseline = sampleSceneFluidMimeticTraceFlows(
+            built.pressure.controlCells,
+            built.pressure.fullTraceSystem,
+            built.pressureFaceLinks, candidateOpeningFlux, built.grid,
+            candidateVelocity);
+        candidateTraceFlowContinuation =
+            continueSceneFluidMimeticTraceFlowsFixedTopology(
+                built.correctedFlow, *previousBulkBaseline,
+                currentBulkBaseline);
+        candidatePressure =
+            advanceSceneFluidMimeticPressureAuditFixedTopology(
+                built.pressure, built.gridEpoch.quadrature,
+                built.pressureVolumes, built.pressureFaceLinks,
+                *candidateTraceFlowContinuation,
+                built.pressureSettings);
+    } else {
+        candidatePressure =
+            advanceSceneFluidMimeticPressureAuditFixedTopology(
+                built.pressure, built.gridEpoch.quadrature,
+                built.pressureVolumes, built.pressureFaceLinks,
+                candidateOpeningFlux, built.grid, candidateVelocity,
+                built.pressureSettings);
+    }
     if (!candidatePressure.pressureEpoch.diagnostics.accepted) {
         throw std::runtime_error(
             "frozen scene continued pressure solve was not accepted");
@@ -387,6 +423,8 @@ void advanceFixedGeometryFlow(
     built.correctedFlow = std::move(candidateCorrectedFlow);
     built.correctedMac = std::move(candidateCorrectedMac);
     built.pressureTransfer = std::move(candidatePressureTransfer);
+    built.traceFlowContinuation =
+        std::move(candidateTraceFlowContinuation);
     built.bulkFlow = std::move(candidateBulkFlow);
     built.bulkProjection = candidateBulkProjection;
     built.meanStreamwiseVelocityBeforePumpMetersPerSecond = meanBeforePump;
@@ -402,6 +440,16 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
     result.gridLowerMeters = built.grid.lowerMeters();
     result.gridUpperMeters = built.grid.upperMeters();
     result.windRampFraction = built.windRampFraction;
+    result.usesCorrectedTraceFlowContinuation =
+        built.traceFlowContinuation.has_value();
+    if (built.traceFlowContinuation) {
+        result.maximumCarriedTraceCorrectionCubicMetersPerSecond =
+            built.traceFlowContinuation
+                ->maximumAbsoluteCarriedCorrectionCubicMetersPerSecond;
+        result.maximumTraceBulkIncrementCubicMetersPerSecond =
+            built.traceFlowContinuation
+                ->maximumAbsoluteBulkIncrementCubicMetersPerSecond;
+    }
     result.pressureControlCount =
         built.pressure.controlCells.controlCells.size();
     result.sharedTraceCount =
@@ -477,6 +525,10 @@ FrozenScenePressureCaseDiagnostics makeDiagnostics(
         && std::isfinite(result.maximumCollapsedMacVelocityMetersPerSecond)
         && std::isfinite(
             result.maximumCollapsedSubfaceVelocityDeviationMetersPerSecond)
+        && std::isfinite(
+            result.maximumCarriedTraceCorrectionCubicMetersPerSecond)
+        && std::isfinite(
+            result.maximumTraceBulkIncrementCubicMetersPerSecond)
         && std::isfinite(
             result.bulkFlowMaximumVelocityChangeMetersPerSecond)
         && std::isfinite(
@@ -778,6 +830,22 @@ viewer::DiagnosticFrame FrozenScenePressureCase::advance() {
         "frozen_scene.embedded_opening_traces", "1",
         viewer::FieldAssociation::Global,
         {static_cast<double>(state.diagnostics.embeddedOpeningTraceCount)},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.corrected_trace_continuation", "1",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.usesCorrectedTraceFlowContinuation ? 1.0 : 0.0},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.maximum_carried_trace_correction", "m^3/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics
+             .maximumCarriedTraceCorrectionCubicMetersPerSecond},
+    });
+    frame.scalarFields.push_back({
+        "frozen_scene.maximum_trace_bulk_increment", "m^3/s",
+        viewer::FieldAssociation::Global,
+        {state.diagnostics.maximumTraceBulkIncrementCubicMetersPerSecond},
     });
     frame.scalarFields.push_back({
         "frozen_scene.flow_advances", "1",
