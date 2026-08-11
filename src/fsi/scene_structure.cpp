@@ -69,6 +69,7 @@ void reject(SceneStructureAssembly& assembly) {
     assembly.mappings = {};
     assembly.settings = {};
     assembly.totalFabricMassKg = 0.0;
+    assembly.totalSeamMassKg = 0.0;
     sortDiagnostics(assembly);
 }
 
@@ -105,13 +106,34 @@ bool checkBounds(const Scene& scene,
             invalidStableId,
             "scene triangle count exceeds the structure triangle bound");
     }
-    if (scene.suspensionLines.size() > limits.maximumConstraints) {
+    std::size_t seamConstraintCount = 0;
+    bool constraintCountOverflow = false;
+    for (const Seam& seam : scene.seams) {
+        const std::size_t count = seam.firstOrderedVertexIds.size();
+        if (count > std::numeric_limits<std::size_t>::max() / 3) {
+            constraintCountOverflow = true;
+            break;
+        }
+        const std::size_t generated = 3 * count - 2;
+        if (generated > std::numeric_limits<std::size_t>::max()
+                            - seamConstraintCount) {
+            constraintCountOverflow = true;
+            break;
+        }
+        seamConstraintCount += generated;
+    }
+    if (constraintCountOverflow
+        || scene.suspensionLines.size()
+            > std::numeric_limits<std::size_t>::max()
+                - seamConstraintCount
+        || scene.suspensionLines.size() + seamConstraintCount
+            > limits.maximumConstraints) {
         addDiagnostic(
             assembly,
             SceneStructureDiagnosticCode::MappingOverflow,
             EntityKind::Scene,
             invalidStableId,
-            "scene suspension-line count exceeds the structure constraint bound");
+            "scene seam and suspension-line constraints exceed the structure bound");
     }
 
     std::size_t remaining = limits.maximumMappingBytes;
@@ -127,6 +149,9 @@ bool checkBounds(const Scene& scene,
                                remaining)
         && checkedMappingBytes(scene.suspensionLines.size(), sizeof(StableId),
                                remaining)
+        && checkedMappingBytes(
+            scene.seams.size(),
+            sizeof(SceneStructureMappings::SeamConstraintRange), remaining)
         && checkedMappingBytes(scene.attachments.size(), sizeof(StableId),
                                remaining)
         // A manifold triangulation has fewer than two hinges per triangle;
@@ -410,6 +435,126 @@ StructureMembraneMaterial convert(const FabricMaterial& material) {
     result.dampingSeconds = material.dampingSeconds;
     result.compressionStiffnessRatio = 1.0;
     return result;
+}
+
+void assembleSeams(
+    const std::vector<const Seam*>& seams,
+    const std::vector<const SeamMaterial*>& materials,
+    const std::map<StableId, const Vertex*>& verticesById,
+    const std::map<StableId, std::size_t>& nodeIndices,
+    const SceneStructureSettings& settings,
+    std::vector<long double>& lumpedMasses,
+    long double& totalSeamMass,
+    SceneStructureAssembly& assembly) {
+    std::map<StableId, const SeamMaterial*> materialsById;
+    for (const SeamMaterial* material : materials) {
+        materialsById.emplace(material->id, material);
+    }
+
+    assembly.mappings.constraintSeamRanges.reserve(seams.size());
+    for (const Seam* seam : seams) {
+        const std::size_t diagnosticCount = assembly.diagnostics.size();
+        const SeamMaterial* material = materialsById.at(seam->materialId);
+        const std::size_t count = seam->firstOrderedVertexIds.size();
+        std::array<std::vector<double>, 2> segmentLengths;
+        for (auto& lengths : segmentLengths) {
+            lengths.reserve(count - 1);
+        }
+
+        for (std::size_t index = 0; index < count; ++index) {
+            const Vec3& first = verticesById.at(
+                seam->firstOrderedVertexIds[index])->positionMeters;
+            const Vec3& second = verticesById.at(
+                seam->secondOrderedVertexIds[index])->positionMeters;
+            const double separation = length(subtract(second, first));
+            if (!std::isfinite(separation)
+                || separation > settings.seamCoincidenceToleranceMeters) {
+                addDiagnostic(
+                    assembly,
+                    SceneStructureDiagnosticCode::UnsupportedSeam,
+                    EntityKind::Seam,
+                    seam->id,
+                    "paired seam vertices are not coincident within the structural tolerance");
+                break;
+            }
+        }
+        for (std::size_t chain = 0; chain < 2; ++chain) {
+            const auto& ids = chain == 0
+                ? seam->firstOrderedVertexIds
+                : seam->secondOrderedVertexIds;
+            for (std::size_t index = 0; index + 1 < count; ++index) {
+                const Vec3& first = verticesById.at(ids[index])
+                                        ->positionMeters;
+                const Vec3& second = verticesById.at(ids[index + 1])
+                                         ->positionMeters;
+                const double segmentLength = length(subtract(second, first));
+                const double compliance = 2.0 * segmentLength
+                    / material->axialStiffnessNewtons;
+                if (!(segmentLength > 0.0)
+                    || !std::isfinite(segmentLength)
+                    || !std::isfinite(compliance)) {
+                    addDiagnostic(
+                        assembly,
+                        SceneStructureDiagnosticCode::MaterialIncompatible,
+                        EntityKind::Seam,
+                        seam->id,
+                        "seam segment stiffness cannot be represented as finite XPBD compliance");
+                    break;
+                }
+                segmentLengths[chain].push_back(segmentLength);
+            }
+        }
+        if (assembly.diagnostics.size() != diagnosticCount) {
+            continue;
+        }
+
+        const std::size_t firstConstraint =
+            assembly.definition.constraints.size();
+        for (std::size_t index = 0; index < count; ++index) {
+            assembly.definition.constraints.push_back(
+                {StructureConstraintKind::Distance,
+                 nodeIndices.at(seam->firstOrderedVertexIds[index]),
+                 nodeIndices.at(seam->secondOrderedVertexIds[index]),
+                 0.0,
+                 0.0});
+        }
+        for (std::size_t chain = 0; chain < 2; ++chain) {
+            const auto& ids = chain == 0
+                ? seam->firstOrderedVertexIds
+                : seam->secondOrderedVertexIds;
+            for (std::size_t index = 0; index + 1 < count; ++index) {
+                const double segmentLength = segmentLengths[chain][index];
+                assembly.definition.constraints.push_back(
+                    {StructureConstraintKind::Distance,
+                     nodeIndices.at(ids[index]),
+                     nodeIndices.at(ids[index + 1]),
+                     segmentLength,
+                     2.0 * segmentLength
+                         / material->axialStiffnessNewtons});
+            }
+        }
+        assembly.mappings.constraintSeamRanges.push_back(
+            {seam->id,
+             firstConstraint,
+             assembly.definition.constraints.size() - firstConstraint});
+
+        for (std::size_t index = 0; index + 1 < count; ++index) {
+            const double centrelineLength = 0.5
+                * (segmentLengths[0][index] + segmentLengths[1][index]);
+            const double segmentMass = centrelineLength
+                * material->linearDensityKgPerMeter;
+            const long double nodeShare =
+                static_cast<long double>(segmentMass) / 4.0L;
+            for (const StableId id : {
+                     seam->firstOrderedVertexIds[index],
+                     seam->firstOrderedVertexIds[index + 1],
+                     seam->secondOrderedVertexIds[index],
+                     seam->secondOrderedVertexIds[index + 1]}) {
+                lumpedMasses[nodeIndices.at(id)] += nodeShare;
+            }
+            totalSeamMass += static_cast<long double>(segmentMass);
+        }
+    }
 }
 
 struct SuspensionEndpointKey {
@@ -714,6 +859,20 @@ std::optional<std::size_t> SceneStructureMappings::constraintIndex(
     return indexOf(constraintSuspensionLineIds, suspensionLineId);
 }
 
+std::optional<SceneStructureMappings::SeamConstraintRange>
+SceneStructureMappings::seamConstraintRange(
+    StableId seamId) const noexcept {
+    const auto found = std::lower_bound(
+        constraintSeamRanges.begin(), constraintSeamRanges.end(), seamId,
+        [](const SeamConstraintRange& range, StableId id) {
+            return range.seamId < id;
+        });
+    if (found == constraintSeamRanges.end() || found->seamId != seamId) {
+        return std::nullopt;
+    }
+    return *found;
+}
+
 std::optional<std::size_t> SceneStructureMappings::suspensionSegmentIndex(
     StableId suspensionLineId) const noexcept {
     return indexOf(suspensionSegmentLineIds, suspensionLineId);
@@ -753,6 +912,14 @@ SceneStructureAssembly assembleSceneStructure(
         if (!checkBounds(scene, limits, assembly)) {
             reject(assembly);
             return assembly;
+        }
+        if (!(settings.seamCoincidenceToleranceMeters >= 0.0)
+            || !std::isfinite(settings.seamCoincidenceToleranceMeters)) {
+            addDiagnostic(
+                assembly,
+                SceneStructureDiagnosticCode::UnsupportedSeam,
+                EntityKind::Scene, invalidStableId,
+                "invalid seam coincidence tolerance");
         }
         const bool invalidSuspensionSettings =
             settings.suspensionSolverIterations <= 0
@@ -805,13 +972,27 @@ SceneStructureAssembly assembleSceneStructure(
             }
         }
 
+        std::set<StableId> fabricVertexIds;
+        for (const Triangle& triangle : scene.triangles) {
+            fabricVertexIds.insert(triangle.vertexIds.begin(),
+                                   triangle.vertexIds.end());
+        }
         for (const Seam* seam : sortedById(scene.seams)) {
-            addDiagnostic(
-                assembly,
-                SceneStructureDiagnosticCode::UnsupportedSeam,
-                EntityKind::Seam,
-                seam->id,
-                "seam topology requires a verified stitch and tributary load-sharing model");
+            const auto checkChain = [&](const std::vector<StableId>& chain) {
+                for (const StableId vertexId : chain) {
+                    if (!fabricVertexIds.contains(vertexId)) {
+                        addDiagnostic(
+                            assembly,
+                            SceneStructureDiagnosticCode::UnsupportedSeam,
+                            EntityKind::Seam,
+                            seam->id,
+                            "seam vertices must belong to fabric triangles");
+                        return;
+                    }
+                }
+            };
+            checkChain(seam->firstOrderedVertexIds);
+            checkChain(seam->secondOrderedVertexIds);
         }
 
         const auto attachments = sortedById(scene.attachments);
@@ -864,6 +1045,8 @@ SceneStructureAssembly assembleSceneStructure(
         const auto junctions = sortedById(scene.suspensionJunctions);
         const auto triangles = sortedById(scene.triangles);
         const auto materials = sortedById(scene.fabricMaterials);
+        const auto seams = sortedById(scene.seams);
+        const auto seamMaterials = sortedById(scene.seamMaterials);
         const auto lineMaterials = sortedById(scene.lineMaterials);
         std::set<StableId> structuralVertexIds;
         for (const Triangle* triangle : triangles) {
@@ -926,6 +1109,7 @@ SceneStructureAssembly assembleSceneStructure(
 
         std::vector<long double> lumpedMasses(vertices.size(), 0.0L);
         long double totalFabricMass = 0.0L;
+        long double totalSeamMass = 0.0L;
         assembly.definition.triangles.reserve(triangles.size());
         assembly.definition.membranes.reserve(triangles.size());
         assembly.mappings.triangleIds.reserve(triangles.size());
@@ -1035,6 +1219,12 @@ SceneStructureAssembly assembleSceneStructure(
                 nodeIndices, lineMaterialsById, settings, assembly));
         }
 
+        if (assembly.diagnostics.empty()) {
+            assembleSeams(
+                seams, seamMaterials, verticesById, nodeIndices, settings,
+                lumpedMasses, totalSeamMass, assembly);
+        }
+
         for (std::size_t index = 0; index < lumpedMasses.size(); ++index) {
             const double mass = static_cast<double>(lumpedMasses[index]);
             if (!(mass > 0.0) || !std::isfinite(mass)) {
@@ -1043,12 +1233,13 @@ SceneStructureAssembly assembleSceneStructure(
                     SceneStructureDiagnosticCode::ZeroMassDynamicNode,
                     EntityKind::Vertex,
                     assembly.mappings.nodeVertexIds[index],
-                    "scene vertex has no finite positive lumped fabric mass");
+                    "scene vertex has no finite positive lumped fabric or seam mass");
             } else {
                 assembly.definition.nodes[index].massKg = mass;
             }
         }
         assembly.totalFabricMassKg = static_cast<double>(totalFabricMass);
+        assembly.totalSeamMassKg = static_cast<double>(totalSeamMass);
         assembly.definition.fabricSelfContact =
             settings.fabricSelfContact;
         if (!std::isfinite(assembly.totalFabricMassKg)) {
@@ -1058,6 +1249,14 @@ SceneStructureAssembly assembleSceneStructure(
                 EntityKind::Scene,
                 invalidStableId,
                 "total fabric mass exceeds the representable structure range");
+        }
+        if (!std::isfinite(assembly.totalSeamMassKg)) {
+            addDiagnostic(
+                assembly,
+                SceneStructureDiagnosticCode::MappingOverflow,
+                EntityKind::Scene,
+                invalidStableId,
+                "total seam mass exceeds the representable structure range");
         }
 
         if (!assembly.diagnostics.empty()) {

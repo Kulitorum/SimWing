@@ -1546,8 +1546,11 @@ makes this a certified aerodynamic solver.
   pilot/harness tree into that XPBD boundary. It derives fabric mass from SI
   material-chart area, creates signed dihedrals only across consistently
   oriented edges within one authored sheet, and enables contact only from
-  explicit worker-supplied settings. It still rejects seams until their stitch
-  and tributary load-sharing model is implemented.
+  explicit worker-supplied settings. Paired seam chains become rigid zero-rest
+  pair stitches plus two half-rigidity axial rails, so their parallel response
+  recovers the authored assembled seam EA. Centreline mass is split equally
+  across each segment's four panel endpoints; noncoincident or non-fabric seam
+  vertices reject transactionally.
 - `src/fsi/scene_fluid_surface.{h,cpp}` extracts stable-ID-sorted compact fluid
   regions, used porous materials, oriented two-sided triangles, ordered
   openings, and optional authored cap disks directly from validated scene-v2,

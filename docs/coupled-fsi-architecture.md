@@ -1714,7 +1714,14 @@ source pair and publishes only after reconstructed full-space closure. Its
 accepted state now remaps through one moving pressure-topology transaction to
 a bounded exact-gauge shared-trace warm start.
 The current graph operator and all worker arithmetic are unchanged.
-Scene assembly adds per-sheet bending and preserves the junction graph.
+Scene assembly adds per-sheet bending, preserves the junction graph, and now
+maps authored paired seam chains without welding their vertex identities. Each
+pair receives a rigid zero-rest stitch; the authored assembled axial rigidity
+is shared equally by parallel distance-constraint rails on the two chains, and
+each centreline segment's mass is divided among its four endpoints. The two
+rails recover the declared EA analytically while the stitch constraints own
+sewn coincidence. Noncoincident pairs and seam vertices outside fabric
+triangles reject transactionally.
 It now orients one pilot's line forest toward its harness
 roots and assembles the rigid payload; contact remains an explicit worker policy
 because scene-v2 has no authoritative contact material yet. `softwing_core`
@@ -1730,7 +1737,7 @@ semantically revalidates every committed diagnostic ledger. The
 real 3.28 regression now reaches an accepted coupled
 structural step and replayable diagnostic trace with synthetic physical export
 settings. Manufacturing flat-pattern UVs, exact authored line-attachment
-vertices, authored paired seams and stitch mechanics, live bidirectional
+vertices, exporter-authored paired seam chains, live bidirectional
 control, an authoritative settings source/engine CLI, and general cut-cell
 moving interfaces, nonplanar topology events, curved or changing grid-side
 correspondence, AMR, and full CFD evolution kernels remain open work.

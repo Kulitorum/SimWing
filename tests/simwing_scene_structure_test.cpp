@@ -434,23 +434,113 @@ void testSuspensionJunctionSegmentGraph() {
           "junction graph: vertex/junction stable-ID collision is rejected transactionally");
 }
 
-void testSeamAndBendingTopologyRejections() {
+void testSeamAssemblyAndBendingTopologyRejections() {
     Scene seamScene = surfaceScene();
+    seamScene.vertices.insert(
+        seamScene.vertices.end(),
+        {{14, {3.0, 0.0, 0.0}},
+         {15, {4.0, 0.0, 0.0}},
+         {16, {4.0, 1.0, 0.0}},
+         {17, {3.0, 1.0, 0.0}}});
+    seamScene.triangles.insert(
+        seamScene.triangles.end(),
+        {{502,
+          {14, 15, 16},
+          {{{0.0, 0.0}, {1.0, 0.0}, {1.0, 1.0}}},
+          1, 2, 100, 901, SurfaceRole::Skin},
+         {503,
+          {14, 16, 17},
+          {{{0.0, 0.0}, {1.0, 1.0}, {0.0, 1.0}}},
+          1, 2, 100, 901, SurfaceRole::Skin}});
     seamScene.seamMaterials = {
         {120, "test seam", 0.001, 3500.0},
     };
     seamScene.seams = {
-        {610, 120, {10, 11}, {13, 12}},
+        {610, 120, {11, 12}, {14, 17}},
     };
     check(validateScene(seamScene).ok(),
           "seam bridge: paired seam topology is valid scene data");
     const SceneStructureAssembly seamAssembly =
         assembleSceneStructure(seamScene);
-    check(!seamAssembly.ok()
-              && contains(seamAssembly,
+    check(seamAssembly.ok(),
+          "seam bridge: coincident paired chains assemble");
+    const auto seamRange = seamAssembly.mappings.seamConstraintRange(610);
+    check(seamRange.has_value()
+              && seamRange->firstConstraint == 1
+              && seamRange->constraintCount == 4
+              && seamAssembly.definition.constraints.size() == 5,
+          "seam bridge: stable range covers pair stitches and two axial rails after the cable");
+    if (seamRange) {
+        const auto& firstPair = seamAssembly.definition.constraints[
+            seamRange->firstConstraint];
+        const auto& firstRail = seamAssembly.definition.constraints[
+            seamRange->firstConstraint + 2];
+        check(firstPair.kind == StructureConstraintKind::Distance
+                  && firstPair.firstNode
+                         == *seamAssembly.mappings.nodeIndex(11)
+                  && firstPair.secondNode
+                         == *seamAssembly.mappings.nodeIndex(14)
+                  && firstPair.restLengthMeters == 0.0
+                  && firstPair.complianceMetersPerNewton == 0.0,
+              "seam bridge: paired vertices receive a rigid zero-rest stitch");
+        check(firstRail.kind == StructureConstraintKind::Distance
+                  && firstRail.firstNode
+                         == *seamAssembly.mappings.nodeIndex(11)
+                  && firstRail.secondNode
+                         == *seamAssembly.mappings.nodeIndex(12),
+              "seam bridge: first axial rail follows authored chain order");
+        checkNear(firstRail.restLengthMeters, 1.0, 0.0,
+                  "seam bridge: axial rail preserves centreline length");
+        checkNear(firstRail.complianceMetersPerNewton,
+                  2.0 / 3500.0, 0.0,
+                  "seam bridge: each parallel rail carries half the assembled EA");
+    }
+    const double seamNodeMass = std::accumulate(
+        seamAssembly.definition.nodes.begin(),
+        seamAssembly.definition.nodes.end(), 0.0,
+        [](double total, const StructureNodeDefinition& node) {
+            return total + node.massKg;
+        });
+    checkNear(seamAssembly.totalFabricMassKg, 0.15, 1.0e-15,
+              "seam bridge: fabric mass remains a separate ledger");
+    checkNear(seamAssembly.totalSeamMassKg, 0.001, 1.0e-15,
+              "seam bridge: centreline density yields the analytic seam mass");
+    checkNear(seamNodeMass, 0.151, 1.0e-15,
+              "seam bridge: seam segment mass is conservatively lumped to paired endpoints");
+    Structure seamStructure(seamAssembly.definition);
+    check(seamStructure.diagnostics().constraintCount == 5,
+          "seam bridge: assembled constraints are accepted by Structure");
+
+    Scene reorderedSeam = seamScene;
+    reverseCollections(reorderedSeam);
+    const SceneStructureAssembly reorderedSeamAssembly =
+        assembleSceneStructure(reorderedSeam);
+    check(reorderedSeamAssembly.ok()
+              && reorderedSeamAssembly.mappings.constraintSeamRanges
+                     == seamAssembly.mappings.constraintSeamRanges,
+          "seam bridge: stable ranges are deterministic under collection reordering");
+
+    SceneStructureLimits seamLimits;
+    seamLimits.maximumConstraints = 4;
+    const SceneStructureAssembly boundedSeam =
+        assembleSceneStructure(seamScene, seamLimits);
+    check(!boundedSeam.ok()
+              && contains(boundedSeam,
+                          SceneStructureDiagnosticCode::MappingOverflow),
+          "seam bridge: generated stitch and rail constraints obey the configured bound");
+
+    Scene separatedSeam = seamScene;
+    std::ranges::find_if(
+        separatedSeam.vertices,
+        [](const Vertex& vertex) { return vertex.id == 14; })
+        ->positionMeters.x += 1.0e-3;
+    const SceneStructureAssembly separatedAssembly =
+        assembleSceneStructure(separatedSeam);
+    check(!separatedAssembly.ok()
+              && contains(separatedAssembly,
                           SceneStructureDiagnosticCode::UnsupportedSeam)
-              && seamAssembly.definition.nodes.empty(),
-          "seam bridge: unsupported stitch physics rejects transactionally");
+              && separatedAssembly.definition.nodes.empty(),
+          "seam bridge: finite authored stitch gaps reject transactionally");
 
     Scene inconsistent = surfaceScene();
     inconsistent.triangles[0].vertexIds = {12, 10, 13};
@@ -579,7 +669,7 @@ int main() {
     testPilotHarnessAssemblyIsCheckpointSafeAndDeterministic();
     testExplicitContactPolicyAndPilotLeafRejection();
     testSuspensionJunctionSegmentGraph();
-    testSeamAndBendingTopologyRejections();
+    testSeamAssemblyAndBendingTopologyRejections();
     testExplicitValidationAndAssemblyRejections();
     if (failures != 0) {
         std::fprintf(stderr,

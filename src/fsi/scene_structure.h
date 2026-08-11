@@ -25,6 +25,9 @@ struct SceneStructureLimits {
 // scene geometry. Scene-v2 carries authoritative fabric/line/pilot data, but
 // it does not yet carry a verified contact material model.
 struct SceneStructureSettings {
+    // Paired seam vertices describe sewn coincidence. This tolerance accepts
+    // only exporter roundoff; it is not a stitch-gap or compliance model.
+    double seamCoincidenceToleranceMeters = 1.0e-9;
     int suspensionSolverIterations = 12;
     double suspensionAttachmentTolerance = 1.0e-10;
     double suspensionMinimumLineLengthMeters = 1.0e-10;
@@ -78,6 +81,16 @@ struct SceneStructureMappings {
     std::vector<StableId> triangleIds;
     std::vector<StableId> membraneTriangleIds;
     std::vector<StableId> constraintSuspensionLineIds;
+    struct SeamConstraintRange {
+        StableId seamId = invalidStableId;
+        std::size_t firstConstraint = 0;
+        std::size_t constraintCount = 0;
+
+        auto operator<=>(const SeamConstraintRange&) const = default;
+    };
+    // Sorted by seamId. Each range covers its pair stitches followed by the
+    // two half-rigidity axial rails in StructureDefinition::constraints.
+    std::vector<SeamConstraintRange> constraintSeamRanges;
     // Populated instead of constraintSuspensionLineIds when a rigid pilot
     // owns the directed suspension tree.
     std::vector<StableId> suspensionSegmentLineIds;
@@ -96,6 +109,8 @@ struct SceneStructureMappings {
         StableId triangleId) const noexcept;
     [[nodiscard]] std::optional<std::size_t> constraintIndex(
         StableId suspensionLineId) const noexcept;
+    [[nodiscard]] std::optional<SeamConstraintRange> seamConstraintRange(
+        StableId seamId) const noexcept;
     [[nodiscard]] std::optional<std::size_t> suspensionSegmentIndex(
         StableId suspensionLineId) const noexcept;
     [[nodiscard]] std::optional<std::size_t> pilotHarnessIndex(
@@ -110,6 +125,7 @@ struct SceneStructureAssembly {
     SceneStructureMappings mappings;
     SceneStructureSettings settings;
     double totalFabricMassKg = 0.0;
+    double totalSeamMassKg = 0.0;
     std::vector<SceneStructureDiagnostic> diagnostics;
 
     [[nodiscard]] bool ok() const noexcept;
@@ -138,8 +154,11 @@ struct SceneStructureAssembly {
 // suspension solver. A scene without a pilot retains direct nodal cable
 // constraints. Cable compliance is restLength/EA. Line mass and drag are
 // intentionally not included in nodal mass or force ledgers by this bridge.
-// Seams remain validated scene topology but are rejected here: converting
-// their paired chains requires a verified stitch/tributary load-sharing model.
+// A seam receives one rigid zero-rest stitch per authored vertex pair. Its
+// assembled axial rigidity is split equally between matching distance-
+// constraint rails on the two chains, and each centreline segment's mass is
+// split equally across its four endpoint nodes. The parallel rails recover the
+// authored EA while pair stitches preserve coincidence without welding.
 [[nodiscard]] SceneStructureAssembly assembleSceneStructure(
     const Scene& scene,
     const SceneStructureLimits& limits = {},
