@@ -1600,6 +1600,25 @@ source triangles, 10.619 square metres of clipped material, and 158 active
 composite cut cells; one immutable frame is about 1 MB instead of about 11 MB
 for the whole wing.
 
+For a qualitative live preview rather than a convergence-quality probe, use
+the explicitly distinct fast-preview solver identity. It uses six rather than
+twelve forcing/projection passes, a 25% larger timestep, and `1e-6` rather than
+`1e-10` pressure tolerance. Scale two is the practical CPU preview compromise:
+its local refined spacing is about `94 x 63 x 94 mm`, and 640 steps represent
+one second of simulated time. Recording every ten steps keeps the trace around
+one-sixth the size of recording every step.
+
+```powershell
+.\build-amrex\bin\Release\simwing-fsi.exe --case external-flow `
+  --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin `
+  --external-slab-x 0 --external-resolution-scale 2 `
+  --external-fast-preview --steps 640 --trace-every 10
+```
+
+This mode retains the finite-state, CFL, projection-contraction, and decreasing
+surface-normal-speed acceptance checks, but its pressure and interface values
+must not be used as validation or aerodynamic-load evidence.
+
 Run:
 
 ```powershell

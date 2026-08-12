@@ -185,6 +185,8 @@ int main(int argc, char* argv[]) {
             simwing::fsi::amr::makeSpanwiseSlabSettings();
         const auto fineSlabSettings =
             simwing::fsi::amr::makeSpanwiseSlabSettings(1.5, 4);
+        const auto fastFineSlabSettings =
+            simwing::fsi::amr::makeFastSpanwiseSlabPreviewSettings(1.5, 4);
         check(fineSlabSettings.projection.grid.coarseCellCounts
                       == simwing::fsi::fluid::GridCellCounts{12, 192, 64}
                   && fineSlabSettings.projection.grid.lowerMeters.x
@@ -201,6 +203,19 @@ int main(int argc, char* argv[]) {
                   && fineSlabSettings.projection.timeStepSeconds
                       == fineSlabSettings.timeStepSeconds,
               "slab resolution scale subdivides one physical domain and time step consistently");
+        check(fastFineSlabSettings.projection.grid
+                      == fineSlabSettings.projection.grid
+                  && fastFineSlabSettings.timeStepSeconds == 0.000390625
+                  && fastFineSlabSettings.projection.timeStepSeconds
+                      == fastFineSlabSettings.timeStepSeconds
+                  && fastFineSlabSettings.projection
+                         .staticWingForcingProjectionIterations == 6
+                  && fastFineSlabSettings.projection.relativeTolerance
+                      == 1.0e-6
+                  && fastFineSlabSettings.projection
+                         .maximumDivergenceReductionRatio == 1.0e-5
+                  && fastFineSlabSettings.approximateFastPreview,
+              "fast slab preview preserves the grid while explicitly relaxing temporal and forcing accuracy");
         simwing::fsi::amr::ExternalFlowTransportCase slab(
             staticPlateScene(), slabSettings);
         const auto slabFrame = slab.advance();

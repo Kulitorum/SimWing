@@ -18,6 +18,7 @@ struct WindTunnelProjectionSettings {
     double timeStepSeconds = 0.005;
     double airDensityKilogramsPerCubicMeter = 1.225;
     double relativeTolerance = 1.0e-10;
+    double maximumDivergenceReductionRatio = 1.0e-7;
     std::size_t maximumIterations = 200;
     std::size_t staticWingForcingProjectionIterations = 12;
     double staticWingDirectForcingRelaxation = 1.8;

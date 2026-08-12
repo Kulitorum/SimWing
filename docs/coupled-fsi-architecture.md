@@ -3861,6 +3861,18 @@ intentionally nearby far-field boundaries; this is a rapid transport,
 interface, resolution, and viewer probe and is excluded from aerodynamic,
 spanwise-flow, pressure, and load validation.
 
+The separately identified `--external-fast-preview` mode is an explicit
+accuracy/performance trade for interactive inspection. It keeps the selected
+slab grid, reduces static-interface forcing/projection passes from twelve to
+six, enlarges `dt` by 25%, and relaxes the pressure relative tolerance from
+`1e-10` to `1e-6` with a corresponding `1e-5` divergence-reduction acceptance
+bound. It retains finite-state, CFL, projection-contraction, and decreasing
+surface-normal-speed gates. A scale-two centre slab advances 100 accepted
+steps (`0.15625 s`) in about 49 seconds on the reference i9-13900K serial CPU
+build; this is the useful live-view preset, while scale four remains a short
+resolution probe. Neither fast-preview pressure nor interface response is
+validation or load evidence.
+
 Gate: observed convergence is consistent with the intended order away from
 interface singularities; mass, force, moment, and power errors satisfy written
 budgets; folded-interface and unresolved-gap cases do not leak or change fluid

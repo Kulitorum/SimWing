@@ -98,6 +98,7 @@ struct Options {
     std::filesystem::path scenePath;
     std::optional<double> externalSlabCentreXMeters;
     std::optional<std::size_t> externalResolutionScale;
+    bool externalFastPreview = false;
     std::optional<simwing::fsi::fluid::GridCellCounts>
         frozenGridCellCounts;
     std::optional<double> frozenDomainPaddingMeters;
@@ -131,6 +132,7 @@ void printUsage(FILE* stream) {
         "                   [--scene PATH]\n"
         "                   [--external-slab-x METERS]\n"
         "                   [--external-resolution-scale 1..4]\n"
+        "                   [--external-fast-preview]\n"
         "                   [--grid N|NXxNYxNZ] [--padding METERS]\n"
         "                   [--wind-y MPS|--wind-x MPS] [--ramp-seconds SECONDS]\n"
         "                   [--continue-corrected-trace-flow]\n"
@@ -218,7 +220,9 @@ void printUsage(FILE* stream) {
         "the non-periodic positive-Y tunnel; optional --scene enables the static\n"
         "authoritative cut-cell direct-forcing diagnostic; --external-slab-x\n"
         "selects a fast local X slab centred at METERS, and the optional\n"
-        "resolution scale subdivides its fixed domain and timestep.\n"
+        "resolution scale subdivides its fixed domain and timestep. The\n"
+        "explicit fast-preview mode relaxes timestep, forcing-pass and pressure\n"
+        "accuracy for qualitative live visualization only.\n"
         "'porous-flow' advances a pressure-driven Darcy-Forchheimer plug and\n"
         "publishes its porous and periodic gauge-closure planes.\n"
         "'moving-porous-flow' advances a prescribed translating porous plane\n"
@@ -497,6 +501,8 @@ bool parseOptions(int argc,
             }
             options.externalResolutionScale =
                 static_cast<std::size_t>(value);
+        } else if (argument == "--external-fast-preview") {
+            options.externalFastPreview = true;
         } else if (argument == "--grid") {
             simwing::fsi::fluid::GridCellCounts counts;
             if (++index >= argc
@@ -794,6 +800,11 @@ bool parseOptions(int argc,
     if (options.externalResolutionScale
         && !options.externalSlabCentreXMeters) {
         error = "--external-resolution-scale requires --external-slab-x";
+        return false;
+    }
+    if (options.externalFastPreview
+        && !options.externalSlabCentreXMeters) {
+        error = "--external-fast-preview requires --external-slab-x";
         return false;
     }
     const bool frozenControlRequested =
@@ -2652,9 +2663,13 @@ int main(int argc, char* argv[]) {
                 amrexArgumentCount, amrexArguments);
             if (frozenScene) {
                 const auto settings = options.externalSlabCentreXMeters
-                    ? simwing::fsi::amr::makeSpanwiseSlabSettings(
-                          *options.externalSlabCentreXMeters,
-                          options.externalResolutionScale.value_or(1))
+                    ? (options.externalFastPreview
+                           ? simwing::fsi::amr::makeFastSpanwiseSlabPreviewSettings(
+                                 *options.externalSlabCentreXMeters,
+                                 options.externalResolutionScale.value_or(1))
+                           : simwing::fsi::amr::makeSpanwiseSlabSettings(
+                                 *options.externalSlabCentreXMeters,
+                                 options.externalResolutionScale.value_or(1)))
                     : simwing::fsi::amr::ExternalFlowTransportSettings{};
                 simwing::fsi::amr::ExternalFlowTransportCase simulation(
                     *frozenScene, settings);

@@ -17,6 +17,8 @@ inline constexpr char staticWingExternalFlowSolverId[] =
     "simwing-amr-static-wing-direct-forcing-worker-v1";
 inline constexpr char staticWingSlabExternalFlowSolverId[] =
     "simwing-amr-static-wing-slab-direct-forcing-worker-v1";
+inline constexpr char staticWingFastSlabExternalFlowSolverId[] =
+    "simwing-amr-static-wing-fast-slab-preview-worker-v1";
 
 struct ExternalFlowTransportSettings {
     WindTunnelProjectionSettings projection;
@@ -24,6 +26,7 @@ struct ExternalFlowTransportSettings {
     double markerPulsePeriodSeconds = 1.2;
     double markerPulseDurationSeconds = 0.3;
     bool clipStaticWingToWindTunnel = false;
+    bool approximateFastPreview = false;
 
     bool operator==(const ExternalFlowTransportSettings&) const = default;
 };
@@ -39,6 +42,16 @@ inline constexpr std::size_t maximumSpanwiseSlabResolutionScale = 4;
 // load result.
 [[nodiscard]] ExternalFlowTransportSettings
 makeSpanwiseSlabSettings(
+    double centreXMeters = 0.0,
+    std::size_t resolutionScale = 1);
+
+// Explicitly approximate interactive preset. It retains the requested slab
+// grid but performs six forcing/projection passes instead of twelve and uses
+// 1.25 times the conservative slab timestep. Its pressure relative tolerance
+// is 1e-6 instead of 1e-10. It is a qualitative transport and viewer probe,
+// not a pressure/load/convergence result.
+[[nodiscard]] ExternalFlowTransportSettings
+makeFastSpanwiseSlabPreviewSettings(
     double centreXMeters = 0.0,
     std::size_t resolutionScale = 1);
 

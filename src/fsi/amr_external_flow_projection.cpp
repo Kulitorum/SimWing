@@ -44,6 +44,9 @@ void validateProjectionSettings(
         || !std::isfinite(settings.relativeTolerance)
         || !(settings.relativeTolerance > 0.0)
         || !(settings.relativeTolerance < 1.0)
+        || !std::isfinite(settings.maximumDivergenceReductionRatio)
+        || !(settings.maximumDivergenceReductionRatio > 0.0)
+        || !(settings.maximumDivergenceReductionRatio < 1.0)
         || settings.maximumIterations == 0
         || settings.maximumIterations
             > static_cast<std::size_t>(std::numeric_limits<int>::max())
@@ -1004,7 +1007,8 @@ WindTunnelProjectionDiagnostics projectHierarchy(
                 && diagnostics.maximumPressureCorrectionPascals > 0.0))
         && (diagnostics.initialMaximumDivergencePerSecond == 0.0
             ? diagnostics.projectedMaximumDivergencePerSecond == 0.0
-            : diagnostics.maximumDivergenceReductionRatio < 1.0e-7)
+            : diagnostics.maximumDivergenceReductionRatio
+                < settings.maximumDivergenceReductionRatio)
         && diagnostics.lowerYInflowNormalVelocityErrorMetersPerSecond
             < 1.0e-11
         && diagnostics.upperYOutletNormalVelocityChangeMetersPerSecond

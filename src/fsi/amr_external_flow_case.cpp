@@ -94,9 +94,11 @@ struct ExternalFlowTransportCase::Implementation {
           momentum(settings.projection, staticWingScene,
                    settings.clipStaticWingToWindTunnel),
           sceneChecksum(staticWingScene.metadata.designChecksum),
-          solverCommit(settings.clipStaticWingToWindTunnel
-                           ? staticWingSlabExternalFlowSolverId
-                           : staticWingExternalFlowSolverId) {
+          solverCommit(settings.approximateFastPreview
+                           ? staticWingFastSlabExternalFlowSolverId
+                           : (settings.clipStaticWingToWindTunnel
+                                  ? staticWingSlabExternalFlowSolverId
+                                  : staticWingExternalFlowSolverId)) {
         if (sceneChecksum.empty()) {
             sceneChecksum = externalFlowTransportCaseChecksum;
         }
@@ -477,6 +479,20 @@ ExternalFlowTransportSettings makeSpanwiseSlabSettings(
     settings.timeStepSeconds /= timeScale * timeScale;
     settings.projection.timeStepSeconds = settings.timeStepSeconds;
     settings.clipStaticWingToWindTunnel = true;
+    return settings;
+}
+
+ExternalFlowTransportSettings makeFastSpanwiseSlabPreviewSettings(
+    const double centreXMeters,
+    const std::size_t resolutionScale) {
+    auto settings = makeSpanwiseSlabSettings(
+        centreXMeters, resolutionScale);
+    settings.timeStepSeconds *= 1.25;
+    settings.projection.timeStepSeconds = settings.timeStepSeconds;
+    settings.projection.staticWingForcingProjectionIterations = 6;
+    settings.projection.relativeTolerance = 1.0e-6;
+    settings.projection.maximumDivergenceReductionRatio = 1.0e-5;
+    settings.approximateFastPreview = true;
     return settings;
 }
 
