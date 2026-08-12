@@ -1455,7 +1455,8 @@ private:
             const auto preferred = std::ranges::find_if(
                 fields,
                 [](const ScalarField* field) {
-                    return field->name == "external_flow.marker"
+                    return field->name == "surface_aero.pressure_jump"
+                        || field->name == "external_flow.marker"
                         || field->name == "frozen_scene.fluid_speed"
                         || field->name == "speed";
                 });
@@ -1504,7 +1505,8 @@ private:
             const auto preferred = std::ranges::find_if(
                 vectorFields,
                 [](const VectorField* field) {
-                    return field->name == "frozen_scene.fluid_velocity"
+                    return field->name == "surface_aero.applied_force"
+                        || field->name == "frozen_scene.fluid_velocity"
                         || field->name == "velocity";
                 });
             if (preferred != vectorFields.end()) {

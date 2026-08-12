@@ -34,9 +34,11 @@ change moves ownership or invalidates a command or invariant.
 - The new FSI path must not link `playground_sim`, `playground_pressure_solve`,
   `playground_cell_air`, or `playground_analysis`, and it does not read
   `lep-sim.json` v1.
-- Build scene-v2 directly from authoritative model geometry, assemble a new
-  Qt-free structural adapter from XPBD primitives, and let CFD be the sole
-  owner of internal/external pressure and aerodynamic traction.
+- Build scene-v2 directly from authoritative model geometry and assemble a new
+  Qt-free structural adapter from XPBD primitives. The interactive
+  `surface-flight` path owns reduced-order external traction and per-cell gas
+  pressure explicitly; full CFD remains the offline validation/reference path.
+  Never mix inherited Playground aerodynamics into either owner.
 - Archived Playground records explain inherited code only. They are not
   SimWing physics acceptance criteria.
 - A standalone `simwing-viewer` is an early diagnostic requirement. Interactive
@@ -97,7 +99,7 @@ Run the products with:
 .\build\bin\Release\LEparagliding.exe
 .\build\bin\Release\leparagliding-engine.exe <design-file> <output-directory>
 .\build\bin\Release\LEparagliding.exe --headless <design-file> <output-directory>
-.\build\bin\Release\simwing-fsi.exe [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|external-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--external-slab-x METERS] [--external-resolution-scale 1..4] [--external-fast-preview] [--grid N|NXxNYxNZ] [--padding METERS] [--wind-y MPS|--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--moving-fsi] [--hold-preflow-load-preview] [--structure-substeps N] [--load-ramp-seconds SECONDS] [--moving-pressure-relative-tolerance VALUE] [--moving-pressure-reconstruction-tolerance VALUE] [--wall-trace-pressure-load] [--aggregate-opening-traces] [--preflow-bootstrap|--preflow-steps N] [--steps N] [--trace-every N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
+.\build\bin\Release\simwing-fsi.exe [--case structural|surface-flight|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|external-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump] [--scene <scene-v2.bin>] [--external-slab-x METERS] [--external-resolution-scale 1..4] [--external-fast-preview] [--grid N|NXxNYxNZ] [--padding METERS] [--wind-y MPS|--wind-x MPS] [--ramp-seconds SECONDS] [--perturbation MPS] [--moving-fsi] [--hold-preflow-load-preview] [--structure-substeps N] [--load-ramp-seconds SECONDS] [--moving-pressure-relative-tolerance VALUE] [--moving-pressure-reconstruction-tolerance VALUE] [--wall-trace-pressure-load] [--aggregate-opening-traces] [--preflow-bootstrap|--preflow-steps N] [--steps N|--continuous] [--trace-every N] [--trace <file>] [--checkpoint-in <file>] [--checkpoint-out <file>] [--checkpoint-every N] [--mimetic-pressure-audit] [--control-stdio] [--no-viewer]
 .\build\bin\Release\simwing-viewer.exe [--follow] <trace-file>
 ```
 
@@ -1633,6 +1635,29 @@ makes this a certified aerodynamic solver.
   every accepted state against both scene-surface and Structure fingerprints,
   and delegates uniform or barycentric-quadrature traction and load application.
   It does not choose traction or discard two-sided fluid ownership.
+- `src/fsi/surface_aerodynamics.{h,cpp}` is the Qt-free interactive
+  reduced-order owner. It evaluates a bounded wing polar on the moving outer
+  skin and evolves ideal-gas cell mass through authored intake/crossport caps.
+  It emits a complete immutable per-triangle traction candidate plus its next
+  gas state; evaluation never mutates the accepted state. Collapsed signed
+  volumes remain visible while a bounded positive volume regularizes the gas
+  law. This is a flight-preview model, not Navier-Stokes or validation truth.
+- `src/fsi/surface_flight_case.{h,cpp}` transactionally composes that model,
+  conservative surface transfer, real scene-v2 XPBD, and immutable viewer
+  fields. The initial preview distributes the reduced-order net force by
+  authored fabric mass to suppress unresolved 70k-triangle shock modes; raw
+  triangle pressure and traction remain diagnostics for the next fidelity
+  stage. It ramps gravity one power more gently than lift during startup and
+  exposes the approximation as `surface_aero.mass_weighted_preview_load`.
+  The diagnostic mesh runs at 120 Hz with 48 coupled iterations, explicit 8/s
+  preview damping, and a relaxed 0.1 m terminal suspension bound; none of these
+  are calibrated flight physics. Predictive cases must restore a validated
+  strict limit.
+  `simwing-fsi --case surface-flight --scene <file>` is the interactive entry
+  point; wind is +Y and the default run launches `simwing-viewer`. Use
+  `--continuous` (mutually exclusive with `--steps`) to advance until manually
+  stopped. Its append-only live trace has no completion footer and grows at the
+  selected `--trace-every` cadence, so long runs must sample and monitor disk.
 - `src/fsi/fluid/scene_surface_geometry.{h,cpp}` conservatively bins every
   current authoritative triangle AABB into canonical cell-major candidates,
   including both cells when zero-thickness geometry lies on an internal grid

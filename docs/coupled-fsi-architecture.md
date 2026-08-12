@@ -2,11 +2,13 @@
 
 ## Purpose and claim boundary
 
-The goal is a two-way fluid-structure simulation of a ram-air paraglider that
+The goal is a useful moving-surface simulation of a ram-air paraglider that
 can eventually reproduce launch inflation, trimmed flight, asymmetric collapse,
 deep collapse, reopening, and reinflation. The wing structure remains a
-large-deformation XPBD system. A new CFD system owns both external and internal
-air and exchanges conservative surface traction and motion with XPBD.
+large-deformation XPBD system. Interactive runs use a named reduced-order
+surface-aerodynamic and pneumatic-cell owner. Full CFD is retained as an
+offline calibration, uncertainty, and validation reference rather than a
+mandatory part of every XPBD step.
 
 This is an engineering simulation program, not a promise of a "perfect"
 simulation. Absolute predictions require measured material properties and
@@ -53,17 +55,23 @@ snapshot.
 
 ## Executive decision
 
-Build one new full-FSI simulation path. It uses the proven XPBD structural
-primitives but none of the inherited Playground simulation. An adaptive
-Cartesian finite-volume flow solver with a projection step and a sharp,
-two-sided immersed-interface treatment owns internal and external air. It uses
-strong partitioned coupling to XPBD and is the sole path to flight, inflation,
-collapse, and reinflation.
+Build two deliberately distinct fidelity paths around the same scene-v2,
+XPBD, conservative-transfer, rollback, and diagnostic boundaries:
 
-There is no preliminary port of the Playground pressure solver, polar forces,
-cell-air network, flight dynamics, or SoftWingLab reduced-order aerodynamics.
-If an interactive reduced model is useful later, derive and validate it against
-the completed CFD system; do not make it a foundation of the remake.
+1. `surface-flight` is the product-facing interactive path. A bounded polar
+   supplies external surface force, authored cells carry explicit ideal-gas
+   mass/volume/pressure state, and authored intake/crossport caps carry bounded
+   orifice flow. This makes moving-wing experiments possible without a volume
+   grid.
+2. The adaptive Cartesian CFD work remains an offline research and validation
+   path. It supplies pressure-map, wake, intake-flow, and transient calibration
+   evidence; it is not on the critical path to an interactive run.
+
+Neither path imports Playground pressure, cell-air, flight, or scenario code.
+The reduced-order model has an explicit solver identity and diagnostic fields,
+must remain calibratable against CFD/experiment, and must not be described as
+Navier-Stokes truth. A future panel/free-wake exterior model can replace the
+bounded polar behind the same surface boundary without changing XPBD.
 
 The transcript's central intuition is sound: an Eulerian flow grid avoids
 remeshing around extreme fabric motion, and the fabric must preserve distinct
@@ -114,10 +122,11 @@ LEparagliding design + airfoils + Studio-only material data
                          |
              +-----------+-----------+
              |                       |
-      structure adapter        fluid backend
-      XPBD/contact/lines   adaptive FV + sharp IIM
-             |                       |
-             +-- strong coupling ----+
+      structure adapter       explicit owner
+      XPBD/contact/lines    +------------------+
+             |              |                  |
+             +---- surface-flight       offline adaptive CFD
+                  polar + cell gas       calibration/validation
                          |
           immutable diagnostic frame stream
                          |
@@ -3883,7 +3892,56 @@ refinement, sharp two-sided pressure, folded-interface handling, acceptable
 memory, a compatible license, and better measured cost/accuracy than the
 projection solver.
 
-### Phase 3 — One-way CFD on an inflated wing
+### Interactive track — surface flight preview
+
+This track now runs in parallel with the offline CFD phases. The first accepted
+implementation is `src/fsi/surface_aerodynamics.*` plus
+`src/fsi/surface_flight_case.*`, selected by:
+
+```powershell
+.\build\bin\Release\simwing-fsi.exe --case surface-flight `
+  --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin `
+  --continuous --trace-every 120
+```
+
+`--continuous` keeps advancing until the worker is manually stopped and is
+mutually exclusive with `--steps`. The current local transport is an append-
+only trace, so a continuous run has no completion footer and must use an
+appropriate `--trace-every` cadence to control disk growth. The following
+viewer treats that incomplete trace as a live stream.
+
+It computes in O(surface triangles + openings + cells) per accepted step. The
+external force is a bounded `CL(alpha)`/`CD(CL)` closure using current moving
+span/chord axes and relative +Y wind. Every authored cell retains air mass,
+signed geometric volume, regularized gas-law volume, and gauge pressure;
+authored cap triangles supply intake/crossport area and direction. The complete
+candidate is immutable until conservative transfer and XPBD accept.
+
+The first real-wing preview deliberately applies the reduced-order resultant
+by authored fabric mass. This preserves the actual membrane, seam, line,
+suspension, and pilot constraints while preventing a very fine uncalibrated
+surface mesh from turning a smooth estimated load into local numerical shock.
+Raw triangle pressure jump and external traction remain in every frame, along
+with the applied nodal force and a global flag identifying this approximation.
+The preview uses 48 coupled structural iterations and a relaxed 0.1 m terminal
+suspension-residual bound; predictive runs require a validated strict limit. It
+is a visible milestone, not the final load distribution. The exact diagnostic
+mesh currently runs at 120 Hz with explicit 8/s preview damping to bound
+unresolved tiny-element modes; this is numerical conditioning, not calibrated
+drag. The next gates are:
+
+- replace mass weighting with a span/chord sectional or panel/free-wake load
+  distribution that remains stable under mesh refinement;
+- calibrate the polar and intake loss against XFLR5, offline CFD, and measured
+  data;
+- prove positive cell-volume recovery without hiding the signed collapsed
+  diagnostic;
+- introduce a purpose-built interactive structural discretization instead of
+  stepping every triangle of the exact diagnostic export;
+- validate trim, line residual, strain, and pilot motion before calling a run
+  predictive flight.
+
+### Phase 3 — Offline one-way CFD on an inflated wing
 
 Work:
 
@@ -3897,7 +3955,7 @@ Gate: integrated loads and pressure distributions are grid-converged within a
 declared band and agree with validation data closely enough to justify two-way
 coupling. A matching global lift coefficient alone is insufficient.
 
-### Phase 4 — Two-way inflated-wing FSI
+### Phase 4 — Offline two-way inflated-wing FSI
 
 Work:
 
@@ -4048,4 +4106,5 @@ looks right.
   optional external-solver validation workflows.
 
 These references support method selection; none is a turnkey paraglider solver.
-The architecture remains conditional on the Phase 3 canonical gates.
+Predictive CFD claims remain conditional on the Phase 3 canonical gates;
+interactive surface-flight claims use their own reduced-order gates above.

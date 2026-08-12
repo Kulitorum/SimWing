@@ -19,6 +19,34 @@ SimWing reuses the isolated XPBD structural primitives, but its fluid and flight
 simulation is a remake: inherited Playground aerodynamics, pressure, cell-air,
 flight, and scenario behavior are not compatibility targets.
 
+The first interactive whole-wing flight-preview path is now available. It
+loads authoritative scene-v2 geometry, advances the real XPBD membrane/seam/
+suspension/pilot system, evaluates a bounded moving-surface lift/drag closure,
+and evolves explicit per-cell air mass and pressure through authored openings.
+It does not run a volume CFD grid. Full CFD remains an offline calibration and
+validation path, and the preview is clearly labelled reduced-order rather than
+Navier-Stokes truth.
+
+```powershell
+.\build\bin\Release\simwing-fsi.exe --case surface-flight `
+  --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin `
+  --continuous --trace-every 120
+```
+
+Wind is +Y and ramps to 10 m/s by default. The worker opens the standalone
+viewer, colours the wing by live `surface_aero.pressure_jump`, and selects live
+`surface_aero.applied_force` vectors. `--wind-y`, `--ramp-seconds`,
+`--structure-substeps`, `--trace-every`, and `--no-viewer` are supported.
+`--continuous` runs until the worker is manually stopped and is mutually
+exclusive with `--steps`; because its replay trace grows for the lifetime of
+the process, use a suitable sampling interval and monitor available disk. The
+first preview distributes the reduced-order resultant by fabric mass while
+retaining raw triangle pressure/traction diagnostics; sectional/panel loading
+and an interactive structural remesh are the next fidelity/performance gates.
+The current exact diagnostic mesh is stepped at 120 Hz with 48 coupled
+iterations, a relaxed 0.1 m preview suspension bound, and explicit 8/s preview
+damping; this is numerical conditioning, not calibrated drag.
+
 Numerical development includes a standalone Qt/OpenGL diagnostic viewer from
 the first implementation slice. Interactive runs open it by default so the
 live structure, loads, contact, coupling residuals, and progressively added CFD
@@ -1623,6 +1651,7 @@ Run:
 
 ```powershell
 .\build\bin\Release\LEparagliding.exe
+.\build\bin\Release\simwing-fsi.exe --case surface-flight --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --continuous --trace-every 120
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --steps 2
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --ramp-seconds 0.1 --continue-corrected-trace-flow --steps 6 --no-viewer
 .\build\bin\Release\simwing-fsi.exe --case frozen-scene --scene .\build\simwing-model-scene-real-export-output\simwing-scene-v2.bin --ramp-seconds 0.1 --transport-corrected-region-flow --steps 6 --no-viewer
@@ -1657,7 +1686,8 @@ Run:
 .\build\bin\Release\simwing-fsi.exe --case porous-sheet --checkpoint-in porous-sheet.swps --steps 30 --checkpoint-out porous-sheet.swps --checkpoint-every 30
 ```
 
-The hemisphere command launches the standalone trace viewer by default and
+The `surface-flight` command is the interactive whole-wing reduced-order path
+described above. The hemisphere command launches the standalone trace viewer by default and
 shows a soft fabric dome held at three equatorial points with a compliant rim.
 A spatially alternating analytic pressure mode deforms four lobes without
 exciting a free rigid-body rotation. It is a structural canonical, not a CFD

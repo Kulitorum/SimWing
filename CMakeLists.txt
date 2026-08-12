@@ -407,6 +407,17 @@ target_link_libraries(simwing_scene_fluid_surface_transfer PUBLIC
     simwing_transfer
 )
 
+add_library(simwing_surface_aerodynamics STATIC
+    src/fsi/surface_aerodynamics.cpp
+    src/fsi/surface_aerodynamics.h
+)
+target_include_directories(simwing_surface_aerodynamics PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+)
+target_link_libraries(simwing_surface_aerodynamics PUBLIC
+    simwing_scene_fluid_surface_transfer
+)
+
 add_library(simwing_scene_fluid_geometry STATIC
     src/fsi/fluid/scene_surface_geometry.cpp
     src/fsi/fluid/scene_surface_geometry.h
@@ -674,6 +685,19 @@ target_link_libraries(simwing_structure_frame PUBLIC
     simwing_scene_structure
     simwing_structure
     simwing_viewer_protocol
+)
+
+add_library(simwing_surface_flight_case STATIC
+    src/fsi/surface_flight_case.cpp
+    src/fsi/surface_flight_case.h
+)
+target_include_directories(simwing_surface_flight_case PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/fsi"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/viewer"
+)
+target_link_libraries(simwing_surface_flight_case PUBLIC
+    simwing_surface_aerodynamics
+    simwing_structure_frame
 )
 
 add_library(simwing_viewer_geometry STATIC
@@ -1378,6 +1402,18 @@ add_executable(simwing-scene-fluid-surface-transfer-test
 target_link_libraries(simwing-scene-fluid-surface-transfer-test
     PRIVATE simwing_scene_fluid_surface_transfer)
 
+add_executable(simwing-surface-aerodynamics-test
+    tests/simwing_surface_aerodynamics_test.cpp
+)
+target_link_libraries(simwing-surface-aerodynamics-test
+    PRIVATE simwing_surface_aerodynamics)
+
+add_executable(simwing-surface-flight-case-test
+    tests/simwing_surface_flight_case_test.cpp
+)
+target_link_libraries(simwing-surface-flight-case-test
+    PRIVATE simwing_surface_flight_case)
+
 add_executable(simwing-scene-surface-geometry-test
     tests/simwing_scene_surface_geometry_test.cpp
 )
@@ -1923,6 +1959,7 @@ target_link_libraries(simwing-fsi PRIVATE
     simwing_projected_flag_case
     simwing_ram_air_cell_case
     simwing_scene_pressure_cell_case
+    simwing_surface_flight_case
     simwing_open_piston_control
     simwing_open_piston_case
     simwing_moving_porous_flow_control
@@ -2327,6 +2364,10 @@ add_test(NAME simwing_scene_fluid_surface
     COMMAND simwing-scene-fluid-surface-test)
 add_test(NAME simwing_scene_fluid_surface_transfer
     COMMAND simwing-scene-fluid-surface-transfer-test)
+add_test(NAME simwing_surface_aerodynamics
+    COMMAND simwing-surface-aerodynamics-test)
+add_test(NAME simwing_surface_flight_case
+    COMMAND simwing-surface-flight-case-test)
 add_test(NAME simwing_scene_surface_geometry
     COMMAND simwing-scene-surface-geometry-test)
 add_test(NAME simwing_scene_surface_intersection

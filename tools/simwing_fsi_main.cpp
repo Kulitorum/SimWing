@@ -18,6 +18,7 @@
 #include "projected_flag_case.h"
 #include "ram_air_cell_case.h"
 #include "scene_pressure_cell_case.h"
+#include "surface_flight_case.h"
 #include "scene_pressure_cell_checkpoint_persistence.h"
 #include "strong_piston_checkpoint_persistence.h"
 #include "strong_piston_control.h"
@@ -38,6 +39,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <span>
 #include <string>
@@ -73,6 +75,7 @@ constexpr std::size_t maximumExternalResolutionScale = 4;
 
 enum class WorkerCase {
     Structural,
+    SurfaceFlight,
     FrozenScene,
     Hemisphere,
     ProjectedFlag,
@@ -92,6 +95,7 @@ enum class WorkerCase {
 struct Options {
     std::uint64_t steps = defaultSteps;
     std::uint64_t traceEvery = 1;
+    bool continuous = false;
     std::filesystem::path tracePath;
     std::filesystem::path checkpointInputPath;
     std::filesystem::path checkpointOutputPath;
@@ -128,7 +132,7 @@ struct Options {
 void printUsage(FILE* stream) {
     std::fprintf(
         stream,
-        "Usage: simwing-fsi [--case structural|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|external-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
+        "Usage: simwing-fsi [--case structural|surface-flight|frozen-scene|hemisphere|flag|ram-cell|pressure-cell|piston|strong-piston|open-piston|periodic-flow|external-flow|porous-flow|moving-porous-flow|porous-sheet|pressure-jump]\n"
         "                   [--scene PATH]\n"
         "                   [--external-slab-x METERS]\n"
         "                   [--external-resolution-scale 1..4]\n"
@@ -149,6 +153,7 @@ void printUsage(FILE* stream) {
         "                   [--moving-pressure-reconstruction-tolerance VALUE]\n"
         "                   [--perturbation MPS]\n"
         "                   [--steps N]\n"
+        "                   [--continuous]\n"
         "                   [--trace-every N]\n"
         "                   [--trace PATH]\n"
         "                   [--checkpoint-in PATH]\n"
@@ -158,8 +163,11 @@ void printUsage(FILE* stream) {
         "                   [--control-stdio]\n"
         "                   [--viewer|--no-viewer]\n"
         "\n"
-        "Runs a canonical Qt-free numerical case and writes a completed diagnostic\n"
-        "trace. 'structural' is the original analytic XPBD harness; 'hemisphere'\n"
+        "Runs a canonical Qt-free numerical case and writes a diagnostic trace.\n"
+        "'surface-flight' loads a real --scene and couples a fast bounded\n"
+        "surface polar plus per-cell pneumatic pressure directly to moving XPBD;\n"
+        "it defaults to +10 m/s Y wind and is the interactive flight-preview path.\n"
+        "'structural' is the original analytic XPBD harness; 'hemisphere'\n"
         "runs a soft three-point fabric dome under an alternating pressure mode;\n"
         "'frozen-scene' loads --scene, holds its geometry fixed by default, and publishes\n"
         "an evolving bulk-flow/mixed-hybrid pressure projection and conservative\n"
@@ -236,8 +244,11 @@ void printUsage(FILE* stream) {
         "restore/save exact accepted state;\n"
         "--checkpoint-every\n"
         "autosaves at absolute accepted-step multiples and the final state. --steps\n"
-        "counts additional intervals. --trace-every writes the first, every Nth,\n"
-        "and the final accepted frame while still advancing every solver step.\n"
+        "counts additional intervals. --continuous is mutually exclusive with\n"
+        "--steps and advances until the process is stopped; its trace remains a\n"
+        "growing live stream without a completion footer. --trace-every writes\n"
+        "the first, every Nth, and (for finite runs) the final accepted frame\n"
+        "while still advancing every solver step.\n"
         "--control-stdio instead exchanges bounded\n"
         "binary strong-piston, moving-porous-flow, porous-sheet, open-piston, or\n"
         "periodic-flow\n"
@@ -252,6 +263,10 @@ void printUsage(FILE* stream) {
 bool parseWorkerCase(const std::string_view text, WorkerCase& workerCase) {
     if (text == "structural") {
         workerCase = WorkerCase::Structural;
+        return true;
+    }
+    if (text == "surface-flight") {
+        workerCase = WorkerCase::SurfaceFlight;
         return true;
     }
     if (text == "frozen-scene") {
@@ -395,7 +410,7 @@ bool parseOptions(int argc,
         } else if (argument == "--case") {
             if (++index >= argc
                 || !parseWorkerCase(argv[index], options.workerCase)) {
-                error = "--case requires 'structural', 'frozen-scene', 'hemisphere', 'flag', 'ram-cell', 'pressure-cell', 'piston', "
+                error = "--case requires 'structural', 'surface-flight', 'frozen-scene', 'hemisphere', 'flag', 'ram-cell', 'pressure-cell', 'piston', "
                     "'strong-piston', 'open-piston', 'periodic-flow', 'external-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
@@ -404,7 +419,7 @@ bool parseOptions(int argc,
             }
         } else if (argument.starts_with("--case=")) {
             if (!parseWorkerCase(argument.substr(7), options.workerCase)) {
-                error = "--case requires 'structural', 'frozen-scene', 'hemisphere', 'flag', 'ram-cell', 'pressure-cell', 'piston', "
+                error = "--case requires 'structural', 'surface-flight', 'frozen-scene', 'hemisphere', 'flag', 'ram-cell', 'pressure-cell', 'piston', "
                     "'strong-piston', 'open-piston', 'periodic-flow', 'external-flow', 'porous-flow', "
                     "'moving-porous-flow', "
                     "'porous-sheet', or "
@@ -424,6 +439,8 @@ bool parseOptions(int argc,
                 error = "--steps requires an unsigned integer";
                 return false;
             }
+        } else if (argument == "--continuous") {
+            options.continuous = true;
         } else if (argument == "--trace-every") {
             if (++index >= argc
                 || !parseUnsigned(argv[index], options.traceEvery)
@@ -772,19 +789,25 @@ bool parseOptions(int argc,
         error = "--viewer and --no-viewer are mutually exclusive";
         return false;
     }
+    if (stepsRequested && options.continuous) {
+        error = "--steps and --continuous are mutually exclusive";
+        return false;
+    }
     if (options.steps > maximumSteps) {
         error = "--steps exceeds the worker safety limit";
         return false;
     }
-    if (options.workerCase == WorkerCase::FrozenScene
+    if ((options.workerCase == WorkerCase::FrozenScene
+         || options.workerCase == WorkerCase::SurfaceFlight)
         && options.scenePath.empty()) {
-        error = "--case frozen-scene requires exactly one --scene path";
+        error = "--case frozen-scene and surface-flight require exactly one --scene path";
         return false;
     }
     if (!options.scenePath.empty()
         && options.workerCase != WorkerCase::FrozenScene
+        && options.workerCase != WorkerCase::SurfaceFlight
         && options.workerCase != WorkerCase::ExternalFlow) {
-        error = "--scene is supported by frozen-scene and external-flow";
+        error = "--scene is supported by surface-flight, frozen-scene, and external-flow";
         return false;
     }
     if (options.externalSlabCentreXMeters
@@ -807,11 +830,13 @@ bool parseOptions(int argc,
         error = "--external-fast-preview requires --external-slab-x";
         return false;
     }
+    const bool sharedSurfaceControlRequested =
+        options.frozenWindMetersPerSecond.has_value()
+        || options.frozenWindRampSeconds.has_value()
+        || options.frozenMovingStructureSubsteps.has_value();
     const bool frozenControlRequested =
         options.frozenGridCellCounts.has_value()
         || options.frozenDomainPaddingMeters.has_value()
-        || options.frozenWindMetersPerSecond.has_value()
-        || options.frozenWindRampSeconds.has_value()
         || options.frozenPerturbationMetersPerSecond.has_value()
         || options.frozenCorrectedTraceFlowContinuation
         || options.frozenRegionalTransportFlowPrediction
@@ -820,13 +845,18 @@ bool parseOptions(int argc,
         || options.frozenAggregateOpeningTraces
         || options.frozenPreflowBootstrapSteps != 0
         || options.frozenHeldPreflowLoadStructurePreview
-        || options.frozenMovingStructureSubsteps.has_value()
         || options.frozenMovingLoadRampSeconds.has_value()
         || options.frozenMovingPressureRelativeTolerance.has_value()
         || options.frozenMovingPressureReconstructionTolerance.has_value();
     if (frozenControlRequested
         && options.workerCase != WorkerCase::FrozenScene) {
         error = "frozen-scene flow controls require --case frozen-scene";
+        return false;
+    }
+    if (sharedSurfaceControlRequested
+        && options.workerCase != WorkerCase::FrozenScene
+        && options.workerCase != WorkerCase::SurfaceFlight) {
+        error = "wind, ramp, and structure-substep controls require --case surface-flight or frozen-scene";
         return false;
     }
     if (options.frozenCorrectedTraceFlowContinuation
@@ -857,8 +887,9 @@ bool parseOptions(int argc,
         return false;
     }
     if (options.frozenMovingStructureSubsteps
+        && options.workerCase == WorkerCase::FrozenScene
         && !options.frozenMovingGeometryFsi) {
-        error = "--structure-substeps requires --moving-fsi";
+        error = "--structure-substeps requires --moving-fsi for frozen-scene";
         return false;
     }
     if (options.frozenMovingLoadRampSeconds
@@ -915,6 +946,10 @@ bool parseOptions(int argc,
         }
         if (stepsRequested) {
             error = "--control-stdio does not accept --steps";
+            return false;
+        }
+        if (options.continuous) {
+            error = "--control-stdio does not accept --continuous";
             return false;
         }
         if (options.checkpointEvery != 0) {
@@ -1868,12 +1903,14 @@ int main(int argc, char* argv[]) {
                 }
             }();
             auto nextFrameTime = std::chrono::steady_clock::now();
-            for (std::uint64_t step = 0; step < options.steps; ++step) {
+            for (std::uint64_t step = 0;
+                 options.continuous || step < options.steps;
+                 ++step) {
                 const simwing::viewer::DiagnosticFrame frame =
                     simulation.advance();
                 const bool publishFrame = step == 0
                     || (step + 1) % options.traceEvery == 0
-                    || step + 1 == options.steps;
+                    || (!options.continuous && step + 1 == options.steps);
                 if (publishFrame) {
                     if (!writer.writeFrame(frame)
                         || !flushTrace(output, error)) {
@@ -2054,6 +2091,37 @@ int main(int argc, char* argv[]) {
                 const simwing::fsi::StructureDiagnostics diagnostics =
                     simulation.structure().diagnostics();
                 if constexpr (std::is_same_v<
+                                  Simulation,
+                                  simwing::fsi::SurfaceFlightCase>) {
+                    const auto& coupled = simulation.diagnostics();
+                    std::printf(
+                        "simwing-fsi completed %llu surface-flight step(s), "
+                        "t=%.9g s, q=%.6g Pa, alpha=%.6g deg, CL=%.6g, "
+                        "CD=%.6g, lift=%.6g N, drag=%.6g N, "
+                        "cell-pressure=[%.6g %.6g] Pa, min-volume=%.6g, "
+                        "bounds=[%.6g %.6g %.6g]-[%.6g %.6g %.6g] m, "
+                        "max-strain=%.6g, max-load-accel=%.6g m/s^2, "
+                        "transfer-residual=%.3g N, trace=%s\n",
+                        static_cast<unsigned long long>(
+                            checkpoint.acceptedStepCount),
+                        checkpoint.simulationTimeSeconds,
+                        coupled.aerodynamics.dynamicPressurePascals,
+                        coupled.aerodynamics.angleOfAttackRadians
+                            * 180.0 / std::numbers::pi,
+                        coupled.aerodynamics.liftCoefficient,
+                        coupled.aerodynamics.dragCoefficient,
+                        coupled.aerodynamics.liftNewtons,
+                        coupled.aerodynamics.dragNewtons,
+                        coupled.aerodynamics.minimumCellGaugePressurePascals,
+                        coupled.aerodynamics.maximumCellGaugePressurePascals,
+                        coupled.aerodynamics.minimumCellVolumeFraction,
+                        minimum.x, minimum.y, minimum.z,
+                        maximum.x, maximum.y, maximum.z,
+                        diagnostics.maximumAbsoluteMembraneStrain,
+                        coupled.maximumSurfaceLoadAccelerationMetersPerSecondSquared,
+                        coupled.transfer.forceResidualNormNewtons,
+                        options.tracePath.string().c_str());
+                } else if constexpr (std::is_same_v<
                                   Simulation,
                                   simwing::fsi::StrongCoupledPistonWorkerCase>) {
                     const auto& coupled = simulation.diagnostics();
@@ -2571,6 +2639,29 @@ int main(int argc, char* argv[]) {
 
         if (options.workerCase == WorkerCase::Piston) {
             simwing::fsi::CoupledPistonCase simulation;
+            return run(simulation);
+        }
+        if (options.workerCase == WorkerCase::SurfaceFlight) {
+            if (!frozenScene) {
+                throw std::logic_error(
+                    "surface flight scene input disappeared before construction");
+            }
+            simwing::fsi::SurfaceFlightCaseSettings settings;
+            if (options.frozenWindMetersPerSecond) {
+                const auto wind = *options.frozenWindMetersPerSecond;
+                settings.aerodynamics.targetWindMetersPerSecond =
+                    {wind.x, wind.y, wind.z};
+            }
+            if (options.frozenWindRampSeconds) {
+                settings.aerodynamics.windRampSeconds =
+                    *options.frozenWindRampSeconds;
+            }
+            if (options.frozenMovingStructureSubsteps) {
+                settings.structureStep.substeps =
+                    *options.frozenMovingStructureSubsteps;
+            }
+            simwing::fsi::SurfaceFlightCase simulation(
+                std::move(*frozenScene), settings);
             return run(simulation);
         }
         if (options.workerCase == WorkerCase::FrozenScene) {
